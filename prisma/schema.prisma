@@ -1,0 +1,353 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  TECHNICIAN
+}
+
+enum SiteVisitStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum InspectionTemplateStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum InspectionItemInputType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  DATETIME
+  JSON
+}
+
+enum InspectionCompletionStatus {
+  DRAFT
+  SUBMITTED
+}
+
+model Tenant {
+  id                   String               @id @default(uuid()) @db.Uuid
+  name                 String
+  code                 String               @unique
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  departments          Department[]
+  teams                Team[]
+  users                User[]
+  substations          Substation[]
+  assetTypes           AssetType[]
+  assets               Asset[]
+  siteVisits           SiteVisit[]
+  inspectionTemplates  InspectionTemplate[]
+  inspections          Inspection[]
+  images               Image[]
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String
+  code      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  teams     Team[]
+  users     User[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Team {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @db.Uuid
+  departmentId String?      @db.Uuid
+  name         String
+  code         String
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  members      TeamMember[]
+  siteVisits   SiteVisit[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model User {
+  id               String          @id @default(uuid()) @db.Uuid
+  tenantId         String          @db.Uuid
+  departmentId     String?         @db.Uuid
+  email            String          @unique
+  name             String
+  passwordHash     String
+  role             UserRole
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department       Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  teamMemberships  TeamMember[]
+  siteVisitUsers   SiteVisitUser[]
+  createdVisits    SiteVisit[]     @relation("SiteVisitCreatedBy")
+  createdInspects  Inspection[]    @relation("InspectionCreatedBy")
+  createdImages    Image[]         @relation("ImageCreatedBy")
+
+  @@index([tenantId])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  teamId    String   @db.Uuid
+  userId    String   @db.Uuid
+  isActive  Boolean  @default(true)
+  joinedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model Substation {
+  id         String      @id @default(uuid()) @db.Uuid
+  tenantId   String      @db.Uuid
+  name       String
+  code       String
+  location   String?
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets     Asset[]
+  siteVisits SiteVisit[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model AssetType {
+  id                  String               @id @default(uuid()) @db.Uuid
+  tenantId            String               @db.Uuid
+  name                String
+  code                String
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets              Asset[]
+  inspectionTemplates InspectionTemplate[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Asset {
+  id            String       @id @default(uuid()) @db.Uuid
+  tenantId      String       @db.Uuid
+  substationId  String       @db.Uuid
+  assetTypeId   String       @db.Uuid
+  name          String
+  code          String
+  serialNumber  String?
+  status        String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  substation    Substation   @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  assetType     AssetType    @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  inspections   Inspection[]
+  images        Image[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([substationId])
+  @@index([assetTypeId])
+}
+
+model SiteVisit {
+  id              String           @id @default(uuid()) @db.Uuid
+  tenantId        String           @db.Uuid
+  teamId          String           @db.Uuid
+  substationId    String           @db.Uuid
+  createdByUserId String           @db.Uuid
+  status          SiteVisitStatus  @default(ACTIVE)
+  startedAt       DateTime         @default(now())
+  endedAt         DateTime?
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  team            Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  substation      Substation       @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  createdBy       User             @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  users           SiteVisitUser[]
+  inspections     Inspection[]
+  images          Image[]
+
+  @@index([tenantId])
+  @@index([teamId, status])
+  @@index([substationId])
+}
+
+model SiteVisitUser {
+  id          String    @id @default(uuid()) @db.Uuid
+  siteVisitId String    @db.Uuid
+  userId      String    @db.Uuid
+  joinedAt    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  siteVisit   SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([siteVisitId, userId])
+  @@index([userId])
+}
+
+model InspectionTemplate {
+  id         String                     @id @default(uuid()) @db.Uuid
+  tenantId   String                     @db.Uuid
+  assetTypeId String                    @db.Uuid
+  version    Int
+  name       String
+  status     InspectionTemplateStatus   @default(DRAFT)
+  isActive   Boolean                    @default(false)
+  createdAt  DateTime                   @default(now())
+  updatedAt  DateTime                   @updatedAt
+  publishedAt DateTime?
+  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetType  AssetType                  @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  sections   InspectionTemplateSection[]
+  items      InspectionTemplateItem[]
+  inspections Inspection[]
+
+  @@unique([assetTypeId, version])
+  @@index([tenantId])
+  @@index([assetTypeId, isActive])
+}
+
+model InspectionTemplateSection {
+  id          String                   @id @default(uuid()) @db.Uuid
+  templateId  String                   @db.Uuid
+  title       String
+  description String?
+  sortOrder   Int                      @default(0)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  template    InspectionTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items       InspectionTemplateItem[]
+
+  @@index([templateId, sortOrder])
+}
+
+model InspectionTemplateItem {
+  id          String                   @id @default(uuid()) @db.Uuid
+  templateId  String                   @db.Uuid
+  sectionId   String                   @db.Uuid
+  key         String
+  label       String
+  helperText  String?
+  inputType   InspectionItemInputType
+  isRequired  Boolean                  @default(false)
+  sortOrder   Int                      @default(0)
+  optionsJson Json?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  template    InspectionTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  section     InspectionTemplateSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  results     InspectionResult[]
+
+  @@unique([templateId, key])
+  @@index([sectionId, sortOrder])
+}
+
+model Inspection {
+  id               String                     @id @default(uuid()) @db.Uuid
+  tenantId         String                     @db.Uuid
+  siteVisitId      String                     @db.Uuid
+  assetId          String                     @db.Uuid
+  templateId       String                     @db.Uuid
+  createdByUserId  String                     @db.Uuid
+  inspectionCycle  Int                        @default(1)
+  completionStatus InspectionCompletionStatus @default(DRAFT)
+  submittedAt      DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  tenant           Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit        SiteVisit                  @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
+  asset            Asset                      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  template         InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  createdBy        User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  results          InspectionResult[]
+  images           Image[]
+
+  @@index([tenantId])
+  @@index([siteVisitId])
+  @@index([assetId])
+  @@index([templateId])
+}
+
+model InspectionResult {
+  id             String      @id @default(uuid()) @db.Uuid
+  inspectionId   String      @db.Uuid
+  templateItemId String      @db.Uuid
+  valueText      String?
+  valueNumber    Decimal?    @db.Decimal(18, 4)
+  valueBoolean   Boolean?
+  valueDate      DateTime?   @db.Date
+  valueDateTime  DateTime?
+  valueJson      Json?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  inspection     Inspection  @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  templateItem   InspectionTemplateItem @relation(fields: [templateItemId], references: [id], onDelete: Restrict)
+  images         Image[]
+
+  @@unique([inspectionId, templateItemId])
+  @@index([templateItemId])
+}
+
+model Image {
+  id                 String            @id @default(uuid()) @db.Uuid
+  tenantId           String            @db.Uuid
+  siteVisitId        String?           @db.Uuid
+  assetId            String?           @db.Uuid
+  inspectionId       String?           @db.Uuid
+  inspectionResultId String?           @db.Uuid
+  createdByUserId    String?           @db.Uuid
+  fileName           String
+  storageKey         String
+  contentType        String?
+  url                String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit          SiteVisit?        @relation(fields: [siteVisitId], references: [id], onDelete: SetNull)
+  asset              Asset?            @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  inspection         Inspection?       @relation(fields: [inspectionId], references: [id], onDelete: SetNull)
+  inspectionResult   InspectionResult? @relation(fields: [inspectionResultId], references: [id], onDelete: SetNull)
+  createdBy          User?             @relation("ImageCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([siteVisitId])
+  @@index([assetId])
+  @@index([inspectionId])
+  @@index([inspectionResultId])
+}

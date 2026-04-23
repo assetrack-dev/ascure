@@ -1,0 +1,27 @@
+{
+  "name": "ascure",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @ascure/api",
+    "start": "npm run start --workspace @ascure/api",
+    "start:dev": "npm run start:dev --workspace @ascure/api",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "bcryptjs": "^3.0.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.7.0",
+    "tsx": "^4.19.4"
+  }
+}
+

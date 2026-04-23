@@ -1,0 +1,26 @@
+node_modules/
+dist/
+coverage/
+
+.env
+.env.*
+
+.DS_Store
+Thumbs.db
+
+apps/api/dist/
+apps/api/node_modules/
+
+prisma/dev.db
+.local-postgres/
+
+# logs
+*.log
+
+# pnpm (optional)
+pnpm-lock.yaml
+
+# IDE
+.vscode/
+
+package-lock.json
