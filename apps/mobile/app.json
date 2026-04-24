@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "ASCURE Field",
+    "slug": "ascure-field",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#f4f7fb"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "local.ascure.field",
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "bundleIdentifier": "local.ascure.field"
+    }
+  }
+}

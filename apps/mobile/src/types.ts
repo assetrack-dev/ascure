@@ -1,0 +1,207 @@
+export type UserRole = 'ADMIN' | 'MANAGER' | 'SUPERVISOR' | 'TECHNICIAN';
+
+export interface SessionUser {
+  id: string;
+  tenantId: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  departmentId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Team {
+  id: string;
+  tenantId?: string;
+  departmentId?: string;
+  code: string;
+  name: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Substation {
+  id: string;
+  tenantId?: string;
+  name: string;
+  code: string;
+  location?: string | null;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SiteVisitUser {
+  id: string;
+  siteVisitId: string;
+  userId: string;
+  joinedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  user: SessionUser;
+}
+
+export interface AssetType {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface Asset {
+  id: string;
+  tenantId?: string;
+  substationId: string;
+  assetTypeId: string;
+  name: string;
+  code: string;
+  serialNumber?: string | null;
+  status?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  assetType: AssetType;
+  substation?: Pick<Substation, 'id' | 'code' | 'name'>;
+}
+
+export type InspectionCompletionStatus = 'DRAFT' | 'SUBMITTED';
+
+export interface InspectionSummary {
+  id: string;
+  tenantId?: string;
+  siteVisitId: string;
+  assetId: string;
+  templateId: string;
+  createdByUserId?: string;
+  inspectionCycle: number;
+  completionStatus: InspectionCompletionStatus;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  asset?: Pick<Asset, 'id' | 'code' | 'name'>;
+}
+
+export interface SiteVisit {
+  id: string;
+  tenantId?: string;
+  teamId: string;
+  substationId: string;
+  createdByUserId?: string;
+  status: string;
+  startedAt: string;
+  endedAt: string | null;
+  notes: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  team: Pick<Team, 'id' | 'code' | 'name'>;
+  substation: Pick<Substation, 'id' | 'code' | 'name' | 'location'>;
+  createdBy?: Pick<SessionUser, 'id' | 'email' | 'name' | 'role'>;
+  users?: SiteVisitUser[];
+  inspections?: InspectionSummary[];
+}
+
+export interface LoginResponse {
+  access_token: string;
+  user: SessionUser;
+}
+
+export type InspectionItemInputType =
+  | 'TEXT'
+  | 'BOOLEAN'
+  | 'NUMBER'
+  | 'SELECT'
+  | 'DATE'
+  | 'DATETIME'
+  | 'JSON';
+
+export interface InspectionValue {
+  valueText: string | null;
+  valueNumber: number | null;
+  valueBoolean: boolean | null;
+  valueDate: string | null;
+  valueDateTime: string | null;
+  valueJson: unknown;
+}
+
+export interface InspectionTemplateItem {
+  id: string;
+  key: string;
+  label: string;
+  helperText: string | null;
+  inputType: InspectionItemInputType;
+  isRequired: boolean;
+  sortOrder: number;
+  optionsJson: unknown;
+  value: InspectionValue | null;
+}
+
+export interface InspectionTemplateSection {
+  id: string;
+  title: string;
+  description: string | null;
+  sortOrder: number;
+  items: InspectionTemplateItem[];
+}
+
+export interface InspectionFormResponse {
+  inspection: {
+    id: string;
+    tenantId: string;
+    siteVisitId: string;
+    assetId: string;
+    templateId: string;
+    inspectionCycle: number;
+    completionStatus: InspectionCompletionStatus;
+    submittedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+    siteVisit: {
+      id: string;
+      status: string;
+      startedAt: string;
+      team: Pick<Team, 'id' | 'code' | 'name'>;
+      substation: Pick<Substation, 'id' | 'code' | 'name'>;
+    };
+    asset: Pick<Asset, 'id' | 'code' | 'name' | 'serialNumber'> & {
+      assetType: AssetType;
+      substation: Pick<Substation, 'id' | 'code' | 'name'>;
+    };
+    createdBy: Pick<SessionUser, 'id' | 'email' | 'name' | 'role'>;
+  };
+  template: {
+    id: string;
+    name: string;
+    version: number;
+    sections: InspectionTemplateSection[];
+  };
+  results: Array<{
+    id: string;
+    templateItemId: string;
+    valueText: string | null;
+    valueNumber: number | null;
+    valueBoolean: boolean | null;
+    valueDate: string | null;
+    valueDateTime: string | null;
+    valueJson: unknown;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+export interface SaveInspectionResultItemInput {
+  templateItemId: string;
+  valueText?: string | null;
+  valueNumber?: number | null;
+  valueBoolean?: boolean | null;
+  valueDate?: string | null;
+  valueDateTime?: string | null;
+  valueJson?: unknown;
+}
+
+export interface SelectOption {
+  label: string;
+  value: string;
+}
+
+export type DraftValue = string | boolean | null;
+export type DraftValues = Record<string, DraftValue>;
