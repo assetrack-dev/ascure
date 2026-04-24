@@ -8,6 +8,14 @@ const APP_VIEWS = {
   TEMPLATE_LIST: 'templateList',
   TEMPLATE_DETAIL: 'templateDetail',
 }
+const TEMPLATE_INPUT_TYPE_OPTIONS = [
+  { value: 'TEXT', label: 'Text' },
+  { value: 'BOOLEAN', label: 'Boolean' },
+  { value: 'NUMBER', label: 'Number' },
+  { value: 'DATE', label: 'Date' },
+  { value: 'DATETIME', label: 'Date & Time' },
+  { value: 'SELECT', label: 'Select' },
+]
 const SEEDED_LOGIN = {
   email: 'admin@ascure.local',
   password: 'Admin123!',
@@ -243,6 +251,52 @@ async function publishTemplateRequest(token, templateId) {
   })
 }
 
+async function addTemplateSectionRequest(token, templateId, body) {
+  return apiRequest(`/templates/${templateId}/sections`, {
+    method: 'POST',
+    headers: buildAuthHeaders(token),
+    body: JSON.stringify(body),
+  })
+}
+
+async function updateTemplateSectionRequest(token, templateId, sectionId, body) {
+  return apiRequest(`/templates/${templateId}/sections/${sectionId}`, {
+    method: 'PATCH',
+    headers: buildAuthHeaders(token),
+    body: JSON.stringify(body),
+  })
+}
+
+async function deleteTemplateSectionRequest(token, templateId, sectionId) {
+  return apiRequest(`/templates/${templateId}/sections/${sectionId}`, {
+    method: 'DELETE',
+    headers: buildAuthHeaders(token),
+  })
+}
+
+async function addTemplateItemRequest(token, templateId, body) {
+  return apiRequest(`/templates/${templateId}/items`, {
+    method: 'POST',
+    headers: buildAuthHeaders(token),
+    body: JSON.stringify(body),
+  })
+}
+
+async function updateTemplateItemRequest(token, templateId, itemId, body) {
+  return apiRequest(`/templates/${templateId}/items/${itemId}`, {
+    method: 'PATCH',
+    headers: buildAuthHeaders(token),
+    body: JSON.stringify(body),
+  })
+}
+
+async function deleteTemplateItemRequest(token, templateId, itemId) {
+  return apiRequest(`/templates/${templateId}/items/${itemId}`, {
+    method: 'DELETE',
+    headers: buildAuthHeaders(token),
+  })
+}
+
 function formatPublishedDate(value) {
   if (!value) {
     return 'Not published'
@@ -275,6 +329,70 @@ function formatOptionsJson(value) {
   }
 
   return JSON.stringify(value, null, 2)
+}
+
+function getNextSortOrder(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return 1
+  }
+
+  return (
+    items.reduce((highestSortOrder, item) => {
+      const sortOrder = Number(item?.sortOrder) || 0
+      return Math.max(highestSortOrder, sortOrder)
+    }, 0) + 1
+  )
+}
+
+function buildSectionFormState(section) {
+  return {
+    title: section?.title ?? '',
+    description: section?.description ?? '',
+  }
+}
+
+function buildItemFormState(item) {
+  return {
+    label: item?.label ?? '',
+    key: item?.key ?? '',
+    inputType: item?.inputType ?? 'TEXT',
+    isRequired: Boolean(item?.isRequired),
+    helperText: item?.helperText ?? '',
+    optionsJsonText:
+      item?.optionsJson === null || item?.optionsJson === undefined
+        ? ''
+        : formatOptionsJson(item.optionsJson),
+  }
+}
+
+function parseItemOptionsJson(inputType, rawOptionsJson) {
+  if (inputType !== 'SELECT') {
+    return null
+  }
+
+  const normalizedOptionsJson = rawOptionsJson.trim()
+
+  if (!normalizedOptionsJson) {
+    throw new Error('Options JSON is required for SELECT items.')
+  }
+
+  let parsedValue
+
+  try {
+    parsedValue = JSON.parse(normalizedOptionsJson)
+  } catch {
+    throw new Error('Options JSON must be valid JSON.')
+  }
+
+  if (!Array.isArray(parsedValue)) {
+    throw new Error('Options JSON must be a JSON array for SELECT items.')
+  }
+
+  if (parsedValue.length === 0) {
+    throw new Error('Options JSON must contain at least one option.')
+  }
+
+  return parsedValue
 }
 
 function countItems(sections) {
@@ -311,6 +429,39 @@ function outlineButtonClassName(disabled = false) {
   }
 
   return `${baseClassName} border-slate-300 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700`
+}
+
+function primaryButtonClassName(disabled = false) {
+  const baseClassName =
+    'inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold transition'
+
+  if (disabled) {
+    return `${baseClassName} cursor-not-allowed bg-slate-300 text-slate-500`
+  }
+
+  return `${baseClassName} bg-slate-900 text-white hover:bg-teal-700`
+}
+
+function dangerButtonClassName(disabled = false) {
+  const baseClassName =
+    'inline-flex items-center justify-center rounded-full border px-3 py-1.5 text-sm font-semibold transition'
+
+  if (disabled) {
+    return `${baseClassName} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400`
+  }
+
+  return `${baseClassName} border-rose-200 bg-white text-rose-700 hover:bg-rose-50`
+}
+
+function editorFieldClassName(disabled = false) {
+  const baseClassName =
+    'w-full rounded-[18px] border px-4 py-3 text-sm outline-none transition'
+
+  if (disabled) {
+    return `${baseClassName} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400`
+  }
+
+  return `${baseClassName} border-slate-200 bg-white text-[var(--ink)] focus:border-teal-600 focus:ring-4 focus:ring-teal-100`
 }
 
 function bannerClassName(tone) {
@@ -412,7 +563,6 @@ function TemplateActionButtons({
   onPublish,
   onView,
   pendingAction,
-  showEditButton = false,
   showViewButton = true,
 }) {
   const isBusy = pendingAction?.templateId === template.id
@@ -449,16 +599,6 @@ function TemplateActionButtons({
       >
         {isPublishPending ? 'Publishing...' : 'Publish'}
       </button>
-      {showEditButton ? (
-        <button
-          type="button"
-          disabled
-          className={outlineButtonClassName(true)}
-          title="Template editing is coming in a later phase."
-        >
-          Edit Template
-        </button>
-      ) : null}
     </div>
   )
 }
@@ -621,20 +761,710 @@ function DetailField({ label, monospace = false, value }) {
   )
 }
 
+function EditorField({ label, helper, children, className = '' }) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="mb-2 block text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+        {label}
+      </span>
+      {children}
+      {helper ? <span className="mt-2 block text-xs leading-5 text-[var(--muted)]">{helper}</span> : null}
+    </label>
+  )
+}
+
+function InlineFormError({ message }) {
+  if (!message) {
+    return null
+  }
+
+  return (
+    <div className="rounded-[20px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      {message}
+    </div>
+  )
+}
+
+function ReadOnlyTemplateSections({ sections }) {
+  if (sections.length === 0) {
+    return (
+      <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
+        <p className="text-lg font-bold text-[var(--ink)]">No sections in this template yet.</p>
+        <p className="mt-2 text-sm text-[var(--muted)]">
+          This version is read-only. Clone it into a new draft before adding sections or items.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {sections.map((section) => (
+        <article
+          key={section.id}
+          className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-4xl">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                Section {section.sortOrder}
+              </p>
+              <h3 className="mt-2 text-2xl font-bold text-[var(--ink)]">{section.title}</h3>
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                {section.description?.trim() || 'No section description provided.'}
+              </p>
+            </div>
+            <div className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-700">
+              {section.items.length} item{section.items.length === 1 ? '' : 's'}
+            </div>
+          </div>
+
+          {section.items.length === 0 ? (
+            <div className="mt-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 px-5 py-8 text-center">
+              <p className="text-sm font-semibold text-[var(--ink)]">No items in this section.</p>
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              {section.items.map((item) => (
+                <div key={item.id} className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                        Item {item.sortOrder}
+                      </p>
+                      <h4 className="mt-2 text-lg font-bold text-[var(--ink)]">{item.label}</h4>
+                    </div>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] ${
+                        item.isRequired
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : 'border-slate-200 bg-white text-slate-600'
+                      }`}
+                    >
+                      {item.isRequired ? 'Required' : 'Optional'}
+                    </span>
+                  </div>
+
+                  <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <DetailField label="Key" monospace value={item.key} />
+                    <DetailField label="Input Type" value={item.inputType} />
+                    <DetailField
+                      label="Helper Text"
+                      value={item.helperText?.trim() || 'Not provided'}
+                    />
+                    <DetailField label="Is Required" value={item.isRequired ? 'Yes' : 'No'} />
+                  </dl>
+
+                  {item.optionsJson !== null && item.optionsJson !== undefined ? (
+                    <div className="mt-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                        Options JSON
+                      </p>
+                      <pre className="mt-2 overflow-x-auto rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-xs leading-6 text-[var(--ink)]">
+                        {formatOptionsJson(item.optionsJson)}
+                      </pre>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function DraftTemplateItemEditor({ item, templateId, onDeleteItem, onUpdateItem }) {
+  const serializedOptionsJson =
+    item.optionsJson === null || item.optionsJson === undefined ? '' : formatOptionsJson(item.optionsJson)
+  const [formValues, setFormValues] = useState(() => ({
+    ...buildItemFormState(item),
+    optionsJsonText: serializedOptionsJson,
+  }))
+  const [error, setError] = useState('')
+  const [activeAction, setActiveAction] = useState('')
+
+  const isBusy = activeAction !== ''
+
+  const handleChange = (event) => {
+    const { checked, name, type, value } = event.target
+
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      [name]: type === 'checkbox' ? checked : value,
+    }))
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setError('')
+    setActiveAction('save')
+
+    try {
+      await onUpdateItem(templateId, item.id, {
+        key: formValues.key.trim(),
+        label: formValues.label.trim(),
+        helperText: formValues.helperText,
+        inputType: formValues.inputType,
+        isRequired: formValues.isRequired,
+        sortOrder: item.sortOrder,
+        optionsJson: parseItemOptionsJson(formValues.inputType, formValues.optionsJsonText),
+      })
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setActiveAction('')
+    }
+  }
+
+  const handleDelete = async () => {
+    setError('')
+    setActiveAction('delete')
+
+    try {
+      await onDeleteItem(templateId, item.id)
+    } catch (requestError) {
+      setError(requestError.message)
+      setActiveAction('')
+    }
+  }
+
+  return (
+    <form className="space-y-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5" onSubmit={handleSubmit}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Item {item.sortOrder}
+          </p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Edit checklist fields inline while this template remains a draft.
+          </p>
+        </div>
+        <span
+          className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] ${
+            formValues.isRequired
+              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              : 'border-slate-200 bg-white text-slate-600'
+          }`}
+        >
+          {formValues.isRequired ? 'Required' : 'Optional'}
+        </span>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <EditorField label="Label">
+          <input
+            className={editorFieldClassName(isBusy)}
+            type="text"
+            name="label"
+            value={formValues.label}
+            onChange={handleChange}
+            disabled={isBusy}
+            required
+          />
+        </EditorField>
+
+        <EditorField label="Key" helper="Use letters, numbers, underscores, or hyphens.">
+          <input
+            className={editorFieldClassName(isBusy)}
+            type="text"
+            name="key"
+            value={formValues.key}
+            onChange={handleChange}
+            disabled={isBusy}
+            required
+          />
+        </EditorField>
+
+        <EditorField label="Input Type">
+          <select
+            className={editorFieldClassName(isBusy)}
+            name="inputType"
+            value={formValues.inputType}
+            onChange={handleChange}
+            disabled={isBusy}
+          >
+            {TEMPLATE_INPUT_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </EditorField>
+
+        <EditorField label="Required">
+          <label className="flex h-[50px] items-center gap-3 rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-[var(--ink)]">
+            <input
+              type="checkbox"
+              name="isRequired"
+              checked={formValues.isRequired}
+              onChange={handleChange}
+              disabled={isBusy}
+              className="h-4 w-4 rounded border-slate-300 text-teal-700 focus:ring-teal-500"
+            />
+            <span>Response is required</span>
+          </label>
+        </EditorField>
+
+        <EditorField label="Helper Text" className="md:col-span-2">
+          <textarea
+            className={editorFieldClassName(isBusy)}
+            name="helperText"
+            rows={3}
+            value={formValues.helperText}
+            onChange={handleChange}
+            disabled={isBusy}
+          />
+        </EditorField>
+
+        {formValues.inputType === 'SELECT' ? (
+          <EditorField
+            label="Options JSON"
+            helper='Example: ["OK", "NOT_OK"] or [{"label":"OK","value":"OK"}]'
+            className="md:col-span-2"
+          >
+            <textarea
+              className={`${editorFieldClassName(isBusy)} font-mono text-xs leading-6`}
+              name="optionsJsonText"
+              rows={6}
+              value={formValues.optionsJsonText}
+              onChange={handleChange}
+              disabled={isBusy}
+            />
+          </EditorField>
+        ) : null}
+      </div>
+
+      <InlineFormError message={error} />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={isBusy} className={primaryButtonClassName(isBusy)}>
+          {activeAction === 'save' ? 'Saving Item...' : 'Save Item'}
+        </button>
+        <button type="button" disabled={isBusy} className={dangerButtonClassName(isBusy)} onClick={handleDelete}>
+          {activeAction === 'delete' ? 'Deleting Item...' : 'Delete Item'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function DraftTemplateNewItemForm({ section, templateId, onAddItem }) {
+  const [formValues, setFormValues] = useState(() => buildItemFormState())
+  const [error, setError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const nextSortOrder = getNextSortOrder(section.items)
+
+  const handleChange = (event) => {
+    const { checked, name, type, value } = event.target
+
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      [name]: type === 'checkbox' ? checked : value,
+    }))
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      await onAddItem(templateId, {
+        sectionId: section.id,
+        key: formValues.key.trim(),
+        label: formValues.label.trim(),
+        helperText: formValues.helperText,
+        inputType: formValues.inputType,
+        isRequired: formValues.isRequired,
+        sortOrder: nextSortOrder,
+        optionsJson: parseItemOptionsJson(formValues.inputType, formValues.optionsJsonText),
+      })
+    } catch (requestError) {
+      setError(requestError.message)
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <form
+      className="rounded-[24px] border border-dashed border-slate-300 bg-white/70 p-5 shadow-[0_16px_40px_rgba(15,23,42,0.04)]"
+      onSubmit={handleSubmit}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">Add Item</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            New items append to the end of this section at position {nextSortOrder}.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <EditorField label="Label">
+          <input
+            className={editorFieldClassName(isSubmitting)}
+            type="text"
+            name="label"
+            value={formValues.label}
+            onChange={handleChange}
+            disabled={isSubmitting}
+            required
+          />
+        </EditorField>
+
+        <EditorField label="Key" helper="Use letters, numbers, underscores, or hyphens.">
+          <input
+            className={editorFieldClassName(isSubmitting)}
+            type="text"
+            name="key"
+            value={formValues.key}
+            onChange={handleChange}
+            disabled={isSubmitting}
+            required
+          />
+        </EditorField>
+
+        <EditorField label="Input Type">
+          <select
+            className={editorFieldClassName(isSubmitting)}
+            name="inputType"
+            value={formValues.inputType}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          >
+            {TEMPLATE_INPUT_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </EditorField>
+
+        <EditorField label="Required">
+          <label className="flex h-[50px] items-center gap-3 rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-[var(--ink)]">
+            <input
+              type="checkbox"
+              name="isRequired"
+              checked={formValues.isRequired}
+              onChange={handleChange}
+              disabled={isSubmitting}
+              className="h-4 w-4 rounded border-slate-300 text-teal-700 focus:ring-teal-500"
+            />
+            <span>Response is required</span>
+          </label>
+        </EditorField>
+
+        <EditorField label="Helper Text" className="md:col-span-2">
+          <textarea
+            className={editorFieldClassName(isSubmitting)}
+            name="helperText"
+            rows={3}
+            value={formValues.helperText}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          />
+        </EditorField>
+
+        {formValues.inputType === 'SELECT' ? (
+          <EditorField
+            label="Options JSON"
+            helper='Example: ["OK", "NOT_OK"] or [{"label":"OK","value":"OK"}]'
+            className="md:col-span-2"
+          >
+            <textarea
+              className={`${editorFieldClassName(isSubmitting)} font-mono text-xs leading-6`}
+              name="optionsJsonText"
+              rows={6}
+              value={formValues.optionsJsonText}
+              onChange={handleChange}
+              disabled={isSubmitting}
+            />
+          </EditorField>
+        ) : null}
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <InlineFormError message={error} />
+        <button type="submit" disabled={isSubmitting} className={primaryButtonClassName(isSubmitting)}>
+          {isSubmitting ? 'Adding Item...' : 'Add Item'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function DraftTemplateSectionEditor({
+  section,
+  templateId,
+  onAddItem,
+  onDeleteItem,
+  onDeleteSection,
+  onUpdateItem,
+  onUpdateSection,
+}) {
+  const [formValues, setFormValues] = useState(() => buildSectionFormState(section))
+  const [error, setError] = useState('')
+  const [activeAction, setActiveAction] = useState('')
+
+  const isBusy = activeAction !== ''
+  const canDeleteSection = section.items.length === 0 && !isBusy
+
+  const handleChange = (event) => {
+    const { name, value } = event.target
+
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      [name]: value,
+    }))
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setError('')
+    setActiveAction('save')
+
+    try {
+      await onUpdateSection(templateId, section.id, {
+        title: formValues.title.trim(),
+        description: formValues.description,
+        sortOrder: section.sortOrder,
+      })
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setActiveAction('')
+    }
+  }
+
+  const handleDelete = async () => {
+    setError('')
+    setActiveAction('delete')
+
+    try {
+      await onDeleteSection(templateId, section.id)
+    } catch (requestError) {
+      setError(requestError.message)
+      setActiveAction('')
+    }
+  }
+
+  return (
+    <article className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Section {section.sortOrder}
+          </p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Section titles save directly to the draft template and refresh after each change.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-700">
+            {section.items.length} item{section.items.length === 1 ? '' : 's'}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-amber-700">
+            Draft editing enabled
+          </span>
+        </div>
+      </div>
+
+      <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <EditorField label="Section Name">
+            <input
+              className={editorFieldClassName(isBusy)}
+              type="text"
+              name="title"
+              value={formValues.title}
+              onChange={handleChange}
+              disabled={isBusy}
+              required
+            />
+          </EditorField>
+
+          <EditorField label="Description">
+            <textarea
+              className={editorFieldClassName(isBusy)}
+              name="description"
+              rows={3}
+              value={formValues.description}
+              onChange={handleChange}
+              disabled={isBusy}
+            />
+          </EditorField>
+        </div>
+
+        <InlineFormError message={error} />
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="submit" disabled={isBusy} className={primaryButtonClassName(isBusy)}>
+            {activeAction === 'save' ? 'Saving Section...' : 'Save Section'}
+          </button>
+          <button
+            type="button"
+            disabled={!canDeleteSection}
+            className={dangerButtonClassName(!canDeleteSection)}
+            onClick={handleDelete}
+            title={section.items.length > 0 ? 'Remove all items before deleting this section.' : undefined}
+          >
+            {activeAction === 'delete' ? 'Deleting Section...' : 'Delete Section'}
+          </button>
+          {section.items.length > 0 ? (
+            <p className="text-sm text-[var(--muted)]">
+              Delete every item in this section first before deleting the section itself.
+            </p>
+          ) : null}
+        </div>
+      </form>
+
+      <div className="mt-6 space-y-4 border-t border-slate-200/80 pt-6">
+        <div>
+          <h4 className="text-lg font-bold text-[var(--ink)]">Checklist Items</h4>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Add new items below or update existing fields inline.
+          </p>
+        </div>
+
+        {section.items.length === 0 ? (
+          <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 px-5 py-8 text-center">
+            <p className="text-sm font-semibold text-[var(--ink)]">No items in this section yet.</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Add the first checklist item below before publishing this draft.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {section.items.map((item) => (
+              <DraftTemplateItemEditor
+                key={`${item.id}:${item.updatedAt ?? ''}`}
+                item={item}
+                templateId={templateId}
+                onDeleteItem={onDeleteItem}
+                onUpdateItem={onUpdateItem}
+              />
+            ))}
+          </div>
+        )}
+
+        <DraftTemplateNewItemForm
+          key={`new-item-${section.id}-${section.items.length}`}
+          section={section}
+          templateId={templateId}
+          onAddItem={onAddItem}
+        />
+      </div>
+    </article>
+  )
+}
+
+function DraftTemplateNewSectionForm({ sections, templateId, onAddSection }) {
+  const [formValues, setFormValues] = useState(() => buildSectionFormState())
+  const [error, setError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const nextSortOrder = getNextSortOrder(sections)
+
+  const handleChange = (event) => {
+    const { name, value } = event.target
+
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      [name]: value,
+    }))
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      await onAddSection(templateId, {
+        title: formValues.title.trim(),
+        description: formValues.description,
+        sortOrder: nextSortOrder,
+      })
+    } catch (requestError) {
+      setError(requestError.message)
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <form
+      className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur"
+      onSubmit={handleSubmit}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold text-[var(--ink)]">Add Section</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            New sections append to the draft template at position {nextSortOrder}.
+          </p>
+        </div>
+        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-amber-700">
+          Draft only
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <EditorField label="Section Name">
+          <input
+            className={editorFieldClassName(isSubmitting)}
+            type="text"
+            name="title"
+            value={formValues.title}
+            onChange={handleChange}
+            disabled={isSubmitting}
+            required
+          />
+        </EditorField>
+
+        <EditorField label="Description">
+          <textarea
+            className={editorFieldClassName(isSubmitting)}
+            name="description"
+            rows={3}
+            value={formValues.description}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          />
+        </EditorField>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <InlineFormError message={error} />
+        <button type="submit" disabled={isSubmitting} className={primaryButtonClassName(isSubmitting)}>
+          {isSubmitting ? 'Adding Section...' : 'Add Section'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
 function TemplateDetailView({
   detail,
   error,
   isLoading,
+  onAddItem,
+  onAddSection,
   onBack,
   onClone,
+  onDeleteItem,
+  onDeleteSection,
   onPublish,
   onRetry,
+  onUpdateItem,
+  onUpdateSection,
   pendingAction,
 }) {
   const template = detail?.template ?? null
   const sections = detail?.sections ?? []
   const sectionCount = sections.length
   const itemCount = countItems(sections)
+  const isDraftTemplate = template?.status === 'DRAFT'
 
   return (
     <section className="mt-6">
@@ -642,8 +1472,9 @@ function TemplateDetailView({
         <div>
           <h2 className="text-2xl font-extrabold text-[var(--ink)]">Template Detail</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Review the stored section and checklist item structure for this version. Editing stays
-            disabled in Phase 3.1.
+            {isDraftTemplate
+              ? 'Draft templates can be edited inline. Active and archived versions stay read-only.'
+              : 'Review the stored section and checklist item structure for this version. Only draft templates can be edited.'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -656,7 +1487,6 @@ function TemplateDetailView({
               onClone={onClone}
               onPublish={onPublish}
               pendingAction={pendingAction}
-              showEditButton
               showViewButton={false}
             />
           ) : null}
@@ -693,9 +1523,10 @@ function TemplateDetailView({
                 </div>
                 <h3 className="mt-4 text-3xl font-extrabold text-[var(--ink)]">{template.name}</h3>
                 <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                  {detail.assetType?.name ?? 'No asset type name'} with version v{template.version}.
-                  This view mirrors the current backend template structure without enabling editor
-                  changes yet.
+                  {detail.assetType?.name ?? 'No asset type name'} with version v{template.version}.{' '}
+                  {isDraftTemplate
+                    ? 'Save section and item changes directly from this page. Each action refreshes the stored template detail.'
+                    : 'This version is read-only. Clone it into a new draft before making changes.'}
                 </p>
               </div>
               <StatusBadge status={template.status} isActive={template.isActive} />
@@ -728,89 +1559,43 @@ function TemplateDetailView({
             </div>
           </div>
 
-          {sections.length === 0 ? (
-            <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
-              <p className="text-lg font-bold text-[var(--ink)]">No sections in this template yet.</p>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                Publishing will stay blocked until at least one section exists, but editing remains
-                intentionally unavailable in this phase.
-              </p>
+          {isDraftTemplate ? (
+            <div className="space-y-4">
+              <DraftTemplateNewSectionForm
+                key={`new-section-${template.id}-${sectionCount}`}
+                sections={sections}
+                templateId={template.id}
+                onAddSection={onAddSection}
+              />
+
+              {sections.length === 0 ? (
+                <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
+                  <p className="text-lg font-bold text-[var(--ink)]">
+                    No sections in this draft template yet.
+                  </p>
+                  <p className="mt-2 text-sm text-[var(--muted)]">
+                    Add a section above, then start building checklist items inline.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {sections.map((section) => (
+                    <DraftTemplateSectionEditor
+                      key={`${section.id}:${section.updatedAt ?? ''}`}
+                      section={section}
+                      templateId={template.id}
+                      onAddItem={onAddItem}
+                      onDeleteItem={onDeleteItem}
+                      onDeleteSection={onDeleteSection}
+                      onUpdateItem={onUpdateItem}
+                      onUpdateSection={onUpdateSection}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="space-y-4">
-              {sections.map((section) => (
-                <article
-                  key={section.id}
-                  className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur"
-                >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="max-w-4xl">
-                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
-                        Section {section.sortOrder}
-                      </p>
-                      <h3 className="mt-2 text-2xl font-bold text-[var(--ink)]">{section.title}</h3>
-                      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                        {section.description?.trim() || 'No section description provided.'}
-                      </p>
-                    </div>
-                    <div className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-700">
-                      {section.items.length} item{section.items.length === 1 ? '' : 's'}
-                    </div>
-                  </div>
-
-                  {section.items.length === 0 ? (
-                    <div className="mt-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 px-5 py-8 text-center">
-                      <p className="text-sm font-semibold text-[var(--ink)]">No items in this section.</p>
-                    </div>
-                  ) : (
-                    <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                      {section.items.map((item) => (
-                        <div
-                          key={item.id}
-                          className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
-                                Item {item.sortOrder}
-                              </p>
-                              <h4 className="mt-2 text-lg font-bold text-[var(--ink)]">{item.label}</h4>
-                            </div>
-                            <span
-                              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] ${
-                                item.isRequired
-                                  ? 'border-rose-200 bg-rose-50 text-rose-700'
-                                  : 'border-slate-200 bg-white text-slate-600'
-                              }`}
-                            >
-                              {item.isRequired ? 'Required' : 'Optional'}
-                            </span>
-                          </div>
-
-                          <dl className="mt-4 grid gap-4 sm:grid-cols-2">
-                            <DetailField label="Key" monospace value={item.key} />
-                            <DetailField label="Input Type" value={item.inputType} />
-                            <DetailField label="Helper Text" value={item.helperText?.trim() || 'Not provided'} />
-                            <DetailField label="Is Required" value={item.isRequired ? 'Yes' : 'No'} />
-                          </dl>
-
-                          {item.optionsJson !== null && item.optionsJson !== undefined ? (
-                            <div className="mt-4">
-                              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
-                                Options JSON
-                              </p>
-                              <pre className="mt-2 overflow-x-auto rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-xs leading-6 text-[var(--ink)]">
-                                {formatOptionsJson(item.optionsJson)}
-                              </pre>
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
+            <ReadOnlyTemplateSections sections={sections} />
           )}
         </div>
       ) : null}
@@ -834,8 +1619,8 @@ function TemplateListView({
         <div>
           <h2 className="text-2xl font-extrabold text-[var(--ink)]">Template List</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            View, clone, and publish now connect to the live template endpoints. Editing remains
-            disabled in this phase.
+            View every template version, edit drafts inline, and use the live clone and publish
+            actions without leaving the admin screen.
           </p>
         </div>
       </div>
@@ -890,8 +1675,8 @@ function LoginView({ authError, formValues, isSubmitting, onChange, onSubmit }) 
                 Template control room for review, clone, and publish workflows.
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-[var(--muted)] sm:text-lg">
-                Phase 3.1 keeps the login flow simple and connects the admin UI directly to live
-                template detail, clone, and publish endpoints.
+                Phase 3.2 keeps the login flow simple and connects the admin UI directly to live
+                template detail, draft editing, clone, and publish endpoints.
               </p>
             </div>
 
@@ -913,10 +1698,10 @@ function LoginView({ authError, formValues, isSubmitting, onChange, onSubmit }) 
               </div>
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)]">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-700">Scope</p>
-                <p className="mt-3 text-xl font-bold text-[var(--ink)]">Phase 3.1</p>
+                <p className="mt-3 text-xl font-bold text-[var(--ink)]">Phase 3.2</p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  Inspect structure safely, clone draft-ready copies, and publish only eligible
-                  templates while editing stays locked.
+                  Inspect structure safely, edit draft templates inline, clone draft-ready copies,
+                  and publish only eligible versions.
                 </p>
               </div>
             </div>
@@ -1004,13 +1789,19 @@ function Dashboard({
   isLoadingTemplateDetail,
   isLoadingTemplates,
   notice,
+  onAddItem,
+  onAddSection,
   onBackToTemplates,
   onCloneTemplate,
+  onDeleteItem,
+  onDeleteSection,
   onLogout,
   onPublishTemplate,
   onRefreshCurrentView,
   onRetryTemplateDetail,
   onRetryTemplates,
+  onUpdateItem,
+  onUpdateSection,
   onViewTemplate,
   pendingAction,
   templateDetail,
@@ -1040,8 +1831,8 @@ function Dashboard({
                 Admin visibility for every inspection template version.
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)] sm:text-lg">
-                Open a template to inspect the exact stored checklist structure, then clone or
-                publish it through the live API while the editor remains safely disabled.
+                Open a template to inspect the exact stored checklist structure, edit draft versions
+                inline, then clone or publish through the live API.
               </p>
             </div>
 
@@ -1108,10 +1899,16 @@ function Dashboard({
             detail={templateDetail}
             error={templateDetailError}
             isLoading={isLoadingTemplateDetail}
+            onAddItem={onAddItem}
+            onAddSection={onAddSection}
             onBack={onBackToTemplates}
             onClone={onCloneTemplate}
+            onDeleteItem={onDeleteItem}
+            onDeleteSection={onDeleteSection}
             onPublish={onPublishTemplate}
             onRetry={onRetryTemplateDetail}
+            onUpdateItem={onUpdateItem}
+            onUpdateSection={onUpdateSection}
             pendingAction={pendingAction}
           />
         ) : (
@@ -1248,6 +2045,63 @@ function App() {
       }
     },
     [resetSession, token],
+  )
+
+  const applyTemplateDetail = useCallback((nextDetail) => {
+    if (!nextDetail?.template?.id) {
+      return
+    }
+
+    startTransition(() => {
+      setTemplateDetail(nextDetail)
+    })
+    setCurrentView(APP_VIEWS.TEMPLATE_DETAIL)
+    setTemplateDetailId(nextDetail.template.id)
+    setTemplateDetailError('')
+  }, [])
+
+  const syncAfterEditorMutation = useCallback(
+    async (templateId, payload) => {
+      const nextDetail = normalizeTemplateDetail(payload)
+
+      if (nextDetail) {
+        applyTemplateDetail(nextDetail)
+      }
+
+      await Promise.all([
+        openTemplateDetail(templateId, { preserveNotice: true }),
+        loadTemplates({
+          clearOnError: false,
+          showSpinner: false,
+        }),
+      ])
+
+      return nextDetail
+    },
+    [applyTemplateDetail, loadTemplates, openTemplateDetail],
+  )
+
+  const runTemplateEditorMutation = useCallback(
+    async (templateId, request) => {
+      if (!token) {
+        return null
+      }
+
+      setNotice(null)
+
+      try {
+        const payload = await request()
+        return await syncAfterEditorMutation(templateId, payload)
+      } catch (error) {
+        if (error.status === 401) {
+          resetSession('Your session expired. Please log in again.')
+          return null
+        }
+
+        throw error
+      }
+    },
+    [resetSession, syncAfterEditorMutation, token],
   )
 
   useEffect(() => {
@@ -1487,6 +2341,60 @@ function App() {
     }
   }
 
+  const handleAddSection = useCallback(
+    async (targetTemplateId, values) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        addTemplateSectionRequest(token, targetTemplateId, values),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
+  const handleUpdateSection = useCallback(
+    async (targetTemplateId, sectionId, values) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        updateTemplateSectionRequest(token, targetTemplateId, sectionId, values),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
+  const handleDeleteSection = useCallback(
+    async (targetTemplateId, sectionId) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        deleteTemplateSectionRequest(token, targetTemplateId, sectionId),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
+  const handleAddItem = useCallback(
+    async (targetTemplateId, values) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        addTemplateItemRequest(token, targetTemplateId, values),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
+  const handleUpdateItem = useCallback(
+    async (targetTemplateId, itemId, values) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        updateTemplateItemRequest(token, targetTemplateId, itemId, values),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
+  const handleDeleteItem = useCallback(
+    async (targetTemplateId, itemId) => {
+      return runTemplateEditorMutation(targetTemplateId, () =>
+        deleteTemplateItemRequest(token, targetTemplateId, itemId),
+      )
+    },
+    [runTemplateEditorMutation, token],
+  )
+
   const handleRefreshCurrentView = async () => {
     if (!token) {
       return
@@ -1522,13 +2430,19 @@ function App() {
       isLoadingTemplateDetail={isLoadingTemplateDetail}
       isLoadingTemplates={isLoadingTemplates}
       notice={notice}
+      onAddItem={handleAddItem}
+      onAddSection={handleAddSection}
       onBackToTemplates={handleBackToTemplates}
       onCloneTemplate={handleCloneTemplate}
+      onDeleteItem={handleDeleteItem}
+      onDeleteSection={handleDeleteSection}
       onLogout={handleLogout}
       onPublishTemplate={handlePublishTemplate}
       onRefreshCurrentView={handleRefreshCurrentView}
       onRetryTemplateDetail={handleRetryTemplateDetail}
       onRetryTemplates={handleRetryTemplates}
+      onUpdateItem={handleUpdateItem}
+      onUpdateSection={handleUpdateSection}
       onViewTemplate={handleViewTemplate}
       pendingAction={pendingAction}
       templateDetail={templateDetail}
