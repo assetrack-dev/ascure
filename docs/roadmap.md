@@ -18,7 +18,9 @@
 - section/item management
 - clone version
 - publish version
-- validation on submission
+- template-management role restrictions
+- select-input template support
+- validation on publish and edit
 
 ## Phase 3
 - image upload flow

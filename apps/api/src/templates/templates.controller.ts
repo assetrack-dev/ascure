@@ -1,14 +1,9 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
-import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { AssetTypeIdParamDto } from './dto/template-params.dto';
 import { TemplatesService } from './templates.service';
-
-class AssetTypeIdParamDto {
-  @IsUUID()
-  assetTypeId!: string;
-}
 
 @UseGuards(JwtAuthGuard)
 @Controller('asset-types')
@@ -20,4 +15,3 @@ export class TemplatesController {
     return this.templatesService.getActiveTemplate(user, params.assetTypeId);
   }
 }
-

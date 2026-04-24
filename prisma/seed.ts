@@ -6,6 +6,8 @@ const prisma = new PrismaClient();
 async function main() {
   const passwordSaltRounds = 10;
   const adminPasswordHash = await bcrypt.hash('Admin123!', passwordSaltRounds);
+  const managerPasswordHash = await bcrypt.hash('Manager123!', passwordSaltRounds);
+  const supervisorPasswordHash = await bcrypt.hash('Supervisor123!', passwordSaltRounds);
   const technicianPasswordHash = await bcrypt.hash('Tech123!', passwordSaltRounds);
 
   const tenant = await prisma.tenant.upsert({
@@ -95,6 +97,48 @@ async function main() {
     },
   });
 
+  const managerUser = await prisma.user.upsert({
+    where: { email: 'manager@ascure.local' },
+    update: {
+      tenantId: tenant.id,
+      departmentId: department.id,
+      name: 'Operations Manager',
+      passwordHash: managerPasswordHash,
+      role: UserRole.MANAGER,
+      isActive: true,
+    },
+    create: {
+      tenantId: tenant.id,
+      departmentId: department.id,
+      email: 'manager@ascure.local',
+      name: 'Operations Manager',
+      passwordHash: managerPasswordHash,
+      role: UserRole.MANAGER,
+      isActive: true,
+    },
+  });
+
+  const supervisorUser = await prisma.user.upsert({
+    where: { email: 'supervisor@ascure.local' },
+    update: {
+      tenantId: tenant.id,
+      departmentId: department.id,
+      name: 'Field Supervisor',
+      passwordHash: supervisorPasswordHash,
+      role: UserRole.SUPERVISOR,
+      isActive: true,
+    },
+    create: {
+      tenantId: tenant.id,
+      departmentId: department.id,
+      email: 'supervisor@ascure.local',
+      name: 'Field Supervisor',
+      passwordHash: supervisorPasswordHash,
+      role: UserRole.SUPERVISOR,
+      isActive: true,
+    },
+  });
+
   await prisma.teamMember.upsert({
     where: {
       teamId_userId: {
@@ -106,6 +150,36 @@ async function main() {
     create: {
       teamId: team.id,
       userId: adminUser.id,
+      isActive: true,
+    },
+  });
+
+  await prisma.teamMember.upsert({
+    where: {
+      teamId_userId: {
+        teamId: team.id,
+        userId: managerUser.id,
+      },
+    },
+    update: { isActive: true },
+    create: {
+      teamId: team.id,
+      userId: managerUser.id,
+      isActive: true,
+    },
+  });
+
+  await prisma.teamMember.upsert({
+    where: {
+      teamId_userId: {
+        teamId: team.id,
+        userId: supervisorUser.id,
+      },
+    },
+    update: { isActive: true },
+    create: {
+      teamId: team.id,
+      userId: supervisorUser.id,
       isActive: true,
     },
   });
@@ -207,7 +281,7 @@ async function main() {
       },
       data: {
         isActive: false,
-        status: InspectionTemplateStatus.RETIRED,
+        status: InspectionTemplateStatus.ARCHIVED,
       },
     });
   }
@@ -237,64 +311,95 @@ async function main() {
     },
   });
 
-  await prisma.inspectionTemplateItem.deleteMany({
+  const existingSection = await prisma.inspectionTemplateSection.findFirst({
     where: {
-      templateId: template.id,
-    },
-  });
-
-  await prisma.inspectionTemplateSection.deleteMany({
-    where: {
-      templateId: template.id,
-    },
-  });
-
-  const section = await prisma.inspectionTemplateSection.create({
-    data: {
       templateId: template.id,
       title: 'Visual Checks',
-      description: 'Basic SAVR inspection checklist for Phase 1 testing.',
-      sortOrder: 1,
+    },
+    select: {
+      id: true,
     },
   });
 
-  await prisma.inspectionTemplateItem.createMany({
-    data: [
-      {
+  const section = existingSection
+    ? await prisma.inspectionTemplateSection.update({
+        where: {
+          id: existingSection.id,
+        },
+        data: {
+          description: 'Basic SAVR inspection checklist for Phase 1 testing.',
+          sortOrder: 1,
+        },
+      })
+    : await prisma.inspectionTemplateSection.create({
+        data: {
+          templateId: template.id,
+          title: 'Visual Checks',
+          description: 'Basic SAVR inspection checklist for Phase 1 testing.',
+          sortOrder: 1,
+        },
+      });
+
+  const seedItems = [
+    {
+      key: 'nameplate_condition',
+      label: 'Nameplate condition is acceptable',
+      helperText: 'Mark true when the nameplate is readable and intact.',
+      inputType: InspectionItemInputType.BOOLEAN,
+      isRequired: true,
+      sortOrder: 1,
+    },
+    {
+      key: 'oil_level_reading',
+      label: 'Oil level reading',
+      helperText: 'Capture the observed oil level as text.',
+      inputType: InspectionItemInputType.TEXT,
+      isRequired: true,
+      sortOrder: 2,
+    },
+    {
+      key: 'inspection_notes',
+      label: 'Inspection notes',
+      helperText: 'Optional general remarks for the asset.',
+      inputType: InspectionItemInputType.TEXT,
+      isRequired: false,
+      sortOrder: 3,
+    },
+  ];
+
+  for (const item of seedItems) {
+    await prisma.inspectionTemplateItem.upsert({
+      where: {
+        templateId_key: {
+          templateId: template.id,
+          key: item.key,
+        },
+      },
+      update: {
+        sectionId: section.id,
+        label: item.label,
+        helperText: item.helperText,
+        inputType: item.inputType,
+        isRequired: item.isRequired,
+        sortOrder: item.sortOrder,
+      },
+      create: {
         templateId: template.id,
         sectionId: section.id,
-        key: 'nameplate_condition',
-        label: 'Nameplate condition is acceptable',
-        helperText: 'Mark true when the nameplate is readable and intact.',
-        inputType: InspectionItemInputType.BOOLEAN,
-        isRequired: true,
-        sortOrder: 1,
+        key: item.key,
+        label: item.label,
+        helperText: item.helperText,
+        inputType: item.inputType,
+        isRequired: item.isRequired,
+        sortOrder: item.sortOrder,
       },
-      {
-        templateId: template.id,
-        sectionId: section.id,
-        key: 'oil_level_reading',
-        label: 'Oil level reading',
-        helperText: 'Capture the observed oil level as text.',
-        inputType: InspectionItemInputType.TEXT,
-        isRequired: true,
-        sortOrder: 2,
-      },
-      {
-        templateId: template.id,
-        sectionId: section.id,
-        key: 'inspection_notes',
-        label: 'Inspection notes',
-        helperText: 'Optional general remarks for the asset.',
-        inputType: InspectionItemInputType.TEXT,
-        isRequired: false,
-        sortOrder: 3,
-      },
-    ],
-  });
+    });
+  }
 
   console.log('Seed completed successfully.');
   console.log('Admin login: admin@ascure.local / Admin123!');
+  console.log('Manager login: manager@ascure.local / Manager123!');
+  console.log('Supervisor login: supervisor@ascure.local / Supervisor123!');
   console.log('Technician login: technician@ascure.local / Tech123!');
 }
 

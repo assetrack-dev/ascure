@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { SaveInspectionResultItemDto, SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
@@ -106,7 +107,7 @@ export class InspectionsService {
           throw new BadRequestException(`Template item ${input.templateItemId} does not belong to this inspection template.`);
         }
 
-        const valueData = this.buildResultValueData(templateItem.inputType, input);
+        const valueData = this.buildResultValueData(templateItem, input);
 
         return this.prisma.inspectionResult.upsert({
           where: {
@@ -312,6 +313,7 @@ export class InspectionsService {
         label: string;
         inputType: InspectionItemInputType;
         isRequired: boolean;
+        optionsJson: Prisma.JsonValue | null;
       }>;
     }>,
   ) {
@@ -319,7 +321,11 @@ export class InspectionsService {
   }
 
   private buildResultValueData(
-    inputType: InspectionItemInputType,
+    templateItem: {
+      id: string;
+      inputType: InspectionItemInputType;
+      optionsJson: Prisma.JsonValue | null;
+    },
     input: SaveInspectionResultItemDto,
   ): {
     valueText: string | null;
@@ -338,7 +344,7 @@ export class InspectionsService {
       valueJson: Prisma.DbNull,
     };
 
-    switch (inputType) {
+    switch (templateItem.inputType) {
       case InspectionItemInputType.TEXT:
         if (input.valueText === undefined) {
           throw new BadRequestException(`valueText is required for template item ${input.templateItemId}.`);
@@ -398,6 +404,38 @@ export class InspectionsService {
           valueJson: Prisma.DbNull,
         };
 
+      case InspectionItemInputType.SELECT: {
+        if (input.valueText === undefined) {
+          throw new BadRequestException(`valueText is required for template item ${input.templateItemId}.`);
+        }
+
+        const selectedValue = input.valueText === null ? null : input.valueText.trim();
+
+        if (selectedValue !== null && selectedValue !== '') {
+          const allowedOptions = normalizeTemplateSelectOptions(templateItem.optionsJson);
+
+          if (!allowedOptions) {
+            throw new BadRequestException(
+              `Template item ${templateItem.id} has invalid SELECT options configuration.`,
+            );
+          }
+
+          const isAllowedOption = allowedOptions.some((option) => option.value === selectedValue);
+
+          if (!isAllowedOption) {
+            throw new BadRequestException(
+              `valueText must match one of the configured SELECT options for template item ${input.templateItemId}.`,
+            );
+          }
+        }
+
+        return {
+          ...baseValueData,
+          valueText: selectedValue === '' ? null : selectedValue,
+          valueJson: Prisma.DbNull,
+        };
+      }
+
       case InspectionItemInputType.JSON:
         if (input.valueJson === undefined) {
           throw new BadRequestException(`valueJson is required for template item ${input.templateItemId}.`);
@@ -412,7 +450,7 @@ export class InspectionsService {
         };
 
       default:
-        throw new ForbiddenException(`Unsupported input type ${inputType}.`);
+        throw new ForbiddenException(`Unsupported input type ${templateItem.inputType}.`);
     }
   }
 

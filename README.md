@@ -1,4 +1,4 @@
-# ASCURE Phase 1 Backend
+# ASCURE Backend
 
 Production-oriented backend foundation for the ASCURE asset inspection platform, focused on utility field inspections at substations/pencawang.
 
@@ -13,6 +13,8 @@ Phase 1 implements:
 - shared site-visit endpoints
 - active checklist template lookup
 - dynamic inspection create/load/save/submit flow
+
+Phase 2 extends the backend with admin-facing template builder APIs for draft management, section/item CRUD, cloning, and publishing.
 
 The `apps/mobile`, `apps/web-admin`, and `packages/*` folders are intentionally minimal placeholders for later phases.
 
@@ -102,6 +104,8 @@ npm run build
 ## Seeded Development Credentials
 
 - Admin: `admin@ascure.local` / `Admin123!`
+- Manager: `manager@ascure.local` / `Manager123!`
+- Supervisor: `supervisor@ascure.local` / `Supervisor123!`
 - Technician: `technician@ascure.local` / `Tech123!`
 
 ## Implemented Endpoints
@@ -130,6 +134,18 @@ npm run build
 ### Templates
 
 - `GET /api/v1/asset-types/:assetTypeId/active-template`
+- `GET /api/v1/templates`
+- `GET /api/v1/templates/:id`
+- `POST /api/v1/templates`
+- `POST /api/v1/templates/:id/sections`
+- `PATCH /api/v1/templates/:id/sections/:sectionId`
+- `DELETE /api/v1/templates/:id/sections/:sectionId`
+- `POST /api/v1/templates/:id/items`
+- `PATCH /api/v1/templates/:id/items/:itemId`
+- `DELETE /api/v1/templates/:id/items/:itemId`
+- `POST /api/v1/templates/:id/clone`
+- `POST /api/v1/templates/:id/publish`
+- `GET /api/v1/asset-types/:assetTypeId/templates`
 
 ### Inspections
 
@@ -148,6 +164,8 @@ The seed creates:
 - one admin user
 - one technician user
 - both users assigned to the team for easier end-to-end testing
+- one manager user
+- one supervisor user
 - one substation
 - one SAVR asset type
 - one SAVR asset
@@ -155,10 +173,26 @@ The seed creates:
 - one checklist section
 - three checklist items
 
-## Current Phase 1 Notes
+## Template Builder Notes
+
+- Template management endpoints are restricted to `ADMIN`, `MANAGER`, and `SUPERVISOR`.
+- `TECHNICIAN` users remain blocked from template management routes.
+- Draft templates are the only editable templates.
+- Active templates must be cloned into a new draft before changes are made.
+- Archived templates are read-only.
+- If `POST /api/v1/templates` omits `version`, the backend assigns the next available version for that asset type.
+- Publishing a draft archives the previous active template for the same asset type and activates the published draft.
+- A database-level partial unique index enforces one active template per asset type.
+- Historical inspections remain compatible because inspections keep their original `templateId`.
+- Section deletion is intentionally conservative in this phase: draft sections cannot be deleted until their items are removed first.
+- Supported builder input types in this phase are `TEXT`, `BOOLEAN`, `NUMBER`, `DATE`, `DATETIME`, and `SELECT`.
+- `SELECT` options are stored as normalized option objects with `label` and `value`.
+
+## Current Backend Notes
 
 - Site visits are shared by team membership; duplicate active site visits for the same team and substation are rejected.
 - Inspection results are stored dynamically per template item with typed value fields.
 - Submission validates required template items before moving an inspection to `SUBMITTED`.
+- Inspection result saving now supports `SELECT` template items and validates the submitted option against the template's configured options.
 - Image storage is scaffolded at the schema level, but upload endpoints are intentionally deferred.
-- Template lifecycle is limited to active-template lookup in this phase; richer version management is planned for later phases.
+- Template lifecycle now supports draft creation, draft editing, cloning, publishing, and archived history while preserving older inspection records.
