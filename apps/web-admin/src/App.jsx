@@ -3,6 +3,11 @@ import { startTransition, useCallback, useEffect, useState } from 'react'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '')
 const TOKEN_STORAGE_KEY = 'ascure:web-admin:token'
 const USER_STORAGE_KEY = 'ascure:web-admin:user'
+const APP_VIEWS = {
+  LOGIN: 'login',
+  TEMPLATE_LIST: 'templateList',
+  TEMPLATE_DETAIL: 'templateDetail',
+}
 const SEEDED_LOGIN = {
   email: 'admin@ascure.local',
   password: 'Admin123!',
@@ -113,30 +118,129 @@ async function apiRequest(path, options = {}) {
   return payload
 }
 
+function unwrapPayload(payload) {
+  let currentPayload = payload
+
+  while (currentPayload && typeof currentPayload === 'object' && !Array.isArray(currentPayload)) {
+    if ('data' in currentPayload && currentPayload.data !== undefined) {
+      currentPayload = currentPayload.data
+      continue
+    }
+
+    if ('value' in currentPayload && currentPayload.value !== undefined) {
+      currentPayload = currentPayload.value
+      continue
+    }
+
+    break
+  }
+
+  return currentPayload
+}
+
 function normalizeTemplates(payload) {
-  if (Array.isArray(payload)) {
-    return payload
-  }
+  const value = unwrapPayload(payload)
 
-  if (Array.isArray(payload?.value)) {
-    return payload.value
-  }
-
-  if (Array.isArray(payload?.data)) {
-    return payload.data
+  if (Array.isArray(value)) {
+    return value
   }
 
   return []
 }
 
+function sortBySortOrder(items) {
+  return [...items].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+}
+
+function normalizeTemplateDetail(payload) {
+  const value = unwrapPayload(payload)
+
+  if (!value || typeof value !== 'object' || !value.template) {
+    return null
+  }
+
+  const sections = Array.isArray(value.sections) ? value.sections : []
+
+  return {
+    template: value.template,
+    assetType: value.assetType ?? null,
+    sections: sortBySortOrder(sections).map((section) => ({
+      ...section,
+      items: sortBySortOrder(Array.isArray(section.items) ? section.items : []),
+    })),
+  }
+}
+
+function extractClonedTemplateDetail(payload) {
+  const value = unwrapPayload(payload)
+  return normalizeTemplateDetail(value?.clonedTemplate ?? value)
+}
+
+function extractPublishedTemplateDetail(payload) {
+  const value = unwrapPayload(payload)
+  return normalizeTemplateDetail(value?.publishedTemplate ?? value)
+}
+
+function extractTemplateIdFromActionPayload(payload, detailKey) {
+  const value = unwrapPayload(payload)
+  const detail = normalizeTemplateDetail(value?.[detailKey] ?? value)
+
+  if (detail?.template?.id) {
+    return detail.template.id
+  }
+
+  const explicitIdKey = `${detailKey}Id`
+
+  if (typeof value?.[explicitIdKey] === 'string' && value[explicitIdKey].trim()) {
+    return value[explicitIdKey]
+  }
+
+  if (typeof value?.id === 'string' && value.id.trim()) {
+    return value.id
+  }
+
+  return ''
+}
+
+function buildAuthHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+  }
+}
+
 async function fetchTemplates(token) {
   const payload = await apiRequest('/templates', {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    headers: buildAuthHeaders(token),
   })
 
   return normalizeTemplates(payload)
+}
+
+async function fetchTemplateDetail(token, templateId) {
+  const payload = await apiRequest(`/templates/${templateId}`, {
+    headers: buildAuthHeaders(token),
+  })
+  const detail = normalizeTemplateDetail(payload)
+
+  if (!detail) {
+    throw new Error('Template detail response was not in the expected format.')
+  }
+
+  return detail
+}
+
+async function cloneTemplateRequest(token, templateId) {
+  return apiRequest(`/templates/${templateId}/clone`, {
+    method: 'POST',
+    headers: buildAuthHeaders(token),
+  })
+}
+
+async function publishTemplateRequest(token, templateId) {
+  return apiRequest(`/templates/${templateId}/publish`, {
+    method: 'POST',
+    headers: buildAuthHeaders(token),
+  })
 }
 
 function formatPublishedDate(value) {
@@ -144,11 +248,17 @@ function formatPublishedDate(value) {
     return 'Not published'
   }
 
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Invalid date'
+  }
+
   return new Intl.DateTimeFormat('en-MY', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  }).format(new Date(value))
+  }).format(date)
 }
 
 function formatRole(role) {
@@ -157,6 +267,26 @@ function formatRole(role) {
   }
 
   return role.toLowerCase().replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function formatOptionsJson(value) {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  return JSON.stringify(value, null, 2)
+}
+
+function countItems(sections) {
+  return sections.reduce((total, section) => total + (section.items?.length ?? 0), 0)
+}
+
+function getTemplateStatus(templateId, templates, templateDetail) {
+  if (templateDetail?.template?.id === templateId) {
+    return templateDetail.template.status
+  }
+
+  return templates.find((template) => template.id === templateId)?.status
 }
 
 function statusStyles(status) {
@@ -181,6 +311,17 @@ function outlineButtonClassName(disabled = false) {
   }
 
   return `${baseClassName} border-slate-300 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700`
+}
+
+function bannerClassName(tone) {
+  switch (tone) {
+    case 'success':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    case 'error':
+      return 'border-rose-200 bg-rose-50 text-rose-700'
+    default:
+      return 'border-sky-200 bg-sky-50 text-sky-800'
+  }
 }
 
 function MetricCard({ label, value, helper }) {
@@ -210,18 +351,16 @@ function StatusBadge({ status, isActive }) {
   )
 }
 
-function PlaceholderActions() {
+function FeedbackBanner({ message, tone = 'info' }) {
+  if (!message) {
+    return null
+  }
+
   return (
-    <div className="flex flex-wrap gap-2">
-      <button type="button" disabled className={outlineButtonClassName(true)} title="Coming soon">
-        View
-      </button>
-      <button type="button" disabled className={outlineButtonClassName(true)} title="Coming soon">
-        Clone
-      </button>
-      <button type="button" disabled className={outlineButtonClassName(true)} title="Coming soon">
-        Publish
-      </button>
+    <div
+      className={`rounded-[24px] border px-5 py-4 text-sm leading-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)] ${bannerClassName(tone)}`}
+    >
+      {message}
     </div>
   )
 }
@@ -242,7 +381,89 @@ function LoadingState() {
   )
 }
 
-function TemplatesTable({ templates }) {
+function TemplateDetailLoadingState() {
+  return (
+    <div className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur">
+      <div className="h-8 w-60 animate-pulse rounded-full bg-slate-200" />
+      <div className="mt-4 h-5 w-full max-w-3xl animate-pulse rounded-full bg-slate-200" />
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-28 animate-pulse rounded-[24px] bg-[linear-gradient(135deg,rgba(226,232,240,0.85),rgba(255,255,255,0.95))]"
+          />
+        ))}
+      </div>
+      <div className="mt-6 space-y-4">
+        {Array.from({ length: 2 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-56 animate-pulse rounded-[28px] bg-[linear-gradient(135deg,rgba(226,232,240,0.7),rgba(255,255,255,0.95))]"
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TemplateActionButtons({
+  template,
+  onClone,
+  onPublish,
+  onView,
+  pendingAction,
+  showEditButton = false,
+  showViewButton = true,
+}) {
+  const isBusy = pendingAction?.templateId === template.id
+  const isClonePending = isBusy && pendingAction.type === 'clone'
+  const isPublishPending = isBusy && pendingAction.type === 'publish'
+  const isPublishDisabled = template.status !== 'DRAFT' || isBusy
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {showViewButton ? (
+        <button
+          type="button"
+          disabled={isBusy}
+          className={outlineButtonClassName(isBusy)}
+          onClick={() => onView(template.id)}
+        >
+          View
+        </button>
+      ) : null}
+      <button
+        type="button"
+        disabled={isBusy}
+        className={outlineButtonClassName(isBusy)}
+        onClick={() => onClone(template.id)}
+      >
+        {isClonePending ? 'Cloning...' : 'Clone'}
+      </button>
+      <button
+        type="button"
+        disabled={isPublishDisabled}
+        className={outlineButtonClassName(isPublishDisabled)}
+        onClick={() => onPublish(template.id)}
+        title={template.status !== 'DRAFT' ? 'Only draft templates can be published.' : undefined}
+      >
+        {isPublishPending ? 'Publishing...' : 'Publish'}
+      </button>
+      {showEditButton ? (
+        <button
+          type="button"
+          disabled
+          className={outlineButtonClassName(true)}
+          title="Template editing is coming in a later phase."
+        >
+          Edit Template
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function TemplatesTable({ onClone, onPublish, onView, pendingAction, templates }) {
   return (
     <>
       <div className="hidden overflow-hidden rounded-[32px] border border-white/70 bg-white/80 shadow-[0_25px_80px_rgba(15,23,42,0.08)] backdrop-blur xl:block">
@@ -290,7 +511,13 @@ function TemplatesTable({ templates }) {
                   {formatPublishedDate(template.publishedAt)}
                 </td>
                 <td className="px-6 py-5">
-                  <PlaceholderActions />
+                  <TemplateActionButtons
+                    template={template}
+                    onClone={onClone}
+                    onPublish={onPublish}
+                    onView={onView}
+                    pendingAction={pendingAction}
+                  />
                 </td>
               </tr>
             ))}
@@ -308,7 +535,8 @@ function TemplatesTable({ templates }) {
               <div className="max-w-3xl">
                 <p className="text-lg font-bold text-[var(--ink)]">{template.name}</p>
                 <p className="mt-1 text-sm text-[var(--muted)]">
-                  {template.assetType?.code ?? 'Unknown'} / {template.assetType?.name ?? 'No asset type name'}
+                  {template.assetType?.code ?? 'Unknown'} /{' '}
+                  {template.assetType?.name ?? 'No asset type name'}
                 </p>
               </div>
               <StatusBadge status={template.status} isActive={template.isActive} />
@@ -358,7 +586,13 @@ function TemplatesTable({ templates }) {
             </dl>
 
             <div className="mt-5 border-t border-slate-200 pt-4">
-              <PlaceholderActions />
+              <TemplateActionButtons
+                template={template}
+                onClone={onClone}
+                onPublish={onPublish}
+                onView={onView}
+                pendingAction={pendingAction}
+              />
             </div>
           </article>
         ))}
@@ -367,13 +601,279 @@ function TemplatesTable({ templates }) {
   )
 }
 
-function LoginView({
-  authError,
-  formValues,
-  isSubmitting,
-  onChange,
-  onSubmit,
+function DetailMetaCard({ label, value }) {
+  return (
+    <div className="rounded-[24px] border border-white/80 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">{label}</p>
+      <div className="mt-3 text-sm text-[var(--ink)]">{value}</div>
+    </div>
+  )
+}
+
+function DetailField({ label, monospace = false, value }) {
+  return (
+    <div>
+      <dt className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">{label}</dt>
+      <dd className={`mt-1 text-sm text-[var(--ink)] ${monospace ? 'break-all font-mono' : ''}`}>
+        {value}
+      </dd>
+    </div>
+  )
+}
+
+function TemplateDetailView({
+  detail,
+  error,
+  isLoading,
+  onBack,
+  onClone,
+  onPublish,
+  onRetry,
+  pendingAction,
 }) {
+  const template = detail?.template ?? null
+  const sections = detail?.sections ?? []
+  const sectionCount = sections.length
+  const itemCount = countItems(sections)
+
+  return (
+    <section className="mt-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-extrabold text-[var(--ink)]">Template Detail</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Review the stored section and checklist item structure for this version. Editing stays
+            disabled in Phase 3.1.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={outlineButtonClassName(false)} onClick={onBack}>
+            Back to Templates
+          </button>
+          {template ? (
+            <TemplateActionButtons
+              template={template}
+              onClone={onClone}
+              onPublish={onPublish}
+              pendingAction={pendingAction}
+              showEditButton
+              showViewButton={false}
+            />
+          ) : null}
+        </div>
+      </div>
+
+      {isLoading && !detail ? <TemplateDetailLoadingState /> : null}
+
+      {!isLoading && error && !detail ? (
+        <div className="rounded-[32px] border border-rose-200 bg-rose-50 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+          <p className="text-lg font-bold text-rose-800">Unable to load this template.</p>
+          <p className="mt-2 text-sm leading-6 text-rose-700">{error}</p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button type="button" className={outlineButtonClassName(false)} onClick={onRetry}>
+              Retry
+            </button>
+            <button type="button" className={outlineButtonClassName(false)} onClick={onBack}>
+              Back to Templates
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {detail ? (
+        <div className="space-y-4">
+          {isLoading ? <FeedbackBanner message="Refreshing template detail..." tone="info" /> : null}
+          {error ? <FeedbackBanner message={error} tone="error" /> : null}
+
+          <div className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:p-7">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-4xl">
+                <div className="inline-flex items-center rounded-full border border-teal-100 bg-teal-50 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-teal-800">
+                  {detail.assetType?.code ?? 'Unknown asset type'}
+                </div>
+                <h3 className="mt-4 text-3xl font-extrabold text-[var(--ink)]">{template.name}</h3>
+                <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                  {detail.assetType?.name ?? 'No asset type name'} with version v{template.version}.
+                  This view mirrors the current backend template structure without enabling editor
+                  changes yet.
+                </p>
+              </div>
+              <StatusBadge status={template.status} isActive={template.isActive} />
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <DetailMetaCard label="Name" value={template.name} />
+              <DetailMetaCard
+                label="Asset Type"
+                value={
+                  <>
+                    <p className="font-semibold text-[var(--ink)]">
+                      {detail.assetType?.code ?? 'Unknown'}
+                    </p>
+                    <p className="mt-1 text-[var(--muted)]">
+                      {detail.assetType?.name ?? 'No asset type name'}
+                    </p>
+                  </>
+                }
+              />
+              <DetailMetaCard label="Version" value={`v${template.version}`} />
+              <DetailMetaCard label="Status" value={<StatusBadge status={template.status} isActive={template.isActive} />} />
+              <DetailMetaCard label="Published At" value={formatPublishedDate(template.publishedAt)} />
+              <DetailMetaCard label="Section Count" value={sectionCount} />
+              <DetailMetaCard label="Item Count" value={itemCount} />
+              <DetailMetaCard
+                label="Template ID"
+                value={<span className="break-all font-mono">{template.id}</span>}
+              />
+            </div>
+          </div>
+
+          {sections.length === 0 ? (
+            <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
+              <p className="text-lg font-bold text-[var(--ink)]">No sections in this template yet.</p>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Publishing will stay blocked until at least one section exists, but editing remains
+                intentionally unavailable in this phase.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sections.map((section) => (
+                <article
+                  key={section.id}
+                  className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur"
+                >
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="max-w-4xl">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                        Section {section.sortOrder}
+                      </p>
+                      <h3 className="mt-2 text-2xl font-bold text-[var(--ink)]">{section.title}</h3>
+                      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                        {section.description?.trim() || 'No section description provided.'}
+                      </p>
+                    </div>
+                    <div className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-700">
+                      {section.items.length} item{section.items.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+
+                  {section.items.length === 0 ? (
+                    <div className="mt-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 px-5 py-8 text-center">
+                      <p className="text-sm font-semibold text-[var(--ink)]">No items in this section.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                      {section.items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                                Item {item.sortOrder}
+                              </p>
+                              <h4 className="mt-2 text-lg font-bold text-[var(--ink)]">{item.label}</h4>
+                            </div>
+                            <span
+                              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] ${
+                                item.isRequired
+                                  ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                  : 'border-slate-200 bg-white text-slate-600'
+                              }`}
+                            >
+                              {item.isRequired ? 'Required' : 'Optional'}
+                            </span>
+                          </div>
+
+                          <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                            <DetailField label="Key" monospace value={item.key} />
+                            <DetailField label="Input Type" value={item.inputType} />
+                            <DetailField label="Helper Text" value={item.helperText?.trim() || 'Not provided'} />
+                            <DetailField label="Is Required" value={item.isRequired ? 'Yes' : 'No'} />
+                          </dl>
+
+                          {item.optionsJson !== null && item.optionsJson !== undefined ? (
+                            <div className="mt-4">
+                              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
+                                Options JSON
+                              </p>
+                              <pre className="mt-2 overflow-x-auto rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-xs leading-6 text-[var(--ink)]">
+                                {formatOptionsJson(item.optionsJson)}
+                              </pre>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function TemplateListView({
+  isLoadingTemplates,
+  onClone,
+  onPublish,
+  onRetry,
+  onView,
+  pendingAction,
+  templates,
+  templatesError,
+}) {
+  return (
+    <section className="mt-6">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-extrabold text-[var(--ink)]">Template List</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            View, clone, and publish now connect to the live template endpoints. Editing remains
+            disabled in this phase.
+          </p>
+        </div>
+      </div>
+
+      {templatesError ? (
+        <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
+          <p>{templatesError}</p>
+          <button type="button" className={outlineButtonClassName(false)} onClick={onRetry}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
+      {isLoadingTemplates ? <LoadingState /> : null}
+
+      {!isLoadingTemplates && templates.length === 0 ? (
+        <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
+          <p className="text-lg font-bold text-[var(--ink)]">No templates returned yet.</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Once the backend has template data for this tenant, it will appear here.
+          </p>
+        </div>
+      ) : null}
+
+      {!isLoadingTemplates && templates.length > 0 ? (
+        <TemplatesTable
+          templates={templates}
+          onClone={onClone}
+          onPublish={onPublish}
+          onView={onView}
+          pendingAction={pendingAction}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+function LoginView({ authError, formValues, isSubmitting, onChange, onSubmit }) {
   return (
     <main className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl overflow-hidden rounded-[40px] border border-white/60 bg-white/35 shadow-[0_28px_120px_rgba(15,23,42,0.16)] backdrop-blur lg:grid-cols-[1.08fr_0.92fr]">
@@ -387,42 +887,36 @@ function LoginView({
                 ASCURE Web Admin
               </div>
               <h1 className="mt-6 max-w-xl text-4xl font-extrabold leading-tight text-[var(--ink)] sm:text-5xl">
-                Template control room for draft, clone, and publish workflows.
+                Template control room for review, clone, and publish workflows.
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-[var(--muted)] sm:text-lg">
-                Phase 3 starts with secure admin login and a live template list connected to the
-                existing ASCURE API. The first screen is focused on visibility, not editing.
+                Phase 3.1 keeps the login flow simple and connects the admin UI directly to live
+                template detail, clone, and publish endpoints.
               </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)]">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-700">
-                  Auth
-                </p>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-700">Auth</p>
                 <p className="mt-3 text-xl font-bold text-[var(--ink)]">JWT Session</p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
                   Login stores the bearer token locally and preserves the session between refreshes.
                 </p>
               </div>
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)]">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
-                  Data
-                </p>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Data</p>
                 <p className="mt-3 text-xl font-bold text-[var(--ink)]">Live Templates</p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  The dashboard reads from the existing `/templates` endpoint with no backend
-                  changes.
+                  The dashboard reads list and detail data from the existing template endpoints with
+                  no backend changes.
                 </p>
               </div>
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)]">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-700">
-                  Scope
-                </p>
-                <p className="mt-3 text-xl font-bold text-[var(--ink)]">Phase 3 Step 1</p>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-700">Scope</p>
+                <p className="mt-3 text-xl font-bold text-[var(--ink)]">Phase 3.1</p>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  View, Clone, and Publish are visible now and ready for real actions in the next
-                  increment.
+                  Inspect structure safely, clone draft-ready copies, and publish only eligible
+                  templates while editing stays locked.
                 </p>
               </div>
             </div>
@@ -435,7 +929,9 @@ function LoginView({
               <p className="text-sm font-bold uppercase tracking-[0.18em] text-[var(--muted)]">
                 Admin Login
               </p>
-              <h2 className="mt-3 text-3xl font-extrabold text-[var(--ink)]">Sign in to manage templates</h2>
+              <h2 className="mt-3 text-3xl font-extrabold text-[var(--ink)]">
+                Sign in to manage templates
+              </h2>
               <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
                 The seeded admin account is prefilled so you can validate the full flow quickly.
               </p>
@@ -504,11 +1000,23 @@ function LoginView({
 }
 
 function Dashboard({
+  currentView,
+  isLoadingTemplateDetail,
   isLoadingTemplates,
+  notice,
+  onBackToTemplates,
+  onCloneTemplate,
+  onLogout,
+  onPublishTemplate,
+  onRefreshCurrentView,
+  onRetryTemplateDetail,
+  onRetryTemplates,
+  onViewTemplate,
+  pendingAction,
+  templateDetail,
+  templateDetailError,
   templates,
   templatesError,
-  onLogout,
-  onRetry,
   user,
 }) {
   const publishedTemplateCount = templates.filter((template) => template.status === 'ACTIVE').length
@@ -532,8 +1040,8 @@ function Dashboard({
                 Admin visibility for every inspection template version.
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)] sm:text-lg">
-                Browse draft, archived, and active templates in one place. This first release keeps
-                actions intentionally safe while the editing workflow is still being built.
+                Open a template to inspect the exact stored checklist structure, then clone or
+                publish it through the live API while the editor remains safely disabled.
               </p>
             </div>
 
@@ -551,8 +1059,12 @@ function Dashboard({
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
-                <button type="button" className={outlineButtonClassName(false)} onClick={onRetry}>
-                  Refresh
+                <button
+                  type="button"
+                  className={outlineButtonClassName(false)}
+                  onClick={onRefreshCurrentView}
+                >
+                  {currentView === APP_VIEWS.TEMPLATE_DETAIL ? 'Refresh Detail' : 'Refresh'}
                 </button>
                 <button type="button" className={outlineButtonClassName(false)} onClick={onLogout}>
                   Logout
@@ -585,39 +1097,35 @@ function Dashboard({
           </div>
         </section>
 
-        <section className="mt-6">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-2xl font-extrabold text-[var(--ink)]">Template List</h2>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                View, Clone, and Publish are placeholders for now so we do not change backend data
-                unexpectedly in this phase.
-              </p>
-            </div>
+        {notice ? (
+          <div className="mt-6">
+            <FeedbackBanner message={notice.message} tone={notice.tone} />
           </div>
+        ) : null}
 
-          {templatesError ? (
-            <div className="mb-4 flex flex-col gap-3 rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
-              <p>{templatesError}</p>
-              <button type="button" className={outlineButtonClassName(false)} onClick={onRetry}>
-                Retry
-              </button>
-            </div>
-          ) : null}
-
-          {isLoadingTemplates ? <LoadingState /> : null}
-
-          {!isLoadingTemplates && templates.length === 0 ? (
-            <div className="rounded-[32px] border border-dashed border-slate-300 bg-white/75 px-6 py-16 text-center shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur">
-              <p className="text-lg font-bold text-[var(--ink)]">No templates returned yet.</p>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                Once the backend has template data for this tenant, it will appear here.
-              </p>
-            </div>
-          ) : null}
-
-          {!isLoadingTemplates && templates.length > 0 ? <TemplatesTable templates={templates} /> : null}
-        </section>
+        {currentView === APP_VIEWS.TEMPLATE_DETAIL ? (
+          <TemplateDetailView
+            detail={templateDetail}
+            error={templateDetailError}
+            isLoading={isLoadingTemplateDetail}
+            onBack={onBackToTemplates}
+            onClone={onCloneTemplate}
+            onPublish={onPublishTemplate}
+            onRetry={onRetryTemplateDetail}
+            pendingAction={pendingAction}
+          />
+        ) : (
+          <TemplateListView
+            isLoadingTemplates={isLoadingTemplates}
+            onClone={onCloneTemplate}
+            onPublish={onPublishTemplate}
+            onRetry={onRetryTemplates}
+            onView={onViewTemplate}
+            pendingAction={pendingAction}
+            templates={templates}
+            templatesError={templatesError}
+          />
+        )}
       </div>
     </main>
   )
@@ -628,21 +1136,119 @@ function App() {
   const [formValues, setFormValues] = useState(SEEDED_LOGIN)
   const [token, setToken] = useState(storedSession.token)
   const [user, setUser] = useState(storedSession.user)
+  const [currentView, setCurrentView] = useState(
+    storedSession.token ? APP_VIEWS.TEMPLATE_LIST : APP_VIEWS.LOGIN,
+  )
   const [templates, setTemplates] = useState([])
+  const [templateDetailId, setTemplateDetailId] = useState('')
+  const [templateDetail, setTemplateDetail] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const [pendingAction, setPendingAction] = useState(null)
   const [authError, setAuthError] = useState('')
   const [templatesError, setTemplatesError] = useState('')
+  const [templateDetailError, setTemplateDetailError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(Boolean(storedSession.token))
+  const [isLoadingTemplateDetail, setIsLoadingTemplateDetail] = useState(false)
 
   const resetSession = useCallback((message = '') => {
     clearStoredSession()
     setToken('')
     setUser(null)
+    setCurrentView(APP_VIEWS.LOGIN)
     setTemplates([])
+    setTemplateDetailId('')
+    setTemplateDetail(null)
+    setNotice(null)
+    setPendingAction(null)
     setTemplatesError('')
+    setTemplateDetailError('')
     setAuthError(message)
     setIsLoadingTemplates(false)
+    setIsLoadingTemplateDetail(false)
   }, [])
+
+  const loadTemplates = useCallback(
+    async ({ clearOnError = true, showSpinner = true } = {}) => {
+      if (!token) {
+        return []
+      }
+
+      if (showSpinner) {
+        setIsLoadingTemplates(true)
+      }
+
+      setTemplatesError('')
+
+      try {
+        const nextTemplates = await fetchTemplates(token)
+
+        startTransition(() => {
+          setTemplates(nextTemplates)
+        })
+
+        return nextTemplates
+      } catch (error) {
+        if (error.status === 401) {
+          resetSession('Your session expired. Please log in again.')
+          return []
+        }
+
+        if (clearOnError) {
+          setTemplates([])
+        }
+
+        setTemplatesError(error.message)
+        return []
+      } finally {
+        if (showSpinner) {
+          setIsLoadingTemplates(false)
+        }
+      }
+    },
+    [resetSession, token],
+  )
+
+  const openTemplateDetail = useCallback(
+    async (nextTemplateId, { preserveNotice = false } = {}) => {
+      if (!token) {
+        return null
+      }
+
+      if (!preserveNotice) {
+        setNotice(null)
+      }
+
+      setCurrentView(APP_VIEWS.TEMPLATE_DETAIL)
+      setTemplateDetailId(nextTemplateId)
+      setTemplateDetailError('')
+      setIsLoadingTemplateDetail(true)
+      setTemplateDetail((currentDetail) =>
+        currentDetail?.template?.id === nextTemplateId ? currentDetail : null,
+      )
+
+      try {
+        const nextDetail = await fetchTemplateDetail(token, nextTemplateId)
+
+        startTransition(() => {
+          setTemplateDetail(nextDetail)
+        })
+
+        return nextDetail
+      } catch (error) {
+        if (error.status === 401) {
+          resetSession('Your session expired. Please log in again.')
+          return null
+        }
+
+        setTemplateDetailError(error.message)
+        return null
+      } finally {
+        setIsLoadingTemplateDetail(false)
+      }
+    },
+    [resetSession, token],
+  )
 
   useEffect(() => {
     if (!token) {
@@ -668,13 +1274,12 @@ function App() {
           return
         }
 
-        setTemplates([])
-
         if (error.status === 401) {
           resetSession('Your session expired. Please log in again.')
           return
         }
 
+        setTemplates([])
         setTemplatesError(error.message)
       } finally {
         if (!cancelled) {
@@ -719,6 +1324,11 @@ function App() {
 
       persistSession(payload.access_token, payload.user ?? null)
       setTemplatesError('')
+      setTemplateDetailError('')
+      setTemplateDetailId('')
+      setTemplateDetail(null)
+      setNotice(null)
+      setCurrentView(APP_VIEWS.TEMPLATE_LIST)
       setIsLoadingTemplates(true)
       setUser(payload.user ?? null)
       setToken(payload.access_token)
@@ -734,32 +1344,164 @@ function App() {
     setFormValues(SEEDED_LOGIN)
   }
 
-  const handleRetry = async () => {
+  const handleRetryTemplates = async () => {
+    await loadTemplates()
+  }
+
+  const handleViewTemplate = async (nextTemplateId) => {
+    await openTemplateDetail(nextTemplateId)
+  }
+
+  const handleBackToTemplates = () => {
+    setCurrentView(APP_VIEWS.TEMPLATE_LIST)
+    setTemplateDetailError('')
+  }
+
+  const handleRetryTemplateDetail = async () => {
+    if (!templateDetailId) {
+      return
+    }
+
+    await openTemplateDetail(templateDetailId, { preserveNotice: true })
+  }
+
+  const handleCloneTemplate = async (sourceTemplateId) => {
     if (!token) {
       return
     }
 
-    setTemplatesError('')
-    setIsLoadingTemplates(true)
+    const showListSpinner = currentView === APP_VIEWS.TEMPLATE_LIST
+
+    setNotice(null)
+    setPendingAction({
+      type: 'clone',
+      templateId: sourceTemplateId,
+    })
 
     try {
-      const nextTemplates = await fetchTemplates(token)
+      const payload = await cloneTemplateRequest(token, sourceTemplateId)
+      const clonedDetail = extractClonedTemplateDetail(payload)
+      const clonedTemplateId =
+        clonedDetail?.template?.id || extractTemplateIdFromActionPayload(payload, 'clonedTemplate')
 
-      startTransition(() => {
-        setTemplates(nextTemplates)
+      if (clonedDetail) {
+        startTransition(() => {
+          setTemplateDetail(clonedDetail)
+        })
+        setTemplateDetailId(clonedDetail.template.id)
+        setTemplateDetailError('')
+        setCurrentView(APP_VIEWS.TEMPLATE_DETAIL)
+        setNotice({
+          tone: 'success',
+          message: `Template cloned successfully as draft version v${clonedDetail.template.version}.`,
+        })
+      } else {
+        setNotice({
+          tone: 'success',
+          message: 'Template cloned successfully.',
+        })
+      }
+
+      if (!clonedDetail && clonedTemplateId) {
+        await openTemplateDetail(clonedTemplateId, { preserveNotice: true })
+      }
+
+      await loadTemplates({
+        clearOnError: false,
+        showSpinner: showListSpinner,
       })
     } catch (error) {
-      setTemplates([])
-
       if (error.status === 401) {
         resetSession('Your session expired. Please log in again.')
         return
       }
 
-      setTemplatesError(error.message)
+      setNotice({
+        tone: 'error',
+        message: error.message,
+      })
     } finally {
-      setIsLoadingTemplates(false)
+      setPendingAction(null)
     }
+  }
+
+  const handlePublishTemplate = async (targetTemplateId) => {
+    if (!token) {
+      return
+    }
+
+    const templateStatus = getTemplateStatus(targetTemplateId, templates, templateDetail)
+
+    if (templateStatus && templateStatus !== 'DRAFT') {
+      return
+    }
+
+    const showListSpinner = currentView === APP_VIEWS.TEMPLATE_LIST
+
+    setNotice(null)
+    setPendingAction({
+      type: 'publish',
+      templateId: targetTemplateId,
+    })
+
+    try {
+      const payload = await publishTemplateRequest(token, targetTemplateId)
+      const publishedDetail = extractPublishedTemplateDetail(payload)
+      const publishedTemplateId =
+        publishedDetail?.template?.id ||
+        extractTemplateIdFromActionPayload(payload, 'publishedTemplate') ||
+        targetTemplateId
+
+      if (publishedDetail) {
+        startTransition(() => {
+          setTemplateDetail(publishedDetail)
+        })
+        setTemplateDetailId(publishedDetail.template.id)
+        setTemplateDetailError('')
+        setCurrentView(APP_VIEWS.TEMPLATE_DETAIL)
+      } else if (publishedTemplateId) {
+        await openTemplateDetail(publishedTemplateId, { preserveNotice: true })
+      }
+
+      setNotice({
+        tone: 'success',
+        message: 'Template published successfully.',
+      })
+
+      await loadTemplates({
+        clearOnError: false,
+        showSpinner: showListSpinner,
+      })
+    } catch (error) {
+      if (error.status === 401) {
+        resetSession('Your session expired. Please log in again.')
+        return
+      }
+
+      setNotice({
+        tone: 'error',
+        message: error.message,
+      })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const handleRefreshCurrentView = async () => {
+    if (!token) {
+      return
+    }
+
+    if (currentView === APP_VIEWS.TEMPLATE_DETAIL && templateDetailId) {
+      await openTemplateDetail(templateDetailId, { preserveNotice: true })
+      await loadTemplates({
+        clearOnError: false,
+        showSpinner: false,
+      })
+      return
+    }
+
+    await loadTemplates()
   }
 
   if (!token) {
@@ -776,9 +1518,21 @@ function App() {
 
   return (
     <Dashboard
+      currentView={currentView}
+      isLoadingTemplateDetail={isLoadingTemplateDetail}
       isLoadingTemplates={isLoadingTemplates}
+      notice={notice}
+      onBackToTemplates={handleBackToTemplates}
+      onCloneTemplate={handleCloneTemplate}
       onLogout={handleLogout}
-      onRetry={handleRetry}
+      onPublishTemplate={handlePublishTemplate}
+      onRefreshCurrentView={handleRefreshCurrentView}
+      onRetryTemplateDetail={handleRetryTemplateDetail}
+      onRetryTemplates={handleRetryTemplates}
+      onViewTemplate={handleViewTemplate}
+      pendingAction={pendingAction}
+      templateDetail={templateDetail}
+      templateDetailError={templateDetailError}
       templates={templates}
       templatesError={templatesError}
       user={user}
