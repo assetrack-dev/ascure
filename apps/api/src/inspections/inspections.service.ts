@@ -4,17 +4,32 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { mkdir, writeFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { extname, resolve } from 'path';
 import {
   InspectionCompletionStatus,
   InspectionItemInputType,
   Prisma,
 } from '@prisma/client';
+import {
+  buildInspectionImageUrl,
+  INSPECTION_IMAGES_DIRECTORY,
+} from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { SaveInspectionResultItemDto, SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
+import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
+
+type UploadedInspectionImageFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
 
 @Injectable()
 export class InspectionsService {
@@ -162,6 +177,53 @@ export class InspectionsService {
         submittedAt: new Date(),
       },
       include: this.inspectionInclude(),
+    });
+  }
+
+  async uploadImage(
+    user: RequestUser,
+    inspectionId: string,
+    file: UploadedInspectionImageFile | undefined,
+    dto: UploadInspectionImageDto,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required.');
+    }
+
+    const inspection = await this.prisma.inspection.findFirst({
+      where: {
+        id: inspectionId,
+        tenantId: user.tenantId,
+        ...this.inspectionAccessScope(user),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!inspection) {
+      throw new NotFoundException('Inspection not found.');
+    }
+
+    await mkdir(INSPECTION_IMAGES_DIRECTORY, { recursive: true });
+
+    const fileExtension = extname(file.originalname || '').toLowerCase();
+    const filename = `${inspection.id}-${Date.now()}-${randomUUID()}${fileExtension}`;
+    const filePath = resolve(INSPECTION_IMAGES_DIRECTORY, filename);
+
+    await writeFile(filePath, file.buffer);
+
+    return this.prisma.inspectionImage.create({
+      data: {
+        inspectionId: inspection.id,
+        url: buildInspectionImageUrl(filename),
+        filename,
+        mimeType: file.mimetype || null,
+        sizeBytes: Number.isFinite(file.size) ? file.size : null,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        timestamp: dto.timestamp ? new Date(dto.timestamp) : null,
+      },
     });
   }
 

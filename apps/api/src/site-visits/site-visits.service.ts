@@ -117,6 +117,11 @@ export class SiteVisitsService {
                 name: true,
               },
             },
+            inspectionImages: {
+              orderBy: {
+                createdAt: 'asc',
+              },
+            },
           },
           orderBy: {
             createdAt: 'desc',

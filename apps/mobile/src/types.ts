@@ -203,6 +203,26 @@ export interface SaveInspectionResultItemInput {
   valueJson?: unknown;
 }
 
+export interface InspectionImageUploadInput {
+  uri: string;
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+}
+
+export interface InspectionImage {
+  id: string;
+  inspectionId: string;
+  url: string;
+  filename: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  timestamp: string | null;
+  createdAt: string;
+}
+
 export interface SelectOption {
   label: string;
   value: string;

@@ -30,8 +30,8 @@ export class MasterDataService {
     });
   }
 
-  listAssets(user: RequestUser, substationId: string) {
-    return this.prisma.asset.findMany({
+  async listAssets(user: RequestUser, substationId: string) {
+    const assets = await this.prisma.asset.findMany({
       where: {
         tenantId: user.tenantId,
         substationId,
@@ -51,10 +51,28 @@ export class MasterDataService {
             name: true,
           },
         },
+        inspections: {
+          take: 1,
+          orderBy: {
+            createdAt: 'desc',
+          },
+          select: {
+            inspectionImages: {
+              orderBy: {
+                createdAt: 'asc',
+              },
+            },
+          },
+        },
       },
       orderBy: {
         assetCode: 'asc',
       },
     });
+
+    return assets.map(({ inspections, ...asset }) => ({
+      ...asset,
+      latestInspectionImages: inspections[0]?.inspectionImages ?? [],
+    }));
   }
 }

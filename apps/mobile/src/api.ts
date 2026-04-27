@@ -1,7 +1,10 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import {
   Asset,
   AssetType,
   CreateAssetInput,
+  InspectionImage,
+  InspectionImageUploadInput,
   InspectionFormResponse,
   LoginResponse,
   SaveInspectionResultItemInput,
@@ -277,6 +280,10 @@ export const api = {
     });
   },
 
+  uploadInspectionImage(token: string, inspectionId: string, photo: InspectionImageUploadInput) {
+    return uploadInspectionImage(token, inspectionId, photo);
+  },
+
   submitInspection(token: string, inspectionId: string) {
     return request(`/inspections/${inspectionId}/submit`, {
       method: 'POST',
@@ -284,3 +291,94 @@ export const api = {
     });
   },
 };
+
+async function uploadInspectionImage(
+  token: string,
+  inspectionId: string,
+  photo: InspectionImageUploadInput,
+) {
+  const url = `${API_BASE_URL}/inspections/${inspectionId}/images`;
+  const uploadFilename = createUploadFilename(photo.timestamp);
+  const uploadUri = await createUploadFileUri(photo.uri, uploadFilename);
+
+  console.log('[UPLOAD REQUEST]', {
+    url,
+    method: 'POST',
+    fileUri: uploadUri,
+    fieldName: 'file',
+    parameters: {
+      latitude: String(photo.latitude),
+      longitude: String(photo.longitude),
+      timestamp: photo.timestamp,
+    },
+  });
+
+  try {
+    const response = await FileSystem.uploadAsync(url, uploadUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'image/jpeg',
+      parameters: {
+        latitude: String(photo.latitude),
+        longitude: String(photo.longitude),
+        timestamp: photo.timestamp,
+      },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = tryParsePayload(response.body);
+
+    console.log('[UPLOAD RESPONSE]', {
+      url,
+      method: 'POST',
+      status: response.status,
+      payload,
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiError(extractErrorMessage(payload, response.status), response.status, payload);
+    }
+
+    return payload as InspectionImage;
+  } catch (error) {
+    console.error('[UPLOAD ERROR]', {
+      url,
+      method: 'POST',
+      error,
+    });
+
+    throw error;
+  } finally {
+    if (uploadUri !== photo.uri) {
+      void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(() => undefined);
+    }
+  }
+}
+
+async function createUploadFileUri(sourceUri: string, filename: string) {
+  if (!FileSystem.cacheDirectory) {
+    return sourceUri;
+  }
+
+  const targetUri = `${FileSystem.cacheDirectory}${filename}`;
+
+  try {
+    await FileSystem.copyAsync({
+      from: sourceUri,
+      to: targetUri,
+    });
+
+    return targetUri;
+  } catch {
+    return sourceUri;
+  }
+}
+
+function createUploadFilename(timestamp: string) {
+  const sanitizedTimestamp = timestamp.replace(/[^0-9A-Za-z_-]/g, '-');
+  const filenameSuffix = sanitizedTimestamp || String(Date.now());
+
+  return `photo_${filenameSuffix}.jpg`;
+}

@@ -1,15 +1,32 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { IsUUID } from 'class-validator';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
+import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
 import { InspectionsService } from './inspections.service';
 
 class InspectionIdParamDto {
   @IsUUID()
   id!: string;
+}
+
+class InspectionImageParamDto {
+  @IsUUID()
+  inspectionId!: string;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -40,5 +57,23 @@ export class InspectionsController {
   submit(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
     return this.inspectionsService.submit(user, params.id);
   }
-}
 
+  @Post(':inspectionId/images')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionImageParamDto,
+    @UploadedFile()
+    file:
+      | {
+          originalname: string;
+          mimetype: string;
+          size: number;
+          buffer: Buffer;
+        }
+      | undefined,
+    @Body() dto: UploadInspectionImageDto,
+  ) {
+    return this.inspectionsService.uploadImage(user, params.inspectionId, file, dto);
+  }
+}

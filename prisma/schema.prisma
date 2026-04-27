@@ -314,11 +314,29 @@ model Inspection {
   createdBy        User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   results          InspectionResult[]
   images           Image[]
+  inspectionImages InspectionImage[]
 
   @@index([tenantId])
   @@index([siteVisitId])
   @@index([assetId])
   @@index([templateId])
+}
+
+model InspectionImage {
+  id           String     @id @default(uuid()) @db.Uuid
+  inspectionId String     @db.Uuid
+  url          String
+  filename     String
+  mimeType     String?
+  sizeBytes    Int?
+  latitude     Float?
+  longitude    Float?
+  timestamp    DateTime?
+  createdAt    DateTime   @default(now())
+  inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+  @@index([inspectionId, createdAt])
 }
 
 model InspectionResult {

@@ -14,9 +14,15 @@
     ],
     "plugins": [
       [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow ASCURE Field to use your camera to capture inspection photos."
+        }
+      ],
+      [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow ASCURE Field to use your location while adding assets."
+          "locationWhenInUsePermission": "Allow ASCURE Field to use your location while capturing inspection photos and adding assets."
         }
       ]
     ],
