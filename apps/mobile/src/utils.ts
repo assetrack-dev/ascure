@@ -1,6 +1,7 @@
 import {
   DraftValues,
   InspectionFormResponse,
+  InspectionSummary,
   InspectionTemplateItem,
   InspectionTemplateSection,
   SaveInspectionResultItemInput,
@@ -28,6 +29,10 @@ export function formatRole(role: string) {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+export function formatInspectionStatus(status: 'DRAFT' | 'SUBMITTED') {
+  return status === 'SUBMITTED' ? 'Completed' : 'Draft';
 }
 
 export function createInitialDraftValues(form: InspectionFormResponse): DraftValues {
@@ -98,15 +103,56 @@ export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
 }
 
 export function validateInspectionDraft(form: InspectionFormResponse, draftValues: DraftValues) {
+  const missingRequiredItems: string[] = [];
   const invalidNumbers: string[] = [];
+  const unsupportedRequiredItems: string[] = [];
 
   for (const section of form.template.sections) {
     for (const item of section.items) {
+      const rawValue = getDraftValue(item.id, draftValues);
+
+      if (
+        item.isRequired &&
+        item.inputType !== 'TEXT' &&
+        item.inputType !== 'BOOLEAN' &&
+        item.inputType !== 'NUMBER' &&
+        item.inputType !== 'SELECT'
+      ) {
+        unsupportedRequiredItems.push(item.label);
+        continue;
+      }
+
+      if (item.isRequired) {
+        if (item.inputType === 'BOOLEAN') {
+          if (typeof rawValue !== 'boolean') {
+            missingRequiredItems.push(item.label);
+            continue;
+          }
+        }
+
+        if (item.inputType === 'NUMBER') {
+          const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+          if (!normalized) {
+            missingRequiredItems.push(item.label);
+            continue;
+          }
+        }
+
+        if (item.inputType === 'TEXT' || item.inputType === 'SELECT') {
+          const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+          if (!normalized) {
+            missingRequiredItems.push(item.label);
+            continue;
+          }
+        }
+      }
+
       if (item.inputType !== 'NUMBER') {
         continue;
       }
 
-      const rawValue = getDraftValue(item.id, draftValues);
       const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
       if (!normalized) {
@@ -117,6 +163,14 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
         invalidNumbers.push(item.label);
       }
     }
+  }
+
+  if (unsupportedRequiredItems.length > 0) {
+    return `This inspection contains unsupported required items: ${unsupportedRequiredItems.join(', ')}`;
+  }
+
+  if (missingRequiredItems.length > 0) {
+    return `Please complete required items: ${missingRequiredItems.join(', ')}`;
   }
 
   if (invalidNumbers.length === 0) {
@@ -175,22 +229,42 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
   return { supportedResults, unsupportedLabels };
 }
 
-export function getLatestDraftInspection(visit: SiteVisit, assetId: string) {
+export function getAssetInspections(visit: SiteVisit, assetId: string) {
   const inspections = visit.inspections ?? [];
 
-  return inspections.find(
-    (inspection) =>
-      inspection.assetId === assetId && inspection.completionStatus === 'DRAFT',
+  return inspections
+    .filter((inspection) => inspection.assetId === assetId)
+    .slice()
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt);
+      const rightTime = Date.parse(right.createdAt);
+
+      return rightTime - leftTime;
+    });
+}
+
+export function getLatestSubmittedInspection(visit: SiteVisit, assetId: string) {
+  return getAssetInspections(visit, assetId).find(
+    (inspection) => inspection.completionStatus === 'SUBMITTED',
   );
 }
 
 export function getNextInspectionCycle(visit: SiteVisit, assetId: string) {
-  const inspections = visit.inspections ?? [];
-  const highestCycle = inspections
-    .filter((inspection) => inspection.assetId === assetId)
-    .reduce((currentMax, inspection) => Math.max(currentMax, inspection.inspectionCycle), 0);
+  const latestSubmittedInspection = getLatestSubmittedInspection(visit, assetId);
 
-  return highestCycle + 1;
+  // Mobile hides abandoned drafts from technicians, so visible cycle numbers
+  // should continue from the last completed inspection.
+  return latestSubmittedInspection ? latestSubmittedInspection.inspectionCycle + 1 : 1;
+}
+
+export function getInspectionStatusTone(
+  inspection: InspectionSummary | undefined,
+): 'neutral' | 'success' | 'warning' {
+  if (!inspection) {
+    return 'neutral';
+  }
+
+  return inspection.completionStatus === 'SUBMITTED' ? 'success' : 'warning';
 }
 
 export function findItemById(

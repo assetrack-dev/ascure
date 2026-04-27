@@ -14,7 +14,7 @@ type Route =
   | { name: 'login' }
   | { name: 'home' }
   | { name: 'check-in' }
-  | { name: 'visit-detail'; visitId: string; substationId: string }
+  | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string };
 
 export default function App() {
@@ -120,6 +120,7 @@ export default function App() {
         token={token}
         visitId={route.visitId}
         substationId={route.substationId}
+        successMessage={route.successMessage}
         onBack={() => setRoute({ name: 'home' })}
         onOpenInspection={(inspectionId) =>
           setRoute({
@@ -146,7 +147,14 @@ export default function App() {
             substationId: route.substationId,
           })
         }
-        onBackToHome={() => setRoute({ name: 'home' })}
+        onSubmitted={(successMessage) =>
+          setRoute({
+            name: 'visit-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            successMessage,
+          })
+        }
         onUnauthorized={handleUnauthorized}
       />
     );

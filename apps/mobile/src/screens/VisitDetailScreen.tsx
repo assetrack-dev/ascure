@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api';
-import { formatDateTime, getLatestDraftInspection, getNextInspectionCycle } from '../utils';
+import {
+  formatDateTime,
+  formatInspectionStatus,
+  getInspectionStatusTone,
+  getLatestSubmittedInspection,
+  getNextInspectionCycle,
+} from '../utils';
 import {
   AppButton,
   BodyText,
@@ -13,6 +19,7 @@ import {
   Screen,
   SectionTitle,
   StatusChip,
+  SuccessBanner,
 } from '../ui';
 import { Asset, SiteVisit } from '../types';
 
@@ -20,6 +27,7 @@ export function VisitDetailScreen({
   token,
   visitId,
   substationId,
+  successMessage,
   onBack,
   onOpenInspection,
   onUnauthorized,
@@ -27,6 +35,7 @@ export function VisitDetailScreen({
   token: string;
   visitId: string;
   substationId: string;
+  successMessage?: string;
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
@@ -69,6 +78,10 @@ export function VisitDetailScreen({
     const counts = new Map<string, number>();
 
     for (const inspection of visit?.inspections ?? []) {
+      if (inspection.completionStatus !== 'SUBMITTED') {
+        continue;
+      }
+
       counts.set(inspection.assetId, (counts.get(inspection.assetId) ?? 0) + 1);
     }
 
@@ -84,13 +97,6 @@ export function VisitDetailScreen({
       setWorkingAssetId(asset.id);
       setError(null);
 
-      const existingDraft = getLatestDraftInspection(visit, asset.id);
-
-      if (existingDraft) {
-        onOpenInspection(existingDraft.id);
-        return;
-      }
-
       const inspection = await api.createInspection(token, {
         siteVisitId: visit.id,
         assetId: asset.id,
@@ -104,7 +110,7 @@ export function VisitDetailScreen({
         return;
       }
 
-      setError(actionError instanceof Error ? actionError.message : 'Unable to open inspection.');
+      setError(actionError instanceof Error ? actionError.message : 'Unable to start inspection.');
     } finally {
       setWorkingAssetId(null);
     }
@@ -113,7 +119,7 @@ export function VisitDetailScreen({
   return (
     <Screen
       title="Visit Detail"
-      subtitle="Review the shared visit, available assets, and continue or start inspections."
+      subtitle="Review the shared visit, available assets, and start a fresh inspection when needed."
       actions={
         <>
           <InlineButton label="Back" onPress={onBack} />
@@ -122,6 +128,7 @@ export function VisitDetailScreen({
       }
     >
       <ErrorBanner message={error} />
+      <SuccessBanner message={successMessage} />
       {isLoading ? <LoadingBlock label="Loading visit details and assets..." /> : null}
 
       {!isLoading && visit ? (
@@ -163,34 +170,43 @@ export function VisitDetailScreen({
               />
             ) : (
               assets.map((asset) => {
-                const draftInspection = getLatestDraftInspection(visit, asset.id);
+                const latestSubmittedInspection = getLatestSubmittedInspection(visit, asset.id);
                 const inspectionCount = inspectionCounts.get(asset.id) ?? 0;
-                const latestSubmitted = (visit.inspections ?? []).find(
-                  (inspection) =>
-                    inspection.assetId === asset.id && inspection.completionStatus === 'SUBMITTED',
-                );
+                const nextCycle = getNextInspectionCycle(visit, asset.id);
 
                 return (
                   <Card key={asset.id}>
                     <KeyValueRow label="Asset" value={`${asset.code} - ${asset.name}`} />
                     <KeyValueRow label="Type" value={asset.assetType.name} />
                     <KeyValueRow label="Serial" value={asset.serialNumber || 'Not set'} />
-                    <KeyValueRow label="Existing Inspections" value={String(inspectionCount)} />
-                    {draftInspection ? (
+                    <KeyValueRow label="Completed Inspections" value={String(inspectionCount)} />
+                    {latestSubmittedInspection ? (
                       <>
-                        <BodyText muted>Latest draft cycle {draftInspection.inspectionCycle} is ready to continue.</BodyText>
-                        <StatusChip label="Draft Available" tone="warning" />
+                        <KeyValueRow
+                          label="Last Completed Status"
+                          value={formatInspectionStatus(latestSubmittedInspection.completionStatus)}
+                        />
+                        <KeyValueRow
+                          label="Last Completed Cycle"
+                          value={`Cycle ${latestSubmittedInspection.inspectionCycle}`}
+                        />
+                        <KeyValueRow
+                          label="Completed At"
+                          value={formatDateTime(latestSubmittedInspection.submittedAt)}
+                        />
+                        <StatusChip
+                          label={`${formatInspectionStatus(latestSubmittedInspection.completionStatus)} - Cycle ${latestSubmittedInspection.inspectionCycle}`}
+                          tone={getInspectionStatusTone(latestSubmittedInspection)}
+                        />
                       </>
-                    ) : latestSubmitted ? (
-                      <BodyText muted>
-                        Latest submitted cycle {latestSubmitted.inspectionCycle} was submitted on{' '}
-                        {formatDateTime(latestSubmitted.submittedAt)}.
-                      </BodyText>
                     ) : (
-                      <BodyText muted>No inspection has been started for this asset yet.</BodyText>
+                      <BodyText muted>No completed inspection has been submitted for this asset yet.</BodyText>
                     )}
+                    <BodyText muted>
+                      Starting a new inspection will create cycle {nextCycle} using the latest active template from the backend.
+                    </BodyText>
                     <AppButton
-                      label={draftInspection ? 'Continue Draft Inspection' : 'Start Inspection'}
+                      label="Start Inspection"
                       onPress={() => handleOpenAssetInspection(asset)}
                       loading={workingAssetId === asset.id}
                       disabled={workingAssetId !== null && workingAssetId !== asset.id}

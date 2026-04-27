@@ -92,6 +92,18 @@ export function ErrorBanner({ message }: { message?: string | null }) {
   );
 }
 
+export function SuccessBanner({ message }: { message?: string | null }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <View style={styles.successBanner}>
+      <Text style={styles.successText}>{message}</Text>
+    </View>
+  );
+}
+
 export function LoadingBlock({ label }: { label: string }) {
   return (
     <View style={styles.loadingBlock}>
@@ -383,6 +395,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#991b1b',
+    fontWeight: '600',
+  },
+  successBanner: {
+    backgroundColor: '#dcfce7',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    padding: 14,
+  },
+  successText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#166534',
     fontWeight: '600',
   },
   loadingBlock: {

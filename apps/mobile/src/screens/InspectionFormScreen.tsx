@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import {
   buildResultsPayload,
@@ -20,6 +20,7 @@ import {
   Screen,
   SectionTitle,
   StatusChip,
+  SuccessBanner,
   TextField,
 } from '../ui';
 import { DraftValues, InspectionFormResponse, InspectionTemplateItem } from '../types';
@@ -28,29 +29,27 @@ export function InspectionFormScreen({
   token,
   inspectionId,
   onBack,
-  onBackToHome,
+  onSubmitted,
   onUnauthorized,
 }: {
   token: string;
   inspectionId: string;
   onBack: () => void;
-  onBackToHome: () => void;
+  onSubmitted: (successMessage: string) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
+  const isBusy = isLoading || isSubmitting;
 
   const loadForm = useCallback(async () => {
     try {
       setError(null);
-      setMessage(null);
       setIsLoading(true);
 
       const formResponse = await api.getInspectionForm(token, inspectionId);
@@ -95,55 +94,8 @@ export function InspectionFormScreen({
     }));
   }
 
-  async function handleSaveResults() {
-    if (!form) {
-      return;
-    }
-
-    const validationMessage = validateInspectionDraft(form, draftValues);
-
-    if (validationMessage) {
-      setError(validationMessage);
-      return;
-    }
-
-    const { supportedResults, unsupportedLabels } = buildResultsPayload(form, draftValues);
-
-    if (supportedResults.length === 0) {
-      setError('This form does not contain any supported input fields for saving.');
-      return;
-    }
-
-    try {
-      setIsSaving(true);
-      setError(null);
-      setMessage(null);
-
-      const savedForm = await api.saveInspectionResults(token, inspectionId, {
-        results: supportedResults,
-      });
-
-      setForm(savedForm);
-      setDraftValues(createInitialDraftValues(savedForm));
-      setMessage(
-        unsupportedLabels.length > 0
-          ? `Results saved. Unsupported fields were skipped: ${unsupportedLabels.join(', ')}`
-          : 'Results saved successfully.',
-      );
-    } catch (saveError) {
-      if (saveError instanceof ApiError && saveError.status === 401) {
-        await onUnauthorized(saveError);
-        return;
-      }
-
-      setError(saveError instanceof Error ? saveError.message : 'Unable to save inspection results.');
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
   async function handleSubmitInspection() {
-    if (!form) {
+    if (!form || isSubmitted) {
       return;
     }
 
@@ -164,22 +116,14 @@ export function InspectionFormScreen({
     try {
       setIsSubmitting(true);
       setError(null);
-      setMessage(null);
 
-      const savedForm = await api.saveInspectionResults(token, inspectionId, {
+      await api.saveInspectionResults(token, inspectionId, {
         results: supportedResults,
       });
 
       await api.submitInspection(token, inspectionId);
 
-      const refreshed = await api.getInspectionForm(token, inspectionId);
-      setForm(refreshed);
-      setDraftValues(createInitialDraftValues(refreshed));
-      setMessage('Inspection submitted successfully.');
-
-      if (savedForm.inspection.completionStatus !== 'SUBMITTED') {
-        Alert.alert('Inspection submitted', 'This inspection is now locked from further changes.');
-      }
+      onSubmitted('Inspection submitted successfully.');
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         await onUnauthorized(submitError);
@@ -195,31 +139,23 @@ export function InspectionFormScreen({
   return (
     <Screen
       title="Inspection Form"
-      subtitle="Complete the dynamic checklist, save progress, and submit when all required items are ready."
+      subtitle="Complete the checklist and submit the inspection when every required item is ready."
       actions={
         <>
-          <InlineButton label="Back" onPress={onBack} />
-          <InlineButton label="Refresh" onPress={loadForm} />
+          <InlineButton label="Back" onPress={onBack} disabled={isSubmitting} />
+          <InlineButton label="Refresh" onPress={loadForm} disabled={isBusy} />
         </>
       }
       footer={
         <>
           <ErrorBanner message={error} />
-          {message ? <SuccessBanner message={message} /> : null}
-          <AppButton
-            label={isSaving ? 'Saving Results...' : 'Save Results'}
-            onPress={handleSaveResults}
-            loading={isSaving}
-            disabled={isLoading || isSubmitted}
-          />
+          {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
           <AppButton
             label={isSubmitting ? 'Submitting Inspection...' : 'Submit Inspection'}
             onPress={handleSubmitInspection}
-            variant="secondary"
             loading={isSubmitting}
-            disabled={isLoading || isSubmitted}
+            disabled={isBusy || isSubmitted}
           />
-          <AppButton label="Back To Home" onPress={onBackToHome} variant="ghost" />
         </>
       }
     >
@@ -239,7 +175,7 @@ export function InspectionFormScreen({
               <KeyValueRow label="Serial Number" value={form.inspection.asset.serialNumber} />
             ) : null}
             <StatusChip
-              label={form.inspection.completionStatus}
+              label={isSubmitted ? 'Completed' : 'In Progress'}
               tone={isSubmitted ? 'success' : 'warning'}
             />
           </Card>
@@ -429,14 +365,6 @@ function BooleanButton({
   );
 }
 
-function SuccessBanner({ message }: { message: string }) {
-  return (
-    <View style={styles.successBanner}>
-      <Text style={styles.successText}>{message}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   itemCard: {
     paddingTop: 12,
@@ -505,18 +433,5 @@ const styles = StyleSheet.create({
   },
   choiceButtonTextSelected: {
     color: '#0f5cd8',
-  },
-  successBanner: {
-    backgroundColor: '#dcfce7',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    padding: 14,
-  },
-  successText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#166534',
-    fontWeight: '600',
   },
 });
