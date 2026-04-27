@@ -9,8 +9,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   app.enableCors({
-    origin: true,
-    credentials: true,
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   app.useGlobalPipes(
@@ -24,8 +25,7 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port, '0.0.0.0');
+  await app.listen(3000, '0.0.0.0');
 }
 
 bootstrap();

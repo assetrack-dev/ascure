@@ -49,15 +49,20 @@ export interface AssetType {
   name: string;
 }
 
+export type AssetStatus = 'ACTIVE' | 'INACTIVE' | 'NOT_FOUND' | 'REMOVED' | 'DUPLICATE';
+
 export interface Asset {
   id: string;
   tenantId?: string;
   substationId: string;
   assetTypeId: string;
-  name: string;
-  code: string;
-  serialNumber?: string | null;
-  status?: string | null;
+  assetCode: string;
+  name: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  metadata?: Record<string, unknown> | null;
+  status: AssetStatus;
+  createdDuringVisitId?: string | null;
   createdAt?: string;
   updatedAt?: string;
   assetType: AssetType;
@@ -78,7 +83,7 @@ export interface InspectionSummary {
   submittedAt: string | null;
   createdAt: string;
   updatedAt?: string;
-  asset?: Pick<Asset, 'id' | 'code' | 'name'>;
+  asset?: Pick<Asset, 'id' | 'assetCode' | 'name'>;
 }
 
 export interface SiteVisit {
@@ -162,7 +167,7 @@ export interface InspectionFormResponse {
       team: Pick<Team, 'id' | 'code' | 'name'>;
       substation: Pick<Substation, 'id' | 'code' | 'name'>;
     };
-    asset: Pick<Asset, 'id' | 'code' | 'name' | 'serialNumber'> & {
+    asset: Pick<Asset, 'id' | 'assetCode' | 'name'> & {
       assetType: AssetType;
       substation: Pick<Substation, 'id' | 'code' | 'name'>;
     };
@@ -201,6 +206,27 @@ export interface SaveInspectionResultItemInput {
 export interface SelectOption {
   label: string;
   value: string;
+}
+
+export interface CreateAssetInput {
+  substationId: string;
+  assetTypeId: string;
+  assetCode: string;
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  metadata?: Record<string, unknown>;
+  status?: AssetStatus;
+  createdDuringVisitId?: string;
+}
+
+export interface UpdateAssetInput {
+  assetTypeId?: string;
+  assetCode?: string;
+  name?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export type DraftValue = string | boolean | null;

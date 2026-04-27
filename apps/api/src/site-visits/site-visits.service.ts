@@ -113,7 +113,7 @@ export class SiteVisitsService {
             asset: {
               select: {
                 id: true,
-                code: true,
+                assetCode: true,
                 name: true,
               },
             },

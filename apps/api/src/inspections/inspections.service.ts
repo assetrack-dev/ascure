@@ -267,9 +267,8 @@ export class InspectionsService {
       asset: {
         select: {
           id: true,
-          code: true,
+          assetCode: true,
           name: true,
-          serialNumber: true,
           assetType: {
             select: {
               id: true,

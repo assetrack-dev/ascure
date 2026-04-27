@@ -12,6 +12,14 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow ASCURE Field to use your location while adding assets."
+        }
+      ]
+    ],
     "android": {
       "package": "local.ascure.field",
       "usesCleartextTraffic": true

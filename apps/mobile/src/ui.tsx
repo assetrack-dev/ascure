@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TextInputProps,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -199,7 +200,7 @@ export function TextField({
   onChangeText: (nextValue: string) => void;
   placeholder?: string;
   secureTextEntry?: boolean;
-  keyboardType?: 'default' | 'numeric' | 'email-address';
+  keyboardType?: TextInputProps['keyboardType'];
   editable?: boolean;
   multiline?: boolean;
 }) {

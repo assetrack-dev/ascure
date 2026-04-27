@@ -1,6 +1,7 @@
-import { Platform } from 'react-native';
 import {
   Asset,
+  AssetType,
+  CreateAssetInput,
   InspectionFormResponse,
   LoginResponse,
   SaveInspectionResultItemInput,
@@ -8,18 +9,16 @@ import {
   SiteVisit,
   Team,
   Substation,
+  UpdateAssetInput,
 } from './types';
 
-const DEFAULT_API_BASE_URL =
-  Platform.OS === 'android'
-    ? 'http://10.0.2.2:3000/api/v1'
-    : 'http://localhost:3000/api/v1';
+const DEFAULT_API_BASE_URL = 'http://10.149.246.224:3000/api/v1';
 
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL;
 
 type RequestOptions = {
-  method?: 'GET' | 'POST' | 'PUT';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
   token?: string;
   body?: unknown;
 };
@@ -37,6 +36,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}) {
+  const method = options.method ?? 'GET';
+  const url = `${API_BASE_URL}${path}`;
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
@@ -49,14 +50,34 @@ async function request<T>(path: string, options: RequestOptions = {}) {
     headers.Authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  console.log('[API REQUEST]', { url, method });
+
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (error) {
+    console.error('[API NETWORK ERROR]', {
+      url,
+      method,
+      error,
+    });
+    throw error;
+  }
 
   const rawText = await response.text();
   const payload = tryParsePayload(rawText);
+
+  console.log('[API RESPONSE]', {
+    url,
+    method,
+    status: response.status,
+    payload,
+  });
 
   if (!response.ok) {
     throw new ApiError(extractErrorMessage(payload, response.status), response.status, payload);
@@ -202,6 +223,34 @@ export const api = {
     const query = encodeURIComponent(substationId);
 
     return request<Asset[]>(`/assets?substation_id=${query}`, { token });
+  },
+
+  getAssetTypes(token: string) {
+    return request<AssetType[]>('/asset-types', { token });
+  },
+
+  createAsset(token: string, input: CreateAssetInput) {
+    return request<Asset>('/assets', {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  },
+
+  updateAsset(token: string, assetId: string, input: UpdateAssetInput) {
+    return request<Asset>(`/assets/${assetId}`, {
+      method: 'PUT',
+      token,
+      body: input,
+    });
+  },
+
+  updateAssetStatus(token: string, assetId: string, input: { status: Asset['status'] }) {
+    return request<Asset>(`/assets/${assetId}/status`, {
+      method: 'PATCH',
+      token,
+      body: input,
+    });
   },
 
   createInspection(token: string, input: { siteVisitId: string; assetId: string; inspectionCycle: number }) {

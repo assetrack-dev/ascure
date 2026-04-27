@@ -53,9 +53,8 @@ export class MasterDataService {
         },
       },
       orderBy: {
-        name: 'asc',
+        assetCode: 'asc',
       },
     });
   }
 }
-

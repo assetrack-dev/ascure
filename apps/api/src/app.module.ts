@@ -7,6 +7,7 @@ import { MasterDataModule } from './master-data/master-data.module';
 import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { TemplatesModule } from './templates/templates.module';
 import { InspectionsModule } from './inspections/inspections.module';
+import { AssetsModule } from './assets/assets.module';
 
 @Module({
   imports: [
@@ -18,10 +19,10 @@ import { InspectionsModule } from './inspections/inspections.module';
     AuthModule,
     UsersModule,
     MasterDataModule,
+    AssetsModule,
     SiteVisitsModule,
     TemplatesModule,
     InspectionsModule,
   ],
 })
 export class AppModule {}
-

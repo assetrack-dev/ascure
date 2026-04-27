@@ -165,15 +165,19 @@ export function InspectionFormScreen({
         <>
           <Card>
             <SectionTitle>Inspection Summary</SectionTitle>
-            <KeyValueRow label="Asset" value={`${form.inspection.asset.code} - ${form.inspection.asset.name}`} />
+            <KeyValueRow
+              label="Asset"
+              value={
+                form.inspection.asset.name
+                  ? `${form.inspection.asset.assetCode} - ${form.inspection.asset.name}`
+                  : `${form.inspection.asset.assetCode} - Unnamed asset`
+              }
+            />
             <KeyValueRow label="Asset Type" value={form.inspection.asset.assetType.name} />
             <KeyValueRow label="Substation" value={form.inspection.asset.substation.name} />
             <KeyValueRow label="Template" value={`${form.template.name} (v${form.template.version})`} />
             <KeyValueRow label="Cycle" value={String(form.inspection.inspectionCycle)} />
             <KeyValueRow label="Started" value={formatDateTime(form.inspection.createdAt)} />
-            {form.inspection.asset.serialNumber ? (
-              <KeyValueRow label="Serial Number" value={form.inspection.asset.serialNumber} />
-            ) : null}
             <StatusChip
               label={isSubmitted ? 'Completed' : 'In Progress'}
               tone={isSubmitted ? 'success' : 'warning'}

@@ -2,19 +2,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import { api, ApiError } from './src/api';
 import { loadStoredToken, removeStoredToken, storeToken } from './src/storage';
+import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { VisitDetailScreen } from './src/screens/VisitDetailScreen';
 import { LoadingScreen } from './src/ui';
-import { SessionUser } from './src/types';
+import { Asset, SessionUser } from './src/types';
 
 type Route =
   | { name: 'login' }
   | { name: 'home' }
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
+  | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string };
 
 export default function App() {
@@ -128,6 +130,48 @@ export default function App() {
             inspectionId,
             visitId: route.visitId,
             substationId: route.substationId,
+          })
+        }
+        onOpenAddAsset={() =>
+          setRoute({
+            name: 'add-asset',
+            visitId: route.visitId,
+            substationId: route.substationId,
+          })
+        }
+        onOpenEditAsset={(asset) =>
+          setRoute({
+            name: 'add-asset',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetToEdit: asset,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'add-asset') {
+    return (
+      <AddAssetScreen
+        token={token}
+        siteVisitId={route.visitId}
+        substationId={route.substationId}
+        assetToEdit={route.assetToEdit}
+        onBack={() =>
+          setRoute({
+            name: 'visit-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+          })
+        }
+        onSaved={(successMessage) =>
+          setRoute({
+            name: 'visit-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            successMessage,
           })
         }
         onUnauthorized={handleUnauthorized}

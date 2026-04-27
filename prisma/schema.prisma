@@ -41,6 +41,14 @@ enum InspectionCompletionStatus {
   SUBMITTED
 }
 
+enum AssetStatus {
+  ACTIVE
+  INACTIVE
+  NOT_FOUND
+  REMOVED
+  DUPLICATE
+}
+
 model Tenant {
   id                   String               @id @default(uuid()) @db.Uuid
   name                 String
@@ -163,26 +171,31 @@ model AssetType {
 }
 
 model Asset {
-  id            String       @id @default(uuid()) @db.Uuid
-  tenantId      String       @db.Uuid
-  substationId  String       @db.Uuid
-  assetTypeId   String       @db.Uuid
-  name          String
-  code          String
-  serialNumber  String?
-  status        String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  substation    Substation   @relation(fields: [substationId], references: [id], onDelete: Cascade)
-  assetType     AssetType    @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  inspections   Inspection[]
-  images        Image[]
+  id                   String       @id @default(uuid()) @db.Uuid
+  tenantId             String       @db.Uuid
+  substationId         String       @db.Uuid
+  assetTypeId          String       @db.Uuid
+  assetCode            String       @map("code")
+  name                 String?
+  latitude             Float?
+  longitude            Float?
+  metadata             Json?
+  status               AssetStatus  @default(ACTIVE)
+  createdDuringVisitId String?      @db.Uuid
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  tenant               Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  substation           Substation   @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  assetType            AssetType    @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  createdDuringVisit   SiteVisit?   @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
+  inspections          Inspection[]
+  images               Image[]
 
-  @@unique([tenantId, code])
+  @@unique([tenantId, assetCode])
   @@index([tenantId])
   @@index([substationId])
   @@index([assetTypeId])
+  @@index([createdDuringVisitId])
 }
 
 model SiteVisit {
@@ -202,6 +215,7 @@ model SiteVisit {
   substation      Substation       @relation(fields: [substationId], references: [id], onDelete: Restrict)
   createdBy       User             @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   users           SiteVisitUser[]
+  createdAssets   Asset[]
   inspections     Inspection[]
   images          Image[]
 

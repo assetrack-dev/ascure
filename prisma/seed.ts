@@ -1,4 +1,10 @@
-import { PrismaClient, InspectionItemInputType, InspectionTemplateStatus, UserRole } from '@prisma/client';
+import {
+  AssetStatus,
+  PrismaClient,
+  InspectionItemInputType,
+  InspectionTemplateStatus,
+  UserRole,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -241,26 +247,25 @@ async function main() {
 
   await prisma.asset.upsert({
     where: {
-      tenantId_code: {
+      tenantId_assetCode: {
         tenantId: tenant.id,
-        code: 'SAVR-001',
+        assetCode: 'SAVR-001',
       },
     },
     update: {
-      name: 'SAVR Unit 001',
       substationId: substation.id,
       assetTypeId: assetType.id,
-      serialNumber: 'SAVR-DEV-001',
-      status: 'active',
+      assetCode: 'SAVR-001',
+      name: 'SAVR Unit 001',
+      status: AssetStatus.ACTIVE,
     },
     create: {
       tenantId: tenant.id,
       substationId: substation.id,
       assetTypeId: assetType.id,
-      code: 'SAVR-001',
+      assetCode: 'SAVR-001',
       name: 'SAVR Unit 001',
-      serialNumber: 'SAVR-DEV-001',
-      status: 'active',
+      status: AssetStatus.ACTIVE,
     },
   });
 
