@@ -6,6 +6,7 @@ import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
+import { DefectDetailScreen } from './src/screens/DefectDetailScreen';
 import { DefectListScreen } from './src/screens/DefectListScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ImagePreviewScreen } from './src/screens/ImagePreviewScreen';
@@ -36,6 +37,7 @@ type InspectionDetailRoute =
 
 type ImagePreviewReturnRoute =
   | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
+  | { name: 'DefectDetail'; defectId: string }
   | {
       name: 'AssetInspectionHistory';
       visitId: string;
@@ -49,6 +51,7 @@ type Route =
   | { name: 'login' }
   | { name: 'home' }
   | { name: 'DefectList' }
+  | { name: 'DefectDetail'; defectId: string }
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
   | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
@@ -298,6 +301,12 @@ export default function App() {
       <DefectListScreen
         token={token}
         onBack={() => setRoute({ name: 'home' })}
+        onOpenDefect={(item) =>
+          setRoute({
+            name: 'DefectDetail',
+            defectId: item.id,
+          })
+        }
         onOpenInspection={(item) =>
           setRoute({
             name: 'InspectionDetail',
@@ -305,6 +314,25 @@ export default function App() {
             inspectionId: item.inspectionId,
             assetId: item.assetId,
             assetCode: item.assetCode,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'DefectDetail') {
+    return (
+      <DefectDetailScreen
+        token={token}
+        defectId={route.defectId}
+        onBack={() => setRoute({ name: 'DefectList' })}
+        onOpenImagePreview={(params) =>
+          setRoute({
+            name: 'ImagePreview',
+            uri: params.uri,
+            title: params.title,
+            returnTo: route,
           })
         }
         onUnauthorized={handleUnauthorized}

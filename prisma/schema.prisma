@@ -47,6 +47,12 @@ enum InspectionItemResultValue {
   NA
 }
 
+enum DefectStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
 enum AssetStatus {
   ACTIVE
   INACTIVE
@@ -357,9 +363,21 @@ model InspectionItemResult {
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
   inspection      Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  defect          Defect?
 
   @@index([inspectionId])
   @@index([checklistItemId])
+}
+
+model Defect {
+  id                     String               @id @default(uuid()) @db.Uuid
+  inspectionItemResultId String               @unique @db.Uuid
+  status                 DefectStatus         @default(OPEN)
+  actionRemark           String?
+  closedAt               DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  inspectionItemResult   InspectionItemResult @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
 }
 
 model InspectionResult {

@@ -20,11 +20,13 @@ import {
 export function DefectListScreen({
   token,
   onBack,
+  onOpenDefect,
   onOpenInspection,
   onUnauthorized,
 }: {
   token: string;
   onBack: () => void;
+  onOpenDefect: (item: DefectListItem) => void;
   onOpenInspection: (item: DefectListItem) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
@@ -91,7 +93,10 @@ export function DefectListScreen({
         <>
           <Card>
             <SectionTitle>Summary</SectionTitle>
-            <KeyValueRow label="Total Open Defects" value={String(defects.length)} />
+            <KeyValueRow label="Total Defects" value={String(defects.length)} />
+            <KeyValueRow label="Open" value={String(countByStatus(defects, 'OPEN'))} />
+            <KeyValueRow label="In Progress" value={String(countByStatus(defects, 'IN_PROGRESS'))} />
+            <KeyValueRow label="Closed" value={String(countByStatus(defects, 'CLOSED'))} />
             <TextField
               label="Search"
               value={search}
@@ -117,6 +122,7 @@ export function DefectListScreen({
                 <DefectCard
                   key={defect.id}
                   defect={defect}
+                  onOpenDefect={() => onOpenDefect(defect)}
                   onOpenInspection={() => onOpenInspection(defect)}
                 />
               ))
@@ -135,14 +141,16 @@ export function DefectListScreen({
 
 function DefectCard({
   defect,
+  onOpenDefect,
   onOpenInspection,
 }: {
   defect: DefectListItem;
+  onOpenDefect: () => void;
   onOpenInspection: () => void;
 }) {
   return (
     <Pressable
-      onPress={onOpenInspection}
+      onPress={onOpenDefect}
       style={({ pressed }) => ({
         backgroundColor: '#ffffff',
         borderRadius: 18,
@@ -164,7 +172,7 @@ function DefectCard({
             </Text>
           ) : null}
         </View>
-        <StatusChip label={defect.status} tone="warning" />
+        <StatusChip label={formatStatus(defect.status)} tone={getStatusTone(defect.status)} />
       </View>
 
       <KeyValueRow
@@ -190,9 +198,48 @@ function DefectCard({
         </Text>
       </View>
       <KeyValueRow label="Submitted" value={formatDateTime(defect.submittedAt)} />
-      <AppButton label="View Inspection" onPress={onOpenInspection} />
+      <Pressable
+        onPress={(event) => {
+          event.stopPropagation();
+          onOpenInspection();
+        }}
+        style={({ pressed }) => ({
+          minHeight: 54,
+          borderRadius: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#0f5cd8',
+          opacity: pressed ? 0.9 : 1,
+        })}
+      >
+        <Text style={{ fontSize: 16, fontWeight: '700', color: '#ffffff' }}>View Inspection</Text>
+      </Pressable>
     </Pressable>
   );
+}
+
+function countByStatus(defects: DefectListItem[], status: DefectListItem['status']) {
+  return defects.filter((defect) => defect.status === status).length;
+}
+
+function getStatusTone(status: DefectListItem['status']) {
+  if (status === 'CLOSED') {
+    return 'success';
+  }
+
+  if (status === 'OPEN') {
+    return 'warning';
+  }
+
+  return 'neutral';
+}
+
+function formatStatus(value: string) {
+  return value
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function createRemarkPreview(remark?: string | null) {

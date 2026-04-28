@@ -5,7 +5,9 @@ import {
   AssetInspectionHistoryItem,
   AssetType,
   CreateAssetInput,
+  DefectDetail,
   DefectListItem,
+  DefectStatus,
   InspectionImage,
   InspectionImageUploadInput,
   InspectionDetail,
@@ -247,6 +249,32 @@ export const api = {
 
   getDefects(token: string) {
     return request<DefectListItem[]>('/defects', { token });
+  },
+
+  getDefectDetail(token: string, defectId: string) {
+    return request<DefectDetail>(`/defects/${defectId}`, { token });
+  },
+
+  updateDefectStatus(
+    token: string,
+    defectId: string,
+    status: DefectStatus,
+    actionRemark?: string | null,
+  ) {
+    const body: {
+      status: DefectStatus;
+      actionRemark?: string | null;
+    } = { status };
+
+    if (actionRemark !== undefined) {
+      body.actionRemark = actionRemark;
+    }
+
+    return request<DefectDetail>(`/defects/${defectId}/status`, {
+      method: 'PATCH',
+      token,
+      body,
+    });
   },
 
   createAsset(token: string, input: CreateAssetInput) {

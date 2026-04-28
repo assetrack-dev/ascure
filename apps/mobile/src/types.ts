@@ -275,6 +275,8 @@ export type AssetInspectionHistoryItem = {
   images?: InspectionImage[];
 };
 
+export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
+
 export type InspectionDetail = {
   id: string;
   assetId: string;
@@ -291,6 +293,7 @@ export type InspectionDetail = {
 
 export type DefectListItem = {
   id: string;
+  inspectionItemResultId?: string;
   inspectionId: string;
   assetId: string;
   assetCode?: string;
@@ -299,9 +302,30 @@ export type DefectListItem = {
   label: string;
   result: 'FAIL';
   remark?: string | null;
-  status: 'OPEN';
+  status: DefectStatus;
+  actionRemark?: string | null;
+  closedAt?: string | null;
   submittedAt?: string | null;
   createdAt: string;
+};
+
+export type DefectDetail = {
+  id: string;
+  inspectionItemResultId: string;
+  status: DefectStatus;
+  actionRemark: string | null;
+  closedAt: string | null;
+  label: string;
+  checklistRemark: string | null;
+  inspectionId: string;
+  assetId: string;
+  assetCode?: string;
+  assetType?: string;
+  cycleNumber?: number;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  images: InspectionImage[];
 };
 
 export interface InspectionItemResult {
