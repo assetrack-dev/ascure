@@ -13,8 +13,9 @@ import {
   Prisma,
 } from '@prisma/client';
 import {
+  buildInspectionImagePath,
   buildInspectionImageUrl,
-  INSPECTION_IMAGES_DIRECTORY,
+  buildInspectionImagesDirectory,
 } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -119,7 +120,12 @@ export class InspectionsService {
           },
           select: {
             id: true,
+            inspectionId: true,
             url: true,
+            filename: true,
+            latitude: true,
+            longitude: true,
+            timestamp: true,
             createdAt: true,
           },
         },
@@ -150,11 +156,7 @@ export class InspectionsService {
       createdAt: inspection.createdAt.toISOString(),
       updatedAt: inspection.updatedAt.toISOString(),
       remarks: this.extractRemarks(inspection.results) || null,
-      images: inspection.inspectionImages.map((image) => ({
-        id: image.id,
-        url: image.url,
-        createdAt: image.createdAt.toISOString(),
-      })),
+      images: inspection.inspectionImages.map((image) => this.serializeInspectionImage(image)),
     };
   }
 
@@ -258,18 +260,20 @@ export class InspectionsService {
       throw new NotFoundException('Inspection not found.');
     }
 
-    await mkdir(INSPECTION_IMAGES_DIRECTORY, { recursive: true });
+    const uploadDirectory = buildInspectionImagesDirectory(inspection.id);
 
-    const fileExtension = extname(file.originalname || '').toLowerCase();
-    const filename = `${inspection.id}-${Date.now()}-${randomUUID()}${fileExtension}`;
-    const filePath = resolve(INSPECTION_IMAGES_DIRECTORY, filename);
+    await mkdir(uploadDirectory, { recursive: true });
+
+    const fileExtension = this.getSafeFileExtension(file.originalname);
+    const filename = `${Date.now()}-${randomUUID()}${fileExtension}`;
+    const filePath = resolve(uploadDirectory, filename);
 
     await writeFile(filePath, file.buffer);
 
-    return this.prisma.inspectionImage.create({
+    const image = await this.prisma.inspectionImage.create({
       data: {
         inspectionId: inspection.id,
-        url: buildInspectionImageUrl(filename),
+        url: buildInspectionImageUrl(inspection.id, filename),
         filename,
         mimeType: file.mimetype || null,
         sizeBytes: Number.isFinite(file.size) ? file.size : null,
@@ -278,6 +282,44 @@ export class InspectionsService {
         timestamp: dto.timestamp ? new Date(dto.timestamp) : null,
       },
     });
+
+    return this.serializeInspectionImage(image, dto.type ?? null);
+  }
+
+  private serializeInspectionImage(
+    image: {
+      id: string;
+      inspectionId: string;
+      url: string;
+      filename: string;
+      latitude: number | null;
+      longitude: number | null;
+      timestamp: Date | null;
+      createdAt: Date;
+    },
+    type: string | null = null,
+  ) {
+    return {
+      id: image.id,
+      inspectionId: image.inspectionId,
+      url: image.url,
+      path: buildInspectionImagePath(image.inspectionId, image.filename),
+      latitude: image.latitude,
+      longitude: image.longitude,
+      timestamp: image.timestamp?.toISOString() ?? null,
+      type,
+      createdAt: image.createdAt.toISOString(),
+    };
+  }
+
+  private getSafeFileExtension(originalName: string | undefined) {
+    const extension = extname(originalName || '').toLowerCase();
+
+    if (/^\.[a-z0-9]{1,10}$/.test(extension)) {
+      return extension;
+    }
+
+    return '.jpg';
   }
 
   private async getAccessibleInspection(inspectionId: string, user: RequestUser) {

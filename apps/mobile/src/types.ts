@@ -235,6 +235,7 @@ export interface InspectionImageUploadInput {
   latitude: number;
   longitude: number;
   timestamp: string;
+  type?: string | null;
 }
 
 export interface InspectionImage {
@@ -242,6 +243,7 @@ export interface InspectionImage {
   inspectionId?: string;
   uri?: string;
   url?: string;
+  path?: string;
   type?: string | null;
   filename?: string;
   mimeType?: string | null;

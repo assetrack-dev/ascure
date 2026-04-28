@@ -1,4 +1,7 @@
 import { Image, Platform, Pressable, StatusBar, Text, View } from 'react-native';
+import { API_BASE_URL } from '../api';
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
 export function ImagePreviewScreen({
   uri,
@@ -9,7 +12,7 @@ export function ImagePreviewScreen({
   title?: string;
   onBack: () => void;
 }) {
-  const imageUri = uri.trim();
+  const imageUri = getImageSourceUri(uri.trim());
 
   return (
     <View
@@ -81,4 +84,20 @@ export function ImagePreviewScreen({
       </View>
     </View>
   );
+}
+
+function getImageSourceUri(source: string) {
+  if (!source) {
+    return '';
+  }
+
+  if (/^[a-z][a-z\d+\-.]*:/i.test(source)) {
+    return source;
+  }
+
+  if (source.startsWith('/')) {
+    return `${API_ORIGIN}${source}`;
+  }
+
+  return source;
 }

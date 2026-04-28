@@ -37,7 +37,9 @@ type PhotoUploadState = 'uploading' | 'uploaded' | 'error';
 
 type CapturedInspectionPhoto = InspectionImageUploadInput & {
   id: string;
+  uploadedImageId?: string;
   uploadedUrl?: string;
+  url?: string;
   uploadState: PhotoUploadState;
   uploadError?: string;
 };
@@ -202,7 +204,9 @@ export function InspectionFormScreen({
       const uploadedPhoto = await api.uploadInspectionImage(token, inspectionId, photo);
 
       updatePhoto(photo.id, {
+        uploadedImageId: uploadedPhoto.id,
         uploadedUrl: uploadedPhoto.url,
+        url: uploadedPhoto.url,
         uploadState: 'uploaded',
         uploadError: undefined,
       });

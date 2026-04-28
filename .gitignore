@@ -27,3 +27,4 @@ package-lock.json
 
 apps/mobile/.expo/
 uploads/
+apps/api/uploads/

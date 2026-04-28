@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsDateString, IsNumber, IsOptional } from 'class-validator';
+import { IsDateString, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 
 const emptyStringToUndefined = ({ value }: { value: unknown }) =>
   value === '' ? undefined : value;
@@ -21,4 +21,10 @@ export class UploadInspectionImageDto {
   @Transform(emptyStringToUndefined)
   @IsDateString()
   timestamp?: string;
+
+  @IsOptional()
+  @Transform(emptyStringToUndefined)
+  @IsString()
+  @MaxLength(64)
+  type?: string;
 }

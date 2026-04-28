@@ -315,17 +315,14 @@ async function uploadInspectionImage(
   const url = `${API_BASE_URL}/inspections/${inspectionId}/images`;
   const uploadFilename = createUploadFilename(photo.timestamp);
   const uploadUri = await createUploadFileUri(photo.uri, uploadFilename);
+  const parameters = createUploadParameters(photo);
 
   console.log('[UPLOAD REQUEST]', {
     url,
     method: 'POST',
     fileUri: uploadUri,
     fieldName: 'file',
-    parameters: {
-      latitude: String(photo.latitude),
-      longitude: String(photo.longitude),
-      timestamp: photo.timestamp,
-    },
+    parameters,
   });
 
   try {
@@ -334,11 +331,7 @@ async function uploadInspectionImage(
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
       mimeType: 'image/jpeg',
-      parameters: {
-        latitude: String(photo.latitude),
-        longitude: String(photo.longitude),
-        timestamp: photo.timestamp,
-      },
+      parameters,
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -370,6 +363,30 @@ async function uploadInspectionImage(
       void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(() => undefined);
     }
   }
+}
+
+function createUploadParameters(photo: InspectionImageUploadInput) {
+  const parameters: Record<string, string> = {};
+
+  if (Number.isFinite(photo.latitude)) {
+    parameters.latitude = String(photo.latitude);
+  }
+
+  if (Number.isFinite(photo.longitude)) {
+    parameters.longitude = String(photo.longitude);
+  }
+
+  if (photo.timestamp) {
+    parameters.timestamp = photo.timestamp;
+  }
+
+  const type = photo.type?.trim();
+
+  if (type) {
+    parameters.type = type;
+  }
+
+  return parameters;
 }
 
 async function createUploadFileUri(sourceUri: string, filename: string) {
