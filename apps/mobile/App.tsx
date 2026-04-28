@@ -7,11 +7,31 @@ import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { ImagePreviewScreen } from './src/screens/ImagePreviewScreen';
+import { InspectionDetailScreen } from './src/screens/InspectionDetailScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { VisitDetailScreen } from './src/screens/VisitDetailScreen';
 import { LoadingScreen } from './src/ui';
 import { Asset, SessionUser } from './src/types';
+
+type ImagePreviewReturnRoute =
+  | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
+  | {
+      name: 'AssetInspectionHistory';
+      visitId: string;
+      substationId: string;
+      assetId: string;
+      assetCode?: string;
+    }
+  | {
+      name: 'InspectionDetail';
+      visitId: string;
+      substationId: string;
+      assetId: string;
+      inspectionId: string;
+      assetCode?: string;
+    };
 
 type Route =
   | { name: 'login' }
@@ -26,8 +46,17 @@ type Route =
       assetId: string;
       assetCode?: string;
     }
+  | {
+      name: 'InspectionDetail';
+      visitId: string;
+      substationId: string;
+      assetId: string;
+      inspectionId: string;
+      assetCode?: string;
+    }
   | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
-  | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string };
+  | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string }
+  | { name: 'ImagePreview'; uri: string; title?: string; returnTo: ImagePreviewReturnRoute };
 
 export default function App() {
   const [isBooting, setIsBooting] = useState(true);
@@ -200,6 +229,64 @@ export default function App() {
             assetCode: params.assetCode,
           })
         }
+        onOpenImagePreview={(params) =>
+          setRoute({
+            name: 'ImagePreview',
+            uri: params.uri,
+            title: params.title,
+            returnTo: {
+              name: 'asset-detail',
+              visitId: route.visitId,
+              substationId: route.substationId,
+              assetId: route.assetId,
+            },
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'ImagePreview') {
+    return (
+      <ImagePreviewScreen
+        uri={route.uri}
+        title={route.title}
+        onBack={() => setRoute(route.returnTo)}
+      />
+    );
+  }
+
+  if (route.name === 'InspectionDetail') {
+    return (
+      <InspectionDetailScreen
+        token={token}
+        inspectionId={route.inspectionId}
+        assetCode={route.assetCode}
+        onBack={() =>
+          setRoute({
+            name: 'AssetInspectionHistory',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetId: route.assetId,
+            assetCode: route.assetCode,
+          })
+        }
+        onOpenImagePreview={(params) =>
+          setRoute({
+            name: 'ImagePreview',
+            uri: params.uri,
+            title: params.title,
+            returnTo: {
+              name: 'InspectionDetail',
+              visitId: route.visitId,
+              substationId: route.substationId,
+              assetId: route.assetId,
+              inspectionId: route.inspectionId,
+              assetCode: route.assetCode,
+            },
+          })
+        }
         onUnauthorized={handleUnauthorized}
       />
     );
@@ -217,6 +304,30 @@ export default function App() {
             visitId: route.visitId,
             substationId: route.substationId,
             assetId: route.assetId,
+          })
+        }
+        onOpenImagePreview={(params) =>
+          setRoute({
+            name: 'ImagePreview',
+            uri: params.uri,
+            title: params.title,
+            returnTo: {
+              name: 'AssetInspectionHistory',
+              visitId: route.visitId,
+              substationId: route.substationId,
+              assetId: route.assetId,
+              assetCode: route.assetCode,
+            },
+          })
+        }
+        onOpenInspectionDetail={(params) =>
+          setRoute({
+            name: 'InspectionDetail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetId: route.assetId,
+            inspectionId: params.inspectionId,
+            assetCode: params.assetCode,
           })
         }
         onUnauthorized={handleUnauthorized}

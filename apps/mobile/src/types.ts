@@ -238,16 +238,18 @@ export interface InspectionImageUploadInput {
 }
 
 export interface InspectionImage {
-  id: string;
-  inspectionId: string;
-  url: string;
-  filename: string;
-  mimeType: string | null;
-  sizeBytes: number | null;
-  latitude: number | null;
-  longitude: number | null;
-  timestamp: string | null;
-  createdAt: string;
+  id?: string;
+  inspectionId?: string;
+  uri?: string;
+  url?: string;
+  type?: string | null;
+  filename?: string;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timestamp?: string | null;
+  createdAt?: string;
 }
 
 export type AssetInspectionHistoryItem = {
@@ -260,6 +262,18 @@ export type AssetInspectionHistoryItem = {
   updatedAt?: string;
   remarks?: string | null;
   imageCount?: number;
+  images?: InspectionImage[];
+};
+
+export type InspectionDetail = {
+  id: string;
+  assetId: string;
+  cycleNumber: number;
+  status: string;
+  submittedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  remarks?: string | null;
   images?: InspectionImage[];
 };
 

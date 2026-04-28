@@ -7,6 +7,7 @@ import {
   CreateAssetInput,
   InspectionImage,
   InspectionImageUploadInput,
+  InspectionDetail,
   InspectionFormResponse,
   LoginResponse,
   SaveInspectionResultItemInput,
@@ -276,6 +277,10 @@ export const api = {
 
   getInspectionForm(token: string, inspectionId: string) {
     return request<InspectionFormResponse>(`/inspections/${inspectionId}/form`, { token });
+  },
+
+  getInspectionDetail(token: string, inspectionId: string) {
+    return request<InspectionDetail>(`/inspections/${inspectionId}`, { token });
   },
 
   saveInspectionResults(

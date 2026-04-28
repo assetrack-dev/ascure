@@ -39,6 +39,11 @@ export class InspectionsController {
     return this.inspectionsService.create(user, dto);
   }
 
+  @Get(':id')
+  getDetail(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
+    return this.inspectionsService.getDetail(user, params.id);
+  }
+
   @Get(':id/form')
   getForm(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
     return this.inspectionsService.getForm(user, params.id);

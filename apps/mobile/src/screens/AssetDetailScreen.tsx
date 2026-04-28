@@ -7,6 +7,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { api, ApiError, API_BASE_URL } from '../api';
@@ -22,6 +24,7 @@ export function AssetDetailScreen({
   onBack,
   onOpenInspection,
   onOpenInspectionHistory,
+  onOpenImagePreview,
   onUnauthorized,
 }: {
   token: string;
@@ -30,6 +33,7 @@ export function AssetDetailScreen({
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
   onOpenInspectionHistory: (params: { assetId: string; assetCode?: string }) => void;
+  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
@@ -37,6 +41,7 @@ export function AssetDetailScreen({
   const [isStartingInspection, setIsStartingInspection] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { width: screenWidth } = useWindowDimensions();
 
   const loadAssetDetail = useCallback(async () => {
     try {
@@ -66,6 +71,7 @@ export function AssetDetailScreen({
   }, [loadAssetDetail]);
 
   const images = useMemo(() => asset?.latestInspection?.images ?? [], [asset]);
+  const imageCarouselWidth = Math.max(180, screenWidth - 72);
 
   async function handleStartInspection() {
     if (!asset) {
@@ -186,22 +192,45 @@ export function AssetDetailScreen({
           {images.length === 0 ? (
             <Text style={styles.placeholderText}>No inspection images yet.</Text>
           ) : (
-            images.map((image, index) => {
-              const imageUri = getImageSourceUri(image);
+            <ScrollView
+              horizontal
+              pagingEnabled={images.length > 1}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.imageCarouselContent}
+            >
+              {images.map((image, index) => {
+                const imageUri = getImageSourceUri(image);
 
-              return (
-                <View key={`${imageUri ?? 'missing-image'}-${index}`} style={styles.imageBlock}>
-                  {image.type ? <Text style={styles.imageType}>{image.type}</Text> : null}
-                  {imageUri ? (
-                    <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.imagePlaceholder}>
-                      <Text style={styles.placeholderText}>Image unavailable.</Text>
+                return (
+                  <View
+                    key={`${imageUri ?? 'missing-image'}-${index}`}
+                    style={[styles.imageBlock, { width: imageCarouselWidth }]}
+                  >
+                    <View style={styles.imageMetaRow}>
+                      {image.type ? <Text style={styles.imageType}>{image.type}</Text> : <View />}
+                      <Text style={styles.imageCounter}>{index + 1} of {images.length}</Text>
                     </View>
-                  )}
-                </View>
-              );
-            })
+                    {imageUri ? (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() =>
+                          onOpenImagePreview({
+                            uri: imageUri,
+                            title: image.type || 'Inspection Image',
+                          })
+                        }
+                      >
+                        <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.imagePlaceholder}>
+                        <Text style={styles.placeholderText}>Image unavailable.</Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
           )}
         </View>
 
@@ -397,10 +426,24 @@ const styles = StyleSheet.create({
   imageBlock: {
     gap: 8,
   },
+  imageCarouselContent: {
+    gap: 12,
+  },
+  imageMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   imageType: {
     fontSize: 13,
     fontWeight: '700',
     color: '#607086',
+  },
+  imageCounter: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#10233d',
   },
   image: {
     width: '100%',

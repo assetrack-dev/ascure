@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { api, ApiError, API_BASE_URL } from '../api';
@@ -19,12 +20,16 @@ export function AssetInspectionHistoryScreen({
   assetId,
   assetCode,
   onBack,
+  onOpenImagePreview,
+  onOpenInspectionDetail,
   onUnauthorized,
 }: {
   token: string;
   assetId: string;
   assetCode?: string;
   onBack: () => void;
+  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
+  onOpenInspectionDetail: (params: { inspectionId: string; assetCode?: string }) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [inspections, setInspections] = useState<AssetInspectionHistoryItem[]>([]);
@@ -164,7 +169,17 @@ export function AssetInspectionHistoryScreen({
 
         {!isLoading && !error
           ? inspections.map((inspection) => (
-              <InspectionHistoryCard key={inspection.id} inspection={inspection} />
+              <InspectionHistoryCard
+                key={inspection.id}
+                inspection={inspection}
+                onOpenImagePreview={onOpenImagePreview}
+                onOpenInspectionDetail={() =>
+                  onOpenInspectionDetail({
+                    inspectionId: inspection.id,
+                    assetCode,
+                  })
+                }
+              />
             ))
           : null}
       </ScrollView>
@@ -172,21 +187,31 @@ export function AssetInspectionHistoryScreen({
   );
 }
 
-function InspectionHistoryCard({ inspection }: { inspection: AssetInspectionHistoryItem }) {
+function InspectionHistoryCard({
+  inspection,
+  onOpenImagePreview,
+  onOpenInspectionDetail,
+}: {
+  inspection: AssetInspectionHistoryItem;
+  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
+  onOpenInspectionDetail: () => void;
+}) {
   const firstImage = inspection.images?.find((image) => getImageSourceUri(image)) ?? null;
   const thumbnailUri = firstImage ? getImageSourceUri(firstImage) : null;
   const remarksPreview = createRemarksPreview(inspection.remarks);
 
   return (
-    <View
-      style={{
+    <Pressable
+      onPress={onOpenInspectionDetail}
+      style={({ pressed }) => ({
         backgroundColor: '#ffffff',
         borderRadius: 16,
         padding: 16,
         gap: 12,
         borderWidth: 1,
         borderColor: '#dce5f1',
-      }}
+        opacity: pressed ? 0.94 : 1,
+      })}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 4 }}>
@@ -246,18 +271,29 @@ function InspectionHistoryCard({ inspection }: { inspection: AssetInspectionHist
       </View>
 
       {thumbnailUri ? (
-        <Image
-          source={{ uri: thumbnailUri }}
-          style={{
-            width: '100%',
-            height: 160,
-            borderRadius: 14,
-            backgroundColor: '#e5edf8',
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={(event) => {
+            event.stopPropagation();
+            onOpenImagePreview({
+              uri: thumbnailUri,
+              title: getImageTitle(firstImage),
+            });
           }}
-          resizeMode="cover"
-        />
+        >
+          <Image
+            source={{ uri: thumbnailUri }}
+            style={{
+              width: '100%',
+              height: 160,
+              borderRadius: 14,
+              backgroundColor: '#e5edf8',
+            }}
+            resizeMode="cover"
+          />
+        </TouchableOpacity>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -295,4 +331,8 @@ function getImageSourceUri(image: InspectionImage & { uri?: string }) {
   }
 
   return source;
+}
+
+function getImageTitle(image: ({ type?: string | null } & Partial<InspectionImage>) | null) {
+  return image?.type || 'Inspection Image';
 }

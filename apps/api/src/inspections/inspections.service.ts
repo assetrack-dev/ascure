@@ -105,6 +105,59 @@ export class InspectionsService {
     return this.serializeInspectionForm(inspection);
   }
 
+  async getDetail(user: RequestUser, inspectionId: string) {
+    const inspection = await this.prisma.inspection.findFirst({
+      where: {
+        id: inspectionId,
+        tenantId: user.tenantId,
+        ...this.inspectionAccessScope(user),
+      },
+      include: {
+        inspectionImages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          select: {
+            id: true,
+            url: true,
+            createdAt: true,
+          },
+        },
+        results: {
+          select: {
+            valueText: true,
+            templateItem: {
+              select: {
+                key: true,
+                label: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!inspection) {
+      throw new NotFoundException('Inspection not found.');
+    }
+
+    return {
+      id: inspection.id,
+      assetId: inspection.assetId,
+      cycleNumber: inspection.inspectionCycle,
+      status: inspection.completionStatus,
+      submittedAt: inspection.submittedAt?.toISOString() ?? null,
+      createdAt: inspection.createdAt.toISOString(),
+      updatedAt: inspection.updatedAt.toISOString(),
+      remarks: this.extractRemarks(inspection.results) || null,
+      images: inspection.inspectionImages.map((image) => ({
+        id: image.id,
+        url: image.url,
+        createdAt: image.createdAt.toISOString(),
+      })),
+    };
+  }
+
   async saveResults(user: RequestUser, inspectionId: string, dto: SaveInspectionResultsDto) {
     const inspection = await this.getAccessibleInspection(inspectionId, user);
 
@@ -552,6 +605,30 @@ export class InspectionsService {
     }
 
     return result.valueJson !== null;
+  }
+
+  private extractRemarks(
+    results: Array<{
+      valueText: string | null;
+      templateItem: {
+        key: string;
+        label: string;
+      };
+    }>,
+  ) {
+    const remarkResult = results.find((result) => {
+      const key = result.templateItem.key.toLowerCase();
+      const label = result.templateItem.label.toLowerCase();
+
+      return (
+        key.includes('remark') ||
+        label.includes('remark') ||
+        key.includes('catatan') ||
+        label.includes('catatan')
+      );
+    });
+
+    return remarkResult?.valueText?.trim() ?? '';
   }
 
   private serializeInspectionForm(
