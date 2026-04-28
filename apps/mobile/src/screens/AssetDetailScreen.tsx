@@ -21,6 +21,7 @@ export function AssetDetailScreen({
   assetId,
   onBack,
   onOpenInspection,
+  onOpenInspectionHistory,
   onUnauthorized,
 }: {
   token: string;
@@ -28,6 +29,7 @@ export function AssetDetailScreen({
   assetId: string;
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
+  onOpenInspectionHistory: (params: { assetId: string; assetCode?: string }) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
@@ -166,6 +168,18 @@ export function AssetDetailScreen({
             <Text style={styles.placeholderText}>No submitted inspection yet.</Text>
           )}
         </View>
+
+        <Pressable
+          onPress={() =>
+            onOpenInspectionHistory({
+              assetId: asset.id,
+              assetCode: asset.assetCode,
+            })
+          }
+          style={({ pressed }) => [styles.historyButton, pressed && styles.pressedButton]}
+        >
+          <Text style={styles.historyButtonText}>View All Inspections</Text>
+        </Pressable>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Inspection Images</Text>
@@ -402,6 +416,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#eef4fb',
     borderWidth: 1,
     borderColor: '#d9e4f2',
+  },
+  historyButton: {
+    minHeight: 52,
+    borderRadius: 16,
+    backgroundColor: '#e5edf8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  historyButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#10233d',
   },
   startButton: {
     minHeight: 54,

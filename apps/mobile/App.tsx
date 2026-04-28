@@ -4,6 +4,7 @@ import { api, ApiError } from './src/api';
 import { loadStoredToken, removeStoredToken, storeToken } from './src/storage';
 import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
+import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
@@ -18,6 +19,13 @@ type Route =
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
   | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
+  | {
+      name: 'AssetInspectionHistory';
+      visitId: string;
+      substationId: string;
+      assetId: string;
+      assetCode?: string;
+    }
   | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string };
 
@@ -181,6 +189,34 @@ export default function App() {
             inspectionId,
             visitId: route.visitId,
             substationId: route.substationId,
+          })
+        }
+        onOpenInspectionHistory={(params) =>
+          setRoute({
+            name: 'AssetInspectionHistory',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetId: params.assetId,
+            assetCode: params.assetCode,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'AssetInspectionHistory') {
+    return (
+      <AssetInspectionHistoryScreen
+        token={token}
+        assetId={route.assetId}
+        assetCode={route.assetCode}
+        onBack={() =>
+          setRoute({
+            name: 'asset-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetId: route.assetId,
           })
         }
         onUnauthorized={handleUnauthorized}

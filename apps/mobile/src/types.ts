@@ -250,6 +250,19 @@ export interface InspectionImage {
   createdAt: string;
 }
 
+export type AssetInspectionHistoryItem = {
+  id: string;
+  assetId: string;
+  cycleNumber: number;
+  status: string;
+  submittedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  remarks?: string | null;
+  imageCount?: number;
+  images?: InspectionImage[];
+};
+
 export interface SelectOption {
   label: string;
   value: string;

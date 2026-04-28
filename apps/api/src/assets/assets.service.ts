@@ -176,6 +176,93 @@ export class AssetsService {
     };
   }
 
+  async getInspections(user: RequestUser, id: string) {
+    const asset = await this.prisma.asset.findFirst({
+      where: {
+        id,
+        tenantId: user.tenantId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        assetId: id,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+        ...this.inspectionAccessScope(user),
+      },
+      orderBy: [
+        {
+          submittedAt: 'desc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
+      include: {
+        inspectionImages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          select: {
+            id: true,
+            inspectionId: true,
+            url: true,
+            filename: true,
+            mimeType: true,
+            sizeBytes: true,
+            latitude: true,
+            longitude: true,
+            timestamp: true,
+            createdAt: true,
+          },
+        },
+        results: {
+          select: {
+            valueText: true,
+            templateItem: {
+              select: {
+                key: true,
+                label: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return inspections.map((inspection) => ({
+      id: inspection.id,
+      assetId: inspection.assetId,
+      cycleNumber: inspection.inspectionCycle,
+      status: inspection.completionStatus,
+      submittedAt: inspection.submittedAt?.toISOString() ?? null,
+      createdAt: inspection.createdAt.toISOString(),
+      updatedAt: inspection.updatedAt.toISOString(),
+      remarks: this.extractRemarks(inspection.results) || null,
+      imageCount: inspection.inspectionImages.length,
+      images: inspection.inspectionImages.map((image) => ({
+        id: image.id,
+        inspectionId: image.inspectionId,
+        url: image.url,
+        filename: image.filename,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        latitude: image.latitude,
+        longitude: image.longitude,
+        timestamp: image.timestamp?.toISOString() ?? null,
+        createdAt: image.createdAt.toISOString(),
+      })),
+    }));
+  }
+
   async updateStatus(
     user: RequestUser,
     id: string,
@@ -312,6 +399,25 @@ export class AssetsService {
           some: {
             userId: user.id,
             isActive: true,
+          },
+        },
+      },
+    };
+  }
+
+  private inspectionAccessScope(user: RequestUser) {
+    if (user.role === 'ADMIN') {
+      return {};
+    }
+
+    return {
+      siteVisit: {
+        team: {
+          members: {
+            some: {
+              userId: user.id,
+              isActive: true,
+            },
           },
         },
       },

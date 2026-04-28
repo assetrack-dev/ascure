@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import {
   Asset,
   AssetDetailResponse,
+  AssetInspectionHistoryItem,
   AssetType,
   CreateAssetInput,
   InspectionImage,
@@ -231,6 +232,10 @@ export const api = {
 
   getAssetDetail(token: string, assetId: string) {
     return request<AssetDetailResponse>(`/assets/${assetId}`, { token });
+  },
+
+  getAssetInspections(token: string, assetId: string) {
+    return request<AssetInspectionHistoryItem[]>(`/assets/${assetId}/inspections`, { token });
   },
 
   getAssetTypes(token: string) {

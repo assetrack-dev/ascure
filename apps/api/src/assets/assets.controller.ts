@@ -28,6 +28,11 @@ export class AssetsController {
     return this.assetsService.getById(user, params.id);
   }
 
+  @Get(':id/inspections')
+  getInspections(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
+    return this.assetsService.getInspections(user, params.id);
+  }
+
   @Put(':id')
   update(
     @CurrentUser() user: RequestUser,
