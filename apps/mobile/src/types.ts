@@ -233,6 +233,7 @@ export interface SaveInspectionResultItemInput {
 }
 
 export interface SaveInspectionItemResultInput {
+  checklistItemId?: string | null;
   label: string;
   result: InspectionItemResultValue;
   remark?: string | null;
@@ -343,6 +344,54 @@ export interface InspectionItemResult {
 export interface SelectOption {
   label: string;
   value: string;
+}
+
+export interface ChecklistTemplateItem {
+  id: string;
+  templateId: string;
+  label: string;
+  sortOrder: number;
+  isRequired: boolean;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ChecklistTemplate {
+  id: string;
+  assetType: string;
+  assetTypeId: string;
+  assetTypeCode?: string;
+  assetTypeName?: string;
+  name: string;
+  version: number;
+  status: string;
+  isActive: boolean;
+  itemCount: number;
+  inspectionCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  items: ChecklistTemplateItem[];
+}
+
+export interface ChecklistTemplateItemInput {
+  id?: string;
+  label: string;
+  sortOrder?: number;
+  isRequired?: boolean;
+  isActive?: boolean;
+}
+
+export interface CreateChecklistTemplateInput {
+  assetType: string;
+  name: string;
+  items: ChecklistTemplateItemInput[];
+}
+
+export interface UpdateChecklistTemplateInput {
+  name?: string;
+  isActive?: boolean;
+  items?: ChecklistTemplateItemInput[];
 }
 
 export interface CreateAssetInput {

@@ -172,6 +172,7 @@ export function buildChecklistItemsPayload(
       const remark = draftValue.remark.trim();
 
       items.push({
+        checklistItemId: item.id,
         label: item.label,
         result: draftValue.result,
         remark: remark || null,

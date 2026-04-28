@@ -295,6 +295,7 @@ model InspectionTemplateItem {
   helperText  String?
   inputType   InspectionItemInputType
   isRequired  Boolean                  @default(false)
+  isActive    Boolean                  @default(true)
   sortOrder   Int                      @default(0)
   optionsJson Json?
   createdAt   DateTime                 @default(now())

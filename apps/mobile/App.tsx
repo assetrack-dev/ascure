@@ -6,6 +6,7 @@ import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
+import { ChecklistTemplateAdminScreen } from './src/screens/ChecklistTemplateAdminScreen';
 import { DefectDetailScreen } from './src/screens/DefectDetailScreen';
 import { DefectListScreen } from './src/screens/DefectListScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -50,6 +51,7 @@ type ImagePreviewReturnRoute =
 type Route =
   | { name: 'login' }
   | { name: 'home' }
+  | { name: 'ChecklistTemplateAdmin' }
   | { name: 'DefectList' }
   | { name: 'DefectDetail'; defectId: string }
   | { name: 'check-in' }
@@ -321,6 +323,16 @@ export default function App() {
     );
   }
 
+  if (route.name === 'ChecklistTemplateAdmin') {
+    return (
+      <ChecklistTemplateAdminScreen
+        token={token}
+        onBack={() => setRoute({ name: 'home' })}
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
   if (route.name === 'DefectDetail') {
     return (
       <DefectDetailScreen
@@ -443,6 +455,7 @@ export default function App() {
       onUserRefreshed={setUser}
       onOpenCheckIn={() => setRoute({ name: 'check-in' })}
       onOpenDefects={() => setRoute({ name: 'DefectList' })}
+      onOpenChecklistTemplates={() => setRoute({ name: 'ChecklistTemplateAdmin' })}
       onOpenVisit={(visit) =>
         setRoute({
           name: 'visit-detail',

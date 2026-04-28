@@ -452,6 +452,9 @@ export class InspectionsService {
             sections: {
               include: {
                 items: {
+                  where: {
+                    isActive: true,
+                  },
                   orderBy: {
                     sortOrder: 'asc',
                   },

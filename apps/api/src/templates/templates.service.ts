@@ -373,6 +373,7 @@ export class TemplatesService {
                 helperText: item.helperText,
                 inputType: item.inputType,
                 isRequired: item.isRequired,
+                isActive: item.isActive,
                 sortOrder: item.sortOrder,
                 optionsJson:
                   item.optionsJson === null
@@ -572,6 +573,7 @@ export class TemplatesService {
         helperText: true,
         inputType: true,
         isRequired: true,
+        isActive: true,
         sortOrder: true,
         optionsJson: true,
       },
@@ -848,6 +850,7 @@ export class TemplatesService {
           helperText: item.helperText,
           inputType: item.inputType,
           isRequired: item.isRequired,
+          isActive: item.isActive,
           sortOrder: item.sortOrder,
           optionsJson: item.optionsJson,
           createdAt: item.createdAt,

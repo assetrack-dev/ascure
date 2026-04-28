@@ -22,6 +22,7 @@ export function HomeScreen({
   onUserRefreshed,
   onOpenCheckIn,
   onOpenDefects,
+  onOpenChecklistTemplates,
   onOpenVisit,
   onLogout,
   onUnauthorized,
@@ -31,6 +32,7 @@ export function HomeScreen({
   onUserRefreshed: (user: SessionUser) => void;
   onOpenCheckIn: () => void;
   onOpenDefects: () => void;
+  onOpenChecklistTemplates: () => void;
   onOpenVisit: (visit: SiteVisit) => void;
   onLogout: () => Promise<void>;
   onUnauthorized: (error?: unknown) => Promise<void>;
@@ -134,6 +136,11 @@ export function HomeScreen({
             <BodyText>Start a new shared site visit when your team arrives at a substation.</BodyText>
             <AppButton label="Create Check-In" onPress={onOpenCheckIn} />
             <AppButton label="View Defects" variant="secondary" onPress={onOpenDefects} />
+            <AppButton
+              label="Manage Checklist Templates"
+              variant="secondary"
+              onPress={onOpenChecklistTemplates}
+            />
           </Card>
         </>
       ) : null}

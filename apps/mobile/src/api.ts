@@ -4,6 +4,8 @@ import {
   AssetDetailResponse,
   AssetInspectionHistoryItem,
   AssetType,
+  ChecklistTemplate,
+  CreateChecklistTemplateInput,
   CreateAssetInput,
   DefectDetail,
   DefectListItem,
@@ -19,6 +21,7 @@ import {
   SiteVisit,
   Team,
   Substation,
+  UpdateChecklistTemplateInput,
   UpdateAssetInput,
 } from './types';
 
@@ -245,6 +248,33 @@ export const api = {
 
   getAssetTypes(token: string) {
     return request<AssetType[]>('/asset-types', { token });
+  },
+
+  getChecklistTemplates(token: string) {
+    return request<ChecklistTemplate[]>('/checklist-templates', { token });
+  },
+
+  getChecklistTemplateByAssetType(token: string, assetType: string) {
+    return request<ChecklistTemplate>(
+      `/checklist-templates/asset-type/${encodeURIComponent(assetType)}`,
+      { token },
+    );
+  },
+
+  createChecklistTemplate(token: string, input: CreateChecklistTemplateInput) {
+    return request<ChecklistTemplate>('/checklist-templates', {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  },
+
+  updateChecklistTemplate(token: string, templateId: string, input: UpdateChecklistTemplateInput) {
+    return request<ChecklistTemplate>(`/checklist-templates/${templateId}`, {
+      method: 'PATCH',
+      token,
+      body: input,
+    });
   },
 
   getDefects(token: string) {
