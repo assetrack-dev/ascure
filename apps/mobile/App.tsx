@@ -6,6 +6,7 @@ import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
+import { DefectListScreen } from './src/screens/DefectListScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ImagePreviewScreen } from './src/screens/ImagePreviewScreen';
 import { InspectionDetailScreen } from './src/screens/InspectionDetailScreen';
@@ -14,6 +15,24 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { VisitDetailScreen } from './src/screens/VisitDetailScreen';
 import { LoadingScreen } from './src/ui';
 import { Asset, SessionUser } from './src/types';
+
+type InspectionDetailRoute =
+  | {
+      name: 'InspectionDetail';
+      source: 'history';
+      visitId: string;
+      substationId: string;
+      assetId: string;
+      inspectionId: string;
+      assetCode?: string;
+    }
+  | {
+      name: 'InspectionDetail';
+      source: 'defects';
+      inspectionId: string;
+      assetId: string;
+      assetCode?: string;
+    };
 
 type ImagePreviewReturnRoute =
   | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
@@ -24,18 +43,12 @@ type ImagePreviewReturnRoute =
       assetId: string;
       assetCode?: string;
     }
-  | {
-      name: 'InspectionDetail';
-      visitId: string;
-      substationId: string;
-      assetId: string;
-      inspectionId: string;
-      assetCode?: string;
-    };
+  | InspectionDetailRoute;
 
 type Route =
   | { name: 'login' }
   | { name: 'home' }
+  | { name: 'DefectList' }
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
   | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
@@ -46,14 +59,7 @@ type Route =
       assetId: string;
       assetCode?: string;
     }
-  | {
-      name: 'InspectionDetail';
-      visitId: string;
-      substationId: string;
-      assetId: string;
-      inspectionId: string;
-      assetCode?: string;
-    }
+  | InspectionDetailRoute
   | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string }
   | { name: 'ImagePreview'; uri: string; title?: string; returnTo: ImagePreviewReturnRoute };
@@ -264,27 +270,41 @@ export default function App() {
         inspectionId={route.inspectionId}
         assetCode={route.assetCode}
         onBack={() =>
-          setRoute({
-            name: 'AssetInspectionHistory',
-            visitId: route.visitId,
-            substationId: route.substationId,
-            assetId: route.assetId,
-            assetCode: route.assetCode,
-          })
+          route.source === 'history'
+            ? setRoute({
+                name: 'AssetInspectionHistory',
+                visitId: route.visitId,
+                substationId: route.substationId,
+                assetId: route.assetId,
+                assetCode: route.assetCode,
+              })
+            : setRoute({ name: 'DefectList' })
         }
         onOpenImagePreview={(params) =>
           setRoute({
             name: 'ImagePreview',
             uri: params.uri,
             title: params.title,
-            returnTo: {
-              name: 'InspectionDetail',
-              visitId: route.visitId,
-              substationId: route.substationId,
-              assetId: route.assetId,
-              inspectionId: route.inspectionId,
-              assetCode: route.assetCode,
-            },
+            returnTo: route,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'DefectList') {
+    return (
+      <DefectListScreen
+        token={token}
+        onBack={() => setRoute({ name: 'home' })}
+        onOpenInspection={(item) =>
+          setRoute({
+            name: 'InspectionDetail',
+            source: 'defects',
+            inspectionId: item.inspectionId,
+            assetId: item.assetId,
+            assetCode: item.assetCode,
           })
         }
         onUnauthorized={handleUnauthorized}
@@ -323,6 +343,7 @@ export default function App() {
         onOpenInspectionDetail={(params) =>
           setRoute({
             name: 'InspectionDetail',
+            source: 'history',
             visitId: route.visitId,
             substationId: route.substationId,
             assetId: route.assetId,
@@ -393,6 +414,7 @@ export default function App() {
       initialUser={user}
       onUserRefreshed={setUser}
       onOpenCheckIn={() => setRoute({ name: 'check-in' })}
+      onOpenDefects={() => setRoute({ name: 'DefectList' })}
       onOpenVisit={(visit) =>
         setRoute({
           name: 'visit-detail',

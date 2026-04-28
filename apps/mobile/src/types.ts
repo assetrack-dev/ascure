@@ -289,6 +289,21 @@ export type InspectionDetail = {
   images?: InspectionImage[];
 };
 
+export type DefectListItem = {
+  id: string;
+  inspectionId: string;
+  assetId: string;
+  assetCode?: string;
+  assetType?: string;
+  cycleNumber?: number;
+  label: string;
+  result: 'FAIL';
+  remark?: string | null;
+  status: 'OPEN';
+  submittedAt?: string | null;
+  createdAt: string;
+};
+
 export interface InspectionItemResult {
   id: string;
   inspectionId?: string;

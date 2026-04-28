@@ -5,6 +5,7 @@ import {
   AssetInspectionHistoryItem,
   AssetType,
   CreateAssetInput,
+  DefectListItem,
   InspectionImage,
   InspectionImageUploadInput,
   InspectionDetail,
@@ -242,6 +243,10 @@ export const api = {
 
   getAssetTypes(token: string) {
     return request<AssetType[]>('/asset-types', { token });
+  },
+
+  getDefects(token: string) {
+    return request<DefectListItem[]>('/defects', { token });
   },
 
   createAsset(token: string, input: CreateAssetInput) {

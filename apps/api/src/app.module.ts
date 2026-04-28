@@ -8,6 +8,7 @@ import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { TemplatesModule } from './templates/templates.module';
 import { InspectionsModule } from './inspections/inspections.module';
 import { AssetsModule } from './assets/assets.module';
+import { DefectsModule } from './defects/defects.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AssetsModule } from './assets/assets.module';
     SiteVisitsModule,
     TemplatesModule,
     InspectionsModule,
+    DefectsModule,
   ],
 })
 export class AppModule {}
