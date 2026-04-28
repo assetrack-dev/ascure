@@ -22,7 +22,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
-import { SaveInspectionResultItemDto, SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
+import {
+  SaveInspectionItemResultDto,
+  SaveInspectionResultItemDto,
+  SaveInspectionResultsDto,
+} from './dto/save-inspection-results.dto';
 import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
 
 type UploadedInspectionImageFile = {
@@ -140,6 +144,11 @@ export class InspectionsService {
             },
           },
         },
+        itemResults: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
       },
     });
 
@@ -156,6 +165,8 @@ export class InspectionsService {
       createdAt: inspection.createdAt.toISOString(),
       updatedAt: inspection.updatedAt.toISOString(),
       remarks: this.extractRemarks(inspection.results) || null,
+      items: inspection.itemResults.map((item) => this.serializeInspectionItemResult(item)),
+      totalDefects: inspection.itemResults.filter((item) => item.isDefect).length,
       images: inspection.inspectionImages.map((image) => this.serializeInspectionImage(image)),
     };
   }
@@ -167,11 +178,80 @@ export class InspectionsService {
       throw new BadRequestException('Submitted inspections cannot be modified.');
     }
 
+    const hasStructuredItems = dto.items !== undefined;
+    const hasLegacyResults = dto.results !== undefined;
+
+    if (!hasStructuredItems && !hasLegacyResults) {
+      throw new BadRequestException('Inspection results payload must include items or results.');
+    }
+
+    if (hasStructuredItems) {
+      await this.saveStructuredItemResults(inspection, dto.items ?? []);
+    }
+
+    if (hasLegacyResults) {
+      await this.saveLegacyTemplateResults(inspection, dto.results ?? []);
+    }
+
+    return this.getForm(user, inspectionId);
+  }
+
+  private async saveStructuredItemResults(
+    inspection: Awaited<ReturnType<InspectionsService['getAccessibleInspection']>>,
+    items: SaveInspectionItemResultDto[],
+  ) {
+    const templateItems = this.flattenTemplateItems(inspection.template.sections);
+    const templateItemIds = new Set(templateItems.map((item) => item.id));
+    const checklistItemIdByLabel = this.buildChecklistItemIdByLabel(templateItems);
+
+    const data = items.map((item) => {
+      const label = item.label.trim();
+
+      if (!label) {
+        throw new BadRequestException('Checklist item label is required.');
+      }
+
+      if (item.checklistItemId && !templateItemIds.has(item.checklistItemId)) {
+        throw new BadRequestException(
+          `Checklist item ${item.checklistItemId} does not belong to this inspection template.`,
+        );
+      }
+
+      const checklistItemId =
+        item.checklistItemId ?? checklistItemIdByLabel.get(this.normalizeLabelKey(label)) ?? null;
+      const remark = this.normalizeOptionalString(item.remark);
+
+      return {
+        inspectionId: inspection.id,
+        checklistItemId,
+        label,
+        result: item.result,
+        remark,
+        isDefect: item.result === 'FAIL',
+      };
+    });
+
+    await this.prisma.$transaction([
+      this.prisma.inspectionItemResult.deleteMany({
+        where: {
+          inspectionId: inspection.id,
+        },
+      }),
+      this.prisma.inspectionItemResult.createMany({
+        data,
+      }),
+    ]);
+  }
+
+  private async saveLegacyTemplateResults(
+    inspection: Awaited<ReturnType<InspectionsService['getAccessibleInspection']>>,
+    results: SaveInspectionResultItemDto[],
+  ) {
     const templateItems = this.flattenTemplateItems(inspection.template.sections);
     const templateItemMap = new Map(templateItems.map((item) => [item.id, item]));
 
     await this.prisma.$transaction(
-      dto.results.map((input) => {
+      results.map((input) => {
         const templateItem = templateItemMap.get(input.templateItemId);
         if (!templateItem) {
           throw new BadRequestException(`Template item ${input.templateItemId} does not belong to this inspection template.`);
@@ -195,8 +275,6 @@ export class InspectionsService {
         });
       }),
     );
-
-    return this.getForm(user, inspectionId);
   }
 
   async submit(user: RequestUser, inspectionId: string) {
@@ -207,22 +285,36 @@ export class InspectionsService {
     }
 
     const templateItems = this.flattenTemplateItems(inspection.template.sections);
-    const resultMap = new Map(inspection.results.map((result) => [result.templateItemId, result]));
+    if (inspection.itemResults.length > 0) {
+      const missingChecklistItems = this.findMissingStructuredChecklistItems(
+        templateItems,
+        inspection.itemResults,
+      );
 
-    const missingRequiredItems = templateItems
-      .filter((item) => item.isRequired)
-      .filter((item) => !this.hasStoredValue(resultMap.get(item.id)))
-      .map((item) => ({
-        templateItemId: item.id,
-        key: item.key,
-        label: item.label,
-      }));
+      if (missingChecklistItems.length > 0) {
+        throw new BadRequestException({
+          message: 'Checklist selections are missing.',
+          missingItems: missingChecklistItems,
+        });
+      }
+    } else {
+      const resultMap = new Map(inspection.results.map((result) => [result.templateItemId, result]));
 
-    if (missingRequiredItems.length > 0) {
-      throw new BadRequestException({
-        message: 'Required inspection items are missing.',
-        missingItems: missingRequiredItems,
-      });
+      const missingRequiredItems = templateItems
+        .filter((item) => item.isRequired)
+        .filter((item) => !this.hasStoredValue(resultMap.get(item.id)))
+        .map((item) => ({
+          templateItemId: item.id,
+          key: item.key,
+          label: item.label,
+        }));
+
+      if (missingRequiredItems.length > 0) {
+        throw new BadRequestException({
+          message: 'Required inspection items are missing.',
+          missingItems: missingRequiredItems,
+        });
+      }
     }
 
     return this.prisma.inspection.update({
@@ -284,6 +376,30 @@ export class InspectionsService {
     });
 
     return this.serializeInspectionImage(image, dto.type ?? null);
+  }
+
+  private serializeInspectionItemResult(item: {
+    id: string;
+    inspectionId: string;
+    checklistItemId: string | null;
+    label: string;
+    result: string;
+    remark: string | null;
+    isDefect: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: item.id,
+      inspectionId: item.inspectionId,
+      checklistItemId: item.checklistItemId,
+      label: item.label,
+      result: item.result,
+      remark: item.remark,
+      isDefect: item.isDefect,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    };
   }
 
   private serializeInspectionImage(
@@ -348,6 +464,11 @@ export class InspectionsService {
           },
         },
         results: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+        itemResults: {
           orderBy: {
             createdAt: 'asc',
           },
@@ -474,6 +595,102 @@ export class InspectionsService {
     }>,
   ) {
     return sections.flatMap((section) => section.items);
+  }
+
+  private buildChecklistItemIdByLabel(
+    templateItems: Array<{
+      id: string;
+      label: string;
+    }>,
+  ) {
+    const byLabel = new Map<string, string | null>();
+
+    for (const item of templateItems) {
+      const labelKey = this.normalizeLabelKey(item.label);
+
+      if (!labelKey) {
+        continue;
+      }
+
+      byLabel.set(labelKey, byLabel.has(labelKey) ? null : item.id);
+    }
+
+    return byLabel;
+  }
+
+  private findMissingStructuredChecklistItems(
+    templateItems: Array<{
+      id: string;
+      key: string;
+      label: string;
+    }>,
+    itemResults: Array<{
+      checklistItemId: string | null;
+      label: string;
+    }>,
+  ) {
+    const resultItemIds = new Set(
+      itemResults
+        .map((item) => item.checklistItemId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const resultLabelCounts = new Map<string, number>();
+
+    for (const item of itemResults) {
+      if (item.checklistItemId) {
+        continue;
+      }
+
+      const labelKey = this.normalizeLabelKey(item.label);
+
+      if (!labelKey) {
+        continue;
+      }
+
+      resultLabelCounts.set(labelKey, (resultLabelCounts.get(labelKey) ?? 0) + 1);
+    }
+
+    const missingItems: Array<{
+      templateItemId: string;
+      key: string;
+      label: string;
+    }> = [];
+
+    for (const item of templateItems) {
+      if (resultItemIds.has(item.id)) {
+        continue;
+      }
+
+      const labelKey = this.normalizeLabelKey(item.label);
+      const labelResultCount = resultLabelCounts.get(labelKey) ?? 0;
+
+      if (labelResultCount > 0) {
+        resultLabelCounts.set(labelKey, labelResultCount - 1);
+        continue;
+      }
+
+      missingItems.push({
+        templateItemId: item.id,
+        key: item.key,
+        label: item.label,
+      });
+    }
+
+    return missingItems;
+  }
+
+  private normalizeLabelKey(label: string) {
+    return label.trim().toLowerCase();
+  }
+
+  private normalizeOptionalString(value?: string | null) {
+    if (!value) {
+      return null;
+    }
+
+    const trimmedValue = value.trim();
+
+    return trimmedValue ? trimmedValue : null;
   }
 
   private buildResultValueData(
@@ -728,6 +945,7 @@ export class InspectionsService {
         createdAt: result.createdAt,
         updatedAt: result.updatedAt,
       })),
+      items: inspection.itemResults.map((item) => this.serializeInspectionItemResult(item)),
     };
   }
 

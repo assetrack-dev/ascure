@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { api, ApiError, API_BASE_URL } from '../api';
-import { InspectionDetail, InspectionImage } from '../types';
+import { InspectionDetail, InspectionImage, InspectionItemResult } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -64,6 +64,8 @@ export function InspectionDetailScreen({
   }, [loadInspectionDetail]);
 
   const images = useMemo(() => inspection?.images ?? [], [inspection]);
+  const checklistItems = useMemo(() => inspection?.items ?? [], [inspection]);
+  const totalDefects = inspection?.totalDefects ?? checklistItems.filter((item) => item.isDefect).length;
   const groupedImages = useMemo(() => groupInspectionImages(images), [images]);
 
   return (
@@ -159,6 +161,7 @@ export function InspectionDetailScreen({
               <InfoRow label="Status" value={formatStatus(inspection.status)} />
               <InfoRow label="Submitted" value={formatDateTime(inspection.submittedAt)} />
               <InfoRow label="Images" value={String(images.length)} />
+              <InfoRow label="Total Defects" value={String(totalDefects)} />
               <View style={{ gap: 6 }}>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>Remarks</Text>
                 <Text
@@ -171,6 +174,29 @@ export function InspectionDetailScreen({
                   {inspection.remarks || 'No remarks recorded.'}
                 </Text>
               </View>
+            </View>
+
+            <View
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 16,
+                padding: 16,
+                gap: 14,
+                borderWidth: 1,
+                borderColor: '#dce5f1',
+              }}
+            >
+              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+                Checklist Results
+              </Text>
+
+              {checklistItems.length === 0 ? (
+                <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
+                  No checklist results recorded.
+                </Text>
+              ) : (
+                checklistItems.map((item) => <ChecklistResultRow key={item.id} item={item} />)
+              )}
             </View>
 
             <View
@@ -281,6 +307,64 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ChecklistResultRow({ item }: { item: InspectionItemResult }) {
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: '#dce5f1',
+        paddingTop: 12,
+        gap: 8,
+      }}
+    >
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+        <Text style={{ flex: 1, fontSize: 15, lineHeight: 22, fontWeight: '700', color: '#10233d' }}>
+          {item.label}
+        </Text>
+        <ResultBadge result={item.result} />
+        {item.isDefect ? <DefectBadge /> : null}
+      </View>
+      {item.remark ? (
+        <Text style={{ fontSize: 14, lineHeight: 21, color: '#526277' }}>{item.remark}</Text>
+      ) : (
+        <Text style={{ fontSize: 14, lineHeight: 21, color: '#8a98aa' }}>No remark.</Text>
+      )}
+    </View>
+  );
+}
+
+function ResultBadge({ result }: { result: InspectionItemResult['result'] }) {
+  const style = getResultBadgeStyle(result);
+
+  return (
+    <View
+      style={{
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        backgroundColor: style.backgroundColor,
+      }}
+    >
+      <Text style={{ fontSize: 12, fontWeight: '800', color: style.color }}>{result}</Text>
+    </View>
+  );
+}
+
+function DefectBadge() {
+  return (
+    <View
+      style={{
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        backgroundColor: '#fee2e2',
+      }}
+    >
+      <Text style={{ fontSize: 12, fontWeight: '800', color: '#b91c1c' }}>DEFECT</Text>
+    </View>
+  );
+}
+
 function groupInspectionImages(images: InspectionImage[]) {
   const groups: Record<ImageGroup, InspectionImage[]> = {
     BEFORE: [],
@@ -294,6 +378,27 @@ function groupInspectionImages(images: InspectionImage[]) {
   }
 
   return groups;
+}
+
+function getResultBadgeStyle(result: InspectionItemResult['result']) {
+  if (result === 'PASS') {
+    return {
+      backgroundColor: '#dcfce7',
+      color: '#166534',
+    };
+  }
+
+  if (result === 'FAIL') {
+    return {
+      backgroundColor: '#fee2e2',
+      color: '#b91c1c',
+    };
+  }
+
+  return {
+    backgroundColor: '#e5e7eb',
+    color: '#374151',
+  };
 }
 
 function getImageGroup(image: InspectionImage): ImageGroup {

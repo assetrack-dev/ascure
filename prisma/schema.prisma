@@ -41,6 +41,12 @@ enum InspectionCompletionStatus {
   SUBMITTED
 }
 
+enum InspectionItemResultValue {
+  PASS
+  FAIL
+  NA
+}
+
 enum AssetStatus {
   ACTIVE
   INACTIVE
@@ -313,6 +319,7 @@ model Inspection {
   template         InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
   createdBy        User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   results          InspectionResult[]
+  itemResults      InspectionItemResult[]
   images           Image[]
   inspectionImages InspectionImage[]
 
@@ -337,6 +344,22 @@ model InspectionImage {
 
   @@index([inspectionId])
   @@index([inspectionId, createdAt])
+}
+
+model InspectionItemResult {
+  id              String                    @id @default(uuid()) @db.Uuid
+  inspectionId    String                    @db.Uuid
+  checklistItemId String?                   @db.Uuid
+  label           String
+  result          InspectionItemResultValue
+  remark          String?
+  isDefect        Boolean                   @default(false)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  inspection      Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+  @@index([checklistItemId])
 }
 
 model InspectionResult {

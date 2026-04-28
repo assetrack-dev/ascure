@@ -1,9 +1,12 @@
 import {
+  ChecklistDraftValues,
   DraftValues,
   InspectionFormResponse,
+  InspectionItemResultValue,
   InspectionSummary,
   InspectionTemplateItem,
   InspectionTemplateSection,
+  SaveInspectionItemResultInput,
   SaveInspectionResultItemInput,
   SelectOption,
   SiteVisit,
@@ -100,6 +103,91 @@ export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
   }
 
   return options;
+}
+
+export function createInitialChecklistDraftValues(form: InspectionFormResponse): ChecklistDraftValues {
+  const values: ChecklistDraftValues = {};
+  const storedItems = form.items ?? [];
+  const storedByChecklistItemId = new Map(
+    storedItems
+      .filter((item) => item.checklistItemId)
+      .map((item) => [item.checklistItemId, item]),
+  );
+  const storedByLabel = new Map(
+    storedItems.map((item) => [normalizeLabelKey(item.label), item]),
+  );
+
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      const storedItem =
+        storedByChecklistItemId.get(item.id) ?? storedByLabel.get(normalizeLabelKey(item.label));
+
+      values[item.id] = {
+        result: isInspectionItemResultValue(storedItem?.result) ? storedItem.result : null,
+        remark: storedItem?.remark ?? '',
+      };
+    }
+  }
+
+  return values;
+}
+
+export function validateChecklistDraft(
+  form: InspectionFormResponse,
+  draftValues: ChecklistDraftValues,
+) {
+  const missingItems: string[] = [];
+
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      const draftValue = draftValues[item.id];
+
+      if (!isInspectionItemResultValue(draftValue?.result)) {
+        missingItems.push(item.label);
+      }
+    }
+  }
+
+  if (missingItems.length === 0) {
+    return null;
+  }
+
+  return `Please select PASS, FAIL, or NA for: ${missingItems.join(', ')}`;
+}
+
+export function buildChecklistItemsPayload(
+  form: InspectionFormResponse,
+  draftValues: ChecklistDraftValues,
+) {
+  const items: SaveInspectionItemResultInput[] = [];
+
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      const draftValue = draftValues[item.id];
+
+      if (!isInspectionItemResultValue(draftValue?.result)) {
+        continue;
+      }
+
+      const remark = draftValue.remark.trim();
+
+      items.push({
+        label: item.label,
+        result: draftValue.result,
+        remark: remark || null,
+      });
+    }
+  }
+
+  return items;
+}
+
+function isInspectionItemResultValue(value: unknown): value is InspectionItemResultValue {
+  return value === 'PASS' || value === 'FAIL' || value === 'NA';
+}
+
+function normalizeLabelKey(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export function validateInspectionDraft(form: InspectionFormResponse, draftValues: DraftValues) {

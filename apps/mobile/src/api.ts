@@ -10,6 +10,7 @@ import {
   InspectionDetail,
   InspectionFormResponse,
   LoginResponse,
+  SaveInspectionItemResultInput,
   SaveInspectionResultItemInput,
   SessionUser,
   SiteVisit,
@@ -286,7 +287,10 @@ export const api = {
   saveInspectionResults(
     token: string,
     inspectionId: string,
-    input: { results: SaveInspectionResultItemInput[] },
+    input: {
+      items?: SaveInspectionItemResultInput[];
+      results?: SaveInspectionResultItemInput[];
+    },
   ) {
     return request<InspectionFormResponse>(`/inspections/${inspectionId}/results`, {
       method: 'PUT',

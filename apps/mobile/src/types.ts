@@ -97,6 +97,7 @@ export interface AssetDetailResponse {
 }
 
 export type InspectionCompletionStatus = 'DRAFT' | 'SUBMITTED';
+export type InspectionItemResultValue = 'PASS' | 'FAIL' | 'NA';
 
 export interface InspectionSummary {
   id: string;
@@ -218,6 +219,7 @@ export interface InspectionFormResponse {
     createdAt: string;
     updatedAt: string;
   }>;
+  items?: InspectionItemResult[];
 }
 
 export interface SaveInspectionResultItemInput {
@@ -228,6 +230,12 @@ export interface SaveInspectionResultItemInput {
   valueDate?: string | null;
   valueDateTime?: string | null;
   valueJson?: unknown;
+}
+
+export interface SaveInspectionItemResultInput {
+  label: string;
+  result: InspectionItemResultValue;
+  remark?: string | null;
 }
 
 export interface InspectionImageUploadInput {
@@ -276,8 +284,22 @@ export type InspectionDetail = {
   createdAt?: string;
   updatedAt?: string;
   remarks?: string | null;
+  items?: InspectionItemResult[];
+  totalDefects?: number;
   images?: InspectionImage[];
 };
+
+export interface InspectionItemResult {
+  id: string;
+  inspectionId?: string;
+  checklistItemId: string | null;
+  label: string;
+  result: InspectionItemResultValue;
+  remark: string | null;
+  isDefect: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export interface SelectOption {
   label: string;
@@ -307,3 +329,8 @@ export interface UpdateAssetInput {
 
 export type DraftValue = string | boolean | null;
 export type DraftValues = Record<string, DraftValue>;
+export type ChecklistItemDraftValue = {
+  result: InspectionItemResultValue | null;
+  remark: string;
+};
+export type ChecklistDraftValues = Record<string, ChecklistItemDraftValue>;

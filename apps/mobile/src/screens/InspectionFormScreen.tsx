@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import { Alert, Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import {
-  buildResultsPayload,
-  createInitialDraftValues,
+  buildChecklistItemsPayload,
+  createInitialChecklistDraftValues,
   formatDateTime,
-  normalizeSelectOptions,
-  validateInspectionDraft,
+  validateChecklistDraft,
 } from '../utils';
 import {
   AppButton,
@@ -27,9 +26,10 @@ import {
   TextField,
 } from '../ui';
 import {
-  DraftValues,
+  ChecklistDraftValues,
   InspectionFormResponse,
   InspectionImageUploadInput,
+  InspectionItemResultValue,
   InspectionTemplateItem,
 } from '../types';
 
@@ -67,7 +67,7 @@ export function InspectionFormScreen({
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
-  const [draftValues, setDraftValues] = useState<DraftValues>({});
+  const [draftValues, setDraftValues] = useState<ChecklistDraftValues>({});
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -91,7 +91,7 @@ export function InspectionFormScreen({
 
       const formResponse = await api.getInspectionForm(token, inspectionId);
       setForm(formResponse);
-      setDraftValues(createInitialDraftValues(formResponse));
+      setDraftValues(createInitialChecklistDraftValues(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await onUnauthorized(loadError);
@@ -170,26 +170,14 @@ export function InspectionFormScreen({
     };
   }, [pendingOverlayPhoto]);
 
-  const unsupportedItems = useMemo(() => {
-    if (!form) {
-      return [];
-    }
-
-    return form.template.sections.flatMap((section) =>
-      section.items.filter(
-        (item) =>
-          item.inputType !== 'TEXT' &&
-          item.inputType !== 'BOOLEAN' &&
-          item.inputType !== 'NUMBER' &&
-          item.inputType !== 'SELECT',
-      ),
-    );
-  }, [form]);
-
-  function updateDraftValue(itemId: string, value: DraftValues[string]) {
+  function updateDraftValue(itemId: string, changes: Partial<ChecklistDraftValues[string]>) {
     setDraftValues((current) => ({
       ...current,
-      [itemId]: value,
+      [itemId]: {
+        result: current[itemId]?.result ?? null,
+        remark: current[itemId]?.remark ?? '',
+        ...changes,
+      },
     }));
   }
 
@@ -332,17 +320,17 @@ export function InspectionFormScreen({
       return;
     }
 
-    const validationMessage = validateInspectionDraft(form, draftValues);
+    const validationMessage = validateChecklistDraft(form, draftValues);
 
     if (validationMessage) {
       setError(validationMessage);
       return;
     }
 
-    const { supportedResults } = buildResultsPayload(form, draftValues);
+    const checklistItems = buildChecklistItemsPayload(form, draftValues);
 
-    if (supportedResults.length === 0) {
-      setError('This form does not contain any supported input fields for submission.');
+    if (checklistItems.length === 0) {
+      setError('This form does not contain any checklist items for submission.');
       return;
     }
 
@@ -351,7 +339,7 @@ export function InspectionFormScreen({
       setError(null);
 
       await api.saveInspectionResults(token, inspectionId, {
-        results: supportedResults,
+        items: checklistItems,
       });
 
       await api.submitInspection(token, inspectionId);
@@ -450,20 +438,6 @@ export function InspectionFormScreen({
             ))}
           </Card>
 
-          {unsupportedItems.length > 0 ? (
-            <Card>
-              <SectionTitle>Unsupported Items</SectionTitle>
-              <BodyText muted>
-                The current mobile MVP only edits TEXT, BOOLEAN, NUMBER, and SELECT fields.
-              </BodyText>
-              {unsupportedItems.map((item) => (
-                <BodyText key={item.id} muted>
-                  {item.label} ({item.inputType})
-                </BodyText>
-              ))}
-            </Card>
-          ) : null}
-
           {form.template.sections.length === 0 ? (
             <EmptyState
               title="No checklist items"
@@ -480,7 +454,7 @@ export function InspectionFormScreen({
                     item={item}
                     value={draftValues[item.id]}
                     disabled={Boolean(isSubmitted)}
-                    onChange={(nextValue) => updateDraftValue(item.id, nextValue)}
+                    onChange={(changes) => updateDraftValue(item.id, changes)}
                   />
                 ))}
               </Card>
@@ -541,9 +515,9 @@ function ChecklistItemCard({
   onChange,
 }: {
   item: InspectionTemplateItem;
-  value: DraftValues[string];
+  value: ChecklistDraftValues[string] | undefined;
   disabled: boolean;
-  onChange: (nextValue: DraftValues[string]) => void;
+  onChange: (changes: Partial<ChecklistDraftValues[string]>) => void;
 }) {
   return (
     <View style={styles.itemCard}>
@@ -552,111 +526,36 @@ function ChecklistItemCard({
         {item.isRequired ? <Text style={styles.requiredLabel}>Required</Text> : null}
       </View>
       {item.helperText ? <Text style={styles.helperText}>{item.helperText}</Text> : null}
-      {renderInput({ item, value, disabled, onChange })}
+      <View style={styles.resultButtonRow}>
+        {(['PASS', 'FAIL', 'NA'] as InspectionItemResultValue[]).map((result) => (
+          <ResultButton
+            key={result}
+            result={result}
+            selected={value?.result === result}
+            disabled={disabled}
+            onPress={() => onChange({ result })}
+          />
+        ))}
+      </View>
+      <TextField
+        label="Remark"
+        value={value?.remark ?? ''}
+        onChangeText={(remark) => onChange({ remark })}
+        placeholder="Optional remark"
+        editable={!disabled}
+        multiline
+      />
     </View>
   );
 }
 
-function renderInput({
-  item,
-  value,
-  disabled,
-  onChange,
-}: {
-  item: InspectionTemplateItem;
-  value: DraftValues[string];
-  disabled: boolean;
-  onChange: (nextValue: DraftValues[string]) => void;
-}) {
-  if (item.inputType === 'TEXT') {
-    return (
-      <TextField
-        label="Answer"
-        value={typeof value === 'string' ? value : ''}
-        onChangeText={onChange}
-        placeholder="Enter text"
-        editable={!disabled}
-        multiline
-      />
-    );
-  }
-
-  if (item.inputType === 'NUMBER') {
-    return (
-      <TextField
-        label="Answer"
-        value={typeof value === 'string' ? value : ''}
-        onChangeText={onChange}
-        placeholder="Enter number"
-        keyboardType="numeric"
-        editable={!disabled}
-      />
-    );
-  }
-
-  if (item.inputType === 'BOOLEAN') {
-    return (
-      <View style={styles.booleanRow}>
-        <BooleanButton
-          label="Yes"
-          selected={value === true}
-          disabled={disabled}
-          onPress={() => onChange(true)}
-        />
-        <BooleanButton
-          label="No"
-          selected={value === false}
-          disabled={disabled}
-          onPress={() => onChange(false)}
-        />
-        <BooleanButton
-          label="Clear"
-          selected={value === null}
-          disabled={disabled}
-          onPress={() => onChange(null)}
-        />
-      </View>
-    );
-  }
-
-  if (item.inputType === 'SELECT') {
-    const options = normalizeSelectOptions(item.optionsJson);
-
-    if (options.length === 0) {
-      return <BodyText muted>Select options are not configured for this item.</BodyText>;
-    }
-
-    return (
-      <View style={styles.selectOptionsWrap}>
-        {options.map((option) => (
-          <BooleanButton
-            key={option.value}
-            label={option.label}
-            selected={value === option.value}
-            disabled={disabled}
-            onPress={() => onChange(option.value)}
-          />
-        ))}
-        <BooleanButton
-          label="Clear"
-          selected={value === '' || value === null}
-          disabled={disabled}
-          onPress={() => onChange('')}
-        />
-      </View>
-    );
-  }
-
-  return <BodyText muted>This field type is not editable in the current mobile MVP.</BodyText>;
-}
-
-function BooleanButton({
-  label,
+function ResultButton({
+  result,
   selected,
   disabled,
   onPress,
 }: {
-  label: string;
+  result: InspectionItemResultValue;
   selected: boolean;
   disabled: boolean;
   onPress: () => void;
@@ -668,11 +567,22 @@ function BooleanButton({
       style={({ pressed }) => [
         styles.choiceButton,
         selected && styles.choiceButtonSelected,
+        result === 'FAIL' && styles.choiceButtonFail,
+        result === 'FAIL' && selected && styles.choiceButtonFailSelected,
         disabled && styles.choiceButtonDisabled,
         pressed && !disabled && styles.choiceButtonPressed,
       ]}
     >
-      <Text style={[styles.choiceButtonText, selected && styles.choiceButtonTextSelected]}>{label}</Text>
+      <Text
+        style={[
+          styles.choiceButtonText,
+          selected && styles.choiceButtonTextSelected,
+          result === 'FAIL' && styles.choiceButtonFailText,
+          result === 'FAIL' && selected && styles.choiceButtonFailTextSelected,
+        ]}
+      >
+        {result}
+      </Text>
     </Pressable>
   );
 }
@@ -830,15 +740,12 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: '#607086',
   },
-  booleanRow: {
+  resultButtonRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  selectOptionsWrap: {
     gap: 10,
   },
   choiceButton: {
+    flex: 1,
     minHeight: 48,
     borderRadius: 14,
     borderWidth: 1,
@@ -851,6 +758,13 @@ const styles = StyleSheet.create({
   choiceButtonSelected: {
     borderColor: '#0f5cd8',
     backgroundColor: '#eef4ff',
+  },
+  choiceButtonFail: {
+    borderColor: '#fca5a5',
+  },
+  choiceButtonFailSelected: {
+    borderColor: '#dc2626',
+    backgroundColor: '#fef2f2',
   },
   choiceButtonDisabled: {
     opacity: 0.55,
@@ -865,5 +779,11 @@ const styles = StyleSheet.create({
   },
   choiceButtonTextSelected: {
     color: '#0f5cd8',
+  },
+  choiceButtonFailText: {
+    color: '#b91c1c',
+  },
+  choiceButtonFailTextSelected: {
+    color: '#dc2626',
   },
 });
