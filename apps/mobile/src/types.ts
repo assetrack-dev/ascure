@@ -69,6 +69,33 @@ export interface Asset {
   substation?: Pick<Substation, 'id' | 'code' | 'name'>;
 }
 
+export type AssetDetailImageType = 'BEFORE' | 'DURING' | 'AFTER';
+
+export interface AssetDetailImage {
+  uri?: string;
+  url?: string;
+  type?: AssetDetailImageType;
+}
+
+export interface AssetDetailInspection {
+  id: string;
+  cycleNumber: number;
+  status: string;
+  submittedAt: string;
+  remarks: string;
+  images: AssetDetailImage[];
+}
+
+export interface AssetDetailResponse {
+  id: string;
+  assetCode: string;
+  assetType: string;
+  status: string;
+  latitude: number | null;
+  longitude: number | null;
+  latestInspection: AssetDetailInspection | null;
+}
+
 export type InspectionCompletionStatus = 'DRAFT' | 'SUBMITTED';
 
 export interface InspectionSummary {

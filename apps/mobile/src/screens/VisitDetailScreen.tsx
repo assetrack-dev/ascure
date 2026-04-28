@@ -32,6 +32,7 @@ export function VisitDetailScreen({
   onBack,
   onOpenInspection,
   onOpenAddAsset,
+  onOpenAssetDetail,
   onOpenEditAsset,
   onUnauthorized,
 }: {
@@ -42,6 +43,7 @@ export function VisitDetailScreen({
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
   onOpenAddAsset: () => void;
+  onOpenAssetDetail: (assetId: string) => void;
   onOpenEditAsset: (asset: Asset) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
@@ -278,6 +280,12 @@ export function VisitDetailScreen({
                       <BodyText muted>
                         Starting a new inspection will create cycle {nextCycle} using the latest active template from the backend.
                       </BodyText>
+                      <AppButton
+                        label="View Details"
+                        onPress={() => onOpenAssetDetail(asset.id)}
+                        variant="secondary"
+                        disabled={statusAssetId !== null || workingAssetId !== null}
+                      />
                       <AppButton
                         label="Edit Asset"
                         onPress={() => onOpenEditAsset(asset)}

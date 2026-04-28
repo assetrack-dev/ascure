@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -21,6 +21,11 @@ export class AssetsController {
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateAssetDto) {
     return this.assetsService.create(user, dto);
+  }
+
+  @Get(':id')
+  getById(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
+    return this.assetsService.getById(user, params.id);
   }
 
   @Put(':id')

@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   Asset,
+  AssetDetailResponse,
   AssetType,
   CreateAssetInput,
   InspectionImage,
@@ -226,6 +227,10 @@ export const api = {
     const query = encodeURIComponent(substationId);
 
     return request<Asset[]>(`/assets?substation_id=${query}`, { token });
+  },
+
+  getAssetDetail(token: string, assetId: string) {
+    return request<AssetDetailResponse>(`/assets/${assetId}`, { token });
   },
 
   getAssetTypes(token: string) {

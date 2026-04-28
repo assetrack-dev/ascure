@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AssetStatus, Prisma } from '@prisma/client';
+import { AssetStatus, InspectionCompletionStatus, Prisma } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -94,6 +94,86 @@ export class AssetsService {
 
       throw error;
     }
+  }
+
+  async getById(user: RequestUser, id: string) {
+    const asset = await this.prisma.asset.findFirst({
+      where: {
+        id,
+        tenantId: user.tenantId,
+      },
+      include: {
+        assetType: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
+        inspections: {
+          where: {
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+          },
+          take: 1,
+          orderBy: [
+            {
+              submittedAt: 'desc',
+            },
+            {
+              createdAt: 'desc',
+            },
+          ],
+          include: {
+            inspectionImages: {
+              orderBy: {
+                createdAt: 'asc',
+              },
+              select: {
+                url: true,
+              },
+            },
+            results: {
+              select: {
+                valueText: true,
+                templateItem: {
+                  select: {
+                    key: true,
+                    label: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    const latestInspection = asset.inspections[0];
+
+    return {
+      id: asset.id,
+      assetCode: asset.assetCode,
+      assetType: asset.assetType.name,
+      status: asset.status,
+      latitude: asset.latitude,
+      longitude: asset.longitude,
+      latestInspection: latestInspection
+        ? {
+            id: latestInspection.id,
+            cycleNumber: latestInspection.inspectionCycle,
+            status: latestInspection.completionStatus,
+            submittedAt: latestInspection.submittedAt?.toISOString() ?? '',
+            remarks: this.extractRemarks(latestInspection.results),
+            images: latestInspection.inspectionImages.map((image) => ({
+              url: image.url,
+            })),
+          }
+        : null,
+    };
   }
 
   async updateStatus(
@@ -255,6 +335,30 @@ export class AssetsService {
         },
       },
     };
+  }
+
+  private extractRemarks(
+    results: Array<{
+      valueText: string | null;
+      templateItem: {
+        key: string;
+        label: string;
+      };
+    }>,
+  ) {
+    const remarkResult = results.find((result) => {
+      const key = result.templateItem.key.toLowerCase();
+      const label = result.templateItem.label.toLowerCase();
+
+      return (
+        key.includes('remark') ||
+        label.includes('remark') ||
+        key.includes('catatan') ||
+        label.includes('catatan')
+      );
+    });
+
+    return remarkResult?.valueText?.trim() ?? '';
   }
 
   private normalizeOptionalString(value?: string) {

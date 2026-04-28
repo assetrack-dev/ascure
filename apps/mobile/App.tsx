@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import { api, ApiError } from './src/api';
 import { loadStoredToken, removeStoredToken, storeToken } from './src/storage';
 import { AddAssetScreen } from './src/screens/AddAssetScreen';
+import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
@@ -16,6 +17,7 @@ type Route =
   | { name: 'home' }
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
+  | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
   | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string };
 
@@ -139,12 +141,46 @@ export default function App() {
             substationId: route.substationId,
           })
         }
+        onOpenAssetDetail={(assetId) =>
+          setRoute({
+            name: 'asset-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetId,
+          })
+        }
         onOpenEditAsset={(asset) =>
           setRoute({
             name: 'add-asset',
             visitId: route.visitId,
             substationId: route.substationId,
             assetToEdit: asset,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
+  if (route.name === 'asset-detail') {
+    return (
+      <AssetDetailScreen
+        token={token}
+        visitId={route.visitId}
+        assetId={route.assetId}
+        onBack={() =>
+          setRoute({
+            name: 'visit-detail',
+            visitId: route.visitId,
+            substationId: route.substationId,
+          })
+        }
+        onOpenInspection={(inspectionId) =>
+          setRoute({
+            name: 'inspection-form',
+            inspectionId,
+            visitId: route.visitId,
+            substationId: route.substationId,
           })
         }
         onUnauthorized={handleUnauthorized}
