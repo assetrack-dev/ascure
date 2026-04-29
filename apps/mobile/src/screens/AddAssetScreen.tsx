@@ -15,27 +15,39 @@ import {
   SelectCard,
   TextField,
 } from '../ui';
-import { Asset, AssetType } from '../types';
+import { Asset, AssetType, Substation } from '../types';
 
 export function AddAssetScreen({
   token,
   substationId,
   siteVisitId,
   assetToEdit,
+  initialLatitude,
+  initialLongitude,
   onBack,
   onSaved,
   onUnauthorized,
 }: {
   token: string;
-  substationId: string;
-  siteVisitId: string;
+  substationId?: string;
+  siteVisitId?: string;
   assetToEdit?: Asset;
+  initialLatitude?: number;
+  initialLongitude?: number;
   onBack: () => void;
   onSaved: (successMessage: string) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const isEditMode = Boolean(assetToEdit);
+  const initialMapLatitude =
+    typeof initialLatitude === 'number' && Number.isFinite(initialLatitude) ? initialLatitude : null;
+  const initialMapLongitude =
+    typeof initialLongitude === 'number' && Number.isFinite(initialLongitude) ? initialLongitude : null;
+  const hasInitialMapLocation =
+    !isEditMode && initialMapLatitude !== null && initialMapLongitude !== null;
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
+  const [substations, setSubstations] = useState<Substation[]>([]);
+  const [selectedSubstationId, setSelectedSubstationId] = useState('');
   const [selectedAssetTypeId, setSelectedAssetTypeId] = useState('');
   const [assetCode, setAssetCode] = useState('');
   const [assetName, setAssetName] = useState('');
@@ -44,9 +56,15 @@ export function AddAssetScreen({
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isSubstationMenuOpen, setIsSubstationMenuOpen] = useState(false);
   const [isAssetTypeMenuOpen, setIsAssetTypeMenuOpen] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedSubstation = useMemo(
+    () => substations.find((substation) => substation.id === selectedSubstationId) ?? null,
+    [selectedSubstationId, substations],
+  );
 
   const selectedAssetType = useMemo(
     () => assetTypes.find((assetType) => assetType.id === selectedAssetTypeId) ?? null,
@@ -54,22 +72,34 @@ export function AddAssetScreen({
   );
 
   useEffect(() => {
+    setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
     setSelectedAssetTypeId(assetToEdit?.assetTypeId ?? '');
     setAssetCode(assetToEdit?.assetCode ?? '');
     setAssetName(assetToEdit?.name ?? '');
     setLatitude(
       assetToEdit?.latitude !== null && assetToEdit?.latitude !== undefined
         ? formatCoordinate(assetToEdit.latitude)
+        : hasInitialMapLocation
+          ? formatCoordinate(initialMapLatitude)
         : '',
     );
     setLongitude(
       assetToEdit?.longitude !== null && assetToEdit?.longitude !== undefined
         ? formatCoordinate(assetToEdit.longitude)
+        : hasInitialMapLocation
+          ? formatCoordinate(initialMapLongitude)
         : '',
     );
+    setIsSubstationMenuOpen(false);
     setIsAssetTypeMenuOpen(false);
     setError(null);
-  }, [assetToEdit]);
+  }, [
+    assetToEdit,
+    hasInitialMapLocation,
+    initialMapLatitude,
+    initialMapLongitude,
+    substationId,
+  ]);
 
   const prefillCurrentLocation = useCallback(async () => {
     try {
@@ -97,8 +127,13 @@ export function AddAssetScreen({
       setError(null);
       setIsLoading(true);
 
-      const assetTypeList = await api.getAssetTypes(token);
+      const [assetTypeList, substationList] = await Promise.all([
+        api.getAssetTypes(token),
+        substationId ? Promise.resolve<Substation[]>([]) : api.getSubstations(token),
+      ]);
+
       setAssetTypes(assetTypeList);
+      setSubstations(substationList);
 
       if (assetTypeList.length > 0) {
         setSelectedAssetTypeId((currentValue) =>
@@ -108,7 +143,15 @@ export function AddAssetScreen({
         );
       }
 
-      if (!isEditMode) {
+      if (!substationId && substationList.length > 0) {
+        setSelectedSubstationId((currentValue) =>
+          substationList.some((substation) => substation.id === currentValue)
+            ? currentValue
+            : substationList[0].id,
+        );
+      }
+
+      if (!isEditMode && !hasInitialMapLocation) {
         await prefillCurrentLocation();
       }
     } catch (loadError) {
@@ -121,7 +164,14 @@ export function AddAssetScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [isEditMode, onUnauthorized, prefillCurrentLocation, token]);
+  }, [
+    hasInitialMapLocation,
+    isEditMode,
+    onUnauthorized,
+    prefillCurrentLocation,
+    substationId,
+    token,
+  ]);
 
   useEffect(() => {
     loadOptions();
@@ -159,6 +209,13 @@ export function AddAssetScreen({
 
     if (!selectedAssetTypeId) {
       setError('Please select an asset type.');
+      return;
+    }
+
+    const targetSubstationId = substationId ?? selectedSubstationId;
+
+    if (!targetSubstationId) {
+      setError('Please select a pencawang.');
       return;
     }
 
@@ -212,7 +269,7 @@ export function AddAssetScreen({
       }
 
       await api.createAsset(token, {
-        substationId,
+        substationId: targetSubstationId,
         assetTypeId: selectedAssetTypeId,
         assetCode: normalizedAssetCode,
         name: normalizedAssetName || undefined,
@@ -268,7 +325,12 @@ export function AddAssetScreen({
           }
           onPress={handleSubmit}
           loading={isSubmitting}
-          disabled={isLoading || isSubmitting || assetTypes.length === 0}
+          disabled={
+            isLoading ||
+            isSubmitting ||
+            assetTypes.length === 0 ||
+            (!substationId && substations.length === 0)
+          }
         />
       }
     >
@@ -279,6 +341,56 @@ export function AddAssetScreen({
 
       {!isLoading ? (
         <>
+          {!substationId ? (
+            <Card>
+              <SectionTitle>Pencawang</SectionTitle>
+              {substations.length === 0 ? (
+                <EmptyState
+                  title="No pencawang available"
+                  description="The backend did not return any active substations for this tenant."
+                />
+              ) : (
+                <>
+                  <Pressable
+                    onPress={() => setIsSubstationMenuOpen((currentValue) => !currentValue)}
+                    style={({ pressed }) => [
+                      styles.dropdownField,
+                      isSubstationMenuOpen && styles.dropdownFieldOpen,
+                      pressed && styles.dropdownFieldPressed,
+                    ]}
+                  >
+                    <View style={styles.dropdownLabelWrap}>
+                      <Text style={styles.dropdownLabel}>Selected Pencawang</Text>
+                      <Text style={styles.dropdownValue}>
+                        {selectedSubstation
+                          ? `${selectedSubstation.code} - ${selectedSubstation.name}`
+                          : 'Choose a pencawang'}
+                      </Text>
+                    </View>
+                    <Text style={styles.dropdownCaret}>{isSubstationMenuOpen ? 'Hide' : 'Choose'}</Text>
+                  </Pressable>
+
+                  {isSubstationMenuOpen ? (
+                    <View style={styles.dropdownOptions}>
+                      {substations.map((substation) => (
+                        <SelectCard
+                          key={substation.id}
+                          label={`${substation.code} - ${substation.name}`}
+                          description={substation.location}
+                          selected={selectedSubstationId === substation.id}
+                          onPress={() => {
+                            setSelectedSubstationId(substation.id);
+                            setIsSubstationMenuOpen(false);
+                          }}
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                </>
+              )}
+            </Card>
+          ) : null}
+
           <Card>
             <SectionTitle>Asset Type</SectionTitle>
             {assetTypes.length === 0 ? (
@@ -344,6 +456,7 @@ export function AddAssetScreen({
 
           <Card>
             <SectionTitle>Coordinates</SectionTitle>
+            {hasInitialMapLocation ? <BodyText muted>Location selected from map</BodyText> : null}
             <BodyText muted>Use the current device GPS if it is available, or enter coordinates manually.</BodyText>
             <TextField
               label="Latitude"

@@ -28,7 +28,7 @@ export function AssetDetailScreen({
   onUnauthorized,
 }: {
   token: string;
-  visitId: string;
+  visitId?: string;
   assetId: string;
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
@@ -74,7 +74,7 @@ export function AssetDetailScreen({
   const imageCarouselWidth = Math.max(180, screenWidth - 72);
 
   async function handleStartInspection() {
-    if (!asset) {
+    if (!asset || !visitId) {
       return;
     }
 
@@ -175,17 +175,19 @@ export function AssetDetailScreen({
           )}
         </View>
 
-        <Pressable
-          onPress={() =>
-            onOpenInspectionHistory({
-              assetId: asset.id,
-              assetCode: asset.assetCode,
-            })
-          }
-          style={({ pressed }) => [styles.historyButton, pressed && styles.pressedButton]}
-        >
-          <Text style={styles.historyButtonText}>View All Inspections</Text>
-        </Pressable>
+        {visitId ? (
+          <Pressable
+            onPress={() =>
+              onOpenInspectionHistory({
+                assetId: asset.id,
+                assetCode: asset.assetCode,
+              })
+            }
+            style={({ pressed }) => [styles.historyButton, pressed && styles.pressedButton]}
+          >
+            <Text style={styles.historyButtonText}>View All Inspections</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Inspection Images</Text>
@@ -234,18 +236,20 @@ export function AssetDetailScreen({
           )}
         </View>
 
-        <Pressable
-          onPress={handleStartInspection}
-          disabled={isStartingInspection}
-          style={({ pressed }) => [
-            styles.startButton,
-            isStartingInspection && styles.disabledButton,
-            pressed && !isStartingInspection && styles.pressedButton,
-          ]}
-        >
-          {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
-          <Text style={styles.startButtonText}>Start New Inspection</Text>
-        </Pressable>
+        {visitId ? (
+          <Pressable
+            onPress={handleStartInspection}
+            disabled={isStartingInspection}
+            style={({ pressed }) => [
+              styles.startButton,
+              isStartingInspection && styles.disabledButton,
+              pressed && !isStartingInspection && styles.pressedButton,
+            ]}
+          >
+            {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
+            <Text style={styles.startButtonText}>Start New Inspection</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     </View>
   );

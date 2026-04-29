@@ -7,6 +7,7 @@ import {
   ChecklistTemplate,
   CreateChecklistTemplateInput,
   CreateAssetInput,
+  DashboardData,
   DefectDetail,
   DefectListItem,
   DefectStatus,
@@ -252,6 +253,10 @@ export const api = {
 
   getChecklistTemplates(token: string) {
     return request<ChecklistTemplate[]>('/checklist-templates', { token });
+  },
+
+  getDashboard(token: string) {
+    return request<DashboardData>('/dashboard', { token });
   },
 
   getChecklistTemplateByAssetType(token: string, assetType: string) {

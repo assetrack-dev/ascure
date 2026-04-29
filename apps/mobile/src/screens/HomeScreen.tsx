@@ -21,6 +21,8 @@ export function HomeScreen({
   initialUser,
   onUserRefreshed,
   onOpenCheckIn,
+  onOpenDashboard,
+  onOpenAssetMap,
   onOpenDefects,
   onOpenChecklistTemplates,
   onOpenVisit,
@@ -31,6 +33,8 @@ export function HomeScreen({
   initialUser: SessionUser;
   onUserRefreshed: (user: SessionUser) => void;
   onOpenCheckIn: () => void;
+  onOpenDashboard: () => void;
+  onOpenAssetMap: () => void;
   onOpenDefects: () => void;
   onOpenChecklistTemplates: () => void;
   onOpenVisit: (visit: SiteVisit) => void;
@@ -135,6 +139,8 @@ export function HomeScreen({
             <SectionTitle>Next Step</SectionTitle>
             <BodyText>Start a new shared site visit when your team arrives at a substation.</BodyText>
             <AppButton label="Create Check-In" onPress={onOpenCheckIn} />
+            <AppButton label="View Dashboard" variant="secondary" onPress={onOpenDashboard} />
+            <AppButton label="Asset Map" variant="secondary" onPress={onOpenAssetMap} />
             <AppButton label="View Defects" variant="secondary" onPress={onOpenDefects} />
             <AppButton
               label="Manage Checklist Templates"

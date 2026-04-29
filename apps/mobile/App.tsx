@@ -7,6 +7,7 @@ import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
 import { ChecklistTemplateAdminScreen } from './src/screens/ChecklistTemplateAdminScreen';
+import { DashboardScreen } from './src/screens/DashboardScreen';
 import { DefectDetailScreen } from './src/screens/DefectDetailScreen';
 import { DefectListScreen } from './src/screens/DefectListScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -14,6 +15,7 @@ import { ImagePreviewScreen } from './src/screens/ImagePreviewScreen';
 import { InspectionDetailScreen } from './src/screens/InspectionDetailScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
+import { MapScreen } from './src/screens/MapScreen';
 import { VisitDetailScreen } from './src/screens/VisitDetailScreen';
 import { LoadingScreen } from './src/ui';
 import { Asset, SessionUser } from './src/types';
@@ -36,9 +38,27 @@ type InspectionDetailRoute =
       assetCode?: string;
     };
 
+type AssetDetailRoute = {
+  name: 'asset-detail';
+  visitId?: string;
+  substationId: string;
+  assetId: string;
+  returnTo?: 'asset-map';
+  mapVisitId?: string;
+  mapSubstationId?: string;
+};
+
+type DefectDetailRoute = {
+  name: 'DefectDetail';
+  defectId: string;
+  returnTo?: 'Dashboard' | 'DefectList' | 'AssetMap';
+  mapVisitId?: string;
+  mapSubstationId?: string;
+};
+
 type ImagePreviewReturnRoute =
-  | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
-  | { name: 'DefectDetail'; defectId: string }
+  | AssetDetailRoute
+  | DefectDetailRoute
   | {
       name: 'AssetInspectionHistory';
       visitId: string;
@@ -51,12 +71,14 @@ type ImagePreviewReturnRoute =
 type Route =
   | { name: 'login' }
   | { name: 'home' }
+  | { name: 'Dashboard' }
   | { name: 'ChecklistTemplateAdmin' }
   | { name: 'DefectList' }
-  | { name: 'DefectDetail'; defectId: string }
+  | DefectDetailRoute
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
-  | { name: 'asset-detail'; visitId: string; substationId: string; assetId: string }
+  | AssetDetailRoute
+  | { name: 'asset-map'; visitId?: string; substationId?: string }
   | {
       name: 'AssetInspectionHistory';
       visitId: string;
@@ -65,7 +87,15 @@ type Route =
       assetCode?: string;
     }
   | InspectionDetailRoute
-  | { name: 'add-asset'; visitId: string; substationId: string; assetToEdit?: Asset }
+  | {
+      name: 'add-asset';
+      visitId?: string;
+      substationId?: string;
+      assetToEdit?: Asset;
+      initialLatitude?: number;
+      initialLongitude?: number;
+      returnTo?: 'asset-map';
+    }
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string }
   | { name: 'ImagePreview'; uri: string; title?: string; returnTo: ImagePreviewReturnRoute };
 
@@ -189,6 +219,13 @@ export default function App() {
             substationId: route.substationId,
           })
         }
+        onOpenAssetMap={() =>
+          setRoute({
+            name: 'asset-map',
+            visitId: route.visitId,
+            substationId: route.substationId,
+          })
+        }
         onOpenAssetDetail={(assetId) =>
           setRoute({
             name: 'asset-detail',
@@ -217,40 +254,51 @@ export default function App() {
         visitId={route.visitId}
         assetId={route.assetId}
         onBack={() =>
-          setRoute({
-            name: 'visit-detail',
-            visitId: route.visitId,
-            substationId: route.substationId,
-          })
+          route.returnTo === 'asset-map'
+            ? setRoute({
+                name: 'asset-map',
+                visitId: route.mapVisitId,
+                substationId: route.mapSubstationId,
+              })
+            : route.visitId
+              ? setRoute({
+                  name: 'visit-detail',
+                  visitId: route.visitId,
+                  substationId: route.substationId,
+                })
+              : setRoute({ name: 'home' })
         }
-        onOpenInspection={(inspectionId) =>
+        onOpenInspection={(inspectionId) => {
+          if (!route.visitId) {
+            return;
+          }
+
           setRoute({
             name: 'inspection-form',
             inspectionId,
             visitId: route.visitId,
             substationId: route.substationId,
-          })
-        }
-        onOpenInspectionHistory={(params) =>
+          });
+        }}
+        onOpenInspectionHistory={(params) => {
+          if (!route.visitId) {
+            return;
+          }
+
           setRoute({
             name: 'AssetInspectionHistory',
             visitId: route.visitId,
             substationId: route.substationId,
             assetId: params.assetId,
             assetCode: params.assetCode,
-          })
-        }
+          });
+        }}
         onOpenImagePreview={(params) =>
           setRoute({
             name: 'ImagePreview',
             uri: params.uri,
             title: params.title,
-            returnTo: {
-              name: 'asset-detail',
-              visitId: route.visitId,
-              substationId: route.substationId,
-              assetId: route.assetId,
-            },
+            returnTo: route,
           })
         }
         onUnauthorized={handleUnauthorized}
@@ -307,6 +355,7 @@ export default function App() {
           setRoute({
             name: 'DefectDetail',
             defectId: item.id,
+            returnTo: 'DefectList',
           })
         }
         onOpenInspection={(item) =>
@@ -333,12 +382,39 @@ export default function App() {
     );
   }
 
+  if (route.name === 'Dashboard') {
+    return (
+      <DashboardScreen
+        token={token}
+        onBack={() => setRoute({ name: 'home' })}
+        onOpenDefect={(defectId) =>
+          setRoute({
+            name: 'DefectDetail',
+            defectId,
+            returnTo: 'Dashboard',
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
   if (route.name === 'DefectDetail') {
     return (
       <DefectDetailScreen
         token={token}
         defectId={route.defectId}
-        onBack={() => setRoute({ name: 'DefectList' })}
+        onBack={() =>
+          route.returnTo === 'Dashboard'
+            ? setRoute({ name: 'Dashboard' })
+            : route.returnTo === 'AssetMap'
+              ? setRoute({
+                  name: 'asset-map',
+                  visitId: route.mapVisitId,
+                  substationId: route.mapSubstationId,
+                })
+              : setRoute({ name: 'DefectList' })
+        }
         onOpenImagePreview={(params) =>
           setRoute({
             name: 'ImagePreview',
@@ -396,6 +472,56 @@ export default function App() {
     );
   }
 
+  if (route.name === 'asset-map') {
+    return (
+      <MapScreen
+        token={token}
+        visitId={route.visitId}
+        substationId={route.substationId}
+        onBack={() =>
+          route.visitId && route.substationId
+            ? setRoute({
+                name: 'visit-detail',
+                visitId: route.visitId,
+                substationId: route.substationId,
+              })
+            : setRoute({ name: 'home' })
+        }
+        onAddAssetHere={(params) =>
+          setRoute({
+            name: 'add-asset',
+            visitId: params.visitId,
+            substationId: params.substationId,
+            initialLatitude: params.latitude,
+            initialLongitude: params.longitude,
+            returnTo: 'asset-map',
+          })
+        }
+        onOpenAssetDetail={(asset) =>
+          setRoute({
+            name: 'asset-detail',
+            visitId: route.visitId,
+            substationId: asset.substationId,
+            assetId: asset.id,
+            returnTo: 'asset-map',
+            mapVisitId: route.visitId,
+            mapSubstationId: route.substationId,
+          })
+        }
+        onOpenDefectDetail={(defectId) =>
+          setRoute({
+            name: 'DefectDetail',
+            defectId,
+            returnTo: 'AssetMap',
+            mapVisitId: route.visitId,
+            mapSubstationId: route.substationId,
+          })
+        }
+        onUnauthorized={handleUnauthorized}
+      />
+    );
+  }
+
   if (route.name === 'add-asset') {
     return (
       <AddAssetScreen
@@ -403,20 +529,32 @@ export default function App() {
         siteVisitId={route.visitId}
         substationId={route.substationId}
         assetToEdit={route.assetToEdit}
+        initialLatitude={route.initialLatitude}
+        initialLongitude={route.initialLongitude}
         onBack={() =>
-          setRoute({
-            name: 'visit-detail',
-            visitId: route.visitId,
-            substationId: route.substationId,
-          })
+          route.returnTo === 'asset-map'
+            ? setRoute({
+                name: 'asset-map',
+                visitId: route.visitId,
+                substationId: route.substationId,
+              })
+            : route.visitId && route.substationId
+              ? setRoute({
+                  name: 'visit-detail',
+                  visitId: route.visitId,
+                  substationId: route.substationId,
+                })
+              : setRoute({ name: 'home' })
         }
         onSaved={(successMessage) =>
-          setRoute({
-            name: 'visit-detail',
-            visitId: route.visitId,
-            substationId: route.substationId,
-            successMessage,
-          })
+          route.visitId && route.substationId
+            ? setRoute({
+                name: 'visit-detail',
+                visitId: route.visitId,
+                substationId: route.substationId,
+                successMessage,
+              })
+            : setRoute({ name: 'home' })
         }
         onUnauthorized={handleUnauthorized}
       />
@@ -454,6 +592,8 @@ export default function App() {
       initialUser={user}
       onUserRefreshed={setUser}
       onOpenCheckIn={() => setRoute({ name: 'check-in' })}
+      onOpenDashboard={() => setRoute({ name: 'Dashboard' })}
+      onOpenAssetMap={() => setRoute({ name: 'asset-map' })}
       onOpenDefects={() => setRoute({ name: 'DefectList' })}
       onOpenChecklistTemplates={() => setRoute({ name: 'ChecklistTemplateAdmin' })}
       onOpenVisit={(visit) =>

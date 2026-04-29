@@ -278,6 +278,24 @@ export type AssetInspectionHistoryItem = {
 
 export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
 
+export type DashboardRecentDefect = {
+  id: string;
+  assetCode?: string;
+  label: string;
+  status: DefectStatus;
+  createdAt: string;
+};
+
+export type DashboardData = {
+  totalAssets: number;
+  totalInspections: number;
+  totalDefects: number;
+  openDefects: number;
+  inProgressDefects: number;
+  closedDefects: number;
+  recentDefects: DashboardRecentDefect[];
+};
+
 export type InspectionDetail = {
   id: string;
   assetId: string;

@@ -32,6 +32,7 @@ export function VisitDetailScreen({
   onBack,
   onOpenInspection,
   onOpenAddAsset,
+  onOpenAssetMap,
   onOpenAssetDetail,
   onOpenEditAsset,
   onUnauthorized,
@@ -43,6 +44,7 @@ export function VisitDetailScreen({
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
   onOpenAddAsset: () => void;
+  onOpenAssetMap: () => void;
   onOpenAssetDetail: (assetId: string) => void;
   onOpenEditAsset: (asset: Asset) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
@@ -220,6 +222,7 @@ export function VisitDetailScreen({
           <Card>
             <SectionTitle>Assets</SectionTitle>
             <AppButton label="+ Add Asset" onPress={onOpenAddAsset} variant="secondary" />
+            <AppButton label="Asset Map" onPress={onOpenAssetMap} variant="secondary" />
             {assets.length === 0 ? (
               <EmptyState
                 title="No assets found"

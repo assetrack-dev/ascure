@@ -7,3 +7,6 @@ onlyBuiltDependencies:
   - '@prisma/engines'
   - esbuild
   - prisma
+patchedDependencies:
+  expo-modules-core@55.0.23: patches/expo-modules-core@55.0.23.patch
+  react-native@0.83.6: patches/react-native@0.83.6.patch
