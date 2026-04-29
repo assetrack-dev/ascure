@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Location from 'expo-location';
+import { Pressable, Text, View } from 'react-native';
 import MapView, { LongPressEvent, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import { api, ApiError } from '../api';
 import { AppButton, BodyText, ErrorBanner, InlineButton, LoadingBlock, Screen } from '../ui';
@@ -18,6 +19,8 @@ const DEFAULT_REGION: Region = {
   latitudeDelta: 0.08,
   longitudeDelta: 0.08,
 };
+
+const CURRENT_LOCATION_REGION_DELTA = 0.005;
 
 console.log('MAP API KEY:', process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
@@ -45,9 +48,14 @@ export function MapScreen({
   onOpenDefectDetail: (defectId: string) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
+  const mapRef = useRef<MapView | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [defectMarkers, setDefectMarkers] = useState<DefectMapMarker[]>([]);
   const [selectedCoordinate, setSelectedCoordinate] = useState<Coordinate | null>(null);
+  const [currentCoordinate, setCurrentCoordinate] = useState<Coordinate | null>(null);
+  const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null);
+  const [locationMessage, setLocationMessage] = useState<string | null>(null);
+  const [mapType, setMapType] = useState<'standard' | 'hybrid'>('hybrid');
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +63,53 @@ export function MapScreen({
   const assetsWithCoordinates = useMemo(
     () => assets.filter((asset) => getAssetCoordinate(asset) !== null),
     [assets],
+  );
+
+  const hasAssetOrDefectMarkers = assetsWithCoordinates.length > 0 || defectMarkers.length > 0;
+
+  const centerMapOnCoordinate = useCallback((coordinate: Coordinate) => {
+    const nextRegion = createCurrentLocationRegion(coordinate);
+
+    mapRef.current?.animateToRegion(nextRegion, 600);
+    setRegion(nextRegion);
+  }, []);
+
+  const requestCurrentLocation = useCallback(
+    async (centerMap = false) => {
+      try {
+        setLocationMessage(null);
+
+        const permission = await Location.requestForegroundPermissionsAsync();
+
+        if (permission.status !== Location.PermissionStatus.GRANTED) {
+          setCurrentCoordinate(null);
+          setCurrentAccuracy(null);
+          setLocationMessage('Location permission denied.');
+          return null;
+        }
+
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        const nextCoordinate = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        };
+
+        setCurrentCoordinate(nextCoordinate);
+        setCurrentAccuracy(location.coords.accuracy);
+
+        if (centerMap) {
+          centerMapOnCoordinate(nextCoordinate);
+        }
+
+        return nextCoordinate;
+      } catch {
+        setLocationMessage('Unable to get current location.');
+        return null;
+      }
+    },
+    [centerMapOnCoordinate],
   );
 
   const loadMapData = useCallback(async () => {
@@ -90,6 +145,16 @@ export function MapScreen({
   useEffect(() => {
     loadMapData();
   }, [loadMapData]);
+
+  useEffect(() => {
+    void requestCurrentLocation();
+  }, [requestCurrentLocation]);
+
+  useEffect(() => {
+    if (!isLoading && currentCoordinate && !hasAssetOrDefectMarkers) {
+      centerMapOnCoordinate(currentCoordinate);
+    }
+  }, [centerMapOnCoordinate, currentCoordinate, hasAssetOrDefectMarkers, isLoading]);
 
   function handleLongPress(event: LongPressEvent) {
     const nextCoordinate = {
@@ -158,9 +223,14 @@ export function MapScreen({
           </View>
         ) : (
           <MapView
+            ref={mapRef}
             provider={PROVIDER_GOOGLE}
             style={{ flex: 1 }}
             region={region}
+            mapType={mapType}
+            showsUserLocation={true}
+            showsMyLocationButton={true}
+            followsUserLocation={false}
             onRegionChangeComplete={setRegion}
             onLongPress={handleLongPress}
           >
@@ -200,13 +270,136 @@ export function MapScreen({
             {selectedCoordinate ? (
               <Marker
                 coordinate={selectedCoordinate}
+                draggable
                 title="New asset location"
                 description="Confirm below to add an asset here."
                 pinColor="#10b981"
+                onDragEnd={(event) => setSelectedCoordinate(event.nativeEvent.coordinate)}
               />
             ) : null}
           </MapView>
         )}
+
+        {!isLoading ? (
+          <>
+            <View
+              style={{
+                position: 'absolute',
+                top: 12,
+                left: 12,
+                alignItems: 'flex-start',
+                gap: 6,
+              }}
+            >
+              <Pressable
+                onPress={() => {
+                  void requestCurrentLocation(true);
+                }}
+                style={({ pressed }) => ({
+                  backgroundColor: '#ffffff',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#c7d5e8',
+                  paddingHorizontal: 12,
+                  paddingVertical: 9,
+                  opacity: pressed ? 0.82 : 1,
+                })}
+              >
+                <Text style={{ color: '#33516f', fontSize: 13, fontWeight: '800' }}>
+                  My Location
+                </Text>
+              </Pressable>
+
+              {currentAccuracy !== null ? (
+                <View
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#c7d5e8',
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                  }}
+                >
+                  <Text style={{ color: '#33516f', fontSize: 12, fontWeight: '700' }}>
+                    Accuracy: {Math.round(currentAccuracy)}m
+                  </Text>
+                </View>
+              ) : null}
+
+              {locationMessage ? (
+                <View
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#f3b4b4',
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                    maxWidth: 220,
+                  }}
+                >
+                  <Text style={{ color: '#b42318', fontSize: 12, fontWeight: '700' }}>
+                    {locationMessage}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View
+              style={{
+                position: 'absolute',
+                top: 12,
+                right: 12,
+                flexDirection: 'row',
+                backgroundColor: '#ffffff',
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: '#c7d5e8',
+                overflow: 'hidden',
+              }}
+            >
+              <Pressable
+                onPress={() => setMapType('standard')}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  backgroundColor: mapType === 'standard' ? '#0f5cd8' : '#ffffff',
+                  opacity: pressed ? 0.82 : 1,
+                })}
+              >
+                <Text
+                  style={{
+                    color: mapType === 'standard' ? '#ffffff' : '#33516f',
+                    fontSize: 13,
+                    fontWeight: '800',
+                  }}
+                >
+                  Map
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setMapType('hybrid')}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  backgroundColor: mapType === 'hybrid' ? '#0f5cd8' : '#ffffff',
+                  opacity: pressed ? 0.82 : 1,
+                })}
+              >
+                <Text
+                  style={{
+                    color: mapType === 'hybrid' ? '#ffffff' : '#33516f',
+                    fontSize: 13,
+                    fontWeight: '800',
+                  }}
+                >
+                  Satellite
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        ) : null}
 
         {selectedCoordinate ? (
           <View
@@ -223,6 +416,9 @@ export function MapScreen({
               borderColor: '#c7d5e8',
             }}
           >
+            <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '800' }}>
+              Drag pin to adjust location
+            </Text>
             <BodyText muted>
               {selectedCoordinate.latitude.toFixed(6)}, {selectedCoordinate.longitude.toFixed(6)}
             </BodyText>
@@ -339,6 +535,15 @@ function createCoordinate(
   }
 
   return null;
+}
+
+function createCurrentLocationRegion(coordinate: Coordinate): Region {
+  return {
+    latitude: coordinate.latitude,
+    longitude: coordinate.longitude,
+    latitudeDelta: CURRENT_LOCATION_REGION_DELTA,
+    longitudeDelta: CURRENT_LOCATION_REGION_DELTA,
+  };
 }
 
 function createRegion(coordinates: Coordinate[]) {

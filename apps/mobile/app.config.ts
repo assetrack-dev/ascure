@@ -37,6 +37,7 @@ export default {
     android: {
       package: 'local.ascure.field',
       usesCleartextTraffic: true,
+      permissions: ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION'],
       config: {
         googleMaps: {
           apiKey: googleMapsApiKey,
