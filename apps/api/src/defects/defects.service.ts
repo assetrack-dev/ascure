@@ -44,6 +44,13 @@ export class DefectsService {
                   select: {
                     id: true,
                     assetCode: true,
+                    substation: {
+                      select: {
+                        code: true,
+                        name: true,
+                        location: true,
+                      },
+                    },
                     assetType: {
                       select: {
                         code: true,
@@ -234,6 +241,13 @@ export class DefectsService {
                 select: {
                   id: true,
                   assetCode: true,
+                  substation: {
+                    select: {
+                      code: true,
+                      name: true,
+                      location: true,
+                    },
+                  },
                   assetType: {
                     select: {
                       code: true,
@@ -283,6 +297,11 @@ export class DefectsService {
         submittedAt: Date | null;
         asset: {
           assetCode: string;
+          substation: {
+            code: string;
+            name: string;
+            location: string | null;
+          };
           assetType: {
             code: string;
             name: string;
@@ -301,6 +320,15 @@ export class DefectsService {
       assetId: inspection.assetId,
       assetCode: inspection.asset.assetCode,
       assetType: inspection.asset.assetType.name || inspection.asset.assetType.code,
+      location:
+        inspection.asset.substation.location ||
+        inspection.asset.substation.name ||
+        inspection.asset.substation.code,
+      substation: {
+        code: inspection.asset.substation.code,
+        name: inspection.asset.substation.name,
+        location: inspection.asset.substation.location,
+      },
       cycleNumber: inspection.inspectionCycle,
       label: item.label,
       result: 'FAIL' as const,
@@ -333,6 +361,15 @@ export class DefectsService {
       assetId: inspection.assetId,
       assetCode: inspection.asset.assetCode,
       assetType: inspection.asset.assetType.name || inspection.asset.assetType.code,
+      location:
+        inspection.asset.substation.location ||
+        inspection.asset.substation.name ||
+        inspection.asset.substation.code,
+      substation: {
+        code: inspection.asset.substation.code,
+        name: inspection.asset.substation.name,
+        location: inspection.asset.substation.location,
+      },
       cycleNumber: inspection.inspectionCycle,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
       createdAt: defect.createdAt.toISOString(),

@@ -110,6 +110,14 @@ export class AssetsService {
             name: true,
           },
         },
+        substation: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            location: true,
+          },
+        },
         inspections: {
           where: {
             completionStatus: InspectionCompletionStatus.SUBMITTED,
@@ -157,10 +165,17 @@ export class AssetsService {
     return {
       id: asset.id,
       assetCode: asset.assetCode,
+      name: asset.name,
       assetType: asset.assetType.name,
       status: asset.status,
       latitude: asset.latitude,
       longitude: asset.longitude,
+      metadata: asset.metadata,
+      location: asset.substation.location,
+      pencawangName: asset.substation.name,
+      substation: asset.substation,
+      createdAt: asset.createdAt.toISOString(),
+      updatedAt: asset.updatedAt.toISOString(),
       latestInspection: latestInspection
         ? {
             id: latestInspection.id,

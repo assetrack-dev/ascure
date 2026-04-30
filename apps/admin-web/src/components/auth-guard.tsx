@@ -22,10 +22,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   if (!isReady) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[var(--background)] px-6">
-        <div className="w-full max-w-sm rounded-lg border border-[var(--line)] bg-white p-6 shadow-sm">
-          <div className="h-3 w-28 animate-pulse rounded bg-slate-200" />
-          <div className="mt-5 h-8 w-48 animate-pulse rounded bg-slate-200" />
-          <div className="mt-4 h-3 w-full animate-pulse rounded bg-slate-200" />
+        <div className="w-full max-w-sm rounded-xl border border-[var(--line)] bg-white p-6 shadow-[var(--shadow-card)]">
+          <div className="h-3 w-28 animate-pulse rounded-md bg-slate-200" />
+          <div className="mt-5 h-8 w-48 animate-pulse rounded-md bg-slate-200" />
+          <div className="mt-4 h-3 w-full animate-pulse rounded-md bg-slate-200" />
         </div>
       </main>
     );

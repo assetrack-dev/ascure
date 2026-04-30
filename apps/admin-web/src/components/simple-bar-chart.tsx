@@ -8,9 +8,9 @@ interface SimpleBarChartProps {
 }
 
 const toneClasses = {
-  teal: "bg-[#0f766e]",
-  amber: "bg-[#b45309]",
-  rose: "bg-[#be123c]",
+  teal: "bg-[var(--brand)]",
+  amber: "bg-orange-500",
+  rose: "bg-red-600",
 };
 
 export function SimpleBarChart({
@@ -23,7 +23,7 @@ export function SimpleBarChart({
   const hasData = data.some((item) => item.value > 0);
 
   return (
-    <section className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-sm">
+    <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-[var(--foreground)]">{title}</h2>
       </div>
@@ -39,9 +39,9 @@ export function SimpleBarChart({
                   <span className="font-medium text-slate-700">{item.label}</span>
                   <span className="font-semibold text-slate-900">{item.value.toLocaleString()}</span>
                 </div>
-                <div className="h-3 overflow-hidden rounded bg-slate-100">
+                <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded ${toneClasses[tone]}`}
+                    className={`h-full rounded-full ${toneClasses[tone]}`}
                     style={{ width: `${width}%` }}
                   />
                 </div>
@@ -49,7 +49,7 @@ export function SimpleBarChart({
             );
           })
         ) : (
-          <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
             {emptyLabel}
           </div>
         )}

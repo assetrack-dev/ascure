@@ -30,11 +30,11 @@ export class MasterDataService {
     });
   }
 
-  async listAssets(user: RequestUser, substationId: string) {
+  async listAssets(user: RequestUser, substationId?: string) {
     const assets = await this.prisma.asset.findMany({
       where: {
         tenantId: user.tenantId,
-        substationId,
+        ...(substationId ? { substationId } : {}),
       },
       include: {
         assetType: {
@@ -49,14 +49,26 @@ export class MasterDataService {
             id: true,
             code: true,
             name: true,
+            location: true,
           },
         },
         inspections: {
           take: 1,
-          orderBy: {
-            createdAt: 'desc',
-          },
+          orderBy: [
+            {
+              submittedAt: 'desc',
+            },
+            {
+              createdAt: 'desc',
+            },
+          ],
           select: {
+            id: true,
+            inspectionCycle: true,
+            completionStatus: true,
+            submittedAt: true,
+            createdAt: true,
+            updatedAt: true,
             inspectionImages: {
               orderBy: {
                 createdAt: 'asc',
@@ -72,6 +84,16 @@ export class MasterDataService {
 
     return assets.map(({ inspections, ...asset }) => ({
       ...asset,
+      latestInspection: inspections[0]
+        ? {
+            id: inspections[0].id,
+            cycleNumber: inspections[0].inspectionCycle,
+            status: inspections[0].completionStatus,
+            submittedAt: inspections[0].submittedAt?.toISOString() ?? null,
+            createdAt: inspections[0].createdAt.toISOString(),
+            updatedAt: inspections[0].updatedAt.toISOString(),
+          }
+        : null,
       latestInspectionImages: inspections[0]?.inspectionImages ?? [],
     }));
   }

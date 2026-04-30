@@ -1,16 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f7fb;
-  --foreground: #17202e;
-  --muted: #64748b;
+  --background: #f6f8fb;
+  --foreground: #111827;
+  --muted: #667085;
   --panel: #ffffff;
-  --line: #d9e2ef;
+  --panel-muted: #f8fafc;
+  --line: #d9e1ec;
   --brand: #0f766e;
   --brand-strong: #115e59;
+  --brand-soft: #ccfbf1;
   --danger: #b42318;
   --warning: #b45309;
   --info: #1d4ed8;
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.06);
+  --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.04);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -27,19 +38,31 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family:
-    Arial,
-    Helvetica,
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
+  line-height: 1.5;
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button:focus-visible,
 a:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgba(15, 118, 110, 0.28);
   outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(15, 118, 110, 0.16);
+  color: var(--foreground);
 }
