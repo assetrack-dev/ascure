@@ -212,7 +212,13 @@ export function AssetDetailScreen({
             <View style={styles.headerTitleWrap}>
               <Text style={styles.title}>Asset Detail</Text>
             </View>
-            <View style={styles.headerSide} />
+            <View style={[styles.headerSide, styles.headerSideRight]}>
+              <HeaderIconButton
+                icon="refresh"
+                onPress={loadAssetDetail}
+                accessibilityLabel="Refresh"
+              />
+            </View>
           </View>
           <View style={styles.centerContent}>
             <Text style={styles.emptyTitle}>Asset not found</Text>
@@ -237,7 +243,13 @@ export function AssetDetailScreen({
             <Text style={styles.title}>Asset Detail</Text>
             <Text style={styles.subtitle}>{asset.assetCode || 'No asset code available'}</Text>
           </View>
-          <View style={styles.headerSide} />
+          <View style={[styles.headerSide, styles.headerSideRight]}>
+            <HeaderIconButton
+              icon="refresh"
+              onPress={loadAssetDetail}
+              accessibilityLabel="Refresh"
+            />
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -466,16 +478,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   header: {
-    minHeight: 46,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+    minHeight: 44,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   headerSide: {
-    width: 44,
-    justifyContent: 'center',
+    width: 84,
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  headerSideRight: {
+    justifyContent: 'flex-end',
   },
   headerTitleWrap: {
     flex: 1,

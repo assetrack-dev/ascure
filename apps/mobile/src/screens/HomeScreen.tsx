@@ -91,12 +91,19 @@ export function HomeScreen({
           onPress: () => setIsDrawerOpen(true),
           accessibilityLabel: 'Menu',
         }}
-        rightAction={{
-          icon: 'refresh',
-          onPress: loadHomeData,
-          accessibilityLabel: 'Refresh',
-          disabled: isLoading,
-        }}
+        rightActions={[
+          {
+            icon: 'refresh',
+            onPress: loadHomeData,
+            accessibilityLabel: 'Refresh',
+            disabled: isLoading,
+          },
+          {
+            icon: 'add',
+            onPress: onOpenCheckIn,
+            accessibilityLabel: 'Create Check In',
+          },
+        ]}
       >
         <ErrorBanner message={error} />
         {isLoading ? <LoadingBlock label="Loading active sites..." /> : null}
@@ -127,15 +134,6 @@ export function HomeScreen({
           </Card>
         ) : null}
       </Screen>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Create Check In"
-        onPress={onOpenCheckIn}
-        style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-      >
-        <Text style={styles.fabText}>+</Text>
-      </Pressable>
 
       <HomeDrawer
         visible={isDrawerOpen}
@@ -461,37 +459,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     textAlign: 'right',
-  },
-  fab: {
-    position: 'absolute',
-    right: 22,
-    bottom: 28,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.primary,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    shadowColor: uiTheme.colors.textPrimary,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  fabPressed: {
-    transform: [{ scale: 0.96 }],
-  },
-  fabText: {
-    marginTop: -2,
-    color: '#FFFFFF',
-    fontSize: 36,
-    lineHeight: 42,
-    fontWeight: '700',
   },
   drawerRoot: {
     flex: 1,

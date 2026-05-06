@@ -31,7 +31,8 @@ type SequenceValidationResult = ReturnType<typeof validateFeederSequences>;
 type DefectMapMarker = DefectListItem & Coordinate & DefectMapExtraData;
 type DefectSeverity = 'critical' | 'high' | 'medium' | 'low' | 'unknown';
 
-type MapMode = 'all' | 'assets' | 'defects';
+type MapMode = 'assets' | 'defects';
+type MapType = 'standard' | 'hybrid';
 type MapFilterValue = 'all' | string;
 
 type MapFilters = {
@@ -45,6 +46,8 @@ type MapModeOption = {
   label: string;
   value: MapMode;
 };
+
+type MapControlMenu = 'layers' | 'mapType' | null;
 
 type AssetMapFilterData = Asset & {
   inspectionStatus?: string | null;
@@ -81,6 +84,22 @@ type SequenceWarningMarker = {
   messages: string[];
 };
 
+type MapControlDeckProps = {
+  mapMode: MapMode;
+  onChangeMapMode: (nextMapMode: MapMode) => void;
+  mapType: MapType;
+  onChangeMapType: (nextMapType: MapType) => void;
+  showHeatmap: boolean;
+  showFeederLines: boolean;
+  showSequenceWarnings: boolean;
+  onToggleHeatmap: () => void;
+  onToggleFeederLines: () => void;
+  onToggleSequenceWarnings: () => void;
+  currentAccuracy: number | null;
+  locationMessage: string | null;
+  onRequestCurrentLocation: () => void;
+};
+
 const DEFAULT_REGION: Region = {
   latitude: 3.139,
   longitude: 101.6869,
@@ -100,13 +119,12 @@ const DEFECT_HEATMAP_GRADIENT = {
 };
 const ALL_FILTER_VALUE = 'all';
 const INITIAL_MAP_FILTERS: MapFilters = {
-  mapMode: 'all',
+  mapMode: 'assets',
   selectedAssetType: ALL_FILTER_VALUE,
   selectedInspectionStatus: ALL_FILTER_VALUE,
   selectedDefectSeverity: ALL_FILTER_VALUE,
 };
 const MAP_MODE_OPTIONS: MapModeOption[] = [
-  { label: 'All', value: 'all' },
   { label: 'Assets', value: 'assets' },
   { label: 'Defects', value: 'defects' },
 ];
@@ -128,6 +146,13 @@ const FALLBACK_FEEDER_LINE_COLORS = [
   '#64748b',
 ];
 const FEEDER_LINE_OFFSET_AMOUNT = 0.000025;
+const MAP_CONTROL_RADIUS = 8;
+const MAP_CONTROL_SURFACE = 'rgba(255, 255, 255, 0.94)';
+const MAP_CONTROL_BORDER = 'rgba(148, 163, 184, 0.46)';
+const MAP_CONTROL_ACTIVE = '#1f2937';
+const MAP_CONTROL_TEXT = '#25364a';
+const MAP_CONTROL_MUTED_TEXT = '#64748b';
+const MAP_CONTROL_BUTTON_SURFACE = 'rgba(248, 250, 252, 0.98)';
 
 console.log('MAP API KEY:', process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
@@ -162,7 +187,7 @@ export function MapScreen({
   const [currentCoordinate, setCurrentCoordinate] = useState<Coordinate | null>(null);
   const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
-  const [mapType, setMapType] = useState<'standard' | 'hybrid'>('hybrid');
+  const [mapType, setMapType] = useState<MapType>('hybrid');
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showFeederLines, setShowFeederLines] = useState(false);
   const [showSequenceWarnings, setShowSequenceWarnings] = useState(false);
@@ -478,14 +503,7 @@ export function MapScreen({
 
       <View style={styles.mapShell}>
         {isLoading ? (
-          <View
-            style={{
-              flex: 1,
-              minHeight: 420,
-              backgroundColor: '#eef4fb',
-              justifyContent: 'center',
-            }}
-          >
+          <View style={styles.mapLoadingState}>
             <LoadingBlock label="Loading asset map..." />
           </View>
         ) : (
@@ -501,7 +519,7 @@ export function MapScreen({
             clusterTextColor="#ffffff"
             edgePadding={CLUSTER_EDGE_PADDING}
             showsUserLocation={true}
-            showsMyLocationButton={true}
+            showsMyLocationButton={false}
             followsUserLocation={false}
             onRegionChangeComplete={setRegion}
             onLongPress={handleLongPress}
@@ -530,118 +548,31 @@ export function MapScreen({
 
         {!isLoading ? (
           <>
-            <View pointerEvents="box-none" style={styles.filterOverlay}>
-              <MapFilterBar mapMode={mapMode} onChangeMapMode={updateMapMode} />
-            </View>
-
-            <View
-              style={{
-                position: 'absolute',
-                top: 64,
-                left: 12,
-                alignItems: 'flex-start',
-                gap: 6,
+            <MapControlDeck
+              mapMode={mapMode}
+              onChangeMapMode={updateMapMode}
+              mapType={mapType}
+              onChangeMapType={setMapType}
+              showHeatmap={showHeatmap}
+              showFeederLines={showFeederLines}
+              showSequenceWarnings={showSequenceWarnings}
+              onToggleHeatmap={() => setShowHeatmap((currentValue) => !currentValue)}
+              onToggleFeederLines={() => setShowFeederLines((currentValue) => !currentValue)}
+              onToggleSequenceWarnings={() =>
+                setShowSequenceWarnings((currentValue) => !currentValue)
+              }
+              currentAccuracy={currentAccuracy}
+              locationMessage={locationMessage}
+              onRequestCurrentLocation={() => {
+                void requestCurrentLocation(true);
               }}
-            >
-              <Pressable
-                onPress={() => {
-                  void requestCurrentLocation(true);
-                }}
-                style={({ pressed }) => ({
-                  backgroundColor: '#ffffff',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#c7d5e8',
-                  paddingHorizontal: 12,
-                  paddingVertical: 9,
-                  opacity: pressed ? 0.82 : 1,
-                })}
-              >
-                <Text style={{ color: '#33516f', fontSize: 13, fontWeight: '700' }}>
-                  My Location
-                </Text>
-              </Pressable>
-
-              {currentAccuracy !== null ? (
-                <View
-                  style={{
-                    backgroundColor: '#ffffff',
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: '#c7d5e8',
-                    paddingHorizontal: 10,
-                    paddingVertical: 7,
-                  }}
-                >
-                  <Text style={{ color: '#33516f', fontSize: 12, fontWeight: '700' }}>
-                    Accuracy: {Math.round(currentAccuracy)}m
-                  </Text>
-                </View>
-              ) : null}
-
-              {locationMessage ? (
-                <View
-                  style={{
-                    backgroundColor: '#ffffff',
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: '#f3b4b4',
-                    paddingHorizontal: 10,
-                    paddingVertical: 7,
-                    maxWidth: 220,
-                  }}
-                >
-                  <Text style={{ color: '#b42318', fontSize: 12, fontWeight: '700' }}>
-                    {locationMessage}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.mapControlPanel}>
-              <MapTypeControl mapType={mapType} onChangeMapType={setMapType} />
-              <View style={styles.mapOverlayGroup}>
-                <MapOverlayToggleButton
-                  label="Heatmap"
-                  isActive={showHeatmap}
-                  activeColor="#166534"
-                  onPress={() => setShowHeatmap((currentValue) => !currentValue)}
-                />
-                <MapOverlayToggleButton
-                  label="Lines"
-                  isActive={showFeederLines}
-                  activeColor="#0f5cd8"
-                  onPress={() => setShowFeederLines((currentValue) => !currentValue)}
-                />
-                <MapOverlayToggleButton
-                  label="Warnings"
-                  isActive={showSequenceWarnings}
-                  activeColor="#b45309"
-                  onPress={() => setShowSequenceWarnings((currentValue) => !currentValue)}
-                />
-              </View>
-            </View>
+            />
           </>
         ) : null}
 
         {selectedCoordinate ? (
-          <View
-            style={{
-              position: 'absolute',
-              left: 12,
-              right: 12,
-              bottom: 12,
-              backgroundColor: '#ffffff',
-              borderRadius: 8,
-              padding: 14,
-              gap: 10,
-              borderWidth: 1,
-              borderColor: '#c7d5e8',
-            }}
-          >
-            <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '700' }}>
-              Drag pin to adjust location
-            </Text>
+          <View style={styles.selectedPinPanel}>
+            <Text style={styles.selectedPinTitle}>Drag pin to adjust location</Text>
             <BodyText muted>
               {selectedCoordinate.latitude.toFixed(6)}, {selectedCoordinate.longitude.toFixed(6)}
             </BodyText>
@@ -668,6 +599,129 @@ export function MapScreen({
   );
 }
 
+function MapControlDeck({
+  mapMode,
+  onChangeMapMode,
+  mapType,
+  onChangeMapType,
+  showHeatmap,
+  showFeederLines,
+  showSequenceWarnings,
+  onToggleHeatmap,
+  onToggleFeederLines,
+  onToggleSequenceWarnings,
+  currentAccuracy,
+  locationMessage,
+  onRequestCurrentLocation,
+}: MapControlDeckProps) {
+  const [openMenu, setOpenMenu] = useState<MapControlMenu>(null);
+  const hasActiveLayers = showHeatmap || showFeederLines || showSequenceWarnings;
+  const mapTypeLabel = mapType === 'hybrid' ? 'Sat' : 'Map';
+
+  function toggleMenu(nextMenu: Exclude<MapControlMenu, null>) {
+    setOpenMenu((currentMenu) => (currentMenu === nextMenu ? null : nextMenu));
+  }
+
+  return (
+    <View pointerEvents="box-none" style={styles.mapControlsOverlay}>
+      <View style={styles.mapControlsStack}>
+        <View style={styles.mapControlRail}>
+          <MapFilterBar mapMode={mapMode} onChangeMapMode={onChangeMapMode} />
+
+          <View style={styles.mapControlActions}>
+            <MapMenuButton
+              label="Layers"
+              isActive={openMenu === 'layers' || hasActiveLayers}
+              onPress={() => toggleMenu('layers')}
+            />
+            <MapMenuButton
+              label={mapTypeLabel}
+              isActive={openMenu === 'mapType'}
+              onPress={() => toggleMenu('mapType')}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="My Location"
+              onPress={onRequestCurrentLocation}
+              hitSlop={6}
+              style={({ pressed }) => [
+                styles.locationButton,
+                pressed ? styles.mapControlPressed : null,
+              ]}
+            >
+              <Text style={styles.locationButtonText}>GPS</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {openMenu === 'layers' ? (
+          <View style={styles.mapDropdownPanel}>
+            <MapLayerMenuOption
+              label="Heatmap"
+              isActive={showHeatmap}
+              activeColor="#166534"
+              onPress={onToggleHeatmap}
+            />
+            <MapLayerMenuOption
+              label="Lines"
+              isActive={showFeederLines}
+              activeColor="#0f5cd8"
+              onPress={onToggleFeederLines}
+            />
+            <MapLayerMenuOption
+              label="Warnings"
+              isActive={showSequenceWarnings}
+              activeColor="#b45309"
+              onPress={onToggleSequenceWarnings}
+            />
+          </View>
+        ) : null}
+
+        {openMenu === 'mapType' ? (
+          <View style={styles.mapDropdownPanel}>
+            <MapTypeMenuOption
+              label="Map"
+              isActive={mapType === 'standard'}
+              onPress={() => {
+                onChangeMapType('standard');
+                setOpenMenu(null);
+              }}
+            />
+            <MapTypeMenuOption
+              label="Satellite"
+              isActive={mapType === 'hybrid'}
+              onPress={() => {
+                onChangeMapType('hybrid');
+                setOpenMenu(null);
+              }}
+            />
+          </View>
+        ) : null}
+
+        {currentAccuracy !== null || locationMessage ? (
+          <View style={styles.mapStatusPanel}>
+            {currentAccuracy !== null ? (
+              <View style={styles.locationStatusPill}>
+                <Text style={styles.locationStatusText}>
+                  Accuracy {Math.round(currentAccuracy)}m
+                </Text>
+              </View>
+            ) : null}
+
+            {locationMessage ? (
+              <View style={[styles.locationStatusPill, styles.locationStatusPillError]}>
+                <Text style={[styles.locationStatusText, styles.locationStatusTextError]}>
+                  {locationMessage}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function MapFilterBar({
   mapMode,
   onChangeMapMode,
@@ -686,13 +740,17 @@ function MapFilterBar({
             accessibilityRole="button"
             accessibilityState={{ selected: isActive }}
             onPress={() => onChangeMapMode(option.value)}
+            hitSlop={4}
             style={({ pressed }) => [
               styles.filterButton,
               isActive ? styles.filterButtonActive : null,
               pressed ? styles.filterButtonPressed : null,
             ]}
           >
-            <Text style={[styles.filterButtonText, isActive ? styles.filterButtonTextActive : null]}>
+            <Text
+              numberOfLines={1}
+              style={[styles.filterButtonText, isActive ? styles.filterButtonTextActive : null]}
+            >
               {option.label}
             </Text>
           </Pressable>
@@ -702,30 +760,7 @@ function MapFilterBar({
   );
 }
 
-function MapTypeControl({
-  mapType,
-  onChangeMapType,
-}: {
-  mapType: 'standard' | 'hybrid';
-  onChangeMapType: (nextMapType: 'standard' | 'hybrid') => void;
-}) {
-  return (
-    <View style={styles.mapTypeSegment}>
-      <MapTypeButton
-        label="Map"
-        isActive={mapType === 'standard'}
-        onPress={() => onChangeMapType('standard')}
-      />
-      <MapTypeButton
-        label="Satellite"
-        isActive={mapType === 'hybrid'}
-        onPress={() => onChangeMapType('hybrid')}
-      />
-    </View>
-  );
-}
-
-function MapTypeButton({
+function MapMenuButton({
   label,
   isActive,
   onPress,
@@ -739,20 +774,24 @@ function MapTypeButton({
       accessibilityRole="button"
       accessibilityState={{ selected: isActive }}
       onPress={onPress}
+      hitSlop={4}
       style={({ pressed }) => [
-        styles.mapTypeButton,
-        isActive && styles.mapTypeButtonActive,
+        styles.mapMenuButton,
+        isActive ? styles.mapMenuButtonActive : null,
         pressed && styles.mapControlPressed,
       ]}
     >
-      <Text style={[styles.mapTypeButtonText, isActive && styles.mapTypeButtonTextActive]}>
-        {label}
+      <Text
+        numberOfLines={1}
+        style={[styles.mapMenuButtonText, isActive ? styles.mapMenuButtonTextActive : null]}
+      >
+        {label} v
       </Text>
     </Pressable>
   );
 }
 
-function MapOverlayToggleButton({
+function MapLayerMenuOption({
   label,
   isActive,
   activeColor,
@@ -768,22 +807,54 @@ function MapOverlayToggleButton({
       accessibilityRole="switch"
       accessibilityState={{ checked: isActive }}
       onPress={onPress}
+      hitSlop={4}
       style={({ pressed }) => [
-        styles.mapOverlayToggleButton,
-        {
-          backgroundColor: isActive ? activeColor : '#ffffff',
-        },
+        styles.mapDropdownOption,
         pressed && styles.mapControlPressed,
       ]}
     >
+      <View style={[styles.mapDropdownCheck, isActive ? { backgroundColor: activeColor } : null]} />
+      <Text style={styles.mapDropdownOptionText}>{label}</Text>
       <Text
         style={[
-          styles.mapOverlayToggleButtonText,
-          { color: isActive ? '#ffffff' : '#33516f' },
+          styles.mapDropdownStateText,
+          isActive ? styles.mapDropdownStateTextActive : null,
         ]}
       >
-        {label}
+        {isActive ? 'On' : 'Off'}
       </Text>
+    </Pressable>
+  );
+}
+
+function MapTypeMenuOption({
+  label,
+  isActive,
+  onPress,
+}: {
+  label: string;
+  isActive: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: isActive }}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => [
+        styles.mapDropdownOption,
+        isActive ? styles.mapDropdownOptionSelected : null,
+        pressed && styles.mapControlPressed,
+      ]}
+    >
+      <View
+        style={[
+          styles.mapDropdownCheck,
+          isActive ? styles.mapDropdownCheckSelected : null,
+        ]}
+      />
+      <Text style={styles.mapDropdownOptionText}>{label}</Text>
     </Pressable>
   );
 }
@@ -1097,11 +1168,11 @@ function compareFeederLinesForOffset(left: MapFeederLine, right: MapFeederLine):
 }
 
 function shouldShowAssetsForMode(mapMode: MapMode) {
-  return mapMode === 'all' || mapMode === 'assets';
+  return mapMode === 'assets';
 }
 
 function shouldShowDefectsForMode(mapMode: MapMode) {
-  return mapMode === 'all' || mapMode === 'defects';
+  return mapMode === 'defects';
 }
 
 function filterAssetsForMap(
@@ -1518,108 +1589,260 @@ const styles = StyleSheet.create({
     borderRadius: uiTheme.radius.card,
     overflow: 'hidden',
   },
-  filterOverlay: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    alignItems: 'center',
+  mapLoadingState: {
+    flex: 1,
+    minHeight: 420,
+    backgroundColor: '#eef4fb',
+    justifyContent: 'center',
   },
-  filterBar: {
+  mapControlsOverlay: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    right: 10,
+    alignItems: 'flex-start',
+  },
+  mapControlsStack: {
+    width: '100%',
+    maxWidth: 340,
+    gap: 6,
+  },
+  mapControlRail: {
+    maxWidth: 340,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ffffff',
-    borderRadius: 999,
+    gap: 6,
+    backgroundColor: MAP_CONTROL_SURFACE,
+    borderRadius: MAP_CONTROL_RADIUS,
     borderWidth: 1,
-    borderColor: '#d8e2ef',
-    padding: 4,
+    borderColor: MAP_CONTROL_BORDER,
+    padding: 6,
     shadowColor: '#0f172a',
     shadowOffset: {
       width: 0,
-      height: 8,
+      height: 3,
     },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOpacity: 0.1,
+    shadowRadius: 7,
+    elevation: 2,
+  },
+  filterBar: {
+    flex: 1,
+    minWidth: 104,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   filterButton: {
-    minWidth: 76,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    flex: 1,
+    minWidth: 0,
+    minHeight: 34,
+    borderRadius: MAP_CONTROL_RADIUS,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
   filterButtonActive: {
-    backgroundColor: '#0f5cd8',
+    backgroundColor: MAP_CONTROL_ACTIVE,
+    borderColor: MAP_CONTROL_ACTIVE,
   },
   filterButtonPressed: {
     opacity: 0.82,
   },
   filterButtonText: {
-    color: '#33516f',
-    fontSize: 13,
+    color: MAP_CONTROL_TEXT,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
+    flexShrink: 1,
   },
   filterButtonTextActive: {
     color: '#ffffff',
   },
-  mapOverlayToggleButton: {
-    minHeight: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  mapOverlayToggleButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  mapControlPanel: {
-    position: 'absolute',
-    top: 64,
-    right: 12,
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  mapTypeSegment: {
+  mapControlActions: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: '#c7d5e8',
-    overflow: 'hidden',
+    alignItems: 'center',
+    gap: 4,
   },
-  mapTypeButton: {
+  mapMenuButton: {
     minHeight: 34,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    minWidth: 48,
+    borderRadius: MAP_CONTROL_RADIUS,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ffffff',
+    paddingHorizontal: 7,
+    paddingVertical: 7,
   },
-  mapTypeButtonActive: {
-    backgroundColor: uiTheme.colors.primary,
+  mapMenuButtonActive: {
+    backgroundColor: MAP_CONTROL_ACTIVE,
+    borderColor: MAP_CONTROL_ACTIVE,
   },
-  mapTypeButtonText: {
-    color: '#33516f',
-    fontSize: 12,
+  mapMenuButtonText: {
+    color: MAP_CONTROL_TEXT,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: '700',
+    flexShrink: 1,
   },
-  mapTypeButtonTextActive: {
+  mapMenuButtonTextActive: {
     color: '#ffffff',
   },
-  mapOverlayGroup: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    borderRadius: uiTheme.radius.control,
+  mapDropdownPanel: {
+    alignSelf: 'flex-end',
+    width: 190,
+    backgroundColor: MAP_CONTROL_SURFACE,
+    borderRadius: MAP_CONTROL_RADIUS,
     borderWidth: 1,
-    borderColor: '#c7d5e8',
-    overflow: 'hidden',
+    borderColor: MAP_CONTROL_BORDER,
+    padding: 6,
+    gap: 4,
+    shadowColor: '#0f172a',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  mapDropdownOption: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: MAP_CONTROL_RADIUS,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  mapDropdownOptionSelected: {
+    backgroundColor: 'rgba(31, 41, 55, 0.08)',
+  },
+  mapDropdownCheck: {
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    backgroundColor: 'transparent',
+  },
+  mapDropdownCheckSelected: {
+    backgroundColor: MAP_CONTROL_ACTIVE,
+    borderColor: MAP_CONTROL_ACTIVE,
+  },
+  mapDropdownOptionText: {
+    flex: 1,
+    color: MAP_CONTROL_TEXT,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  mapDropdownStateText: {
+    color: MAP_CONTROL_MUTED_TEXT,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  mapDropdownStateTextActive: {
+    color: MAP_CONTROL_ACTIVE,
   },
   mapControlPressed: {
     opacity: 0.82,
+  },
+  mapStatusPanel: {
+    alignSelf: 'flex-start',
+    maxWidth: 300,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: MAP_CONTROL_SURFACE,
+    borderRadius: MAP_CONTROL_RADIUS,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    padding: 5,
+    shadowColor: '#0f172a',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 1,
+  },
+  locationButton: {
+    width: 34,
+    minHeight: 34,
+    borderRadius: MAP_CONTROL_RADIUS,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_ACTIVE,
+    backgroundColor: MAP_CONTROL_ACTIVE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    paddingVertical: 7,
+  },
+  locationButtonText: {
+    color: '#ffffff',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+  },
+  locationStatusPill: {
+    minHeight: 30,
+    borderRadius: MAP_CONTROL_RADIUS,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    justifyContent: 'center',
+  },
+  locationStatusPillError: {
+    maxWidth: 230,
+    borderColor: '#f3b4b4',
+    backgroundColor: 'rgba(254, 242, 242, 0.96)',
+  },
+  locationStatusText: {
+    color: MAP_CONTROL_TEXT,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  locationStatusTextError: {
+    color: '#b42318',
+  },
+  selectedPinPanel: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+    backgroundColor: MAP_CONTROL_SURFACE,
+    borderRadius: MAP_CONTROL_RADIUS,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: MAP_CONTROL_BORDER,
+    shadowColor: '#0f172a',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  selectedPinTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#0f172a',
+    fontWeight: '700',
   },
   sequenceWarningMarkerContainer: {
     width: 44,

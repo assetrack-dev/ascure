@@ -72,11 +72,13 @@ export function InspectionFormScreen({
   const [draftValues, setDraftValues] = useState<ChecklistDraftValues>({});
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCapturingPhoto, setIsCapturingPhoto] = useState(false);
   const [pendingOverlayPhoto, setPendingOverlayPhoto] = useState<PendingOverlayPhoto | null>(null);
   const [selectedPhotoUri, setSelectedPhotoUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const overlayCaptureRef = useRef<View>(null);
   const overlayPromiseHandlersRef = useRef<{
     resolve: (uri: string) => void;
@@ -84,11 +86,12 @@ export function InspectionFormScreen({
   } | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
-  const isBusy = isLoading || isSubmitting || isCapturingPhoto;
+  const isBusy = isLoading || isSavingDraft || isSubmitting || isCapturingPhoto;
 
   const loadForm = useCallback(async () => {
     try {
       setError(null);
+      setSaveNotice(null);
       setIsLoading(true);
 
       const formResponse = await api.getInspectionForm(token, inspectionId);
@@ -173,6 +176,7 @@ export function InspectionFormScreen({
   }, [pendingOverlayPhoto]);
 
   function updateDraftValue(itemId: string, changes: Partial<ChecklistDraftValues[string]>) {
+    setSaveNotice(null);
     setDraftValues((current) => ({
       ...current,
       [itemId]: {
@@ -353,7 +357,7 @@ export function InspectionFormScreen({
     const validationMessage = validateChecklistDraft(form, draftValues);
 
     if (validationMessage) {
-      setError(validationMessage);
+      setError(formatChecklistValidationMessage(validationMessage));
       return;
     }
 
@@ -367,6 +371,7 @@ export function InspectionFormScreen({
     try {
       setIsSubmitting(true);
       setError(null);
+      setSaveNotice(null);
 
       await api.saveInspectionResults(token, inspectionId, {
         items: checklistItems,
@@ -387,13 +392,51 @@ export function InspectionFormScreen({
     }
   }
 
+  async function handleSaveDraft() {
+    if (!form || isSubmitted) {
+      return;
+    }
+
+    const checklistItems = buildChecklistItemsPayload(form, draftValues);
+
+    if (checklistItems.length === 0) {
+      setError('Select at least one YES, NO, or N/A before saving.');
+      setSaveNotice(null);
+      return;
+    }
+
+    try {
+      setIsSavingDraft(true);
+      setError(null);
+      setSaveNotice(null);
+
+      const savedForm = await api.saveInspectionResults(token, inspectionId, {
+        items: checklistItems,
+      });
+
+      setForm(savedForm);
+      setDraftValues(createInitialChecklistDraftValues(savedForm));
+      setSaveNotice(`Draft saved ${formatDraftSavedTime(new Date())}.`);
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.status === 401) {
+        await onUnauthorized(saveError);
+        return;
+      }
+
+      setError(saveError instanceof Error ? saveError.message : 'Unable to save inspection draft.');
+    } finally {
+      setIsSavingDraft(false);
+    }
+  }
+
   return (
     <Screen
       title="Inspection Form"
-      subtitle="Complete the checklist and submit the inspection when every required item is ready."
+      subtitle="Field checklist for this inspection cycle."
+      keyboardAware
       actions={
         <>
-          <InlineButton label="Back" onPress={onBack} disabled={isSubmitting} />
+          <InlineButton label="Back" onPress={onBack} disabled={isSavingDraft || isSubmitting} />
           <InlineButton label="Refresh" onPress={loadForm} disabled={isBusy} />
         </>
       }
@@ -401,13 +444,25 @@ export function InspectionFormScreen({
         <View style={styles.stickyActionArea}>
           <ErrorBanner message={error} />
           {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
-          <View style={styles.footerButtonWrap}>
-            <AppButton
-              label={isSubmitting ? 'Submitting...' : 'Submit Inspection'}
-              onPress={handleSubmitInspection}
-              loading={isSubmitting}
-              disabled={isBusy || isSubmitted}
-            />
+          {!isSubmitted ? <SuccessBanner message={saveNotice} /> : null}
+          <View style={styles.footerActions}>
+            <View style={styles.footerActionSecondary}>
+              <AppButton
+                label={isSavingDraft ? 'Saving...' : 'Save Draft'}
+                onPress={handleSaveDraft}
+                variant="secondary"
+                loading={isSavingDraft}
+                disabled={isBusy || isSubmitted}
+              />
+            </View>
+            <View style={styles.footerActionPrimary}>
+              <AppButton
+                label={isSubmitting ? 'Submitting...' : 'Submit'}
+                onPress={handleSubmitInspection}
+                loading={isSubmitting}
+                disabled={isBusy || isSubmitted}
+              />
+            </View>
           </View>
         </View>
       }
@@ -558,7 +613,7 @@ function InspectionPhotoSection({
       {photos.length === 0 ? (
         <View style={styles.emptyPhotoPanel}>
           <Text style={styles.emptyPhotoTitle}>No photos captured</Text>
-          <Text style={styles.emptyPhotoText}>Add the first site photo before submitting.</Text>
+          <Text style={styles.emptyPhotoText}>0 images attached to this inspection.</Text>
         </View>
       ) : null}
       {photos.map((photo, index) => (
@@ -566,7 +621,7 @@ function InspectionPhotoSection({
           <View style={styles.photoCardHeader}>
             <View style={styles.photoMetaTitleWrap}>
               <Text style={styles.kickerLabel}>Photo {index + 1}</Text>
-              <Text style={styles.photoTitle}>{getPhotoStatusLabel(photo.uploadState)}</Text>
+              <Text style={styles.photoTitle}>{formatDateTime(photo.timestamp)}</Text>
             </View>
             <PhotoStatusPill state={photo.uploadState} />
           </View>
@@ -578,7 +633,6 @@ function InspectionPhotoSection({
             <Image source={{ uri: photo.uri }} style={styles.photoPreview} resizeMode="cover" />
           </Pressable>
           <View style={styles.photoDetailsGrid}>
-            <PhotoMeta label="Time" value={formatDateTime(photo.timestamp)} />
             <PhotoMeta label="Lat" value={formatCoordinate(photo.latitude)} />
             <PhotoMeta label="Lng" value={formatCoordinate(photo.longitude)} />
           </View>
@@ -628,12 +682,24 @@ function ChecklistSectionCard({
   const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
     ? normalizedTitle
     : section.title;
+  const sectionTone = getSectionTone(sectionTitle);
 
   return (
-    <View style={styles.sectionCard}>
+    <View style={[styles.sectionCard, { borderColor: sectionTone.border }]}>
+      <View style={[styles.sectionTopRail, { backgroundColor: sectionTone.accent }]} />
       <View style={styles.sectionHeader}>
-        <View style={styles.sectionIndexBadge}>
-          <Text style={styles.sectionIndexText}>{String(sectionIndex + 1).padStart(2, '0')}</Text>
+        <View
+          style={[
+            styles.sectionIndexBadge,
+            {
+              backgroundColor: sectionTone.surface,
+              borderColor: sectionTone.border,
+            },
+          ]}
+        >
+          <Text style={[styles.sectionIndexText, { color: sectionTone.accent }]}>
+            {String(sectionIndex + 1).padStart(2, '0')}
+          </Text>
         </View>
         <View style={styles.sectionHeaderText}>
           <Text style={styles.sectionHeading}>{sectionTitle}</Text>
@@ -670,23 +736,28 @@ function ChecklistItemCard({
   return (
     <View style={styles.itemCard}>
       <View style={styles.itemHeader}>
-        <Text style={styles.itemLabel}>{item.label}</Text>
+        <View style={styles.itemTextWrap}>
+          <Text style={styles.itemLabel}>{item.label}</Text>
+        </View>
         {item.isRequired ? <Text style={styles.requiredLabel}>Required</Text> : null}
       </View>
       {item.helperText ? <Text style={styles.helperText}>{item.helperText}</Text> : null}
-      <View style={styles.resultButtonRow}>
-        {RESULT_OPTIONS.map((result) => (
-          <ResultButton
-            key={result}
-            result={result}
-            selected={value?.result === result}
-            disabled={disabled}
-            onPress={() => onChange({ result })}
-          />
-        ))}
+      <View style={styles.resultControl}>
+        <Text style={styles.controlLabel}>Condition</Text>
+        <View style={styles.resultButtonRow}>
+          {RESULT_OPTIONS.map((result) => (
+            <ResultButton
+              key={result}
+              result={result}
+              selected={value?.result === result}
+              disabled={disabled}
+              onPress={() => onChange({ result })}
+            />
+          ))}
+        </View>
       </View>
       <TextField
-        label="Remark / defect note"
+        label="Remark"
         value={value?.remark ?? ''}
         onChangeText={(remark) => onChange({ remark })}
         placeholder="Optional remark"
@@ -710,6 +781,9 @@ function ResultButton({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={getResultOptionLabel(result)}
+      accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -718,6 +792,7 @@ function ResultButton({
         result === 'PASS' && selected && styles.choiceButtonPassSelected,
         result === 'FAIL' && styles.choiceButtonFail,
         result === 'FAIL' && selected && styles.choiceButtonFailSelected,
+        result === 'NA' && selected && styles.choiceButtonNaSelected,
         disabled && styles.choiceButtonDisabled,
         pressed && !disabled && styles.choiceButtonPressed,
       ]}
@@ -729,6 +804,7 @@ function ResultButton({
           result === 'PASS' && selected && styles.choiceButtonPassTextSelected,
           result === 'FAIL' && styles.choiceButtonFailText,
           result === 'FAIL' && selected && styles.choiceButtonFailTextSelected,
+          result === 'NA' && selected && styles.choiceButtonNaTextSelected,
         ]}
       >
         {getResultOptionLabel(result)}
@@ -783,6 +859,7 @@ function PhotoActionButton({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
+      hitSlop={6}
       onPress={onPress}
       style={({ pressed }) => [
         styles.photoActionButton,
@@ -806,6 +883,56 @@ function getResultOptionLabel(result: InspectionItemResultValue) {
   }
 
   return 'N/A';
+}
+
+function formatChecklistValidationMessage(message: string) {
+  return message.replace('PASS, FAIL, or NA', 'YES, NO, or N/A');
+}
+
+function formatDraftSavedTime(value: Date) {
+  return `${padNumber(value.getHours())}:${padNumber(value.getMinutes())}`;
+}
+
+function getSectionTone(sectionTitle: string) {
+  const normalizedTitle = sectionTitle.trim().toUpperCase();
+
+  if (normalizedTitle === 'TIANG') {
+    return {
+      accent: '#334155',
+      surface: '#f1f5f9',
+      border: '#cbd5e1',
+    };
+  }
+
+  if (normalizedTitle === 'PENGALIR') {
+    return {
+      accent: '#0f766e',
+      surface: '#ecfdf5',
+      border: '#99f6e4',
+    };
+  }
+
+  if (normalizedTitle === 'AKSESORI') {
+    return {
+      accent: '#92400e',
+      surface: '#fffbeb',
+      border: '#fde68a',
+    };
+  }
+
+  if (normalizedTitle === 'PERALATAN') {
+    return {
+      accent: '#475569',
+      surface: '#f8fafc',
+      border: '#cbd5e1',
+    };
+  }
+
+  return {
+    accent: '#111827',
+    surface: '#f8fafc',
+    border: '#d9e1ea',
+  };
 }
 
 function getPhotoStatusLabel(state: PhotoUploadState) {
@@ -880,9 +1007,18 @@ async function delay(durationMs: number) {
 
 const styles = StyleSheet.create({
   stickyActionArea: {
+    gap: 12,
+  },
+  footerActions: {
+    minHeight: 52,
+    flexDirection: 'row',
     gap: 10,
   },
-  footerButtonWrap: {
+  footerActionSecondary: {
+    flex: 0.92,
+  },
+  footerActionPrimary: {
+    flex: 1.08,
     minHeight: 52,
   },
   summaryHeader: {
@@ -896,9 +1032,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   kickerLabel: {
-    fontSize: 11,
+    fontSize: 10,
     lineHeight: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     letterSpacing: 0,
     color: '#6b7280',
     textTransform: 'uppercase',
@@ -912,10 +1048,10 @@ const styles = StyleSheet.create({
   photoSection: {
     backgroundColor: '#ffffff',
     borderRadius: 8,
-    padding: 16,
-    gap: 16,
+    padding: 18,
+    gap: 18,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
+    borderColor: '#cbd5e1',
   },
   photoSectionHeader: {
     flexDirection: 'row',
@@ -928,29 +1064,29 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   sectionHeading: {
-    fontSize: 18,
-    lineHeight: 24,
+    fontSize: 17,
+    lineHeight: 23,
     fontWeight: '600',
     color: '#111827',
   },
   photoCount: {
-    minWidth: 36,
-    minHeight: 32,
-    borderRadius: 16,
+    minWidth: 42,
+    minHeight: 36,
+    borderRadius: 18,
     overflow: 'hidden',
     backgroundColor: '#eef2f7',
-    color: '#374151',
+    color: '#111827',
     textAlign: 'center',
     textAlignVertical: 'center',
     fontSize: 15,
-    lineHeight: 32,
-    fontWeight: '700',
+    lineHeight: 36,
+    fontWeight: '600',
   },
   emptyPhotoPanel: {
-    minHeight: 112,
+    minHeight: 124,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
+    borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
     alignItems: 'center',
     justifyContent: 'center',
@@ -960,8 +1096,8 @@ const styles = StyleSheet.create({
   emptyPhotoTitle: {
     fontSize: 15,
     lineHeight: 21,
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: '500',
+    color: '#111827',
   },
   emptyPhotoText: {
     fontSize: 13,
@@ -970,10 +1106,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   itemCard: {
-    paddingVertical: 14,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+    padding: 14,
+    gap: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
   itemHeader: {
     flexDirection: 'row',
@@ -982,7 +1120,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checklistStack: {
-    gap: 18,
+    gap: 22,
   },
   sectionCard: {
     backgroundColor: '#ffffff',
@@ -991,29 +1129,33 @@ const styles = StyleSheet.create({
     borderColor: '#d9e1ea',
     overflow: 'hidden',
   },
+  sectionTopRail: {
+    height: 5,
+  },
   sectionHeader: {
-    minHeight: 68,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    minHeight: 76,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#e2e8f0',
   },
   sectionIndexBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#111827',
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sectionIndexText: {
     color: '#ffffff',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   sectionHeaderText: {
     flex: 1,
@@ -1032,8 +1174,9 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   sectionItems: {
-    paddingHorizontal: 16,
-    paddingBottom: 6,
+    padding: 16,
+    gap: 12,
+    backgroundColor: '#f8fafc',
   },
   photoCardHeader: {
     flexDirection: 'row',
@@ -1042,11 +1185,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   photoCard: {
-    gap: 14,
-    padding: 12,
+    gap: 16,
+    padding: 14,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
+    borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
   },
   photoMetaTitleWrap: {
@@ -1054,9 +1197,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   photoTitle: {
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '600',
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '500',
     color: '#111827',
   },
   photoPreviewButton: {
@@ -1069,16 +1212,18 @@ const styles = StyleSheet.create({
   },
   photoPreview: {
     width: '100%',
-    height: 280,
+    height: 320,
     borderRadius: 8,
     backgroundColor: '#e5edf8',
   },
   photoDetailsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   photoMetaItem: {
     flex: 1,
+    minWidth: 120,
     minHeight: 58,
     borderRadius: 8,
     backgroundColor: '#ffffff',
@@ -1097,8 +1242,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   photoMetaValue: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '600',
     color: '#111827',
   },
@@ -1121,7 +1266,7 @@ const styles = StyleSheet.create({
   photoStatusText: {
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#3730a3',
   },
   photoStatusTextUploaded: {
@@ -1141,7 +1286,7 @@ const styles = StyleSheet.create({
   },
   photoActionButton: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 54,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1162,9 +1307,9 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.99 }],
   },
   photoActionText: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
     color: '#111827',
   },
   photoActionTextDanger: {
@@ -1210,37 +1355,52 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  itemLabel: {
+  itemTextWrap: {
     flex: 1,
-    fontSize: 16,
-    lineHeight: 23,
+    gap: 4,
+  },
+  itemLabel: {
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: '500',
     color: '#111827',
   },
   requiredLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#b45309',
-    backgroundColor: '#fef3c7',
+    fontWeight: '600',
+    color: '#92400e',
+    backgroundColor: '#fffbeb',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fde68a',
   },
   helperText: {
     fontSize: 13,
     lineHeight: 19,
     color: '#6b7280',
   },
+  resultControl: {
+    gap: 8,
+  },
+  controlLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+  },
   resultButtonRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     borderRadius: 8,
-    backgroundColor: '#eef2f7',
-    padding: 4,
+    backgroundColor: '#e2e8f0',
+    padding: 5,
   },
   choiceButton: {
     flex: 1,
-    minHeight: 56,
+    minHeight: 62,
     borderRadius: 7,
     borderWidth: 1,
     borderColor: 'transparent',
@@ -1254,8 +1414,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
   },
   choiceButtonPassSelected: {
-    borderColor: '#166534',
-    backgroundColor: '#166534',
+    borderColor: '#15803d',
+    backgroundColor: '#15803d',
   },
   choiceButtonFail: {
     borderColor: 'transparent',
@@ -1264,6 +1424,10 @@ const styles = StyleSheet.create({
     borderColor: '#b91c1c',
     backgroundColor: '#b91c1c',
   },
+  choiceButtonNaSelected: {
+    borderColor: '#475569',
+    backgroundColor: '#475569',
+  },
   choiceButtonDisabled: {
     opacity: 0.55,
   },
@@ -1271,7 +1435,8 @@ const styles = StyleSheet.create({
     opacity: 0.92,
   },
   choiceButtonText: {
-    fontSize: 15,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: '700',
     color: '#374151',
   },
@@ -1282,9 +1447,12 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   choiceButtonFailText: {
-    color: '#b91c1c',
+    color: '#374151',
   },
   choiceButtonFailTextSelected: {
+    color: '#ffffff',
+  },
+  choiceButtonNaTextSelected: {
     color: '#ffffff',
   },
 });

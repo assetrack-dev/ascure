@@ -16,7 +16,7 @@ import {
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
-type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close';
+type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
 
 type HeaderAction = {
   icon: HeaderIconName;
@@ -62,6 +62,7 @@ export function Screen({
   actions,
   leftAction,
   rightAction,
+  rightActions,
   footer,
   scroll = true,
   keyboardAware = false,
@@ -72,10 +73,12 @@ export function Screen({
   actions?: ReactNode;
   leftAction?: HeaderAction;
   rightAction?: HeaderAction;
+  rightActions?: HeaderAction[];
   footer?: ReactNode;
   scroll?: boolean;
   keyboardAware?: boolean;
 }) {
+  const headerRightActions = rightActions ?? (rightAction ? [rightAction] : []);
   const content = scroll ? (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       {children}
@@ -99,7 +102,9 @@ export function Screen({
               </Text>
             </View>
             <View style={[styles.headerSide, styles.headerSideRight]}>
-              {rightAction ? <HeaderIconButton {...rightAction} /> : null}
+              {headerRightActions.map((action, index) => (
+                <HeaderIconButton key={`${action.icon}-${index}`} {...action} />
+              ))}
             </View>
           </View>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -173,6 +178,15 @@ function HeaderIcon({ name }: { name: HeaderIconName }) {
       <View style={styles.closeIcon}>
         <View style={[styles.closeIconLine, styles.closeIconLineForward]} />
         <View style={[styles.closeIconLine, styles.closeIconLineBack]} />
+      </View>
+    );
+  }
+
+  if (name === 'add') {
+    return (
+      <View style={styles.addIcon}>
+        <View style={styles.addIconHorizontal} />
+        <View style={styles.addIconVertical} />
       </View>
     );
   }
@@ -446,20 +460,22 @@ const styles = StyleSheet.create({
     backgroundColor: uiTheme.colors.background,
   },
   header: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingBottom: 10,
     gap: 8,
   },
   topBar: {
-    minHeight: 46,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   headerSide: {
-    width: 44,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
+    width: 84,
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
   },
   headerTextWrap: {
     flex: 1,
@@ -467,7 +483,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerSideRight: {
-    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   headerActions: {
     flexDirection: 'row',
@@ -776,20 +793,20 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
   },
   headerIconButton: {
-    minWidth: 44,
-    minHeight: 44,
-    width: 44,
-    height: 44,
-    borderRadius: 20,
+    minWidth: 38,
+    minHeight: 38,
+    width: 38,
+    height: 38,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: uiTheme.colors.card,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
+    borderColor: 'transparent',
   },
   headerIconButtonPressed: {
     backgroundColor: uiTheme.colors.surfacePressed,
-    transform: [{ scale: 0.97 }],
+    borderColor: uiTheme.colors.border,
   },
   headerIconButtonDisabled: {
     opacity: 0.48,
@@ -872,5 +889,28 @@ const styles = StyleSheet.create({
   },
   closeIconLineBack: {
     transform: [{ rotate: '-45deg' }],
+  },
+  addIcon: {
+    width: 20,
+    height: 20,
+    position: 'relative',
+  },
+  addIconHorizontal: {
+    position: 'absolute',
+    left: 3,
+    top: 9,
+    width: 14,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: uiTheme.colors.textPrimary,
+  },
+  addIconVertical: {
+    position: 'absolute',
+    left: 9,
+    top: 3,
+    width: 2,
+    height: 14,
+    borderRadius: 1,
+    backgroundColor: uiTheme.colors.textPrimary,
   },
 });
