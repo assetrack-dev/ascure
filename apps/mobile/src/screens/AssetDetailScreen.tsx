@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   Pressable,
@@ -12,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { api, ApiError, API_BASE_URL } from '../api';
-import { AssetDetailImage, AssetDetailResponse } from '../types';
+import { Asset, AssetDetailImage, AssetDetailResponse } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -20,25 +21,33 @@ const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, ''
 export function AssetDetailScreen({
   token,
   visitId,
+  substationId,
   assetId,
+  assetSnapshot,
   onBack,
   onOpenInspection,
   onOpenInspectionHistory,
+  onOpenEditAsset,
   onOpenImagePreview,
   onUnauthorized,
 }: {
   token: string;
   visitId?: string;
+  substationId?: string;
   assetId: string;
+  assetSnapshot?: Asset;
   onBack: () => void;
   onOpenInspection: (inspectionId: string) => void;
   onOpenInspectionHistory: (params: { assetId: string; assetCode?: string }) => void;
+  onOpenEditAsset: (asset: Asset) => void;
   onOpenImagePreview: (params: { uri: string; title?: string }) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
+  const [editableAsset, setEditableAsset] = useState<Asset | null>(assetSnapshot ?? null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStartingInspection, setIsStartingInspection] = useState(false);
+  const [isMarkingNotFound, setIsMarkingNotFound] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { width: screenWidth } = useWindowDimensions();
@@ -50,7 +59,12 @@ export function AssetDetailScreen({
       setActionError(null);
 
       const response = await api.getAssetDetail(token, assetId);
+      const assetList =
+        !assetSnapshot && substationId
+          ? await loadEditableAssetList(token, substationId)
+          : null;
       setAsset(response);
+      setEditableAsset(assetSnapshot ?? assetList?.find((item) => item.id === assetId) ?? null);
     } catch (error) {
       console.error('[ASSET DETAIL LOAD ERROR]', error);
 
@@ -64,7 +78,7 @@ export function AssetDetailScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [assetId, onUnauthorized, token]);
+  }, [assetId, assetSnapshot, onUnauthorized, substationId, token]);
 
   useEffect(() => {
     loadAssetDetail();
@@ -101,6 +115,75 @@ export function AssetDetailScreen({
     } finally {
       setIsStartingInspection(false);
     }
+  }
+
+  function handleEditAsset() {
+    if (!editableAsset) {
+      setActionError('Unable to load editable asset details.');
+      return;
+    }
+
+    onOpenEditAsset(editableAsset);
+  }
+
+  async function handleMarkAssetNotFound() {
+    if (!asset || asset.status === 'NOT_FOUND') {
+      return;
+    }
+
+    try {
+      setIsMarkingNotFound(true);
+      setActionError(null);
+
+      const updatedAsset = await api.updateAssetStatus(token, assetId, {
+        status: 'NOT_FOUND',
+      });
+
+      setEditableAsset(updatedAsset);
+      setAsset((currentAsset) =>
+        currentAsset
+          ? {
+              ...currentAsset,
+              status: updatedAsset.status,
+            }
+          : currentAsset,
+      );
+    } catch (error) {
+      console.error('[ASSET DETAIL MARK NOT FOUND ERROR]', error);
+
+      if (error instanceof ApiError && error.status === 401) {
+        await onUnauthorized(error);
+        return;
+      }
+
+      setActionError(error instanceof Error ? error.message : 'Unable to mark asset as not found.');
+    } finally {
+      setIsMarkingNotFound(false);
+    }
+  }
+
+  function handleConfirmMarkAssetNotFound() {
+    if (!asset || asset.status === 'NOT_FOUND') {
+      return;
+    }
+
+    Alert.alert(
+      'Mark asset as not found?',
+      'The asset will remain in this pencawang list and be marked as Not Found.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Mark Not Found',
+          style: 'destructive',
+          onPress: () => {
+            void handleMarkAssetNotFound();
+          },
+        },
+      ],
+    );
   }
 
   if (isLoading) {
@@ -149,9 +232,53 @@ export function AssetDetailScreen({
           </View>
         ) : null}
 
+        <View style={styles.actionPanel}>
+          <Pressable
+            onPress={handleEditAsset}
+            disabled={!editableAsset}
+            style={({ pressed }) => [
+              styles.actionButton,
+              styles.actionButtonSecondary,
+              !editableAsset && styles.disabledButton,
+              pressed && editableAsset && styles.pressedButton,
+            ]}
+          >
+            <Text style={styles.actionButtonSecondaryText}>Edit</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleConfirmMarkAssetNotFound}
+            disabled={asset.status === 'NOT_FOUND' || isMarkingNotFound}
+            style={({ pressed }) => [
+              styles.actionButton,
+              styles.actionButtonGhost,
+              (asset.status === 'NOT_FOUND' || isMarkingNotFound) && styles.disabledButton,
+              pressed && asset.status !== 'NOT_FOUND' && !isMarkingNotFound && styles.pressedButton,
+            ]}
+          >
+            {isMarkingNotFound ? <ActivityIndicator color="#10233d" /> : null}
+            <Text style={styles.actionButtonGhostText}>Mark Not Found</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleStartInspection}
+            disabled={!visitId || isStartingInspection}
+            style={({ pressed }) => [
+              styles.actionButton,
+              styles.actionButtonPrimary,
+              (!visitId || isStartingInspection) && styles.disabledButton,
+              pressed && visitId && !isStartingInspection && styles.pressedButton,
+            ]}
+          >
+            {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
+            <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Asset Information</Text>
           <InfoRow label="Asset Code" value={asset.assetCode || 'No asset code available'} />
+          {asset.name ? <InfoRow label="Asset Name" value={asset.name} /> : null}
           <InfoRow label="Asset Type" value={asset.assetType || 'No asset type available'} />
           <InfoRow label="Status" value={formatLabel(asset.status) || 'No status available'} />
           <InfoRow label="Latitude" value={formatCoordinate(asset.latitude)} />
@@ -236,20 +363,6 @@ export function AssetDetailScreen({
           )}
         </View>
 
-        {visitId ? (
-          <Pressable
-            onPress={handleStartInspection}
-            disabled={isStartingInspection}
-            style={({ pressed }) => [
-              styles.startButton,
-              isStartingInspection && styles.disabledButton,
-              pressed && !isStartingInspection && styles.pressedButton,
-            ]}
-          >
-            {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
-            <Text style={styles.startButtonText}>Start New Inspection</Text>
-          </Pressable>
-        ) : null}
       </ScrollView>
     </View>
   );
@@ -262,6 +375,18 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <Text style={styles.infoValue}>{value}</Text>
     </View>
   );
+}
+
+async function loadEditableAssetList(token: string, substationId: string) {
+  try {
+    return await api.getAssets(token, substationId);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      throw error;
+    }
+
+    return null;
+  }
 }
 
 function formatCoordinate(value: number | null) {
@@ -427,6 +552,48 @@ const styles = StyleSheet.create({
     color: '#991b1b',
     fontWeight: '600',
   },
+  actionPanel: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  actionButton: {
+    minHeight: 54,
+    flexGrow: 1,
+    flexBasis: 118,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  actionButtonPrimary: {
+    backgroundColor: '#0f5cd8',
+  },
+  actionButtonSecondary: {
+    backgroundColor: '#e5edf8',
+  },
+  actionButtonGhost: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#c8d6e8',
+  },
+  actionButtonPrimaryText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  actionButtonSecondaryText: {
+    color: '#10233d',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  actionButtonGhostText: {
+    color: '#10233d',
+    fontSize: 15,
+    fontWeight: '800',
+  },
   imageBlock: {
     gap: 8,
   },
@@ -476,21 +643,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#10233d',
-  },
-  startButton: {
-    minHeight: 54,
-    borderRadius: 16,
-    backgroundColor: '#0f5cd8',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 18,
-  },
-  startButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff',
   },
   disabledButton: {
     opacity: 0.6,

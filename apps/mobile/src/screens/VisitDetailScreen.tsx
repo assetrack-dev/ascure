@@ -1,16 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
-import { api, ApiError } from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import type { Region } from 'react-native-maps';
+import { API_BASE_URL, api, ApiError } from '../api';
 import {
-  formatDateTime,
-  formatInspectionStatus,
-  getInspectionStatusTone,
-  getLatestSubmittedInspection,
-  getNextInspectionCycle,
-} from '../utils';
-import {
-  AppButton,
-  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
@@ -21,8 +14,39 @@ import {
   SectionTitle,
   StatusChip,
   SuccessBanner,
+  uiTheme,
 } from '../ui';
 import { Asset, SiteVisit } from '../types';
+import { formatDateTime } from '../utils';
+
+type Coordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+type ThumbnailImage = {
+  uri?: string | null;
+  url?: string | null;
+  path?: string | null;
+};
+
+type AssetWithOptionalDisplayData = Asset & {
+  images?: ThumbnailImage[];
+  inspectionImages?: ThumbnailImage[];
+  latestInspection?: {
+    images?: ThumbnailImage[];
+  } | null;
+  noTiangRondaan?: unknown;
+  no_tiang_rondaan?: unknown;
+};
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
+const DEFAULT_REGION: Region = {
+  latitude: 3.139,
+  longitude: 101.6869,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
+};
 
 export function VisitDetailScreen({
   token,
@@ -30,11 +54,9 @@ export function VisitDetailScreen({
   substationId,
   successMessage,
   onBack,
-  onOpenInspection,
   onOpenAddAsset,
   onOpenAssetMap,
   onOpenAssetDetail,
-  onOpenEditAsset,
   onUnauthorized,
 }: {
   token: string;
@@ -42,19 +64,15 @@ export function VisitDetailScreen({
   substationId: string;
   successMessage?: string;
   onBack: () => void;
-  onOpenInspection: (inspectionId: string) => void;
   onOpenAddAsset: () => void;
   onOpenAssetMap: () => void;
-  onOpenAssetDetail: (assetId: string) => void;
-  onOpenEditAsset: (asset: Asset) => void;
+  onOpenAssetDetail: (asset: Asset) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [visit, setVisit] = useState<SiteVisit | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [workingAssetId, setWorkingAssetId] = useState<string | null>(null);
-  const [statusAssetId, setStatusAssetId] = useState<string | null>(null);
 
   const loadVisitData = useCallback(async () => {
     try {
@@ -84,116 +102,26 @@ export function VisitDetailScreen({
     loadVisitData();
   }, [loadVisitData]);
 
-  const inspectionCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    for (const inspection of visit?.inspections ?? []) {
-      if (inspection.completionStatus !== 'SUBMITTED') {
-        continue;
-      }
-
-      counts.set(inspection.assetId, (counts.get(inspection.assetId) ?? 0) + 1);
-    }
-
-    return counts;
-  }, [visit]);
-
-  async function handleOpenAssetInspection(asset: Asset) {
-    if (!visit) {
-      return;
-    }
-
-    try {
-      setWorkingAssetId(asset.id);
-      setError(null);
-
-      const inspection = await api.createInspection(token, {
-        siteVisitId: visit.id,
-        assetId: asset.id,
-        inspectionCycle: getNextInspectionCycle(visit, asset.id),
-      });
-
-      onOpenInspection(inspection.id);
-    } catch (actionError) {
-      if (actionError instanceof ApiError && actionError.status === 401) {
-        await onUnauthorized(actionError);
-        return;
-      }
-
-      setError(actionError instanceof Error ? actionError.message : 'Unable to start inspection.');
-    } finally {
-      setWorkingAssetId(null);
-    }
-  }
-
-  async function handleMarkAssetNotFound(asset: Asset) {
-    try {
-      setStatusAssetId(asset.id);
-      setError(null);
-
-      const updatedAsset = await api.updateAssetStatus(token, asset.id, {
-        status: 'NOT_FOUND',
-      });
-
-      setAssets((currentAssets) =>
-        currentAssets.map((currentAsset) => (currentAsset.id === asset.id ? updatedAsset : currentAsset)),
-      );
-    } catch (actionError) {
-      if (actionError instanceof ApiError && actionError.status === 401) {
-        await onUnauthorized(actionError);
-        return;
-      }
-
-      setError(actionError instanceof Error ? actionError.message : 'Unable to update asset status.');
-    } finally {
-      setStatusAssetId(null);
-    }
-  }
-
-  function handleConfirmMarkAssetNotFound(asset: Asset) {
-    if (asset.status === 'NOT_FOUND') {
-      return;
-    }
-
-    Alert.alert(
-      'Mark asset as not found?',
-      'The asset will stay in this visit list and be marked as Not Found.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Mark Not Found',
-          style: 'destructive',
-          onPress: () => {
-            void handleMarkAssetNotFound(asset);
-          },
-        },
-      ],
-    );
-  }
-
   return (
     <Screen
       title="Visit Detail"
-      subtitle="Review the shared visit, available assets, and start a fresh inspection when needed."
+      subtitle="Pencawang assets for this shared field visit."
       actions={
         <>
           <InlineButton label="Back" onPress={onBack} />
-          <InlineButton label="Refresh" onPress={loadVisitData} />
+          <InlineButton label="Refresh" onPress={loadVisitData} disabled={isLoading} />
         </>
       }
     >
       <ErrorBanner message={error} />
       <SuccessBanner message={successMessage} />
-      {isLoading ? <LoadingBlock label="Loading visit details and assets..." /> : null}
+      {isLoading ? <LoadingBlock label="Loading visit and assets..." /> : null}
 
       {!isLoading && visit ? (
         <>
           <Card>
             <SectionTitle>Visit Summary</SectionTitle>
-            <KeyValueRow label="Substation" value={`${visit.substation.code} - ${visit.substation.name}`} />
+            <KeyValueRow label="Pencawang" value={`${visit.substation.code} - ${visit.substation.name}`} />
             <KeyValueRow label="Team" value={`${visit.team.code} - ${visit.team.name}`} />
             <KeyValueRow label="Started" value={formatDateTime(visit.startedAt)} />
             <KeyValueRow label="Created By" value={visit.createdBy?.name ?? 'Unknown'} />
@@ -201,124 +129,40 @@ export function VisitDetailScreen({
             <StatusChip label={visit.status} tone="success" />
           </Card>
 
-          <Card>
-            <SectionTitle>Team Members</SectionTitle>
-            {(visit.users ?? []).length === 0 ? (
-              <EmptyState
-                title="No assigned users"
-                description="This visit does not list any joined team members."
-              />
-            ) : (
-              (visit.users ?? []).map((member) => (
-                <Card key={member.id}>
-                  <KeyValueRow label="Name" value={member.user.name} />
-                  <KeyValueRow label="Role" value={member.user.role} />
-                  <KeyValueRow label="Joined" value={formatDateTime(member.joinedAt)} />
-                </Card>
-              ))
-            )}
-          </Card>
+          <VisitAssetMap
+            assets={assets}
+            onOpenAsset={onOpenAssetDetail}
+            onOpenFullScreen={onOpenAssetMap}
+          />
 
           <Card>
-            <SectionTitle>Assets</SectionTitle>
-            <AppButton label="+ Add Asset" onPress={onOpenAddAsset} variant="secondary" />
-            <AppButton label="Asset Map" onPress={onOpenAssetMap} variant="secondary" />
+            <View style={styles.assetHeader}>
+              <SectionTitle>Assets</SectionTitle>
+              <Pressable
+                accessibilityRole="button"
+                onPress={onOpenAddAsset}
+                style={({ pressed }) => [styles.addAssetButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.addAssetButtonText}>+ Add</Text>
+              </Pressable>
+            </View>
+
             {assets.length === 0 ? (
               <EmptyState
                 title="No assets found"
-                description="No assets have been registered for this substation yet. Add the first asset to begin inspections."
+                description="Add the first asset for this pencawang before starting inspections."
               />
             ) : (
-              assets.map((asset) => {
-                const latestSubmittedInspection = getLatestSubmittedInspection(visit, asset.id);
-                const inspectionCount = inspectionCounts.get(asset.id) ?? 0;
-                const nextCycle = getNextInspectionCycle(visit, asset.id);
-                const isNotFound = asset.status === 'NOT_FOUND';
-                const assetStatusLabel = isNotFound ? 'Not Found' : asset.status;
-                const assetLabel = asset.name
-                  ? `${asset.assetCode} - ${asset.name}`
-                  : `${asset.assetCode} - Unnamed asset`;
-                const hasCoordinates =
-                  asset.latitude !== null &&
-                  asset.latitude !== undefined &&
-                  asset.longitude !== null &&
-                  asset.longitude !== undefined;
-
-                return (
-                  <View key={asset.id} style={isNotFound ? styles.notFoundAssetCard : undefined}>
-                    <Card>
-                      <KeyValueRow label="Asset" value={assetLabel} />
-                      <KeyValueRow label="Type" value={asset.assetType.name} />
-                      <KeyValueRow label="Status" value={assetStatusLabel} />
-                      {isNotFound ? <StatusChip label="Not Found" /> : null}
-                      <KeyValueRow label="Completed Inspections" value={String(inspectionCount)} />
-                      {hasCoordinates ? (
-                        <KeyValueRow
-                          label="Coordinates"
-                          value={`${asset.latitude?.toFixed(6)}, ${asset.longitude?.toFixed(6)}`}
-                        />
-                      ) : null}
-                      {latestSubmittedInspection ? (
-                        <>
-                          <KeyValueRow
-                            label="Last Completed Status"
-                            value={formatInspectionStatus(latestSubmittedInspection.completionStatus)}
-                          />
-                          <KeyValueRow
-                            label="Last Completed Cycle"
-                            value={`Cycle ${latestSubmittedInspection.inspectionCycle}`}
-                          />
-                          <KeyValueRow
-                            label="Completed At"
-                            value={formatDateTime(latestSubmittedInspection.submittedAt)}
-                          />
-                          <StatusChip
-                            label={`${formatInspectionStatus(latestSubmittedInspection.completionStatus)} - Cycle ${latestSubmittedInspection.inspectionCycle}`}
-                            tone={getInspectionStatusTone(latestSubmittedInspection)}
-                          />
-                        </>
-                      ) : (
-                        <BodyText muted>No completed inspection has been submitted for this asset yet.</BodyText>
-                      )}
-                      <BodyText muted>
-                        Starting a new inspection will create cycle {nextCycle} using the latest active template from the backend.
-                      </BodyText>
-                      <AppButton
-                        label="View Details"
-                        onPress={() => onOpenAssetDetail(asset.id)}
-                        variant="secondary"
-                        disabled={statusAssetId !== null || workingAssetId !== null}
-                      />
-                      <AppButton
-                        label="Edit Asset"
-                        onPress={() => onOpenEditAsset(asset)}
-                        variant="secondary"
-                        disabled={statusAssetId !== null || workingAssetId !== null}
-                      />
-                      <AppButton
-                        label="Mark Not Found"
-                        onPress={() => handleConfirmMarkAssetNotFound(asset)}
-                        variant="ghost"
-                        loading={statusAssetId === asset.id}
-                        disabled={
-                          isNotFound ||
-                          workingAssetId !== null ||
-                          (statusAssetId !== null && statusAssetId !== asset.id)
-                        }
-                      />
-                      <AppButton
-                        label="Start Inspection"
-                        onPress={() => handleOpenAssetInspection(asset)}
-                        loading={workingAssetId === asset.id}
-                        disabled={
-                          statusAssetId !== null ||
-                          (workingAssetId !== null && workingAssetId !== asset.id)
-                        }
-                      />
-                    </Card>
-                  </View>
-                );
-              })
+              <View style={styles.assetList}>
+                {assets.map((asset) => (
+                  <AssetListRow
+                    key={asset.id}
+                    asset={asset}
+                    visit={visit}
+                    onPress={() => onOpenAssetDetail(asset)}
+                  />
+                ))}
+              </View>
             )}
           </Card>
         </>
@@ -327,8 +171,391 @@ export function VisitDetailScreen({
   );
 }
 
+function VisitAssetMap({
+  assets,
+  onOpenAsset,
+  onOpenFullScreen,
+}: {
+  assets: Asset[];
+  onOpenAsset: (asset: Asset) => void;
+  onOpenFullScreen: () => void;
+}) {
+  const mappedAssets = assets
+    .map((asset) => {
+      const coordinate = getAssetCoordinate(asset);
+
+      return coordinate ? { asset, coordinate } : null;
+    })
+    .filter(isMappedAsset);
+  const region = createRegion(mappedAssets.map((item) => item.coordinate));
+
+  return (
+    <Card>
+      <View style={styles.mapHeader}>
+        <SectionTitle>Map</SectionTitle>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onOpenFullScreen}
+          style={({ pressed }) => [styles.fullScreenButton, pressed && styles.buttonPressed]}
+        >
+          <Text style={styles.fullScreenButtonText}>View Full Screen</Text>
+        </Pressable>
+      </View>
+
+      {mappedAssets.length === 0 ? (
+        <EmptyState
+          title="No mapped assets"
+          description="Assets with GPS coordinates will appear on this pencawang map."
+        />
+      ) : (
+        <View style={styles.mapFrame}>
+          <MapView
+            provider={PROVIDER_GOOGLE}
+            style={styles.map}
+            initialRegion={region}
+            region={region}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+            toolbarEnabled={false}
+          >
+            {mappedAssets.map(({ asset, coordinate }) => (
+              <Marker
+                key={asset.id}
+                coordinate={coordinate}
+                title={asset.assetCode}
+                description={asset.name ?? asset.assetType.name}
+                pinColor={uiTheme.colors.primary}
+                onPress={() => onOpenAsset(asset)}
+              />
+            ))}
+          </MapView>
+        </View>
+      )}
+    </Card>
+  );
+}
+
+function AssetListRow({
+  asset,
+  visit,
+  onPress,
+}: {
+  asset: Asset;
+  visit: SiteVisit;
+  onPress: () => void;
+}) {
+  const thumbnailUri = getAssetThumbnailUri(asset, visit);
+  const noTiangRondaan = getNoTiangRondaan(asset);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.assetRow,
+        asset.status === 'NOT_FOUND' && styles.assetRowMuted,
+        pressed && styles.assetRowPressed,
+      ]}
+    >
+      <View style={styles.thumbnailFrame}>
+        {thumbnailUri ? (
+          <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} resizeMode="cover" />
+        ) : (
+          <View style={styles.thumbnailPlaceholder}>
+            <Text style={styles.thumbnailPlaceholderText}>No image</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.assetTextWrap}>
+        <Text style={styles.assetName} numberOfLines={1}>
+          {asset.name || 'Unnamed asset'}
+        </Text>
+        <Text style={styles.assetMeta} numberOfLines={1}>
+          Code: {asset.assetCode}
+        </Text>
+        <Text style={styles.assetMeta} numberOfLines={1}>
+          No Tiang Rondaan: {noTiangRondaan}
+        </Text>
+      </View>
+
+      <Text style={styles.rowArrow}>{'>'}</Text>
+    </Pressable>
+  );
+}
+
+function getAssetThumbnailUri(asset: Asset, visit: SiteVisit) {
+  const image = getFirstAssetImage(asset, visit);
+
+  return image ? getImageSourceUri(image) : null;
+}
+
+function getFirstAssetImage(asset: Asset, visit: SiteVisit): ThumbnailImage | null {
+  const flexibleAsset = asset as AssetWithOptionalDisplayData;
+  const assetImage =
+    flexibleAsset.images?.[0] ??
+    flexibleAsset.latestInspection?.images?.[0] ??
+    flexibleAsset.inspectionImages?.[0];
+
+  if (assetImage) {
+    return assetImage;
+  }
+
+  for (const inspection of visit.inspections ?? []) {
+    if (inspection.assetId !== asset.id) {
+      continue;
+    }
+
+    const inspectionImage = inspection.inspectionImages?.[0] ?? inspection.images?.[0];
+
+    if (inspectionImage) {
+      return inspectionImage;
+    }
+  }
+
+  return null;
+}
+
+function getImageSourceUri(image: ThumbnailImage) {
+  const source = image.uri || image.url || image.path;
+
+  if (!source) {
+    return null;
+  }
+
+  if (/^[a-z][a-z\d+\-.]*:/i.test(source)) {
+    return source;
+  }
+
+  return source.startsWith('/') ? `${API_ORIGIN}${source}` : `${API_ORIGIN}/${source}`;
+}
+
+function getNoTiangRondaan(asset: Asset) {
+  const flexibleAsset = asset as AssetWithOptionalDisplayData;
+  const metadata = asset.metadata && typeof asset.metadata === 'object' ? asset.metadata : {};
+  const value =
+    flexibleAsset.noTiangRondaan ??
+    flexibleAsset.no_tiang_rondaan ??
+    getMetadataValue(metadata, [
+      'noTiangRondaan',
+      'no_tiang_rondaan',
+      'No Tiang Rondaan',
+      'noTiang',
+      'poleNumber',
+    ]);
+
+  return normalizeDisplayValue(value) ?? 'Not available';
+}
+
+function getMetadataValue(metadata: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (key in metadata) {
+      return metadata[key];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeDisplayValue(value: unknown) {
+  if (typeof value === 'string') {
+    const trimmedValue = value.trim();
+
+    return trimmedValue || null;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return null;
+}
+
+function getAssetCoordinate(asset: Asset) {
+  return createCoordinate(asset.latitude, asset.longitude);
+}
+
+function createCoordinate(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+) {
+  if (
+    typeof latitude === 'number' &&
+    typeof longitude === 'number' &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude)
+  ) {
+    return {
+      latitude,
+      longitude,
+    };
+  }
+
+  return null;
+}
+
+function createRegion(coordinates: Coordinate[]): Region {
+  if (coordinates.length === 0) {
+    return DEFAULT_REGION;
+  }
+
+  if (coordinates.length === 1) {
+    return {
+      latitude: coordinates[0].latitude,
+      longitude: coordinates[0].longitude,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    };
+  }
+
+  const latitudes = coordinates.map((coordinate) => coordinate.latitude);
+  const longitudes = coordinates.map((coordinate) => coordinate.longitude);
+  const minimumLatitude = Math.min(...latitudes);
+  const maximumLatitude = Math.max(...latitudes);
+  const minimumLongitude = Math.min(...longitudes);
+  const maximumLongitude = Math.max(...longitudes);
+
+  return {
+    latitude: (minimumLatitude + maximumLatitude) / 2,
+    longitude: (minimumLongitude + maximumLongitude) / 2,
+    latitudeDelta: Math.max((maximumLatitude - minimumLatitude) * 1.6, 0.01),
+    longitudeDelta: Math.max((maximumLongitude - minimumLongitude) * 1.6, 0.01),
+  };
+}
+
+function isMappedAsset(
+  value: { asset: Asset; coordinate: Coordinate } | null,
+): value is { asset: Asset; coordinate: Coordinate } {
+  return value !== null;
+}
+
 const styles = StyleSheet.create({
-  notFoundAssetCard: {
-    opacity: 0.6,
+  mapHeader: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  fullScreenButton: {
+    minHeight: 44,
+    borderRadius: uiTheme.radius.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    paddingHorizontal: 14,
+  },
+  fullScreenButtonText: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  mapFrame: {
+    height: 220,
+    borderRadius: uiTheme.radius.card,
+    overflow: 'hidden',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  map: {
+    flex: 1,
+  },
+  assetHeader: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  addAssetButton: {
+    minHeight: 44,
+    borderRadius: uiTheme.radius.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.primary,
+    paddingHorizontal: 14,
+  },
+  addAssetButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  assetList: {
+    gap: 12,
+  },
+  assetRow: {
+    minHeight: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 10,
+  },
+  assetRowMuted: {
+    opacity: 0.56,
+  },
+  assetRowPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+    transform: [{ scale: 0.995 }],
+  },
+  thumbnailFrame: {
+    width: 70,
+    height: 70,
+    borderRadius: uiTheme.radius.card,
+    overflow: 'hidden',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbnailPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  thumbnailPlaceholderText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  assetTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  assetName: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '800',
+  },
+  assetMeta: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  rowArrow: {
+    width: 18,
+    color: uiTheme.colors.textMuted,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  buttonPressed: {
+    opacity: 0.82,
   },
 });

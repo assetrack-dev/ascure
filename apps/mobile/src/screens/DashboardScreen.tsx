@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import { DashboardData, DashboardRecentDefect, DefectStatus } from '../types';
 import { formatDateTime } from '../utils';
@@ -13,6 +13,7 @@ import {
   Screen,
   SectionTitle,
   StatusChip,
+  uiTheme,
 } from '../ui';
 
 export function DashboardScreen({
@@ -71,13 +72,13 @@ export function DashboardScreen({
 
       {!isLoading && dashboard ? (
         <>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          <View style={styles.statGrid}>
             <StatCard label="Total Assets" value={dashboard.totalAssets} />
             <StatCard label="Total Inspections" value={dashboard.totalInspections} />
             <StatCard label="Total Defects" value={dashboard.totalDefects} />
           </View>
 
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          <View style={styles.statGrid}>
             <StatusStatCard label="OPEN" value={dashboard.openDefects} status="OPEN" />
             <StatusStatCard
               label="IN_PROGRESS"
@@ -115,22 +116,9 @@ export function DashboardScreen({
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <View
-      style={{
-        flexGrow: 1,
-        flexBasis: 140,
-        backgroundColor: '#ffffff',
-        borderRadius: 18,
-        padding: 16,
-        gap: 8,
-        borderWidth: 1,
-        borderColor: '#dce5f1',
-      }}
-    >
-      <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>{label}</Text>
-      <Text style={{ fontSize: 30, fontWeight: '800', color: '#0f172a' }}>
-        {formatNumber(value)}
-      </Text>
+    <View style={styles.statCard}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue}>{formatNumber(value)}</Text>
     </View>
   );
 }
@@ -145,22 +133,9 @@ function StatusStatCard({
   status: DefectStatus;
 }) {
   return (
-    <View
-      style={{
-        flexGrow: 1,
-        flexBasis: 110,
-        backgroundColor: '#ffffff',
-        borderRadius: 18,
-        padding: 16,
-        gap: 10,
-        borderWidth: 1,
-        borderColor: '#dce5f1',
-      }}
-    >
+    <View style={styles.statusStatCard}>
       <StatusChip label={label} tone={getStatusTone(status)} />
-      <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a' }}>
-        {formatNumber(value)}
-      </Text>
+      <Text style={styles.statusStatValue}>{formatNumber(value)}</Text>
     </View>
   );
 }
@@ -175,27 +150,16 @@ function RecentDefectRow({
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => ({
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#dce5f1',
-        backgroundColor: pressed ? '#f8fbff' : '#ffffff',
-        padding: 14,
-        gap: 10,
-      })}
+      style={({ pressed }) => [styles.recentDefectRow, pressed && styles.recentDefectRowPressed]}
     >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
-            {defect.assetCode || 'Unknown Asset'}
-          </Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, fontWeight: '600', color: '#10233d' }}>
-            {defect.label}
-          </Text>
+      <View style={styles.recentDefectHeader}>
+        <View style={styles.recentDefectTextWrap}>
+          <Text style={styles.recentDefectAsset}>{defect.assetCode || 'Unknown Asset'}</Text>
+          <Text style={styles.recentDefectLabel}>{defect.label}</Text>
         </View>
         <StatusChip label={formatStatus(defect.status)} tone={getStatusTone(defect.status)} />
       </View>
-      <Text style={{ fontSize: 13, color: '#607086' }}>{formatDateTime(defect.createdAt)}</Text>
+      <Text style={styles.recentDefectDate}>{formatDateTime(defect.createdAt)}</Text>
     </Pressable>
   );
 }
@@ -223,3 +187,89 @@ function formatStatus(value: string) {
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
 }
+
+const styles = StyleSheet.create({
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  statCard: {
+    flexGrow: 1,
+    flexBasis: 140,
+    minHeight: 104,
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: uiTheme.spacing.card,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  statLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: uiTheme.colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  statValue: {
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '800',
+    color: uiTheme.colors.textPrimary,
+  },
+  statusStatCard: {
+    flexGrow: 1,
+    flexBasis: 110,
+    minHeight: 100,
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: uiTheme.spacing.card,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  statusStatValue: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+    color: uiTheme.colors.textPrimary,
+  },
+  recentDefectRow: {
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 14,
+    gap: 10,
+  },
+  recentDefectRowPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+  },
+  recentDefectHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  recentDefectTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  recentDefectAsset: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '800',
+    color: uiTheme.colors.textPrimary,
+  },
+  recentDefectLabel: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
+  },
+  recentDefectDate: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiTheme.colors.textSecondary,
+  },
+});

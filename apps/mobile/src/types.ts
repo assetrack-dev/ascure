@@ -89,10 +89,15 @@ export interface AssetDetailInspection {
 export interface AssetDetailResponse {
   id: string;
   assetCode: string;
+  name?: string | null;
   assetType: string;
-  status: string;
+  status: AssetStatus;
   latitude: number | null;
   longitude: number | null;
+  metadata?: Record<string, unknown> | null;
+  location?: string | null;
+  pencawangName?: string;
+  substation?: Pick<Substation, 'id' | 'code' | 'name' | 'location'>;
   latestInspection: AssetDetailInspection | null;
 }
 
@@ -112,6 +117,14 @@ export interface InspectionSummary {
   createdAt: string;
   updatedAt?: string;
   asset?: Pick<Asset, 'id' | 'assetCode' | 'name'>;
+  inspectionImages?: InspectionImage[];
+  images?: InspectionImage[];
+}
+
+export interface SiteVisitImage {
+  uri?: string | null;
+  url?: string | null;
+  path?: string | null;
 }
 
 export interface SiteVisit {
@@ -131,6 +144,7 @@ export interface SiteVisit {
   createdBy?: Pick<SessionUser, 'id' | 'email' | 'name' | 'role'>;
   users?: SiteVisitUser[];
   inspections?: InspectionSummary[];
+  images?: SiteVisitImage[];
 }
 
 export interface LoginResponse {

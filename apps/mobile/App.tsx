@@ -6,7 +6,6 @@ import { AddAssetScreen } from './src/screens/AddAssetScreen';
 import { AssetDetailScreen } from './src/screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from './src/screens/AssetInspectionHistoryScreen';
 import { CheckInScreen } from './src/screens/CheckInScreen';
-import { ChecklistTemplateAdminScreen } from './src/screens/ChecklistTemplateAdminScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { DefectDetailScreen } from './src/screens/DefectDetailScreen';
 import { DefectListScreen } from './src/screens/DefectListScreen';
@@ -43,6 +42,7 @@ type AssetDetailRoute = {
   visitId?: string;
   substationId: string;
   assetId: string;
+  assetSnapshot?: Asset;
   returnTo?: 'asset-map';
   mapVisitId?: string;
   mapSubstationId?: string;
@@ -72,7 +72,6 @@ type Route =
   | { name: 'login' }
   | { name: 'home' }
   | { name: 'Dashboard' }
-  | { name: 'ChecklistTemplateAdmin' }
   | { name: 'DefectList' }
   | DefectDetailRoute
   | { name: 'check-in' }
@@ -204,14 +203,6 @@ export default function App() {
         substationId={route.substationId}
         successMessage={route.successMessage}
         onBack={() => setRoute({ name: 'home' })}
-        onOpenInspection={(inspectionId) =>
-          setRoute({
-            name: 'inspection-form',
-            inspectionId,
-            visitId: route.visitId,
-            substationId: route.substationId,
-          })
-        }
         onOpenAddAsset={() =>
           setRoute({
             name: 'add-asset',
@@ -226,20 +217,13 @@ export default function App() {
             substationId: route.substationId,
           })
         }
-        onOpenAssetDetail={(assetId) =>
+        onOpenAssetDetail={(asset) =>
           setRoute({
             name: 'asset-detail',
             visitId: route.visitId,
             substationId: route.substationId,
-            assetId,
-          })
-        }
-        onOpenEditAsset={(asset) =>
-          setRoute({
-            name: 'add-asset',
-            visitId: route.visitId,
-            substationId: route.substationId,
-            assetToEdit: asset,
+            assetId: asset.id,
+            assetSnapshot: asset,
           })
         }
         onUnauthorized={handleUnauthorized}
@@ -252,7 +236,9 @@ export default function App() {
       <AssetDetailScreen
         token={token}
         visitId={route.visitId}
+        substationId={route.substationId}
         assetId={route.assetId}
+        assetSnapshot={route.assetSnapshot}
         onBack={() =>
           route.returnTo === 'asset-map'
             ? setRoute({
@@ -293,6 +279,14 @@ export default function App() {
             assetCode: params.assetCode,
           });
         }}
+        onOpenEditAsset={(asset) =>
+          setRoute({
+            name: 'add-asset',
+            visitId: route.visitId,
+            substationId: route.substationId,
+            assetToEdit: asset,
+          })
+        }
         onOpenImagePreview={(params) =>
           setRoute({
             name: 'ImagePreview',
@@ -367,16 +361,6 @@ export default function App() {
             assetCode: item.assetCode,
           })
         }
-        onUnauthorized={handleUnauthorized}
-      />
-    );
-  }
-
-  if (route.name === 'ChecklistTemplateAdmin') {
-    return (
-      <ChecklistTemplateAdminScreen
-        token={token}
-        onBack={() => setRoute({ name: 'home' })}
         onUnauthorized={handleUnauthorized}
       />
     );
@@ -503,6 +487,7 @@ export default function App() {
             visitId: route.visitId,
             substationId: asset.substationId,
             assetId: asset.id,
+            assetSnapshot: asset,
             returnTo: 'asset-map',
             mapVisitId: route.visitId,
             mapSubstationId: route.substationId,
@@ -595,7 +580,6 @@ export default function App() {
       onOpenDashboard={() => setRoute({ name: 'Dashboard' })}
       onOpenAssetMap={() => setRoute({ name: 'asset-map' })}
       onOpenDefects={() => setRoute({ name: 'DefectList' })}
-      onOpenChecklistTemplates={() => setRoute({ name: 'ChecklistTemplateAdmin' })}
       onOpenVisit={(visit) =>
         setRoute({
           name: 'visit-detail',

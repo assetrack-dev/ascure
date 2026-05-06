@@ -15,6 +15,36 @@ import { StatusBar } from 'expo-status-bar';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
+export const uiTheme = {
+  colors: {
+    primary: '#111827',
+    background: '#F5F7FA',
+    card: '#FFFFFF',
+    border: '#E5E7EB',
+    textPrimary: '#111827',
+    textSecondary: '#6B7280',
+    textMuted: '#9CA3AF',
+    surfaceMuted: '#F9FAFB',
+    surfacePressed: '#F3F4F6',
+    danger: '#B91C1C',
+    dangerSoft: '#FEF2F2',
+    success: '#166534',
+    successSoft: '#ECFDF5',
+    warning: '#92400E',
+    warningSoft: '#FFFBEB',
+  },
+  radius: {
+    card: 8,
+    control: 12,
+    pill: 999,
+  },
+  spacing: {
+    screen: 20,
+    section: 16,
+    card: 16,
+  },
+} as const;
+
 export function Screen({
   title,
   subtitle,
@@ -108,7 +138,7 @@ export function SuccessBanner({ message }: { message?: string | null }) {
 export function LoadingBlock({ label }: { label: string }) {
   return (
     <View style={styles.loadingBlock}>
-      <ActivityIndicator size="large" color="#0f5cd8" />
+      <ActivityIndicator size="large" color={uiTheme.colors.primary} />
       <Text style={styles.loadingText}>{label}</Text>
     </View>
   );
@@ -118,7 +148,7 @@ export function LoadingScreen({ label }: { label: string }) {
   return (
     <View style={styles.loadingScreen}>
       <StatusBar style="dark" />
-      <ActivityIndicator size="large" color="#0f5cd8" />
+      <ActivityIndicator size="large" color={uiTheme.colors.primary} />
       <Text style={styles.loadingScreenText}>{label}</Text>
     </View>
   );
@@ -163,7 +193,11 @@ export function AppButton({
         pressed && !(disabled || loading) && styles.buttonPressed,
       ]}
     >
-      {loading ? <ActivityIndicator color={variant === 'secondary' ? '#0f172a' : '#ffffff'} /> : null}
+      {loading ? (
+        <ActivityIndicator
+          color={variant === 'secondary' || variant === 'ghost' ? uiTheme.colors.primary : '#ffffff'}
+        />
+      ) : null}
       <Text style={[styles.buttonText, styles[buttonLabelStyles[variant]]]}>{label}</Text>
     </Pressable>
   );
@@ -212,7 +246,7 @@ export function TextField({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#7b8aa3"
+        placeholderTextColor={uiTheme.colors.textMuted}
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         editable={editable}
@@ -314,16 +348,16 @@ const buttonLabelStyles = {
 const styles = StyleSheet.create({
   keyboardRoot: {
     flex: 1,
-    backgroundColor: '#f4f7fb',
+    backgroundColor: uiTheme.colors.background,
   },
   screen: {
     flex: 1,
-    backgroundColor: '#f4f7fb',
+    backgroundColor: uiTheme.colors.background,
     paddingTop: Platform.OS === 'android' ? 24 : 16,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingBottom: 14,
     gap: 12,
   },
   headerTextWrap: {
@@ -332,64 +366,66 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 8,
   },
   title: {
-    fontSize: 28,
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: '800',
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 14,
     lineHeight: 22,
-    color: '#526277',
+    color: uiTheme.colors.textSecondary,
   },
   scrollContent: {
-    paddingHorizontal: 20,
+    paddingHorizontal: uiTheme.spacing.screen,
     paddingBottom: 140,
-    gap: 16,
+    gap: uiTheme.spacing.section,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
-    gap: 16,
+    paddingHorizontal: uiTheme.spacing.screen,
+    gap: uiTheme.spacing.section,
   },
   footer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: uiTheme.spacing.screen,
     paddingVertical: 16,
     borderTopWidth: 1,
-    borderTopColor: '#d7deea',
-    backgroundColor: '#f4f7fb',
+    borderTopColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.background,
     gap: 12,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: uiTheme.spacing.card,
+    gap: 14,
     borderWidth: 1,
-    borderColor: '#dce5f1',
+    borderColor: uiTheme.colors.border,
   },
   sectionTitle: {
-    fontSize: 19,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: '700',
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   bodyText: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#10233d',
+    color: uiTheme.colors.textPrimary,
   },
   bodyMuted: {
     fontSize: 14,
     lineHeight: 21,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
   },
   errorBanner: {
-    backgroundColor: '#fee2e2',
-    borderRadius: 14,
+    backgroundColor: uiTheme.colors.dangerSoft,
+    borderRadius: uiTheme.radius.control,
     borderWidth: 1,
-    borderColor: '#fecaca',
+    borderColor: '#FECACA',
     padding: 14,
   },
   errorText: {
@@ -399,10 +435,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   successBanner: {
-    backgroundColor: '#dcfce7',
-    borderRadius: 14,
+    backgroundColor: uiTheme.colors.successSoft,
+    borderRadius: uiTheme.radius.control,
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: '#BBF7D0',
     padding: 14,
   },
   successText: {
@@ -419,11 +455,11 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 15,
-    color: '#526277',
+    color: uiTheme.colors.textSecondary,
   },
   loadingScreen: {
     flex: 1,
-    backgroundColor: '#f4f7fb',
+    backgroundColor: uiTheme.colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 16,
@@ -431,30 +467,30 @@ const styles = StyleSheet.create({
   },
   loadingScreenText: {
     fontSize: 16,
-    color: '#526277',
+    color: uiTheme.colors.textSecondary,
     textAlign: 'center',
   },
   emptyState: {
-    backgroundColor: '#eef4fb',
-    borderRadius: 16,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderRadius: uiTheme.radius.card,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#d9e4f2',
+    borderColor: uiTheme.colors.border,
     gap: 8,
   },
   emptyTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   emptyDescription: {
     fontSize: 14,
     lineHeight: 21,
-    color: '#526277',
+    color: uiTheme.colors.textSecondary,
   },
   button: {
-    minHeight: 54,
-    borderRadius: 16,
+    minHeight: 52,
+    borderRadius: uiTheme.radius.control,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -462,18 +498,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   buttonPrimary: {
-    backgroundColor: '#0f5cd8',
+    backgroundColor: uiTheme.colors.primary,
   },
   buttonSecondary: {
-    backgroundColor: '#e5edf8',
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
   },
   buttonDanger: {
-    backgroundColor: '#c03636',
+    backgroundColor: uiTheme.colors.danger,
   },
   buttonGhost: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#c8d6e8',
+    borderColor: uiTheme.colors.border,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -489,22 +527,24 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   buttonTextSecondary: {
-    color: '#10233d',
+    color: uiTheme.colors.textPrimary,
   },
   buttonTextGhost: {
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   inlineButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 2,
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 6,
   },
   inlineButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    color: '#0f5cd8',
+    color: uiTheme.colors.primary,
   },
   inlineButtonDisabled: {
-    color: '#94a3b8',
+    color: uiTheme.colors.textMuted,
   },
   fieldWrap: {
     gap: 8,
@@ -512,26 +552,26 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#10233d',
+    color: uiTheme.colors.textPrimary,
   },
   textInput: {
-    minHeight: 54,
-    borderRadius: 14,
+    minHeight: 52,
+    borderRadius: uiTheme.radius.control,
     borderWidth: 1,
-    borderColor: '#c7d5e8',
-    backgroundColor: '#ffffff',
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   textArea: {
     minHeight: 96,
     textAlignVertical: 'top',
   },
   inputDisabled: {
-    backgroundColor: '#edf2f8',
-    color: '#617086',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    color: uiTheme.colors.textSecondary,
   },
   keyValueRow: {
     flexDirection: 'row',
@@ -541,7 +581,7 @@ const styles = StyleSheet.create({
   keyValueLabel: {
     flex: 1,
     fontSize: 14,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
   },
   keyValueValueWrap: {
     flex: 1.2,
@@ -549,27 +589,31 @@ const styles = StyleSheet.create({
   },
   keyValueValue: {
     fontSize: 14,
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
     fontWeight: '600',
     textAlign: 'right',
   },
   chip: {
     alignSelf: 'flex-start',
-    borderRadius: 999,
+    borderRadius: uiTheme.radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#e5edf8',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
   },
   chipSuccess: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: uiTheme.colors.successSoft,
+    borderColor: '#BBF7D0',
   },
   chipWarning: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: uiTheme.colors.warningSoft,
+    borderColor: '#FDE68A',
   },
   chipText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1e293b',
+    color: uiTheme.colors.textPrimary,
   },
   chipTextSuccess: {
     color: '#166534',
@@ -582,14 +626,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     padding: 14,
-    borderRadius: 16,
+    borderRadius: uiTheme.radius.card,
     borderWidth: 1,
-    borderColor: '#c7d5e8',
-    backgroundColor: '#ffffff',
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
   },
   selectCardSelected: {
-    borderColor: '#0f5cd8',
-    backgroundColor: '#eef4ff',
+    borderColor: uiTheme.colors.primary,
+    backgroundColor: uiTheme.colors.surfaceMuted,
   },
   selectCardPressed: {
     opacity: 0.92,
@@ -599,7 +643,7 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#0f5cd8',
+    borderColor: uiTheme.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -607,7 +651,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#0f5cd8',
+    backgroundColor: uiTheme.colors.primary,
   },
   selectTextWrap: {
     flex: 1,
@@ -616,10 +660,10 @@ const styles = StyleSheet.create({
   selectTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   selectDescription: {
     fontSize: 13,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
   },
 });

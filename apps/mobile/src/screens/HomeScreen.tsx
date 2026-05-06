@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../api';
-import { formatDateTime, formatRole } from '../utils';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { API_BASE_URL, api, ApiError } from '../api';
 import {
-  AppButton,
-  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
   InlineButton,
-  KeyValueRow,
   LoadingBlock,
   Screen,
   SectionTitle,
-  StatusChip,
+  uiTheme,
 } from '../ui';
 import { SessionUser, SiteVisit, Team } from '../types';
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
+
+type VisitThumbnailImage = {
+  uri?: string | null;
+  url?: string | null;
+  path?: string | null;
+};
 
 export function HomeScreen({
   token,
@@ -24,7 +29,6 @@ export function HomeScreen({
   onOpenDashboard,
   onOpenAssetMap,
   onOpenDefects,
-  onOpenChecklistTemplates,
   onOpenVisit,
   onLogout,
   onUnauthorized,
@@ -36,7 +40,6 @@ export function HomeScreen({
   onOpenDashboard: () => void;
   onOpenAssetMap: () => void;
   onOpenDefects: () => void;
-  onOpenChecklistTemplates: () => void;
   onOpenVisit: (visit: SiteVisit) => void;
   onLogout: () => Promise<void>;
   onUnauthorized: (error?: unknown) => Promise<void>;
@@ -44,6 +47,7 @@ export function HomeScreen({
   const [user, setUser] = useState(initialUser);
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,10 +61,11 @@ export function HomeScreen({
         api.getTeams(token),
         api.getActiveSiteVisits(token),
       ]);
+      const visitsWithImageData = await loadVisitDetails(token, visitList);
 
       setUser(me);
       setTeams(teamList);
-      setActiveVisits(visitList);
+      setActiveVisits(visitsWithImageData);
       onUserRefreshed(me);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
@@ -68,7 +73,7 @@ export function HomeScreen({
         return;
       }
 
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load home data.');
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load active sites.');
     } finally {
       setIsLoading(false);
     }
@@ -79,90 +84,552 @@ export function HomeScreen({
   }, [loadHomeData]);
 
   return (
-    <Screen
-      title="Home"
-      subtitle="Technician overview for your teams, shared visits, and next actions."
-      actions={
-        <>
-          <InlineButton label="Refresh" onPress={loadHomeData} />
-          <InlineButton label="Logout" onPress={onLogout} />
-        </>
-      }
-    >
-      <ErrorBanner message={error} />
-      {isLoading ? <LoadingBlock label="Loading user, teams, and active site visits..." /> : null}
+    <View style={styles.root}>
+      <Screen
+        title="Active Site Status"
+        subtitle="Shared team check-ins currently open in the field."
+        actions={
+          <>
+            <InlineButton label="Menu" onPress={() => setIsDrawerOpen(true)} />
+            <InlineButton label="Refresh" onPress={loadHomeData} disabled={isLoading} />
+          </>
+        }
+      >
+        <ErrorBanner message={error} />
+        {isLoading ? <LoadingBlock label="Loading active sites..." /> : null}
 
-      {!isLoading ? (
-        <>
+        {!isLoading ? (
           <Card>
-            <SectionTitle>User Info</SectionTitle>
-            <KeyValueRow label="Name" value={user.name} />
-            <KeyValueRow label="Email" value={user.email} />
-            <KeyValueRow label="Role" value={formatRole(user.role)} />
-          </Card>
+            <View style={styles.listHeader}>
+              <SectionTitle>Active Sites</SectionTitle>
+              <Text style={styles.countText}>{activeVisits.length}</Text>
+            </View>
 
-          <Card>
-            <SectionTitle>Your Teams</SectionTitle>
-            {teams.length === 0 ? (
-              <EmptyState
-                title="No team membership"
-                description="This user is not attached to any active team yet."
-              />
-            ) : (
-              teams.map((team) => (
-                <Card key={team.id}>
-                  <KeyValueRow label="Team" value={team.name} />
-                  <KeyValueRow label="Code" value={team.code} />
-                </Card>
-              ))
-            )}
-          </Card>
-
-          <Card>
-            <SectionTitle>Active Site Visits</SectionTitle>
             {activeVisits.length === 0 ? (
               <EmptyState
                 title="No active visits"
                 description="Create a new check-in to start work at a substation."
               />
             ) : (
-              activeVisits.map((visit) => (
-                <Card key={visit.id}>
-                  <ViewVisitSummary visit={visit} />
-                  <AppButton label="Open Visit" onPress={() => onOpenVisit(visit)} />
-                </Card>
-              ))
+              <View style={styles.visitList}>
+                {activeVisits.map((visit) => (
+                  <ActiveVisitRow
+                    key={visit.id}
+                    visit={visit}
+                    onPress={() => onOpenVisit(visit)}
+                  />
+                ))}
+              </View>
             )}
           </Card>
+        ) : null}
+      </Screen>
 
-          <Card>
-            <SectionTitle>Next Step</SectionTitle>
-            <BodyText>Start a new shared site visit when your team arrives at a substation.</BodyText>
-            <AppButton label="Create Check-In" onPress={onOpenCheckIn} />
-            <AppButton label="View Dashboard" variant="secondary" onPress={onOpenDashboard} />
-            <AppButton label="Asset Map" variant="secondary" onPress={onOpenAssetMap} />
-            <AppButton label="View Defects" variant="secondary" onPress={onOpenDefects} />
-            <AppButton
-              label="Manage Checklist Templates"
-              variant="secondary"
-              onPress={onOpenChecklistTemplates}
-            />
-          </Card>
-        </>
-      ) : null}
-    </Screen>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Create Check In"
+        onPress={onOpenCheckIn}
+        style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+      >
+        <Text style={styles.fabText}>+</Text>
+      </Pressable>
+
+      <HomeDrawer
+        visible={isDrawerOpen}
+        user={user}
+        teams={teams}
+        onClose={() => setIsDrawerOpen(false)}
+        onOpenDashboard={onOpenDashboard}
+        onOpenAssetMap={onOpenAssetMap}
+        onOpenDefects={onOpenDefects}
+        onLogout={onLogout}
+      />
+    </View>
   );
 }
 
-function ViewVisitSummary({ visit }: { visit: SiteVisit }) {
+async function loadVisitDetails(token: string, visits: SiteVisit[]) {
+  return Promise.all(
+    visits.map(async (visit) => {
+      try {
+        return await api.getSiteVisit(token, visit.id);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          throw error;
+        }
+
+        return visit;
+      }
+    }),
+  );
+}
+
+function ActiveVisitRow({ visit, onPress }: { visit: SiteVisit; onPress: () => void }) {
+  const thumbnailUri = getVisitThumbnailUri(visit);
+
   return (
-    <>
-      <KeyValueRow label="Substation" value={`${visit.substation.code} - ${visit.substation.name}`} />
-      <KeyValueRow label="Team" value={`${visit.team.code} - ${visit.team.name}`} />
-      <KeyValueRow label="Started" value={formatDateTime(visit.startedAt)} />
-      <KeyValueRow label="Members" value={String(visit.users?.length ?? 0)} />
-      {visit.substation.location ? <KeyValueRow label="Location" value={visit.substation.location} /> : null}
-      <StatusChip label={visit.status} tone="success" />
-    </>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.visitRow, pressed && styles.visitRowPressed]}
+    >
+      <View style={styles.thumbnailFrame}>
+        {thumbnailUri ? (
+          <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} resizeMode="cover" />
+        ) : (
+          <View style={styles.thumbnailPlaceholder}>
+            <Text style={styles.thumbnailPlaceholderText}>No image</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.visitTextWrap}>
+        <Text style={styles.rowLabel}>Nama Pencawang</Text>
+        <Text style={styles.visitName}>{visit.substation.name}</Text>
+        <Text style={styles.rowLabel}>Functional Location</Text>
+        <Text style={styles.functionalLocation}>{visit.substation.code || 'Not available'}</Text>
+      </View>
+
+      <Text style={styles.rowArrow}>{'>'}</Text>
+    </Pressable>
   );
 }
+
+function HomeDrawer({
+  visible,
+  user,
+  teams,
+  onClose,
+  onOpenDashboard,
+  onOpenAssetMap,
+  onOpenDefects,
+  onLogout,
+}: {
+  visible: boolean;
+  user: SessionUser;
+  teams: Team[];
+  onClose: () => void;
+  onOpenDashboard: () => void;
+  onOpenAssetMap: () => void;
+  onOpenDefects: () => void;
+  onLogout: () => Promise<void>;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.drawerRoot}>
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <View style={styles.drawerPanel}>
+          <ScrollView contentContainerStyle={styles.drawerContent}>
+            <View style={styles.drawerHeader}>
+              <Text style={styles.drawerTitle}>Menu</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close menu"
+                onPress={onClose}
+                style={({ pressed }) => [styles.drawerCloseButton, pressed && styles.drawerItemPressed]}
+              >
+                <Text style={styles.drawerCloseText}>X</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.identityCard}>
+              <Text style={styles.identityLabel}>User Info / Team Info</Text>
+              <Text style={styles.identityName}>{user.name}</Text>
+              <Text style={styles.identityEmail}>{user.email}</Text>
+              <View style={styles.teamList}>
+                {teams.length > 0 ? (
+                  teams.map((team) => (
+                    <View key={team.id} style={styles.teamRow}>
+                      <Text style={styles.teamName}>{team.name}</Text>
+                      <Text style={styles.teamCode}>{team.code}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.teamEmpty}>No team available</Text>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.drawerNav}>
+              <DrawerItem label="Active Sites" active onPress={onClose} />
+              <DrawerItem
+                label="Dashboard"
+                onPress={() => {
+                  onClose();
+                  onOpenDashboard();
+                }}
+              />
+              <DrawerItem
+                label="Map"
+                onPress={() => {
+                  onClose();
+                  onOpenAssetMap();
+                }}
+              />
+              <DrawerItem
+                label="Defects"
+                onPress={() => {
+                  onClose();
+                  onOpenDefects();
+                }}
+              />
+            </View>
+
+            <DrawerItem
+              label="Logout"
+              tone="danger"
+              onPress={() => {
+                onClose();
+                void onLogout();
+              }}
+            />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function DrawerItem({
+  label,
+  onPress,
+  tone = 'default',
+  active = false,
+}: {
+  label: string;
+  onPress: () => void;
+  tone?: 'default' | 'danger';
+  active?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.drawerItem,
+        active && styles.drawerItemActive,
+        pressed && styles.drawerItemPressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.drawerItemText,
+          active && styles.drawerItemTextActive,
+          tone === 'danger' && styles.drawerItemTextDanger,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function getVisitThumbnailUri(visit: SiteVisit) {
+  const image = getFirstVisitImage(visit);
+
+  return image ? getImageSourceUri(image) : null;
+}
+
+function getFirstVisitImage(visit: SiteVisit): VisitThumbnailImage | null {
+  const siteVisitImage = visit.images?.[0];
+
+  if (siteVisitImage) {
+    return siteVisitImage;
+  }
+
+  for (const inspection of visit.inspections ?? []) {
+    const inspectionImage = inspection.inspectionImages?.[0] ?? inspection.images?.[0];
+
+    if (inspectionImage) {
+      return inspectionImage;
+    }
+  }
+
+  return null;
+}
+
+function getImageSourceUri(image: VisitThumbnailImage) {
+  const source = image.uri || image.url || image.path;
+
+  if (!source) {
+    return null;
+  }
+
+  if (/^[a-z][a-z\d+\-.]*:/i.test(source)) {
+    return source;
+  }
+
+  return source.startsWith('/') ? `${API_ORIGIN}${source}` : `${API_ORIGIN}/${source}`;
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  listHeader: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  countText: {
+    minWidth: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  visitList: {
+    gap: 12,
+  },
+  visitRow: {
+    minHeight: 112,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 12,
+  },
+  visitRowPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+    transform: [{ scale: 0.995 }],
+  },
+  thumbnailFrame: {
+    width: 76,
+    height: 76,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbnailPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  thumbnailPlaceholderText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  visitTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  rowLabel: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  visitName: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 17,
+    lineHeight: 23,
+    fontWeight: '800',
+  },
+  functionalLocation: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  rowArrow: {
+    width: 18,
+    color: uiTheme.colors.textMuted,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  fab: {
+    position: 'absolute',
+    right: 22,
+    bottom: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: '#1F2937',
+    shadowColor: uiTheme.colors.textPrimary,
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  fabPressed: {
+    transform: [{ scale: 0.96 }],
+  },
+  fabText: {
+    marginTop: -2,
+    color: '#FFFFFF',
+    fontSize: 36,
+    lineHeight: 42,
+    fontWeight: '700',
+  },
+  drawerRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 24, 39, 0.42)',
+  },
+  drawerPanel: {
+    width: '82%',
+    maxWidth: 340,
+    height: '100%',
+    backgroundColor: uiTheme.colors.primary,
+    borderRightWidth: 1,
+    borderRightColor: '#1F2937',
+    shadowColor: '#000000',
+    shadowOffset: {
+      width: 8,
+      height: 0,
+    },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  drawerContent: {
+    paddingTop: 34,
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 16,
+  },
+  drawerHeader: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  drawerTitle: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  drawerCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1F2937',
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  drawerCloseText: {
+    color: '#E5E7EB',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  identityCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#374151',
+    backgroundColor: '#1F2937',
+    padding: 16,
+    gap: 9,
+  },
+  identityLabel: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  identityName: {
+    color: '#FFFFFF',
+    fontSize: 19,
+    lineHeight: 25,
+    fontWeight: '800',
+  },
+  identityEmail: {
+    color: '#D1D5DB',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  teamList: {
+    gap: 8,
+    paddingTop: 6,
+  },
+  teamRow: {
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#374151',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
+  },
+  teamName: {
+    color: '#F9FAFB',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  teamCode: {
+    color: '#9CA3AF',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  teamEmpty: {
+    color: '#9CA3AF',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  drawerNav: {
+    gap: 8,
+  },
+  drawerItem: {
+    minHeight: 52,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  drawerItemActive: {
+    borderColor: '#374151',
+    backgroundColor: '#1F2937',
+  },
+  drawerItemPressed: {
+    opacity: 0.82,
+  },
+  drawerItemText: {
+    color: '#D1D5DB',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  drawerItemTextActive: {
+    color: '#FFFFFF',
+  },
+  drawerItemTextDanger: {
+    color: '#FCA5A5',
+  },
+});
