@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import { DefectListItem } from '../types';
 import { formatDateTime } from '../utils';
@@ -8,13 +8,13 @@ import {
   BodyText,
   Card,
   ErrorBanner,
-  InlineButton,
   KeyValueRow,
   LoadingBlock,
   Screen,
   SectionTitle,
   StatusChip,
   TextField,
+  uiTheme,
 } from '../ui';
 
 export function DefectListScreen({
@@ -79,12 +79,13 @@ export function DefectListScreen({
   return (
     <Screen
       title="Defects"
-      actions={
-        <>
-          <InlineButton label="Refresh" onPress={loadDefects} disabled={isLoading} />
-          <InlineButton label="Back" onPress={onBack} />
-        </>
-      }
+      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      rightAction={{
+        icon: 'refresh',
+        onPress: loadDefects,
+        accessibilityLabel: 'Refresh',
+        disabled: isLoading,
+      }}
     >
       <ErrorBanner message={error} />
       {isLoading ? <LoadingBlock label="Loading defects..." /> : null}
@@ -151,23 +152,15 @@ function DefectCard({
   return (
     <Pressable
       onPress={onOpenDefect}
-      style={({ pressed }) => ({
-        backgroundColor: '#ffffff',
-        borderRadius: 18,
-        padding: 16,
-        gap: 12,
-        borderWidth: 1,
-        borderColor: '#dce5f1',
-        opacity: pressed ? 0.94 : 1,
-      })}
+      style={({ pressed }) => [styles.defectCard, pressed && styles.defectCardPressed]}
     >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>
+      <View style={styles.defectHeader}>
+        <View style={styles.defectTitleWrap}>
+          <Text style={styles.defectAssetCode}>
             {defect.assetCode || 'Unknown Asset'}
           </Text>
           {defect.assetType ? (
-            <Text style={{ fontSize: 14, lineHeight: 20, color: '#607086' }}>
+            <Text style={styles.defectAssetType}>
               {defect.assetType}
             </Text>
           ) : null}
@@ -179,20 +172,16 @@ function DefectCard({
         label="Cycle"
         value={defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : 'Not available'}
       />
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>Defect</Text>
-        <Text style={{ fontSize: 16, lineHeight: 23, fontWeight: '700', color: '#10233d' }}>
+      <View style={styles.detailGroup}>
+        <Text style={styles.detailLabel}>Defect</Text>
+        <Text style={styles.detailValue}>
           {defect.label}
         </Text>
       </View>
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>Remark</Text>
+      <View style={styles.detailGroup}>
+        <Text style={styles.detailLabel}>Remark</Text>
         <Text
-          style={{
-            fontSize: 14,
-            lineHeight: 21,
-            color: defect.remark ? '#526277' : '#8a98aa',
-          }}
+          style={[styles.remarkText, !defect.remark && styles.remarkTextMuted]}
         >
           {createRemarkPreview(defect.remark) || 'No remark.'}
         </Text>
@@ -203,16 +192,9 @@ function DefectCard({
           event.stopPropagation();
           onOpenInspection();
         }}
-        style={({ pressed }) => ({
-          minHeight: 54,
-          borderRadius: 16,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: '#0f5cd8',
-          opacity: pressed ? 0.9 : 1,
-        })}
+        style={({ pressed }) => [styles.inspectionButton, pressed && styles.inspectionButtonPressed]}
       >
-        <Text style={{ fontSize: 16, fontWeight: '700', color: '#ffffff' }}>View Inspection</Text>
+        <Text style={styles.inspectionButtonText}>View Inspection</Text>
       </Pressable>
     </Pressable>
   );
@@ -251,3 +233,74 @@ function createRemarkPreview(remark?: string | null) {
 
   return normalized.length > 120 ? `${normalized.slice(0, 117).trim()}...` : normalized;
 }
+
+const styles = StyleSheet.create({
+  defectCard: {
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  defectCardPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+  },
+  defectHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  defectTitleWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  defectAssetCode: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: uiTheme.colors.textPrimary,
+  },
+  defectAssetType: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiTheme.colors.textSecondary,
+  },
+  detailGroup: {
+    gap: 5,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: uiTheme.colors.textSecondary,
+  },
+  detailValue: {
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
+  },
+  remarkText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: uiTheme.colors.textSecondary,
+  },
+  remarkTextMuted: {
+    color: uiTheme.colors.textMuted,
+  },
+  inspectionButton: {
+    minHeight: 48,
+    borderRadius: uiTheme.radius.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.primary,
+  },
+  inspectionButtonPressed: {
+    opacity: 0.9,
+  },
+  inspectionButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+});

@@ -12,7 +12,6 @@ import {
 } from '../utils';
 import {
   AppButton,
-  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
@@ -20,7 +19,6 @@ import {
   KeyValueRow,
   LoadingBlock,
   Screen,
-  SectionTitle,
   StatusChip,
   SuccessBanner,
   TextField,
@@ -30,6 +28,7 @@ import {
   InspectionFormResponse,
   InspectionImageUploadInput,
   InspectionItemResultValue,
+  InspectionTemplateSection,
   InspectionTemplateItem,
 } from '../types';
 
@@ -52,6 +51,9 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
   layoutWidth: number;
   layoutHeight: number;
 };
+
+const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
+const RESULT_OPTIONS: InspectionItemResultValue[] = ['PASS', 'FAIL', 'NA'];
 
 export function InspectionFormScreen({
   token,
@@ -222,79 +224,83 @@ export function InspectionFormScreen({
     }
   }
 
-  async function handleTakePhoto() {
+  async function captureInspectionPhoto() {
     if (isSubmitted) {
-      return;
+      return null;
     }
 
+    const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (!cameraPermission.granted) {
+      throw new Error('Camera permission is required to capture inspection photos.');
+    }
+
+    const isLocationEnabled = await Location.hasServicesEnabledAsync();
+
+    if (!isLocationEnabled) {
+      throw new Error('Location services must be enabled to attach GPS to the photo.');
+    }
+
+    const locationPermission = await Location.requestForegroundPermissionsAsync();
+
+    if (!locationPermission.granted) {
+      throw new Error('Location permission is required to attach GPS to the photo.');
+    }
+
+    const captureResult = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.7,
+    });
+
+    if (captureResult.canceled) {
+      return null;
+    }
+
+    const capturedAsset = captureResult.assets[0];
+
+    if (!capturedAsset?.uri) {
+      throw new Error('Unable to read the captured photo.');
+    }
+
+    const capturedAt = new Date();
+    const photoTimestamp = capturedAt.toISOString();
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    const overlayImageUri = await createOverlayPhoto({
+      originalUri: capturedAsset.uri,
+      timestamp: photoTimestamp,
+      timestampLabel: formatPhotoTimestampLabel(capturedAt),
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      ...(await getOverlayCaptureSize(
+        capturedAsset.uri,
+        capturedAsset.width,
+        capturedAsset.height,
+      )),
+    });
+
+    return {
+      id: createLocalPhotoId(photoTimestamp),
+      uri: overlayImageUri,
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      timestamp: photoTimestamp,
+      uploadState: 'uploading',
+    } satisfies CapturedInspectionPhoto;
+  }
+
+  async function handleTakePhoto() {
     try {
       setIsCapturingPhoto(true);
       setError(null);
 
-      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      const nextPhoto = await captureInspectionPhoto();
 
-      if (!cameraPermission.granted) {
-        setError('Camera permission is required to capture inspection photos.');
+      if (!nextPhoto) {
         return;
       }
-
-      const isLocationEnabled = await Location.hasServicesEnabledAsync();
-
-      if (!isLocationEnabled) {
-        setError('Location services must be enabled to attach GPS to the photo.');
-        return;
-      }
-
-      const locationPermission = await Location.requestForegroundPermissionsAsync();
-
-      if (!locationPermission.granted) {
-        setError('Location permission is required to attach GPS to the photo.');
-        return;
-      }
-
-      const captureResult = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.7,
-      });
-
-      if (captureResult.canceled) {
-        return;
-      }
-
-      const capturedAsset = captureResult.assets[0];
-
-      if (!capturedAsset?.uri) {
-        setError('Unable to read the captured photo.');
-        return;
-      }
-
-      const capturedAt = new Date();
-      const photoTimestamp = capturedAt.toISOString();
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const overlayImageUri = await createOverlayPhoto({
-        originalUri: capturedAsset.uri,
-        timestamp: photoTimestamp,
-        timestampLabel: formatPhotoTimestampLabel(capturedAt),
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        ...(await getOverlayCaptureSize(
-          capturedAsset.uri,
-          capturedAsset.width,
-          capturedAsset.height,
-        )),
-      });
-
-      const nextPhoto: CapturedInspectionPhoto = {
-        id: createLocalPhotoId(photoTimestamp),
-        uri: overlayImageUri,
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        timestamp: photoTimestamp,
-        uploadState: 'uploading',
-      };
 
       setPhotos((current) => [...current, nextPhoto]);
       void uploadPhotoInBackground(nextPhoto);
@@ -303,6 +309,30 @@ export function InspectionFormScreen({
     } finally {
       setIsCapturingPhoto(false);
     }
+  }
+
+  async function handleRetakePhoto(photoId: string) {
+    try {
+      setIsCapturingPhoto(true);
+      setError(null);
+
+      const nextPhoto = await captureInspectionPhoto();
+
+      if (!nextPhoto) {
+        return;
+      }
+
+      setPhotos((current) => current.map((photo) => (photo.id === photoId ? nextPhoto : photo)));
+      void uploadPhotoInBackground(nextPhoto);
+    } catch (captureError) {
+      setError(captureError instanceof Error ? captureError.message : 'Unable to capture inspection photo.');
+    } finally {
+      setIsCapturingPhoto(false);
+    }
+  }
+
+  function handleRemovePhoto(photoId: string) {
+    setPhotos((current) => current.filter((photo) => photo.id !== photoId));
   }
 
   async function createOverlayPhoto(photo: PendingOverlayPhoto) {
@@ -368,16 +398,18 @@ export function InspectionFormScreen({
         </>
       }
       footer={
-        <>
+        <View style={styles.stickyActionArea}>
           <ErrorBanner message={error} />
           {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
-          <AppButton
-            label={isSubmitting ? 'Submitting Inspection...' : 'Submit Inspection'}
-            onPress={handleSubmitInspection}
-            loading={isSubmitting}
-            disabled={isBusy || isSubmitted}
-          />
-        </>
+          <View style={styles.footerButtonWrap}>
+            <AppButton
+              label={isSubmitting ? 'Submitting...' : 'Submit Inspection'}
+              onPress={handleSubmitInspection}
+              loading={isSubmitting}
+              disabled={isBusy || isSubmitted}
+            />
+          </View>
+        </View>
       }
     >
       {isLoading ? <LoadingBlock label="Loading inspection form..." /> : null}
@@ -385,58 +417,41 @@ export function InspectionFormScreen({
       {!isLoading && form ? (
         <>
           <Card>
-            <SectionTitle>Inspection Summary</SectionTitle>
+            <View style={styles.summaryHeader}>
+              <View style={styles.summaryTitleWrap}>
+                <Text style={styles.kickerLabel}>Asset</Text>
+                <Text style={styles.summaryAsset} numberOfLines={2}>
+                  {form.inspection.asset.name
+                    ? `${form.inspection.asset.assetCode} - ${form.inspection.asset.name}`
+                    : `${form.inspection.asset.assetCode} - Unnamed asset`}
+                </Text>
+              </View>
+              <StatusChip
+                label={isSubmitted ? 'Completed' : 'In Progress'}
+                tone={isSubmitted ? 'success' : 'warning'}
+              />
+            </View>
             <KeyValueRow
-              label="Asset"
-              value={
-                form.inspection.asset.name
-                  ? `${form.inspection.asset.assetCode} - ${form.inspection.asset.name}`
-                  : `${form.inspection.asset.assetCode} - Unnamed asset`
-              }
+              label="Visit Team"
+              value={form.inspection.siteVisit.team.name}
             />
             <KeyValueRow label="Asset Type" value={form.inspection.asset.assetType.name} />
             <KeyValueRow label="Substation" value={form.inspection.asset.substation.name} />
             <KeyValueRow label="Template" value={`${form.template.name} (v${form.template.version})`} />
             <KeyValueRow label="Cycle" value={String(form.inspection.inspectionCycle)} />
             <KeyValueRow label="Started" value={formatDateTime(form.inspection.createdAt)} />
-            <StatusChip
-              label={isSubmitted ? 'Completed' : 'In Progress'}
-              tone={isSubmitted ? 'success' : 'warning'}
-            />
           </Card>
 
-          <Card>
-            <SectionTitle>Inspection Photos</SectionTitle>
-            <BodyText muted>
-              Capture photos with local GPS coordinates and timestamps. Photos upload in the background after the overlay is created.
-            </BodyText>
-            <AppButton
-              label={isCapturingPhoto ? 'Opening Camera...' : 'Take Photo'}
-              onPress={handleTakePhoto}
-              variant="secondary"
-              loading={isCapturingPhoto}
-              disabled={isBusy || isSubmitted}
-            />
-            {photos.length === 0 ? <BodyText muted>No photos captured yet.</BodyText> : null}
-            {photos.map((photo, index) => (
-              <View key={photo.id} style={styles.photoCard}>
-                <Text style={styles.photoTitle}>Photo {index + 1}</Text>
-                <Pressable onPress={() => setSelectedPhotoUri(photo.uri)}>
-                  <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
-                </Pressable>
-                <KeyValueRow label="Timestamp" value={formatDateTime(photo.timestamp)} />
-                <KeyValueRow label="Latitude" value={formatCoordinate(photo.latitude)} />
-                <KeyValueRow label="Longitude" value={formatCoordinate(photo.longitude)} />
-                {photo.uploadState === 'uploading' ? <BodyText muted>Uploading to server...</BodyText> : null}
-                {photo.uploadState === 'uploaded' ? <BodyText muted>Uploaded to server.</BodyText> : null}
-                {photo.uploadState === 'error' ? (
-                  <Text style={styles.photoUploadError}>
-                    {photo.uploadError ?? 'Upload failed. The local photo preview is still available.'}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
-          </Card>
+          <InspectionPhotoSection
+            photos={photos}
+            isBusy={isBusy}
+            isCapturingPhoto={isCapturingPhoto}
+            isSubmitted={Boolean(isSubmitted)}
+            onTakePhoto={handleTakePhoto}
+            onOpenPhoto={setSelectedPhotoUri}
+            onRetakePhoto={handleRetakePhoto}
+            onRemovePhoto={handleRemovePhoto}
+          />
 
           {form.template.sections.length === 0 ? (
             <EmptyState
@@ -444,21 +459,18 @@ export function InspectionFormScreen({
               description="This inspection template does not contain any sections or checklist items."
             />
           ) : (
-            form.template.sections.map((section) => (
-              <Card key={section.id}>
-                <SectionTitle>{section.title}</SectionTitle>
-                {section.description ? <BodyText muted>{section.description}</BodyText> : null}
-                {section.items.map((item) => (
-                  <ChecklistItemCard
-                    key={item.id}
-                    item={item}
-                    value={draftValues[item.id]}
-                    disabled={Boolean(isSubmitted)}
-                    onChange={(changes) => updateDraftValue(item.id, changes)}
-                  />
-                ))}
-              </Card>
-            ))
+            <View style={styles.checklistStack}>
+              {form.template.sections.map((section, sectionIndex) => (
+                <ChecklistSectionCard
+                  key={section.id}
+                  section={section}
+                  sectionIndex={sectionIndex}
+                  draftValues={draftValues}
+                  isSubmitted={Boolean(isSubmitted)}
+                  onUpdateDraftValue={updateDraftValue}
+                />
+              ))}
+            </View>
           )}
 
           {pendingOverlayPhoto ? (
@@ -508,6 +520,142 @@ export function InspectionFormScreen({
   );
 }
 
+function InspectionPhotoSection({
+  photos,
+  isBusy,
+  isCapturingPhoto,
+  isSubmitted,
+  onTakePhoto,
+  onOpenPhoto,
+  onRetakePhoto,
+  onRemovePhoto,
+}: {
+  photos: CapturedInspectionPhoto[];
+  isBusy: boolean;
+  isCapturingPhoto: boolean;
+  isSubmitted: boolean;
+  onTakePhoto: () => void;
+  onOpenPhoto: (uri: string) => void;
+  onRetakePhoto: (photoId: string) => void;
+  onRemovePhoto: (photoId: string) => void;
+}) {
+  return (
+    <View style={styles.photoSection}>
+      <View style={styles.photoSectionHeader}>
+        <View style={styles.photoTitleWrap}>
+          <Text style={styles.kickerLabel}>Images</Text>
+          <Text style={styles.sectionHeading}>Inspection Photos</Text>
+        </View>
+        <Text style={styles.photoCount}>{photos.length}</Text>
+      </View>
+      <AppButton
+        label={isCapturingPhoto ? 'Opening Camera...' : 'Take Photo'}
+        onPress={onTakePhoto}
+        variant="secondary"
+        loading={isCapturingPhoto}
+        disabled={isBusy || isSubmitted}
+      />
+      {photos.length === 0 ? (
+        <View style={styles.emptyPhotoPanel}>
+          <Text style={styles.emptyPhotoTitle}>No photos captured</Text>
+          <Text style={styles.emptyPhotoText}>Add the first site photo before submitting.</Text>
+        </View>
+      ) : null}
+      {photos.map((photo, index) => (
+        <View key={photo.id} style={styles.photoCard}>
+          <View style={styles.photoCardHeader}>
+            <View style={styles.photoMetaTitleWrap}>
+              <Text style={styles.kickerLabel}>Photo {index + 1}</Text>
+              <Text style={styles.photoTitle}>{getPhotoStatusLabel(photo.uploadState)}</Text>
+            </View>
+            <PhotoStatusPill state={photo.uploadState} />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => onOpenPhoto(photo.uri)}
+            style={({ pressed }) => [styles.photoPreviewButton, pressed && styles.photoPreviewPressed]}
+          >
+            <Image source={{ uri: photo.uri }} style={styles.photoPreview} resizeMode="cover" />
+          </Pressable>
+          <View style={styles.photoDetailsGrid}>
+            <PhotoMeta label="Time" value={formatDateTime(photo.timestamp)} />
+            <PhotoMeta label="Lat" value={formatCoordinate(photo.latitude)} />
+            <PhotoMeta label="Lng" value={formatCoordinate(photo.longitude)} />
+          </View>
+          {photo.uploadState === 'error' ? (
+            <Text style={styles.photoUploadError}>
+              {photo.uploadError ?? 'Upload failed. The local photo preview is still available.'}
+            </Text>
+          ) : null}
+          {!isSubmitted ? (
+            <View style={styles.photoActionRow}>
+              <PhotoActionButton
+                label="Retake"
+                onPress={() => onRetakePhoto(photo.id)}
+                disabled={isBusy}
+              />
+              <PhotoActionButton
+                label="Remove"
+                onPress={() => onRemovePhoto(photo.id)}
+                disabled={isBusy}
+                danger
+              />
+            </View>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ChecklistSectionCard({
+  section,
+  sectionIndex,
+  draftValues,
+  isSubmitted,
+  onUpdateDraftValue,
+}: {
+  section: InspectionTemplateSection;
+  sectionIndex: number;
+  draftValues: ChecklistDraftValues;
+  isSubmitted: boolean;
+  onUpdateDraftValue: (
+    itemId: string,
+    changes: Partial<ChecklistDraftValues[string]>,
+  ) => void;
+}) {
+  const normalizedTitle = section.title.trim().toUpperCase();
+  const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
+    ? normalizedTitle
+    : section.title;
+
+  return (
+    <View style={styles.sectionCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIndexBadge}>
+          <Text style={styles.sectionIndexText}>{String(sectionIndex + 1).padStart(2, '0')}</Text>
+        </View>
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.sectionHeading}>{sectionTitle}</Text>
+          <Text style={styles.sectionMeta}>{section.items.length} checks</Text>
+        </View>
+      </View>
+      {section.description ? <Text style={styles.sectionDescription}>{section.description}</Text> : null}
+      <View style={styles.sectionItems}>
+        {section.items.map((item) => (
+          <ChecklistItemCard
+            key={item.id}
+            item={item}
+            value={draftValues[item.id]}
+            disabled={isSubmitted}
+            onChange={(changes) => onUpdateDraftValue(item.id, changes)}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function ChecklistItemCard({
   item,
   value,
@@ -527,7 +675,7 @@ function ChecklistItemCard({
       </View>
       {item.helperText ? <Text style={styles.helperText}>{item.helperText}</Text> : null}
       <View style={styles.resultButtonRow}>
-        {(['PASS', 'FAIL', 'NA'] as InspectionItemResultValue[]).map((result) => (
+        {RESULT_OPTIONS.map((result) => (
           <ResultButton
             key={result}
             result={result}
@@ -538,7 +686,7 @@ function ChecklistItemCard({
         ))}
       </View>
       <TextField
-        label="Remark"
+        label="Remark / defect note"
         value={value?.remark ?? ''}
         onChangeText={(remark) => onChange({ remark })}
         placeholder="Optional remark"
@@ -567,6 +715,7 @@ function ResultButton({
       style={({ pressed }) => [
         styles.choiceButton,
         selected && styles.choiceButtonSelected,
+        result === 'PASS' && selected && styles.choiceButtonPassSelected,
         result === 'FAIL' && styles.choiceButtonFail,
         result === 'FAIL' && selected && styles.choiceButtonFailSelected,
         disabled && styles.choiceButtonDisabled,
@@ -577,14 +726,98 @@ function ResultButton({
         style={[
           styles.choiceButtonText,
           selected && styles.choiceButtonTextSelected,
+          result === 'PASS' && selected && styles.choiceButtonPassTextSelected,
           result === 'FAIL' && styles.choiceButtonFailText,
           result === 'FAIL' && selected && styles.choiceButtonFailTextSelected,
         ]}
       >
-        {result}
+        {getResultOptionLabel(result)}
       </Text>
     </Pressable>
   );
+}
+
+function PhotoStatusPill({ state }: { state: PhotoUploadState }) {
+  return (
+    <View
+      style={[
+        styles.photoStatusPill,
+        state === 'uploaded' && styles.photoStatusUploaded,
+        state === 'error' && styles.photoStatusError,
+      ]}
+    >
+      <Text
+        style={[
+          styles.photoStatusText,
+          state === 'uploaded' && styles.photoStatusTextUploaded,
+          state === 'error' && styles.photoStatusTextError,
+        ]}
+      >
+        {getPhotoStatusLabel(state)}
+      </Text>
+    </View>
+  );
+}
+
+function PhotoMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.photoMetaItem}>
+      <Text style={styles.photoMetaLabel}>{label}</Text>
+      <Text style={styles.photoMetaValue}>{value}</Text>
+    </View>
+  );
+}
+
+function PhotoActionButton({
+  label,
+  onPress,
+  disabled = false,
+  danger = false,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.photoActionButton,
+        danger && styles.photoActionButtonDanger,
+        disabled && styles.photoActionButtonDisabled,
+        pressed && !disabled && styles.photoActionButtonPressed,
+      ]}
+    >
+      <Text style={[styles.photoActionText, danger && styles.photoActionTextDanger]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function getResultOptionLabel(result: InspectionItemResultValue) {
+  if (result === 'PASS') {
+    return 'YES';
+  }
+
+  if (result === 'FAIL') {
+    return 'NO';
+  }
+
+  return 'N/A';
+}
+
+function getPhotoStatusLabel(state: PhotoUploadState) {
+  if (state === 'uploaded') {
+    return 'Uploaded';
+  }
+
+  if (state === 'error') {
+    return 'Needs retry';
+  }
+
+  return 'Uploading';
 }
 
 function createLocalPhotoId(timestamp: string) {
@@ -646,11 +879,101 @@ async function delay(durationMs: number) {
 }
 
 const styles = StyleSheet.create({
-  itemCard: {
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#dce5f1',
+  stickyActionArea: {
     gap: 10,
+  },
+  footerButtonWrap: {
+    minHeight: 52,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  summaryTitleWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  kickerLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 0,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  summaryAsset: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  photoSection: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 16,
+    gap: 16,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+  },
+  photoSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  photoTitleWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  sectionHeading: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  photoCount: {
+    minWidth: 36,
+    minHeight: 32,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#eef2f7',
+    color: '#374151',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    fontSize: 15,
+    lineHeight: 32,
+    fontWeight: '700',
+  },
+  emptyPhotoPanel: {
+    minHeight: 112,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+    gap: 6,
+  },
+  emptyPhotoTitle: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  emptyPhotoText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  itemCard: {
+    paddingVertical: 14,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
   },
   itemHeader: {
     flexDirection: 'row',
@@ -658,26 +981,193 @@ const styles = StyleSheet.create({
     gap: 12,
     alignItems: 'center',
   },
-  photoCard: {
+  checklistStack: {
+    gap: 18,
+  },
+  sectionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+    overflow: 'hidden',
+  },
+  sectionHeader: {
+    minHeight: 68,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#dce5f1',
-    paddingTop: 12,
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  sectionIndexBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionIndexText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sectionHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  sectionMeta: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#6b7280',
+  },
+  sectionDescription: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#6b7280',
+  },
+  sectionItems: {
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  photoCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  photoCard: {
+    gap: 14,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+    backgroundColor: '#f8fafc',
+  },
+  photoMetaTitleWrap: {
+    flex: 1,
+    gap: 2,
   },
   photoTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  photoPreviewButton: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#e5edf8',
+  },
+  photoPreviewPressed: {
+    opacity: 0.92,
   },
   photoPreview: {
     width: '100%',
-    height: 220,
-    borderRadius: 14,
+    height: 280,
+    borderRadius: 8,
     backgroundColor: '#e5edf8',
+  },
+  photoDetailsGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  photoMetaItem: {
+    flex: 1,
+    minHeight: 58,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+    justifyContent: 'center',
+  },
+  photoMetaLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  photoMetaValue: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  photoStatusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  photoStatusUploaded: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#bbf7d0',
+  },
+  photoStatusError: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  photoStatusText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: '#3730a3',
+  },
+  photoStatusTextUploaded: {
+    color: '#166534',
+  },
+  photoStatusTextError: {
+    color: '#b91c1c',
   },
   photoUploadError: {
     fontSize: 13,
     lineHeight: 19,
+    color: '#b91c1c',
+  },
+  photoActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  photoActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 12,
+  },
+  photoActionButtonDanger: {
+    borderColor: '#fecaca',
+    backgroundColor: '#fff7f7',
+  },
+  photoActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  photoActionButtonPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
+  },
+  photoActionText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  photoActionTextDanger: {
     color: '#b91c1c',
   },
   overlayCaptureRoot: {
@@ -723,8 +1213,9 @@ const styles = StyleSheet.create({
   itemLabel: {
     flex: 1,
     fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+    lineHeight: 23,
+    fontWeight: '500',
+    color: '#111827',
   },
   requiredLabel: {
     fontSize: 12,
@@ -738,33 +1229,40 @@ const styles = StyleSheet.create({
   helperText: {
     fontSize: 13,
     lineHeight: 19,
-    color: '#607086',
+    color: '#6b7280',
   },
   resultButtonRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
+    borderRadius: 8,
+    backgroundColor: '#eef2f7',
+    padding: 4,
   },
   choiceButton: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 14,
+    minHeight: 56,
+    borderRadius: 7,
     borderWidth: 1,
-    borderColor: '#c7d5e8',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 16,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   choiceButtonSelected: {
-    borderColor: '#0f5cd8',
-    backgroundColor: '#eef4ff',
+    borderColor: '#111827',
+    backgroundColor: '#111827',
+  },
+  choiceButtonPassSelected: {
+    borderColor: '#166534',
+    backgroundColor: '#166534',
   },
   choiceButtonFail: {
-    borderColor: '#fca5a5',
+    borderColor: 'transparent',
   },
   choiceButtonFailSelected: {
-    borderColor: '#dc2626',
-    backgroundColor: '#fef2f2',
+    borderColor: '#b91c1c',
+    backgroundColor: '#b91c1c',
   },
   choiceButtonDisabled: {
     opacity: 0.55,
@@ -775,15 +1273,18 @@ const styles = StyleSheet.create({
   choiceButtonText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#10233d',
+    color: '#374151',
   },
   choiceButtonTextSelected: {
-    color: '#0f5cd8',
+    color: '#ffffff',
+  },
+  choiceButtonPassTextSelected: {
+    color: '#ffffff',
   },
   choiceButtonFailText: {
     color: '#b91c1c',
   },
   choiceButtonFailTextSelected: {
-    color: '#dc2626',
+    color: '#ffffff',
   },
 });

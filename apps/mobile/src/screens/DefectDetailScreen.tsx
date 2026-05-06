@@ -2,9 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -13,6 +11,7 @@ import {
 import { api, ApiError, API_BASE_URL } from '../api';
 import { DefectDetail, DefectStatus, InspectionImage } from '../types';
 import { formatDateTime } from '../utils';
+import { Screen } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -96,46 +95,11 @@ export function DefectDetailScreen({
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: '#f4f7fb',
-        paddingTop: Platform.OS === 'android' ? 24 : 16,
-      }}
+    <Screen
+      title="Defect Detail"
+      subtitle={defect?.assetCode}
+      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
     >
-      <View
-        style={{
-          paddingHorizontal: 20,
-          paddingBottom: 12,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 16,
-        }}
-      >
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a' }}>
-            Defect Detail
-          </Text>
-          {defect?.assetCode ? (
-            <Text style={{ fontSize: 15, lineHeight: 22, color: '#526277' }}>
-              {defect.assetCode}
-            </Text>
-          ) : null}
-        </View>
-        <Pressable onPress={onBack} style={{ paddingVertical: 6 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f5cd8' }}>Back</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingBottom: 140,
-          gap: 16,
-        }}
-        keyboardShouldPersistTaps="handled"
-      >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 36, gap: 12 }}>
             <ActivityIndicator size="large" color="#0f5cd8" />
@@ -373,8 +337,7 @@ export function DefectDetailScreen({
             </View>
           </>
         ) : null}
-      </ScrollView>
-    </View>
+    </Screen>
   );
 }
 

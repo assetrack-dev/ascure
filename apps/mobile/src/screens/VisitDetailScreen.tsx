@@ -7,7 +7,6 @@ import {
   Card,
   EmptyState,
   ErrorBanner,
-  InlineButton,
   KeyValueRow,
   LoadingBlock,
   Screen,
@@ -105,13 +104,13 @@ export function VisitDetailScreen({
   return (
     <Screen
       title="Visit Detail"
-      subtitle="Pencawang assets for this shared field visit."
-      actions={
-        <>
-          <InlineButton label="Back" onPress={onBack} />
-          <InlineButton label="Refresh" onPress={loadVisitData} disabled={isLoading} />
-        </>
-      }
+      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      rightAction={{
+        icon: 'refresh',
+        onPress: loadVisitData,
+        accessibilityLabel: 'Refresh',
+        disabled: isLoading,
+      }}
     >
       <ErrorBanner message={error} />
       <SuccessBanner message={successMessage} />
@@ -486,18 +485,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   assetList: {
-    gap: 12,
+    gap: 10,
   },
   assetRow: {
-    minHeight: 92,
+    minHeight: 76,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
     borderRadius: uiTheme.radius.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
     backgroundColor: uiTheme.colors.card,
-    padding: 10,
+    padding: 8,
   },
   assetRowMuted: {
     opacity: 0.56,
@@ -507,8 +506,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.995 }],
   },
   thumbnailFrame: {
-    width: 70,
-    height: 70,
+    width: 54,
+    height: 54,
     borderRadius: uiTheme.radius.card,
     overflow: 'hidden',
     backgroundColor: uiTheme.colors.surfaceMuted,
@@ -527,26 +526,26 @@ const styles = StyleSheet.create({
   },
   thumbnailPlaceholderText: {
     color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
     textAlign: 'center',
   },
   assetTextWrap: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   assetName: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '800',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
   },
   assetMeta: {
     color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
   },
   rowArrow: {
     width: 18,

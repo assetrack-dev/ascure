@@ -8,7 +8,6 @@ import {
   BodyText,
   Card,
   ErrorBanner,
-  InlineButton,
   LoadingBlock,
   Screen,
   SectionTitle,
@@ -60,12 +59,13 @@ export function DashboardScreen({
   return (
     <Screen
       title="Dashboard"
-      actions={
-        <>
-          <InlineButton label="Refresh" onPress={loadDashboard} disabled={isLoading} />
-          <InlineButton label="Back" onPress={onBack} />
-        </>
-      }
+      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      rightAction={{
+        icon: 'refresh',
+        onPress: loadDashboard,
+        accessibilityLabel: 'Refresh',
+        disabled: isLoading,
+      }}
     >
       <ErrorBanner message={error} />
       {isLoading ? <LoadingBlock label="Loading dashboard..." /> : null}
@@ -79,13 +79,13 @@ export function DashboardScreen({
           </View>
 
           <View style={styles.statGrid}>
-            <StatusStatCard label="OPEN" value={dashboard.openDefects} status="OPEN" />
+            <StatusStatCard label="Open" value={dashboard.openDefects} status="OPEN" />
             <StatusStatCard
-              label="IN_PROGRESS"
+              label="In Progress"
               value={dashboard.inProgressDefects}
               status="IN_PROGRESS"
             />
-            <StatusStatCard label="CLOSED" value={dashboard.closedDefects} status="CLOSED" />
+            <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
           </View>
 
           <Card>
@@ -197,10 +197,10 @@ const styles = StyleSheet.create({
   statCard: {
     flexGrow: 1,
     flexBasis: 140,
-    minHeight: 104,
+    minHeight: 94,
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: uiTheme.spacing.card,
+    padding: 14,
     gap: 8,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
@@ -208,31 +208,30 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '700',
+    fontWeight: '600',
     color: uiTheme.colors.textSecondary,
-    textTransform: 'uppercase',
   },
   statValue: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '800',
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '700',
     color: uiTheme.colors.textPrimary,
   },
   statusStatCard: {
     flexGrow: 1,
     flexBasis: 110,
-    minHeight: 100,
+    minHeight: 92,
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: uiTheme.spacing.card,
+    padding: 14,
     gap: 10,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
   },
   statusStatValue: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '800',
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '700',
     color: uiTheme.colors.textPrimary,
   },
   recentDefectRow: {
@@ -258,13 +257,13 @@ const styles = StyleSheet.create({
   recentDefectAsset: {
     fontSize: 16,
     lineHeight: 21,
-    fontWeight: '800',
+    fontWeight: '700',
     color: uiTheme.colors.textPrimary,
   },
   recentDefectLabel: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: '600',
+    fontWeight: '500',
     color: uiTheme.colors.textPrimary,
   },
   recentDefectDate: {

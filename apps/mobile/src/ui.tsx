@@ -4,16 +4,26 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TextInputProps,
+  StatusBar as NativeStatusBar,
   View,
 } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
+type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close';
+
+type HeaderAction = {
+  icon: HeaderIconName;
+  onPress: () => void;
+  accessibilityLabel: string;
+  disabled?: boolean;
+};
 
 export const uiTheme = {
   colors: {
@@ -50,6 +60,8 @@ export function Screen({
   subtitle,
   children,
   actions,
+  leftAction,
+  rightAction,
   footer,
   scroll = true,
   keyboardAware = false,
@@ -58,6 +70,8 @@ export function Screen({
   subtitle?: string;
   children: ReactNode;
   actions?: ReactNode;
+  leftAction?: HeaderAction;
+  rightAction?: HeaderAction;
   footer?: ReactNode;
   scroll?: boolean;
   keyboardAware?: boolean;
@@ -71,18 +85,30 @@ export function Screen({
   );
 
   const body = (
-    <View style={styles.screen}>
-      <StatusBar style="dark" />
-      <View style={styles.header}>
-        <View style={styles.headerTextWrap}>
-          <Text style={styles.title}>{title}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ExpoStatusBar style="dark" />
+      <View style={styles.screen}>
+        <View style={styles.header}>
+          <View style={styles.topBar}>
+            <View style={styles.headerSide}>
+              {leftAction ? <HeaderIconButton {...leftAction} /> : null}
+            </View>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
+            </View>
+            <View style={[styles.headerSide, styles.headerSideRight]}>
+              {rightAction ? <HeaderIconButton {...rightAction} /> : null}
+            </View>
+          </View>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {actions ? <View style={styles.headerActions}>{actions}</View> : null}
         </View>
-        {actions ? <View style={styles.headerActions}>{actions}</View> : null}
+        {content}
+        {footer ? <View style={styles.footer}>{footer}</View> : null}
       </View>
-      {content}
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
-    </View>
+    </SafeAreaView>
   );
 
   if (!keyboardAware) {
@@ -96,6 +122,66 @@ export function Screen({
     >
       {body}
     </KeyboardAvoidingView>
+  );
+}
+
+export function HeaderIconButton({
+  icon,
+  onPress,
+  accessibilityLabel,
+  disabled = false,
+}: HeaderAction) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.headerIconButton,
+        pressed && !disabled && styles.headerIconButtonPressed,
+        disabled && styles.headerIconButtonDisabled,
+      ]}
+    >
+      <HeaderIcon name={icon} />
+    </Pressable>
+  );
+}
+
+function HeaderIcon({ name }: { name: HeaderIconName }) {
+  if (name === 'menu') {
+    return (
+      <View style={styles.menuIcon}>
+        <View style={styles.menuIconLine} />
+        <View style={styles.menuIconLine} />
+        <View style={styles.menuIconLine} />
+      </View>
+    );
+  }
+
+  if (name === 'refresh') {
+    return (
+      <View style={styles.refreshIcon}>
+        <View style={styles.refreshArc} />
+        <View style={styles.refreshHead} />
+      </View>
+    );
+  }
+
+  if (name === 'close') {
+    return (
+      <View style={styles.closeIcon}>
+        <View style={[styles.closeIconLine, styles.closeIconLineForward]} />
+        <View style={[styles.closeIconLine, styles.closeIconLineBack]} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.backIcon}>
+      <View style={[styles.backIconLine, styles.backIconLineTop]} />
+      <View style={[styles.backIconLine, styles.backIconLineBottom]} />
+    </View>
   );
 }
 
@@ -146,11 +232,11 @@ export function LoadingBlock({ label }: { label: string }) {
 
 export function LoadingScreen({ label }: { label: string }) {
   return (
-    <View style={styles.loadingScreen}>
-      <StatusBar style="dark" />
+    <SafeAreaView style={styles.loadingScreen}>
+      <ExpoStatusBar style="dark" />
       <ActivityIndicator size="large" color={uiTheme.colors.primary} />
       <Text style={styles.loadingScreenText}>{label}</Text>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -350,34 +436,57 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: uiTheme.colors.background,
   },
+  safeArea: {
+    flex: 1,
+    backgroundColor: uiTheme.colors.background,
+    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+  },
   screen: {
     flex: 1,
     backgroundColor: uiTheme.colors.background,
-    paddingTop: Platform.OS === 'android' ? 24 : 16,
   },
   header: {
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 14,
-    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  topBar: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerSide: {
+    width: 44,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
   headerTextWrap: {
-    gap: 6,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerSideRight: {
+    alignItems: 'flex-end',
   },
   headerActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: 8,
   },
   title: {
-    fontSize: 26,
-    lineHeight: 32,
-    fontWeight: '800',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700',
     color: uiTheme.colors.textPrimary,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 13,
+    lineHeight: 18,
     color: uiTheme.colors.textSecondary,
+    textAlign: 'center',
   },
   scrollContent: {
     paddingHorizontal: uiTheme.spacing.screen,
@@ -400,15 +509,15 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: uiTheme.spacing.card,
-    gap: 14,
+    padding: 14,
+    gap: 12,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 16,
     lineHeight: 22,
-    fontWeight: '700',
+    fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
   bodyText: {
@@ -489,7 +598,7 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
   },
   button: {
-    minHeight: 52,
+    minHeight: 50,
     borderRadius: uiTheme.radius.control,
     alignItems: 'center',
     justifyContent: 'center',
@@ -520,7 +629,7 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.99 }],
   },
   buttonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   buttonTextPrimary: {
@@ -550,9 +659,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   fieldLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+    color: uiTheme.colors.textSecondary,
   },
   textInput: {
     minHeight: 52,
@@ -590,7 +699,7 @@ const styles = StyleSheet.create({
   keyValueValue: {
     fontSize: 14,
     color: uiTheme.colors.textPrimary,
-    fontWeight: '600',
+    fontWeight: '500',
     textAlign: 'right',
   },
   chip: {
@@ -612,7 +721,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
   chipTextSuccess: {
@@ -658,12 +767,110 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   selectTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
   selectDescription: {
     fontSize: 13,
     color: uiTheme.colors.textSecondary,
+  },
+  headerIconButton: {
+    minWidth: 44,
+    minHeight: 44,
+    width: 44,
+    height: 44,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  headerIconButtonPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+    transform: [{ scale: 0.97 }],
+  },
+  headerIconButtonDisabled: {
+    opacity: 0.48,
+  },
+  menuIcon: {
+    width: 18,
+    gap: 4,
+  },
+  menuIconLine: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: uiTheme.colors.textPrimary,
+  },
+  backIcon: {
+    width: 22,
+    height: 22,
+    position: 'relative',
+  },
+  backIconLine: {
+    position: 'absolute',
+    left: 5,
+    width: 12,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: uiTheme.colors.textPrimary,
+  },
+  backIconLineTop: {
+    top: 6,
+    transform: [{ rotate: '-45deg' }],
+  },
+  backIconLineBottom: {
+    top: 14,
+    transform: [{ rotate: '45deg' }],
+  },
+  refreshIcon: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshArc: {
+    width: 17,
+    height: 17,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: uiTheme.colors.textPrimary,
+    borderLeftColor: 'transparent',
+    transform: [{ rotate: '24deg' }],
+  },
+  refreshHead: {
+    position: 'absolute',
+    right: 3,
+    top: 4,
+    width: 0,
+    height: 0,
+    borderTopWidth: 4,
+    borderBottomWidth: 4,
+    borderLeftWidth: 6,
+    borderTopColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: uiTheme.colors.textPrimary,
+    transform: [{ rotate: '26deg' }],
+  },
+  closeIcon: {
+    width: 20,
+    height: 20,
+    position: 'relative',
+  },
+  closeIconLine: {
+    position: 'absolute',
+    left: 2,
+    top: 9,
+    width: 16,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: uiTheme.colors.textPrimary,
+  },
+  closeIconLineForward: {
+    transform: [{ rotate: '45deg' }],
+  },
+  closeIconLineBack: {
+    transform: [{ rotate: '-45deg' }],
   },
 });

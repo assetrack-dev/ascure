@@ -5,16 +5,20 @@ import {
   Image,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  StatusBar as NativeStatusBar,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { Asset, AssetDetailImage, AssetDetailResponse } from '../types';
 import { formatDateTime } from '../utils';
+import { HeaderIconButton, uiTheme } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -188,44 +192,55 @@ export function AssetDetailScreen({
 
   if (isLoading) {
     return (
-      <View style={styles.centerScreen}>
-        <ActivityIndicator size="large" color="#0f5cd8" />
+      <SafeAreaView style={styles.centerScreen}>
+        <ExpoStatusBar style="dark" />
+        <ActivityIndicator size="large" color={uiTheme.colors.primary} />
         <Text style={styles.loadingText}>Loading asset detail...</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (loadFailed || !asset) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.header}>
-          <Pressable onPress={onBack} style={styles.inlineButton}>
-            <Text style={styles.inlineButtonText}>Back</Text>
-          </Pressable>
+      <SafeAreaView style={styles.safeArea}>
+        <ExpoStatusBar style="dark" />
+        <View style={styles.screen}>
+          <View style={styles.header}>
+            <View style={styles.headerSide}>
+              <HeaderIconButton icon="back" onPress={onBack} accessibilityLabel="Back" />
+            </View>
+            <View style={styles.headerTitleWrap}>
+              <Text style={styles.title}>Asset Detail</Text>
+            </View>
+            <View style={styles.headerSide} />
+          </View>
+          <View style={styles.centerContent}>
+            <Text style={styles.emptyTitle}>Asset not found</Text>
+            <Text style={styles.emptyText}>This asset could not be loaded. Please refresh the visit and try again.</Text>
+          </View>
         </View>
-        <View style={styles.centerContent}>
-          <Text style={styles.emptyTitle}>Asset not found</Text>
-          <Text style={styles.emptyText}>This asset could not be loaded. Please refresh the visit and try again.</Text>
-        </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   const latestInspection = asset.latestInspection;
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <View style={styles.headerTitleWrap}>
-          <Text style={styles.title}>Asset Detail</Text>
-          <Text style={styles.subtitle}>{asset.assetCode || 'No asset code available'}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ExpoStatusBar style="dark" />
+      <View style={styles.screen}>
+        <View style={styles.header}>
+          <View style={styles.headerSide}>
+            <HeaderIconButton icon="back" onPress={onBack} accessibilityLabel="Back" />
+          </View>
+          <View style={styles.headerTitleWrap}>
+            <Text style={styles.title}>Asset Detail</Text>
+            <Text style={styles.subtitle}>{asset.assetCode || 'No asset code available'}</Text>
+          </View>
+          <View style={styles.headerSide} />
         </View>
-        <Pressable onPress={onBack} style={styles.inlineButton}>
-          <Text style={styles.inlineButtonText}>Back</Text>
-        </Pressable>
-      </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {actionError ? (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{actionError}</Text>
@@ -256,7 +271,7 @@ export function AssetDetailScreen({
               pressed && asset.status !== 'NOT_FOUND' && !isMarkingNotFound && styles.pressedButton,
             ]}
           >
-            {isMarkingNotFound ? <ActivityIndicator color="#10233d" /> : null}
+            {isMarkingNotFound ? <ActivityIndicator color={uiTheme.colors.textPrimary} /> : null}
             <Text style={styles.actionButtonGhostText}>Mark Not Found</Text>
           </Pressable>
 
@@ -363,8 +378,9 @@ export function AssetDetailScreen({
           )}
         </View>
 
-      </ScrollView>
-    </View>
+        </ScrollView>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -424,18 +440,23 @@ function getImageSourceUri(image: AssetDetailImage) {
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: uiTheme.colors.background,
+    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+  },
   screen: {
     flex: 1,
-    backgroundColor: '#f4f7fb',
-    paddingTop: Platform.OS === 'android' ? 24 : 16,
+    backgroundColor: uiTheme.colors.background,
   },
   centerScreen: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-    backgroundColor: '#f4f7fb',
+    backgroundColor: uiTheme.colors.background,
     paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
   },
   centerContent: {
     flex: 1,
@@ -445,33 +466,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   header: {
-    paddingHorizontal: 20,
+    minHeight: 46,
+    paddingHorizontal: 16,
     paddingBottom: 12,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 16,
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerSide: {
+    width: 44,
+    justifyContent: 'center',
   },
   headerTitleWrap: {
     flex: 1,
-    gap: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700',
+    color: uiTheme.colors.textPrimary,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 15,
-    color: '#526277',
-  },
-  inlineButton: {
-    paddingVertical: 6,
-  },
-  inlineButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0f5cd8',
+    fontSize: 12,
+    lineHeight: 17,
+    color: uiTheme.colors.textSecondary,
+    textAlign: 'center',
   },
   content: {
     paddingHorizontal: 20,
@@ -479,17 +502,18 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: 14,
     gap: 12,
     borderWidth: 1,
-    borderColor: '#dce5f1',
+    borderColor: uiTheme.colors.border,
   },
   cardTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
   },
   infoRow: {
     flexDirection: 'row',
@@ -499,49 +523,49 @@ const styles = StyleSheet.create({
   infoLabel: {
     flex: 1,
     fontSize: 14,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
   },
   infoValue: {
     flex: 1.2,
     fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
+    fontWeight: '500',
+    color: uiTheme.colors.textPrimary,
     textAlign: 'right',
   },
   fieldLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#607086',
+    fontSize: 13,
+    fontWeight: '600',
+    color: uiTheme.colors.textSecondary,
   },
   bodyText: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#10233d',
+    color: uiTheme.colors.textPrimary,
   },
   placeholderText: {
     fontSize: 14,
     lineHeight: 21,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontWeight: '700',
+    color: uiTheme.colors.textPrimary,
     textAlign: 'center',
   },
   emptyText: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
     textAlign: 'center',
   },
   loadingText: {
     fontSize: 15,
-    color: '#526277',
+    color: uiTheme.colors.textSecondary,
   },
   errorBanner: {
-    backgroundColor: '#fee2e2',
-    borderRadius: 14,
+    backgroundColor: uiTheme.colors.dangerSoft,
+    borderRadius: uiTheme.radius.control,
     borderWidth: 1,
     borderColor: '#fecaca',
     padding: 14,
@@ -558,10 +582,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   actionButton: {
-    minHeight: 54,
+    minHeight: 48,
     flexGrow: 1,
     flexBasis: 118,
-    borderRadius: 16,
+    borderRadius: uiTheme.radius.control,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -569,30 +593,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   actionButtonPrimary: {
-    backgroundColor: '#0f5cd8',
+    backgroundColor: uiTheme.colors.primary,
   },
   actionButtonSecondary: {
-    backgroundColor: '#e5edf8',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
   },
   actionButtonGhost: {
-    backgroundColor: '#ffffff',
+    backgroundColor: uiTheme.colors.card,
     borderWidth: 1,
-    borderColor: '#c8d6e8',
+    borderColor: uiTheme.colors.border,
   },
   actionButtonPrimaryText: {
     color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
   },
   actionButtonSecondaryText: {
-    color: '#10233d',
-    fontSize: 15,
-    fontWeight: '800',
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
   },
   actionButtonGhostText: {
-    color: '#10233d',
-    fontSize: 15,
-    fontWeight: '800',
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
   },
   imageBlock: {
     gap: 8,
@@ -608,41 +634,43 @@ const styles = StyleSheet.create({
   },
   imageType: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#607086',
+    fontWeight: '600',
+    color: uiTheme.colors.textSecondary,
   },
   imageCounter: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#10233d',
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
   },
   image: {
     width: '100%',
     height: 220,
-    borderRadius: 14,
-    backgroundColor: '#e5edf8',
+    borderRadius: uiTheme.radius.card,
+    backgroundColor: uiTheme.colors.surfaceMuted,
   },
   imagePlaceholder: {
     height: 120,
-    borderRadius: 14,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef4fb',
+    backgroundColor: uiTheme.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#d9e4f2',
+    borderColor: uiTheme.colors.border,
   },
   historyButton: {
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: '#e5edf8',
+    minHeight: 48,
+    borderRadius: uiTheme.radius.control,
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
   historyButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#10233d',
+    color: uiTheme.colors.textPrimary,
   },
   disabledButton: {
     opacity: 0.6,

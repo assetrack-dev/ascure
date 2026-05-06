@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Alert } from 'react-native';
+import type { ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, BackHandler, PanResponder, View } from 'react-native';
 import { api, ApiError } from './src/api';
 import { loadStoredToken, removeStoredToken, storeToken } from './src/storage';
 import { AddAssetScreen } from './src/screens/AddAssetScreen';
@@ -166,6 +167,191 @@ export default function App() {
     [handleLogout],
   );
 
+  const goBack = useCallback(() => {
+    if (route.name === 'login' || route.name === 'home') {
+      return false;
+    }
+
+    if (route.name === 'check-in') {
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'visit-detail') {
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'asset-detail') {
+      if (route.returnTo === 'asset-map') {
+        setRoute({
+          name: 'asset-map',
+          visitId: route.mapVisitId,
+          substationId: route.mapSubstationId,
+        });
+        return true;
+      }
+
+      if (route.visitId) {
+        setRoute({
+          name: 'visit-detail',
+          visitId: route.visitId,
+          substationId: route.substationId,
+        });
+        return true;
+      }
+
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'ImagePreview') {
+      setRoute(route.returnTo);
+      return true;
+    }
+
+    if (route.name === 'InspectionDetail') {
+      if (route.source === 'history') {
+        setRoute({
+          name: 'AssetInspectionHistory',
+          visitId: route.visitId,
+          substationId: route.substationId,
+          assetId: route.assetId,
+          assetCode: route.assetCode,
+        });
+        return true;
+      }
+
+      setRoute({ name: 'DefectList' });
+      return true;
+    }
+
+    if (route.name === 'DefectList') {
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'Dashboard') {
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'DefectDetail') {
+      if (route.returnTo === 'Dashboard') {
+        setRoute({ name: 'Dashboard' });
+        return true;
+      }
+
+      if (route.returnTo === 'AssetMap') {
+        setRoute({
+          name: 'asset-map',
+          visitId: route.mapVisitId,
+          substationId: route.mapSubstationId,
+        });
+        return true;
+      }
+
+      setRoute({ name: 'DefectList' });
+      return true;
+    }
+
+    if (route.name === 'AssetInspectionHistory') {
+      setRoute({
+        name: 'asset-detail',
+        visitId: route.visitId,
+        substationId: route.substationId,
+        assetId: route.assetId,
+      });
+      return true;
+    }
+
+    if (route.name === 'asset-map') {
+      if (route.visitId && route.substationId) {
+        setRoute({
+          name: 'visit-detail',
+          visitId: route.visitId,
+          substationId: route.substationId,
+        });
+        return true;
+      }
+
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'add-asset') {
+      if (route.returnTo === 'asset-map') {
+        setRoute({
+          name: 'asset-map',
+          visitId: route.visitId,
+          substationId: route.substationId,
+        });
+        return true;
+      }
+
+      if (route.visitId && route.substationId) {
+        setRoute({
+          name: 'visit-detail',
+          visitId: route.visitId,
+          substationId: route.substationId,
+        });
+        return true;
+      }
+
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'inspection-form') {
+      setRoute({
+        name: 'visit-detail',
+        visitId: route.visitId,
+        substationId: route.substationId,
+      });
+      return true;
+    }
+
+    return false;
+  }, [route]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [goBack]);
+
+  const canNavigateBack = route.name !== 'login' && route.name !== 'home';
+  const backGestureResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          canNavigateBack &&
+          gesture.x0 <= 32 &&
+          gesture.dx > 22 &&
+          Math.abs(gesture.dy) < 26,
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx > 72 && Math.abs(gesture.dy) < 80) {
+            goBack();
+          }
+        },
+      }),
+    [canNavigateBack, goBack],
+  );
+
+  const withBackGesture = useCallback(
+    (screen: ReactNode) =>
+      canNavigateBack ? (
+        <View style={{ flex: 1 }} {...backGestureResponder.panHandlers}>
+          {screen}
+        </View>
+      ) : (
+        screen
+      ),
+    [backGestureResponder.panHandlers, canNavigateBack],
+  );
+
   if (isBooting) {
     return <LoadingScreen label="Loading ASCURE mobile..." />;
   }
@@ -196,13 +382,13 @@ export default function App() {
   }
 
   if (route.name === 'visit-detail') {
-    return (
+    return withBackGesture(
       <VisitDetailScreen
         token={token}
         visitId={route.visitId}
         substationId={route.substationId}
         successMessage={route.successMessage}
-        onBack={() => setRoute({ name: 'home' })}
+        onBack={goBack}
         onOpenAddAsset={() =>
           setRoute({
             name: 'add-asset',
@@ -232,28 +418,14 @@ export default function App() {
   }
 
   if (route.name === 'asset-detail') {
-    return (
+    return withBackGesture(
       <AssetDetailScreen
         token={token}
         visitId={route.visitId}
         substationId={route.substationId}
         assetId={route.assetId}
         assetSnapshot={route.assetSnapshot}
-        onBack={() =>
-          route.returnTo === 'asset-map'
-            ? setRoute({
-                name: 'asset-map',
-                visitId: route.mapVisitId,
-                substationId: route.mapSubstationId,
-              })
-            : route.visitId
-              ? setRoute({
-                  name: 'visit-detail',
-                  visitId: route.visitId,
-                  substationId: route.substationId,
-                })
-              : setRoute({ name: 'home' })
-        }
+        onBack={goBack}
         onOpenInspection={(inspectionId) => {
           if (!route.visitId) {
             return;
@@ -341,10 +513,10 @@ export default function App() {
   }
 
   if (route.name === 'DefectList') {
-    return (
+    return withBackGesture(
       <DefectListScreen
         token={token}
-        onBack={() => setRoute({ name: 'home' })}
+        onBack={goBack}
         onOpenDefect={(item) =>
           setRoute({
             name: 'DefectDetail',
@@ -367,10 +539,10 @@ export default function App() {
   }
 
   if (route.name === 'Dashboard') {
-    return (
+    return withBackGesture(
       <DashboardScreen
         token={token}
-        onBack={() => setRoute({ name: 'home' })}
+        onBack={goBack}
         onOpenDefect={(defectId) =>
           setRoute({
             name: 'DefectDetail',
@@ -384,21 +556,11 @@ export default function App() {
   }
 
   if (route.name === 'DefectDetail') {
-    return (
+    return withBackGesture(
       <DefectDetailScreen
         token={token}
         defectId={route.defectId}
-        onBack={() =>
-          route.returnTo === 'Dashboard'
-            ? setRoute({ name: 'Dashboard' })
-            : route.returnTo === 'AssetMap'
-              ? setRoute({
-                  name: 'asset-map',
-                  visitId: route.mapVisitId,
-                  substationId: route.mapSubstationId,
-                })
-              : setRoute({ name: 'DefectList' })
-        }
+        onBack={goBack}
         onOpenImagePreview={(params) =>
           setRoute({
             name: 'ImagePreview',
@@ -457,20 +619,12 @@ export default function App() {
   }
 
   if (route.name === 'asset-map') {
-    return (
+    return withBackGesture(
       <MapScreen
         token={token}
         visitId={route.visitId}
         substationId={route.substationId}
-        onBack={() =>
-          route.visitId && route.substationId
-            ? setRoute({
-                name: 'visit-detail',
-                visitId: route.visitId,
-                substationId: route.substationId,
-              })
-            : setRoute({ name: 'home' })
-        }
+        onBack={goBack}
         onAddAssetHere={(params) =>
           setRoute({
             name: 'add-asset',

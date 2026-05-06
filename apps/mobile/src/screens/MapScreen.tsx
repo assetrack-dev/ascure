@@ -6,7 +6,7 @@ import { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-nativ
 import type MapView from 'react-native-maps';
 import type { LongPressEvent, Region } from 'react-native-maps';
 import { api, ApiError } from '../api';
-import { AppButton, BodyText, ErrorBanner, InlineButton, LoadingBlock, Screen } from '../ui';
+import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen, uiTheme } from '../ui';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
 import type { AssetLike } from '../utils/feederSequence';
@@ -455,44 +455,28 @@ export function MapScreen({
 
   return (
     <Screen
-      title="Asset Map"
-      subtitle={
-        substationId
-          ? 'Long press the map to place a new asset pin for this pencawang.'
-          : 'Long press the map to place a new asset pin.'
-      }
-      actions={
-        <>
-          <InlineButton label="Back" onPress={onBack} />
-          <InlineButton label="Refresh" onPress={loadMapData} disabled={isLoading} />
-        </>
-      }
+      title="Map"
+      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      rightAction={{
+        icon: 'refresh',
+        onPress: loadMapData,
+        accessibilityLabel: 'Refresh',
+        disabled: isLoading,
+      }}
       scroll={false}
     >
       <ErrorBanner message={error} />
 
-      <View
-        style={{
-          backgroundColor: '#ffffff',
-          borderRadius: 16,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
-          borderWidth: 1,
-          borderColor: '#dce5f1',
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          gap: 12,
-        }}
-      >
-        <Text style={{ fontSize: 14, color: '#607086', fontWeight: '700' }}>
+      <View style={styles.mapSummary}>
+        <Text style={styles.mapSummaryText}>
           Assets: {filteredAssetsWithCoordinates.length}/{assetsWithCoordinates.length}
         </Text>
-        <Text style={{ fontSize: 14, color: '#607086', fontWeight: '700' }}>
+        <Text style={styles.mapSummaryText}>
           Defects: {filteredDefectMarkers.length}/{defectMarkers.length}
         </Text>
       </View>
 
-      <View style={{ flex: 1, minHeight: 420, borderRadius: 16, overflow: 'hidden' }}>
+      <View style={styles.mapShell}>
         {isLoading ? (
           <View
             style={{
@@ -573,7 +557,7 @@ export function MapScreen({
                   opacity: pressed ? 0.82 : 1,
                 })}
               >
-                <Text style={{ color: '#33516f', fontSize: 13, fontWeight: '800' }}>
+                <Text style={{ color: '#33516f', fontSize: 13, fontWeight: '700' }}>
                   My Location
                 </Text>
               </Pressable>
@@ -614,103 +598,28 @@ export function MapScreen({
               ) : null}
             </View>
 
-            <View
-              style={{
-                position: 'absolute',
-                top: 64,
-                right: 12,
-                alignItems: 'flex-end',
-                gap: 8,
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: 'row',
-                  backgroundColor: '#ffffff',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#c7d5e8',
-                  overflow: 'hidden',
-                }}
-              >
-                <Pressable
-                  onPress={() => setMapType('standard')}
-                  style={({ pressed }) => ({
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    backgroundColor: mapType === 'standard' ? '#0f5cd8' : '#ffffff',
-                    opacity: pressed ? 0.82 : 1,
-                  })}
-                >
-                  <Text
-                    style={{
-                      color: mapType === 'standard' ? '#ffffff' : '#33516f',
-                      fontSize: 13,
-                      fontWeight: '800',
-                    }}
-                  >
-                    Map
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setMapType('hybrid')}
-                  style={({ pressed }) => ({
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    backgroundColor: mapType === 'hybrid' ? '#0f5cd8' : '#ffffff',
-                    opacity: pressed ? 0.82 : 1,
-                  })}
-                >
-                  <Text
-                    style={{
-                      color: mapType === 'hybrid' ? '#ffffff' : '#33516f',
-                      fontSize: 13,
-                      fontWeight: '800',
-                    }}
-                  >
-                    Satellite
-                  </Text>
-                </Pressable>
+            <View style={styles.mapControlPanel}>
+              <MapTypeControl mapType={mapType} onChangeMapType={setMapType} />
+              <View style={styles.mapOverlayGroup}>
+                <MapOverlayToggleButton
+                  label="Heatmap"
+                  isActive={showHeatmap}
+                  activeColor="#166534"
+                  onPress={() => setShowHeatmap((currentValue) => !currentValue)}
+                />
+                <MapOverlayToggleButton
+                  label="Lines"
+                  isActive={showFeederLines}
+                  activeColor="#0f5cd8"
+                  onPress={() => setShowFeederLines((currentValue) => !currentValue)}
+                />
+                <MapOverlayToggleButton
+                  label="Warnings"
+                  isActive={showSequenceWarnings}
+                  activeColor="#b45309"
+                  onPress={() => setShowSequenceWarnings((currentValue) => !currentValue)}
+                />
               </View>
-
-              <Pressable
-                accessibilityRole="switch"
-                accessibilityState={{ checked: showHeatmap }}
-                onPress={() => setShowHeatmap((currentValue) => !currentValue)}
-                style={({ pressed }) => ({
-                  backgroundColor: showHeatmap ? '#166534' : '#ffffff',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: showHeatmap ? '#166534' : '#c7d5e8',
-                  paddingHorizontal: 12,
-                  paddingVertical: 9,
-                  opacity: pressed ? 0.82 : 1,
-                })}
-              >
-                <Text
-                  style={{
-                    color: showHeatmap ? '#ffffff' : '#33516f',
-                    fontSize: 13,
-                    fontWeight: '800',
-                  }}
-                >
-                  Heatmap {showHeatmap ? 'On' : 'Off'}
-                </Text>
-              </Pressable>
-
-              <MapOverlayToggleButton
-                label="Lines"
-                isActive={showFeederLines}
-                activeColor="#0f5cd8"
-                onPress={() => setShowFeederLines((currentValue) => !currentValue)}
-              />
-
-              <MapOverlayToggleButton
-                label="Warnings"
-                isActive={showSequenceWarnings}
-                activeColor="#b45309"
-                onPress={() => setShowSequenceWarnings((currentValue) => !currentValue)}
-              />
             </View>
           </>
         ) : null}
@@ -723,14 +632,14 @@ export function MapScreen({
               right: 12,
               bottom: 12,
               backgroundColor: '#ffffff',
-              borderRadius: 16,
+              borderRadius: 8,
               padding: 14,
               gap: 10,
               borderWidth: 1,
               borderColor: '#c7d5e8',
             }}
           >
-            <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '800' }}>
+            <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '700' }}>
               Drag pin to adjust location
             </Text>
             <BodyText muted>
@@ -793,6 +702,56 @@ function MapFilterBar({
   );
 }
 
+function MapTypeControl({
+  mapType,
+  onChangeMapType,
+}: {
+  mapType: 'standard' | 'hybrid';
+  onChangeMapType: (nextMapType: 'standard' | 'hybrid') => void;
+}) {
+  return (
+    <View style={styles.mapTypeSegment}>
+      <MapTypeButton
+        label="Map"
+        isActive={mapType === 'standard'}
+        onPress={() => onChangeMapType('standard')}
+      />
+      <MapTypeButton
+        label="Satellite"
+        isActive={mapType === 'hybrid'}
+        onPress={() => onChangeMapType('hybrid')}
+      />
+    </View>
+  );
+}
+
+function MapTypeButton({
+  label,
+  isActive,
+  onPress,
+}: {
+  label: string;
+  isActive: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: isActive }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.mapTypeButton,
+        isActive && styles.mapTypeButtonActive,
+        pressed && styles.mapControlPressed,
+      ]}
+    >
+      <Text style={[styles.mapTypeButtonText, isActive && styles.mapTypeButtonTextActive]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 function MapOverlayToggleButton({
   label,
   isActive,
@@ -813,9 +772,8 @@ function MapOverlayToggleButton({
         styles.mapOverlayToggleButton,
         {
           backgroundColor: isActive ? activeColor : '#ffffff',
-          borderColor: isActive ? activeColor : '#c7d5e8',
-          opacity: pressed ? 0.82 : 1,
         },
+        pressed && styles.mapControlPressed,
       ]}
     >
       <Text
@@ -1538,6 +1496,28 @@ function addUniqueMessage(messages: string[], message: string) {
 }
 
 const styles = StyleSheet.create({
+  mapSummary: {
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  mapSummaryText: {
+    fontSize: 13,
+    color: uiTheme.colors.textSecondary,
+    fontWeight: '600',
+  },
+  mapShell: {
+    flex: 1,
+    minHeight: 420,
+    borderRadius: uiTheme.radius.card,
+    overflow: 'hidden',
+  },
   filterOverlay: {
     position: 'absolute',
     top: 12,
@@ -1580,20 +1560,66 @@ const styles = StyleSheet.create({
   filterButtonText: {
     color: '#33516f',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   filterButtonTextActive: {
     color: '#ffffff',
   },
   mapOverlayToggleButton: {
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    minHeight: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
   mapOverlayToggleButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  mapControlPanel: {
+    position: 'absolute',
+    top: 64,
+    right: 12,
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  mapTypeSegment: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    borderRadius: uiTheme.radius.control,
+    borderWidth: 1,
+    borderColor: '#c7d5e8',
+    overflow: 'hidden',
+  },
+  mapTypeButton: {
+    minHeight: 34,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  mapTypeButtonActive: {
+    backgroundColor: uiTheme.colors.primary,
+  },
+  mapTypeButtonText: {
+    color: '#33516f',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  mapTypeButtonTextActive: {
+    color: '#ffffff',
+  },
+  mapOverlayGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    borderRadius: uiTheme.radius.control,
+    borderWidth: 1,
+    borderColor: '#c7d5e8',
+    overflow: 'hidden',
+  },
+  mapControlPressed: {
+    opacity: 0.82,
   },
   sequenceWarningMarkerContainer: {
     width: 44,
@@ -1644,7 +1670,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontSize: 15,
     lineHeight: 20,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   sequenceWarningCalloutMessage: {
     color: '#7c2d12',
@@ -1705,7 +1731,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontSize: 15,
     lineHeight: 20,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   defectCalloutRow: {
     flexDirection: 'row',
@@ -1717,14 +1743,14 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 12,
     lineHeight: 17,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   defectCalloutValue: {
     flex: 1,
     color: '#10233d',
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   defectCalloutDescriptionGroup: {
     gap: 3,

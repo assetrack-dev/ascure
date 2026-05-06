@@ -5,7 +5,6 @@ import {
   Card,
   EmptyState,
   ErrorBanner,
-  InlineButton,
   LoadingBlock,
   Screen,
   SectionTitle,
@@ -86,14 +85,18 @@ export function HomeScreen({
   return (
     <View style={styles.root}>
       <Screen
-        title="Active Site Status"
-        subtitle="Shared team check-ins currently open in the field."
-        actions={
-          <>
-            <InlineButton label="Menu" onPress={() => setIsDrawerOpen(true)} />
-            <InlineButton label="Refresh" onPress={loadHomeData} disabled={isLoading} />
-          </>
-        }
+        title="Active Sites"
+        leftAction={{
+          icon: 'menu',
+          onPress: () => setIsDrawerOpen(true),
+          accessibilityLabel: 'Menu',
+        }}
+        rightAction={{
+          icon: 'refresh',
+          onPress: loadHomeData,
+          accessibilityLabel: 'Refresh',
+          disabled: isLoading,
+        }}
       >
         <ErrorBanner message={error} />
         {isLoading ? <LoadingBlock label="Loading active sites..." /> : null}
@@ -383,30 +386,30 @@ const styles = StyleSheet.create({
     borderColor: uiTheme.colors.border,
     color: uiTheme.colors.textPrimary,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
   },
   visitList: {
-    gap: 12,
+    gap: 10,
   },
   visitRow: {
-    minHeight: 112,
+    minHeight: 88,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
     backgroundColor: uiTheme.colors.card,
-    padding: 12,
+    padding: 10,
   },
   visitRowPressed: {
     backgroundColor: uiTheme.colors.surfacePressed,
     transform: [{ scale: 0.995 }],
   },
   thumbnailFrame: {
-    width: 76,
-    height: 76,
+    width: 56,
+    height: 56,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: uiTheme.colors.surfaceMuted,
@@ -425,9 +428,9 @@ const styles = StyleSheet.create({
   },
   thumbnailPlaceholderText: {
     color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
     textAlign: 'center',
   },
   visitTextWrap: {
@@ -438,20 +441,19 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    fontWeight: '500',
   },
   visitName: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 17,
-    lineHeight: 23,
-    fontWeight: '800',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
   },
   functionalLocation: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
   },
   rowArrow: {
     width: 18,
@@ -527,7 +529,7 @@ const styles = StyleSheet.create({
   drawerTitle: {
     color: '#FFFFFF',
     fontSize: 24,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   drawerCloseButton: {
     width: 44,
@@ -556,14 +558,13 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '800',
-    textTransform: 'uppercase',
+    fontWeight: '600',
   },
   identityName: {
     color: '#FFFFFF',
     fontSize: 19,
     lineHeight: 25,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   identityEmail: {
     color: '#D1D5DB',
@@ -624,7 +625,7 @@ const styles = StyleSheet.create({
   drawerItemText: {
     color: '#D1D5DB',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   drawerItemTextActive: {
     color: '#FFFFFF',
