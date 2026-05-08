@@ -1,10 +1,7 @@
 import { resolve } from 'path';
 
 export const UPLOADS_DIRECTORY = resolve(
-  __dirname,
-  '..',
-  '..',
-  'uploads',
+  process.env.UPLOADS_DIR ?? resolve(__dirname, '..', '..', 'uploads'),
 );
 
 export const INSPECTION_IMAGES_URL_PREFIX = '/uploads/inspections';

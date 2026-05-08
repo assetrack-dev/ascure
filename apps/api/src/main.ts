@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const port = Number(process.env.PORT ?? 3000);
 
   app.setGlobalPrefix('api/v1');
   app.useStaticAssets(UPLOADS_DIRECTORY, {
@@ -30,7 +31,7 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(3000, '0.0.0.0');
+  await app.listen(port, '0.0.0.0');
 }
 
 bootstrap();

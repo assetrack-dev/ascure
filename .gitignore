@@ -13,12 +13,13 @@ apps/api/node_modules/
 
 prisma/dev.db
 .local-postgres/
+data/
+nginx/certbot/
 
 # logs
 *.log
 
-# pnpm (optional)
-pnpm-lock.yaml
+apps/*/pnpm-lock.yaml
 
 # IDE
 .vscode/
