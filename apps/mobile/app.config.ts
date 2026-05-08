@@ -4,6 +4,7 @@ export default {
   expo: {
     name: 'ASCURE',
     slug: 'ascure',
+    scheme: 'ascure',
     version: '1.0.0',
     orientation: 'portrait',
     userInterfaceStyle: 'light',
