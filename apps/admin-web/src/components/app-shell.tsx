@@ -1,6 +1,14 @@
 "use client";
 
-import { Archive, BarChart3, Bug, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import {
+  Archive,
+  BarChart3,
+  Bug,
+  LayoutDashboard,
+  LogOut,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { AuthUser } from "@/types/auth";
 import { roleLabel } from "@/lib/roles";
@@ -29,7 +37,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       label: "Defects",
       icon: Bug,
     },
+    {
+      href: "/users",
+      label: "Users",
+      icon: Users,
+      adminOnly: true,
+    },
   ];
+  const visibleNavItems = navItems.filter((item) => !item.adminOnly || user?.role === "ADMIN");
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] lg:grid lg:grid-cols-[272px_1fr]">
@@ -58,7 +73,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
         </div>
 
         <nav className="flex gap-2 overflow-x-auto px-5 pb-4 lg:block lg:px-4">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive =
               pathname === item.href || pathname?.startsWith(`${item.href}/`);

@@ -12,6 +12,8 @@ enum UserRole {
   MANAGER
   SUPERVISOR
   TECHNICIAN
+  VIEWER
+  CLIENT
 }
 
 enum SiteVisitStatus {

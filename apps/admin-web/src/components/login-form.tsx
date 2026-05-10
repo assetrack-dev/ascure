@@ -63,7 +63,7 @@ export function LoginForm() {
           <div className="mt-8 grid gap-3 text-sm text-slate-200">
             <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
               <ShieldCheck size={18} className="text-green-300" />
-              Role foundation: ADMIN, VIEWER, CLIENT
+              Role foundation: ADMIN, TECHNICIAN, VIEWER, CLIENT
             </div>
             <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
               <LockKeyhole size={18} className="text-amber-300" />

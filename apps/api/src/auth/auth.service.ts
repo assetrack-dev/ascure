@@ -74,10 +74,9 @@ export class AuthService {
     });
 
     if (!currentUser) {
-      throw new UnauthorizedException('User account is no longer active.');
+      throw new UnauthorizedException('Unauthorized.');
     }
 
     return currentUser;
   }
 }
-
