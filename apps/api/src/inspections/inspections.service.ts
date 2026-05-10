@@ -202,6 +202,7 @@ export class InspectionsService {
   ) {
     const templateItems = this.flattenTemplateItems(inspection.template.sections);
     const templateItemIds = new Set(templateItems.map((item) => item.id));
+    const templateItemById = new Map(templateItems.map((item) => [item.id, item]));
     const checklistItemIdByLabel = this.buildChecklistItemIdByLabel(templateItems);
 
     const data = items.map((item) => {
@@ -219,6 +220,7 @@ export class InspectionsService {
 
       const checklistItemId =
         item.checklistItemId ?? checklistItemIdByLabel.get(this.normalizeLabelKey(label)) ?? null;
+      const templateItem = checklistItemId ? templateItemById.get(checklistItemId) : null;
       const remark = this.normalizeOptionalString(item.remark);
 
       return {
@@ -227,7 +229,7 @@ export class InspectionsService {
         label,
         result: item.result,
         remark,
-        isDefect: item.result === 'FAIL',
+        isDefect: item.result === 'FAIL' && templateItem?.isDefectTrigger !== false,
       };
     });
 
@@ -593,6 +595,7 @@ export class InspectionsService {
         label: string;
         inputType: InspectionItemInputType;
         isRequired: boolean;
+        isDefectTrigger: boolean;
         optionsJson: Prisma.JsonValue | null;
       }>;
     }>,
@@ -930,6 +933,7 @@ export class InspectionsService {
             helperText: item.helperText,
             inputType: item.inputType,
             isRequired: item.isRequired,
+            isDefectTrigger: item.isDefectTrigger,
             sortOrder: item.sortOrder,
             optionsJson: item.optionsJson,
             value: this.serializeStoredValue(resultMap.get(item.id)),

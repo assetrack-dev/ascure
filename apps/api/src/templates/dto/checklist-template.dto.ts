@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -10,6 +12,29 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
+  'TEXT',
+  'NUMBER',
+  'BOOLEAN',
+  'YES_NO',
+  'SELECT',
+  'DROPDOWN',
+  'DATE',
+  'DATETIME',
+] as const;
+
+export type ChecklistTemplateFieldType = (typeof CHECKLIST_TEMPLATE_FIELD_TYPES)[number];
+
+export class ChecklistTemplateOptionInputDto {
+  @IsString()
+  @MaxLength(255)
+  label!: string;
+
+  @IsString()
+  @MaxLength(255)
+  value!: string;
+}
 
 export class ChecklistTemplateItemInputDto {
   @IsOptional()
@@ -26,12 +51,33 @@ export class ChecklistTemplateItemInputDto {
   sortOrder?: number;
 
   @IsOptional()
+  @IsIn(CHECKLIST_TEMPLATE_FIELD_TYPES)
+  fieldType?: ChecklistTemplateFieldType;
+
+  @IsOptional()
+  @IsIn(CHECKLIST_TEMPLATE_FIELD_TYPES)
+  inputType?: ChecklistTemplateFieldType;
+
+  @IsOptional()
   @IsBoolean()
   isRequired?: boolean;
 
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isDefectTrigger?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ChecklistTemplateOptionInputDto)
+  options?: ChecklistTemplateOptionInputDto[];
+
+  @IsOptional()
+  optionsJson?: unknown;
 }
 
 export class CreateChecklistTemplateDto {
@@ -43,7 +89,12 @@ export class CreateChecklistTemplateDto {
   @MaxLength(255)
   name!: string;
 
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => ChecklistTemplateItemInputDto)
   items!: ChecklistTemplateItemInputDto[];

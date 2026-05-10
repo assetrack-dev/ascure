@@ -15,6 +15,7 @@ import {
   CreateChecklistTemplateDto,
   UpdateChecklistTemplateDto,
 } from './dto/checklist-template.dto';
+import { normalizeTemplateSelectOptions } from './template-builder.constants';
 
 const checklistTemplateInclude = {
   assetType: {
@@ -54,9 +55,12 @@ type DesiredChecklistItem = {
   id?: string;
   key?: string;
   label: string;
+  inputType: InspectionItemInputType;
+  optionsJson: Array<{ label: string; value: string }> | null;
   sortOrder: number;
   isRequired: boolean;
   isActive: boolean;
+  isDefectTrigger: boolean;
   sectionId?: string;
 };
 
@@ -110,14 +114,23 @@ export class ChecklistTemplatesService {
     return this.serialize(template, { onlyActiveItems: true });
   }
 
+  async getById(user: RequestUser, templateId: string) {
+    const template = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
+
+    return this.serialize(template);
+  }
+
   async create(user: RequestUser, dto: CreateChecklistTemplateDto) {
     const assetType = await this.findAssetTypeOrThrow(this.prisma, user.tenantId, dto.assetType);
     const items = this.normalizeIncomingItems([], dto.items);
+    const templateWillBeActive = dto.isActive ?? true;
 
-    this.ensureActiveItems(items, true);
+    this.ensureActiveItems(items, templateWillBeActive);
 
     const createdTemplate = await this.prisma.$transaction(async (tx) => {
-      await this.deactivateActiveTemplates(tx, user.tenantId, assetType.id);
+      if (templateWillBeActive) {
+        await this.deactivateActiveTemplates(tx, user.tenantId, assetType.id);
+      }
 
       const version = await this.getNextVersion(tx, assetType.id);
       const template = await tx.inspectionTemplate.create({
@@ -126,9 +139,11 @@ export class ChecklistTemplatesService {
           assetTypeId: assetType.id,
           version,
           name: this.normalizeRequiredText(dto.name, 'Template name'),
-          status: InspectionTemplateStatus.ACTIVE,
-          isActive: true,
-          publishedAt: new Date(),
+          status: templateWillBeActive
+            ? InspectionTemplateStatus.ACTIVE
+            : InspectionTemplateStatus.DRAFT,
+          isActive: templateWillBeActive,
+          publishedAt: templateWillBeActive ? new Date() : null,
         },
       });
       const section = await tx.inspectionTemplateSection.create({
@@ -163,6 +178,45 @@ export class ChecklistTemplatesService {
     return this.findAndSerialize(user.tenantId, template.id);
   }
 
+  async activate(user: RequestUser, templateId: string) {
+    const template = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
+    const items = this.flattenItems(template).map((item) => this.fromExistingItem(item));
+
+    this.ensureActiveItems(items, true);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.deactivateActiveTemplates(tx, user.tenantId, template.assetTypeId, template.id);
+      await tx.inspectionTemplate.update({
+        where: {
+          id: template.id,
+        },
+        data: {
+          status: InspectionTemplateStatus.ACTIVE,
+          isActive: true,
+          publishedAt: template.publishedAt ?? new Date(),
+        },
+      });
+    });
+
+    return this.findAndSerialize(user.tenantId, template.id);
+  }
+
+  async archive(user: RequestUser, templateId: string) {
+    const template = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
+
+    await this.prisma.inspectionTemplate.update({
+      where: {
+        id: template.id,
+      },
+      data: {
+        status: InspectionTemplateStatus.ARCHIVED,
+        isActive: false,
+      },
+    });
+
+    return this.findAndSerialize(user.tenantId, template.id);
+  }
+
   private async createPatchedVersion(
     user: RequestUser,
     template: ChecklistTemplateRecord,
@@ -173,7 +227,9 @@ export class ChecklistTemplatesService {
       dto.items === undefined
         ? existingItems.map((item) => this.fromExistingItem(item))
         : this.normalizeIncomingItems(existingItems, dto.items);
-    const nextIsActive = dto.isActive ?? template.isActive;
+    const nextIsActive =
+      dto.isActive ??
+      (template._count.inspections > 0 ? false : template.isActive);
 
     this.ensureActiveItems(desiredItems, nextIsActive);
 
@@ -237,6 +293,8 @@ export class ChecklistTemplatesService {
 
     if (desiredItems) {
       this.ensureActiveItems(desiredItems, nextIsActive);
+    } else if (nextIsActive) {
+      this.ensureActiveItems(existingItems.map((item) => this.fromExistingItem(item)), true);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -290,9 +348,15 @@ export class ChecklistTemplatesService {
           },
           data: {
             label: item.label,
+            inputType: item.inputType,
+            optionsJson:
+              item.optionsJson === null
+                ? Prisma.DbNull
+                : (item.optionsJson as Prisma.InputJsonValue),
             sortOrder: item.sortOrder,
             isRequired: item.isRequired,
             isActive: item.isActive,
+            isDefectTrigger: item.isDefectTrigger,
           },
         });
         continue;
@@ -305,10 +369,15 @@ export class ChecklistTemplatesService {
           key: this.buildUniqueItemKey(item.label, usedKeys),
           label: item.label,
           helperText: null,
-          inputType: InspectionItemInputType.BOOLEAN,
+          inputType: item.inputType,
           isRequired: item.isRequired,
           isActive: item.isActive,
+          isDefectTrigger: item.isDefectTrigger,
           sortOrder: item.sortOrder,
+          optionsJson:
+            item.optionsJson === null
+              ? Prisma.DbNull
+              : (item.optionsJson as Prisma.InputJsonValue),
         },
       });
     }
@@ -355,9 +424,15 @@ export class ChecklistTemplatesService {
         key: existingItem?.key,
         sectionId: existingItem?.sectionId,
         label: this.normalizeRequiredText(item.label, 'Item label'),
+        inputType: this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType),
+        optionsJson: this.normalizeOptionsJson(
+          this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType),
+          item.options ?? item.optionsJson ?? existingItem?.optionsJson ?? null,
+        ),
         sortOrder: item.sortOrder ?? index + 1,
         isRequired: item.isRequired ?? existingItem?.isRequired ?? true,
         isActive: item.isActive ?? existingItem?.isActive ?? true,
+        isDefectTrigger: item.isDefectTrigger ?? existingItem?.isDefectTrigger ?? true,
       };
     });
 
@@ -381,9 +456,12 @@ export class ChecklistTemplatesService {
       key: item.key,
       sectionId: item.sectionId,
       label: item.label,
+      inputType: item.inputType,
+      optionsJson: this.normalizeOptionsJson(item.inputType, item.optionsJson),
       sortOrder: item.sortOrder,
       isRequired: item.isRequired,
       isActive: item.isActive,
+      isDefectTrigger: item.isDefectTrigger,
     };
   }
 
@@ -400,10 +478,15 @@ export class ChecklistTemplatesService {
       key: item.key && !usedKeys.has(item.key) ? this.reserveKey(item.key, usedKeys) : this.buildUniqueItemKey(item.label, usedKeys),
       label: item.label,
       helperText: null,
-      inputType: InspectionItemInputType.BOOLEAN,
+      inputType: item.inputType,
       isRequired: item.isRequired,
       isActive: item.isActive,
+      isDefectTrigger: item.isDefectTrigger,
       sortOrder: item.sortOrder,
+      optionsJson:
+        item.optionsJson === null
+          ? Prisma.DbNull
+          : (item.optionsJson as Prisma.InputJsonValue),
     }));
   }
 
@@ -423,6 +506,50 @@ export class ChecklistTemplatesService {
     if (activeItemCount === 0) {
       throw new BadRequestException('Active checklist templates must contain at least one active item.');
     }
+  }
+
+  private normalizeInputType(
+    requestedInputType: string | undefined,
+    fallbackInputType?: InspectionItemInputType,
+  ): InspectionItemInputType {
+    const normalizedInputType = (requestedInputType ?? fallbackInputType ?? InspectionItemInputType.BOOLEAN)
+      .trim()
+      .toUpperCase();
+
+    if (normalizedInputType === 'YES_NO' || normalizedInputType === 'BOOLEAN') {
+      return InspectionItemInputType.BOOLEAN;
+    }
+
+    if (normalizedInputType === 'DROPDOWN' || normalizedInputType === 'SELECT') {
+      return InspectionItemInputType.SELECT;
+    }
+
+    if (
+      normalizedInputType === InspectionItemInputType.TEXT ||
+      normalizedInputType === InspectionItemInputType.NUMBER ||
+      normalizedInputType === InspectionItemInputType.DATE ||
+      normalizedInputType === InspectionItemInputType.DATETIME
+    ) {
+      return normalizedInputType as InspectionItemInputType;
+    }
+
+    throw new BadRequestException(`Unsupported checklist item field type: ${requestedInputType}.`);
+  }
+
+  private normalizeOptionsJson(inputType: InspectionItemInputType, optionsJson: unknown) {
+    if (inputType !== InspectionItemInputType.SELECT) {
+      return null;
+    }
+
+    const normalizedOptions = normalizeTemplateSelectOptions(optionsJson);
+
+    if (!normalizedOptions) {
+      throw new BadRequestException(
+        'Dropdown items require a non-empty options array of unique { label, value } entries.',
+      );
+    }
+
+    return normalizedOptions;
   }
 
   private buildUniqueItemKey(label: string, usedKeys: Set<string>) {
@@ -576,14 +703,40 @@ export class ChecklistTemplatesService {
       items: items.map((item) => ({
         id: item.id,
         templateId: item.templateId,
+        key: item.key,
         label: item.label,
+        fieldType: this.serializeFieldType(item.inputType),
+        inputType: item.inputType,
+        options: this.serializeOptions(item.inputType, item.optionsJson),
+        optionsJson: item.optionsJson,
         sortOrder: item.sortOrder,
         isRequired: item.isRequired,
         isActive: item.isActive,
+        isDefectTrigger: item.isDefectTrigger,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       })),
     };
+  }
+
+  private serializeFieldType(inputType: InspectionItemInputType) {
+    if (inputType === InspectionItemInputType.BOOLEAN) {
+      return 'YES_NO';
+    }
+
+    if (inputType === InspectionItemInputType.SELECT) {
+      return 'DROPDOWN';
+    }
+
+    return inputType;
+  }
+
+  private serializeOptions(inputType: InspectionItemInputType, optionsJson: Prisma.JsonValue | null) {
+    if (inputType !== InspectionItemInputType.SELECT) {
+      return [];
+    }
+
+    return normalizeTemplateSelectOptions(optionsJson) ?? [];
   }
 
   private normalizeRequiredText(value: string, fieldName: string) {

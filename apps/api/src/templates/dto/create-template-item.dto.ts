@@ -25,6 +25,10 @@ export class CreateTemplateItemDto {
   @IsBoolean()
   isRequired!: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  isDefectTrigger?: boolean;
+
   @IsInt()
   @Min(1)
   sortOrder!: number;
@@ -61,6 +65,10 @@ export class UpdateTemplateItemDto {
   @IsOptional()
   @IsBoolean()
   isRequired?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isDefectTrigger?: boolean;
 
   @IsOptional()
   @IsInt()

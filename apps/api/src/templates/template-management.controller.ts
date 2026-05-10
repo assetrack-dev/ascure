@@ -28,7 +28,7 @@ import {
 import { TemplatesService } from './templates.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.SUPERVISOR)
+@Roles(UserRole.ADMIN)
 @Controller()
 export class TemplateManagementController {
   constructor(private readonly templatesService: TemplatesService) {}

@@ -298,6 +298,7 @@ model InspectionTemplateItem {
   inputType   InspectionItemInputType
   isRequired  Boolean                  @default(false)
   isActive    Boolean                  @default(true)
+  isDefectTrigger Boolean               @default(true)
   sortOrder   Int                      @default(0)
   optionsJson Json?
   createdAt   DateTime                 @default(now())

@@ -2,12 +2,18 @@ import { Module } from '@nestjs/common';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ChecklistTemplatesController } from './checklist-templates.controller';
 import { ChecklistTemplatesService } from './checklist-templates.service';
+import { InspectionTemplatesController } from './inspection-templates.controller';
 import { TemplateManagementController } from './template-management.controller';
 import { TemplatesController } from './templates.controller';
 import { TemplatesService } from './templates.service';
 
 @Module({
-  controllers: [TemplatesController, TemplateManagementController, ChecklistTemplatesController],
+  controllers: [
+    TemplatesController,
+    TemplateManagementController,
+    ChecklistTemplatesController,
+    InspectionTemplatesController,
+  ],
   providers: [TemplatesService, ChecklistTemplatesService, RolesGuard],
   exports: [TemplatesService],
 })

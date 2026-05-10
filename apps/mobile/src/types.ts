@@ -183,6 +183,7 @@ export interface InspectionTemplateItem {
   helperText: string | null;
   inputType: InspectionItemInputType;
   isRequired: boolean;
+  isDefectTrigger?: boolean;
   sortOrder: number;
   optionsJson: unknown;
   value: InspectionValue | null;
@@ -387,10 +388,16 @@ export interface SelectOption {
 export interface ChecklistTemplateItem {
   id: string;
   templateId: string;
+  key?: string;
   label: string;
+  fieldType?: string;
+  inputType?: InspectionItemInputType;
+  options?: SelectOption[];
+  optionsJson?: unknown;
   sortOrder: number;
   isRequired: boolean;
   isActive: boolean;
+  isDefectTrigger?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -415,14 +422,20 @@ export interface ChecklistTemplate {
 export interface ChecklistTemplateItemInput {
   id?: string;
   label: string;
+  fieldType?: string;
+  inputType?: string;
   sortOrder?: number;
   isRequired?: boolean;
   isActive?: boolean;
+  isDefectTrigger?: boolean;
+  options?: SelectOption[];
+  optionsJson?: unknown;
 }
 
 export interface CreateChecklistTemplateInput {
   assetType: string;
   name: string;
+  isActive?: boolean;
   items: ChecklistTemplateItemInput[];
 }
 

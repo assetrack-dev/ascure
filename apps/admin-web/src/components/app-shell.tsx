@@ -4,6 +4,7 @@ import {
   Archive,
   BarChart3,
   Bug,
+  ClipboardList,
   LayoutDashboard,
   LogOut,
   ShieldCheck,
@@ -36,6 +37,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/defects",
       label: "Defects",
       icon: Bug,
+    },
+    {
+      href: "/checklist-templates",
+      label: "Checklists",
+      icon: ClipboardList,
+      adminOnly: true,
     },
     {
       href: "/users",

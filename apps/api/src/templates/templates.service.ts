@@ -258,6 +258,7 @@ export class TemplatesService {
           helperText: this.normalizeOptionalText(dto.helperText),
           inputType: dto.inputType,
           isRequired: dto.isRequired,
+          isDefectTrigger: dto.isDefectTrigger ?? true,
           sortOrder: dto.sortOrder,
           optionsJson:
             normalizedOptions === null
@@ -309,6 +310,7 @@ export class TemplatesService {
               : this.normalizeOptionalText(dto.helperText),
           inputType: nextInputType,
           isRequired: dto.isRequired ?? item.isRequired,
+          isDefectTrigger: dto.isDefectTrigger ?? item.isDefectTrigger,
           sortOrder: nextSortOrder,
           optionsJson:
             nextOptions === null ? Prisma.DbNull : (nextOptions as Prisma.InputJsonValue),
@@ -374,6 +376,7 @@ export class TemplatesService {
                 inputType: item.inputType,
                 isRequired: item.isRequired,
                 isActive: item.isActive,
+                isDefectTrigger: item.isDefectTrigger,
                 sortOrder: item.sortOrder,
                 optionsJson:
                   item.optionsJson === null
@@ -574,6 +577,7 @@ export class TemplatesService {
         inputType: true,
         isRequired: true,
         isActive: true,
+        isDefectTrigger: true,
         sortOrder: true,
         optionsJson: true,
       },
@@ -851,6 +855,7 @@ export class TemplatesService {
           inputType: item.inputType,
           isRequired: item.isRequired,
           isActive: item.isActive,
+          isDefectTrigger: item.isDefectTrigger,
           sortOrder: item.sortOrder,
           optionsJson: item.optionsJson,
           createdAt: item.createdAt,

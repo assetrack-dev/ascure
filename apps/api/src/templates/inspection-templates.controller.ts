@@ -7,28 +7,19 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { ChecklistTemplatesService } from './checklist-templates.service';
 import {
-  ChecklistTemplateAssetTypeParamDto,
   ChecklistTemplateIdParamDto,
   CreateChecklistTemplateDto,
   UpdateChecklistTemplateDto,
 } from './dto/checklist-template.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('checklist-templates')
-export class ChecklistTemplatesController {
+@Controller('inspection-templates')
+export class InspectionTemplatesController {
   constructor(private readonly checklistTemplatesService: ChecklistTemplatesService) {}
 
   @Get()
   list(@CurrentUser() user: RequestUser) {
     return this.checklistTemplatesService.list(user);
-  }
-
-  @Get('asset-type/:assetType')
-  getActiveByAssetType(
-    @CurrentUser() user: RequestUser,
-    @Param() params: ChecklistTemplateAssetTypeParamDto,
-  ) {
-    return this.checklistTemplatesService.getActiveByAssetType(user, params.assetType);
   }
 
   @Get(':id')
