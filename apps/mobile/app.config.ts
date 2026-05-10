@@ -8,11 +8,20 @@ export default {
     version: '1.0.0',
     orientation: 'portrait',
     userInterfaceStyle: 'light',
+
+    extra: {
+      eas: {
+        projectId: '67539625-8d92-4574-b3b4-e8d17f171661',
+      },
+    },
+
     splash: {
       resizeMode: 'contain',
       backgroundColor: '#f4f7fb',
     },
+
     assetBundlePatterns: ['**/*'],
+
     plugins: [
       [
         'expo-image-picker',
@@ -35,6 +44,7 @@ export default {
         },
       ],
     ],
+
     android: {
       package: 'local.ascure.field',
       usesCleartextTraffic: true,
@@ -45,6 +55,7 @@ export default {
         },
       },
     },
+
     ios: {
       bundleIdentifier: 'local.ascure.field',
     },
