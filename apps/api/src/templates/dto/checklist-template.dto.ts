@@ -12,6 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { DefectSeverity } from '@prisma/client';
 
 export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'TEXT',
@@ -25,6 +26,13 @@ export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
 ] as const;
 
 export type ChecklistTemplateFieldType = (typeof CHECKLIST_TEMPLATE_FIELD_TYPES)[number];
+
+export const CHECKLIST_TEMPLATE_DEFECT_SEVERITIES = [
+  DefectSeverity.LOW,
+  DefectSeverity.MEDIUM,
+  DefectSeverity.HIGH,
+  DefectSeverity.CRITICAL,
+] as const;
 
 export class ChecklistTemplateOptionInputDto {
   @IsString()
@@ -69,6 +77,10 @@ export class ChecklistTemplateItemInputDto {
   @IsOptional()
   @IsBoolean()
   isDefectTrigger?: boolean;
+
+  @IsOptional()
+  @IsIn(CHECKLIST_TEMPLATE_DEFECT_SEVERITIES)
+  severity?: DefectSeverity;
 
   @IsOptional()
   @IsArray()

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DefectSeverity,
   InspectionItemInputType,
   InspectionTemplateStatus,
   Prisma,
@@ -259,6 +260,7 @@ export class TemplatesService {
           inputType: dto.inputType,
           isRequired: dto.isRequired,
           isDefectTrigger: dto.isDefectTrigger ?? true,
+          severity: dto.severity ?? DefectSeverity.MEDIUM,
           sortOrder: dto.sortOrder,
           optionsJson:
             normalizedOptions === null
@@ -288,6 +290,7 @@ export class TemplatesService {
     const nextInputType = dto.inputType ?? item.inputType;
     const nextKey = dto.key === undefined ? item.key : this.normalizeItemKey(dto.key);
     const nextSortOrder = dto.sortOrder ?? item.sortOrder;
+    const nextSeverity = dto.severity ?? item.severity;
     const nextOptions = this.normalizeOptionsJson(
       nextInputType,
       dto.optionsJson === undefined ? item.optionsJson : dto.optionsJson,
@@ -311,6 +314,7 @@ export class TemplatesService {
           inputType: nextInputType,
           isRequired: dto.isRequired ?? item.isRequired,
           isDefectTrigger: dto.isDefectTrigger ?? item.isDefectTrigger,
+          severity: nextSeverity,
           sortOrder: nextSortOrder,
           optionsJson:
             nextOptions === null ? Prisma.DbNull : (nextOptions as Prisma.InputJsonValue),
@@ -377,6 +381,7 @@ export class TemplatesService {
                 isRequired: item.isRequired,
                 isActive: item.isActive,
                 isDefectTrigger: item.isDefectTrigger,
+                severity: item.severity,
                 sortOrder: item.sortOrder,
                 optionsJson:
                   item.optionsJson === null
@@ -578,6 +583,7 @@ export class TemplatesService {
         isRequired: true,
         isActive: true,
         isDefectTrigger: true,
+        severity: true,
         sortOrder: true,
         optionsJson: true,
       },
@@ -856,6 +862,7 @@ export class TemplatesService {
           isRequired: item.isRequired,
           isActive: item.isActive,
           isDefectTrigger: item.isDefectTrigger,
+          severity: item.severity,
           sortOrder: item.sortOrder,
           optionsJson: item.optionsJson,
           createdAt: item.createdAt,

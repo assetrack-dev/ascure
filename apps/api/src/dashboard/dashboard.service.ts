@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DefectStatus, Prisma } from '@prisma/client';
+import { DefectSeverity, DefectStatus, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +13,7 @@ export class DashboardService {
 
     const defectWhere = this.accessibleDefectWhere(user);
 
-    const [totalAssets, totalInspections, defectStatusCounts, recentDefectItems] =
+    const [totalAssets, totalInspections, defectStatusCounts, defectSeverityCounts, recentDefectItems] =
       await Promise.all([
         this.prisma.asset.count({
           where: this.accessibleAssetWhere(user),
@@ -23,6 +23,13 @@ export class DashboardService {
         }),
         this.prisma.defect.groupBy({
           by: ['status'],
+          where: defectWhere,
+          _count: {
+            _all: true,
+          },
+        }),
+        this.prisma.defect.groupBy({
+          by: ['severity'],
           where: defectWhere,
           _count: {
             _all: true,
@@ -47,6 +54,7 @@ export class DashboardService {
               select: {
                 id: true,
                 status: true,
+                severity: true,
               },
             },
             inspection: {
@@ -68,6 +76,18 @@ export class DashboardService {
     const openDefects = countsByStatus.get(DefectStatus.OPEN) ?? 0;
     const inProgressDefects = countsByStatus.get(DefectStatus.IN_PROGRESS) ?? 0;
     const closedDefects = countsByStatus.get(DefectStatus.CLOSED) ?? 0;
+    const countsBySeverity = new Map(
+      defectSeverityCounts.map((entry) => [entry.severity, entry._count._all]),
+    );
+    const defectsBySeverity = [
+      DefectSeverity.CRITICAL,
+      DefectSeverity.HIGH,
+      DefectSeverity.MEDIUM,
+      DefectSeverity.LOW,
+    ].map((severity) => ({
+      label: severity,
+      value: countsBySeverity.get(severity) ?? 0,
+    }));
 
     return {
       totalAssets,
@@ -76,6 +96,8 @@ export class DashboardService {
       openDefects,
       inProgressDefects,
       closedDefects,
+      criticalDefects: countsBySeverity.get(DefectSeverity.CRITICAL) ?? 0,
+      defectsBySeverity,
       recentDefects: recentDefectItems.flatMap((item) => {
         if (!item.defect) {
           return [];
@@ -86,6 +108,7 @@ export class DashboardService {
           assetCode: item.inspection.asset.assetCode,
           label: item.label,
           status: item.defect.status,
+          severity: item.defect.severity,
           createdAt: item.createdAt.toISOString(),
         };
       }),
@@ -103,6 +126,7 @@ export class DashboardService {
       },
       select: {
         id: true,
+        severity: true,
       },
     });
 
@@ -117,6 +141,7 @@ export class DashboardService {
         id: randomUUID(),
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
+        severity: item.severity ?? DefectSeverity.MEDIUM,
         createdAt: now,
         updatedAt: now,
       })),

@@ -55,6 +55,7 @@ import type {
   ChecklistTemplateItemPayload,
   ChecklistTemplateOption,
   ChecklistTemplateStatus,
+  DefectSeverity,
 } from "@/types/checklist-templates";
 
 type StatusFilter = "ALL" | ChecklistTemplateStatus;
@@ -68,6 +69,7 @@ interface TemplateFormItem {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  severity: DefectSeverity;
   optionsText: string;
 }
 
@@ -90,6 +92,37 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "DRAFT", value: "DRAFT" },
   { label: "ACTIVE", value: "ACTIVE" },
   { label: "ARCHIVED", value: "ARCHIVED" },
+];
+const DEFECT_SEVERITY_OPTIONS: Array<{
+  label: string;
+  value: DefectSeverity;
+  badgeClassName: string;
+  dotClassName: string;
+}> = [
+  {
+    label: "Low",
+    value: "LOW",
+    badgeClassName: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    dotClassName: "bg-emerald-500",
+  },
+  {
+    label: "Medium",
+    value: "MEDIUM",
+    badgeClassName: "border-amber-200 bg-amber-50 text-amber-800",
+    dotClassName: "bg-amber-500",
+  },
+  {
+    label: "High",
+    value: "HIGH",
+    badgeClassName: "border-orange-200 bg-orange-50 text-orange-800",
+    dotClassName: "bg-orange-500",
+  },
+  {
+    label: "Critical",
+    value: "CRITICAL",
+    badgeClassName: "border-red-200 bg-red-50 text-red-800",
+    dotClassName: "bg-red-500",
+  },
 ];
 const inputClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
@@ -118,6 +151,7 @@ function createBlankItem(): TemplateFormItem {
     isRequired: true,
     isActive: true,
     isDefectTrigger: true,
+    severity: "MEDIUM",
     optionsText: "",
   };
 }
@@ -160,6 +194,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     isRequired: item.isRequired,
     isActive: item.isActive,
     isDefectTrigger: item.isDefectTrigger,
+    severity: item.severity ?? "MEDIUM",
     optionsText: optionLines(item.options),
   };
 }
@@ -284,6 +319,23 @@ function StatusBadge({
   );
 }
 
+function severityMeta(severity: DefectSeverity) {
+  return DEFECT_SEVERITY_OPTIONS.find((option) => option.value === severity) ?? DEFECT_SEVERITY_OPTIONS[1];
+}
+
+function SeverityBadge({ severity }: { severity: DefectSeverity }) {
+  const meta = severityMeta(severity);
+
+  return (
+    <span
+      className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-bold uppercase ${meta.badgeClassName}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${meta.dotClassName}`} />
+      {meta.label}
+    </span>
+  );
+}
+
 function parseOptions(optionsText: string) {
   const options: ChecklistTemplateOption[] = [];
   const seenValues = new Set<string>();
@@ -338,6 +390,7 @@ function buildPayloadItems(items: TemplateFormItem[]) {
       isRequired: item.isRequired,
       isActive: item.isActive,
       isDefectTrigger: item.isDefectTrigger,
+      severity: item.severity,
       options,
     });
   });
@@ -491,7 +544,10 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
               type="checkbox"
               checked={item.isDefectTrigger}
               onChange={(event) =>
-                onUpdateItem(item.localId, { isDefectTrigger: event.target.checked })
+                onUpdateItem(item.localId, {
+                  isDefectTrigger: event.target.checked,
+                  severity: item.severity ?? "MEDIUM",
+                })
               }
               className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
             />
@@ -518,6 +574,32 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
           </button>
         </div>
       </div>
+
+      {item.isDefectTrigger ? (
+        <div className="mt-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <label className="block min-w-0 sm:max-w-xs">
+            <span className="text-sm font-semibold text-slate-700">Severity</span>
+            <select
+              value={item.severity}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  severity: event.target.value as DefectSeverity,
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+            >
+              {DEFECT_SEVERITY_OPTIONS.map((severity) => (
+                <option key={severity.value} value={severity.value}>
+                  {severity.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex min-h-10 items-center">
+            <SeverityBadge severity={item.severity} />
+          </div>
+        </div>
+      ) : null}
 
       {item.fieldType === "DROPDOWN" ? (
         <label className="mt-3 block min-w-0">

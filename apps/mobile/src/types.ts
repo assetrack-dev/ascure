@@ -184,6 +184,7 @@ export interface InspectionTemplateItem {
   inputType: InspectionItemInputType;
   isRequired: boolean;
   isDefectTrigger?: boolean;
+  severity?: DefectSeverity | null;
   sortOrder: number;
   optionsJson: unknown;
   value: InspectionValue | null;
@@ -299,11 +300,14 @@ export type AssetInspectionHistoryItem = {
 
 export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
 
+export type DefectSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
 export type DashboardRecentDefect = {
   id: string;
   assetCode?: string;
   label: string;
   status: DefectStatus;
+  severity?: DefectSeverity | null;
   createdAt: string;
 };
 
@@ -343,6 +347,7 @@ export type DefectListItem = {
   result: 'FAIL';
   remark?: string | null;
   status: DefectStatus;
+  severity?: DefectSeverity | null;
   actionRemark?: string | null;
   closedAt?: string | null;
   submittedAt?: string | null;
@@ -353,6 +358,7 @@ export type DefectDetail = {
   id: string;
   inspectionItemResultId: string;
   status: DefectStatus;
+  severity?: DefectSeverity | null;
   actionRemark: string | null;
   closedAt: string | null;
   label: string;
@@ -376,6 +382,7 @@ export interface InspectionItemResult {
   result: InspectionItemResultValue;
   remark: string | null;
   isDefect: boolean;
+  severity?: DefectSeverity | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -398,6 +405,7 @@ export interface ChecklistTemplateItem {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger?: boolean;
+  severity?: DefectSeverity | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -428,6 +436,7 @@ export interface ChecklistTemplateItemInput {
   isRequired?: boolean;
   isActive?: boolean;
   isDefectTrigger?: boolean;
+  severity?: DefectSeverity | null;
   options?: SelectOption[];
   optionsJson?: unknown;
 }

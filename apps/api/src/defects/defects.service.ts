@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { DefectStatus } from '@prisma/client';
+import { DefectSeverity, DefectStatus } from '@prisma/client';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -127,6 +127,7 @@ export class DefectsService {
       },
       select: {
         id: true,
+        severity: true,
       },
     });
 
@@ -141,6 +142,7 @@ export class DefectsService {
         id: randomUUID(),
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
+        severity: item.severity ?? DefectSeverity.MEDIUM,
         createdAt: now,
         updatedAt: now,
       })),
@@ -166,6 +168,7 @@ export class DefectsService {
       },
       select: {
         id: true,
+        severity: true,
       },
     });
 
@@ -181,6 +184,7 @@ export class DefectsService {
         id: randomUUID(),
         inspectionItemResultId: itemResult.id,
         status: DefectStatus.OPEN,
+        severity: itemResult.severity ?? DefectSeverity.MEDIUM,
       },
       update: {},
     });
@@ -283,6 +287,7 @@ export class DefectsService {
   private serializeDefectListItem(defect: {
     id: string;
     status: DefectStatus;
+    severity: DefectSeverity;
     actionRemark: string | null;
     closedAt: Date | null;
     inspectionItemResult: {
@@ -334,6 +339,7 @@ export class DefectsService {
       result: 'FAIL' as const,
       remark: item.remark,
       status: defect.status,
+      severity: defect.severity,
       actionRemark: defect.actionRemark,
       closedAt: defect.closedAt?.toISOString() ?? null,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
@@ -353,6 +359,7 @@ export class DefectsService {
       id: defect.id,
       inspectionItemResultId: item.id,
       status: defect.status,
+      severity: defect.severity,
       actionRemark: defect.actionRemark,
       closedAt: defect.closedAt?.toISOString() ?? null,
       label: item.label,

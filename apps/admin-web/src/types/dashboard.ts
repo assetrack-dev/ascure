@@ -10,6 +10,7 @@ export interface RecentDefect {
   assetCode: string;
   label: string;
   status: string;
+  severity?: DefectSeverity | null;
   createdAt: string;
 }
 

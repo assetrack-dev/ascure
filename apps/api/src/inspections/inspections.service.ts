@@ -8,6 +8,8 @@ import { mkdir, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { extname, resolve } from 'path';
 import {
+  DefectSeverity,
+  DefectStatus,
   InspectionCompletionStatus,
   InspectionItemInputType,
   Prisma,
@@ -222,6 +224,11 @@ export class InspectionsService {
         item.checklistItemId ?? checklistItemIdByLabel.get(this.normalizeLabelKey(label)) ?? null;
       const templateItem = checklistItemId ? templateItemById.get(checklistItemId) : null;
       const remark = this.normalizeOptionalString(item.remark);
+      const isDefect = item.result === 'FAIL' && templateItem?.isDefectTrigger !== false;
+      const severity =
+        templateItem && templateItem.isDefectTrigger !== false
+          ? templateItem.severity ?? DefectSeverity.MEDIUM
+          : null;
 
       return {
         inspectionId: inspection.id,
@@ -229,7 +236,8 @@ export class InspectionsService {
         label,
         result: item.result,
         remark,
-        isDefect: item.result === 'FAIL' && templateItem?.isDefectTrigger !== false,
+        isDefect,
+        severity,
       };
     });
 
@@ -319,7 +327,8 @@ export class InspectionsService {
       }
     }
 
-    return this.prisma.inspection.update({
+    const defectCreateData = this.buildDefectCreateData(inspection.itemResults);
+    const submitInspection = this.prisma.inspection.update({
       where: { id: inspection.id },
       data: {
         completionStatus: InspectionCompletionStatus.SUBMITTED,
@@ -327,6 +336,20 @@ export class InspectionsService {
       },
       include: this.inspectionInclude(),
     });
+
+    if (defectCreateData.length === 0) {
+      return submitInspection;
+    }
+
+    const [submittedInspection] = await this.prisma.$transaction([
+      submitInspection,
+      this.prisma.defect.createMany({
+        data: defectCreateData,
+        skipDuplicates: true,
+      }),
+    ]);
+
+    return submittedInspection;
   }
 
   async uploadImage(
@@ -388,6 +411,7 @@ export class InspectionsService {
     result: string;
     remark: string | null;
     isDefect: boolean;
+    severity: DefectSeverity | null;
     createdAt: Date;
     updatedAt: Date;
   }) {
@@ -399,6 +423,7 @@ export class InspectionsService {
       result: item.result,
       remark: item.remark,
       isDefect: item.isDefect,
+      severity: item.severity,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     };
@@ -596,6 +621,7 @@ export class InspectionsService {
         inputType: InspectionItemInputType;
         isRequired: boolean;
         isDefectTrigger: boolean;
+        severity: DefectSeverity;
         optionsJson: Prisma.JsonValue | null;
       }>;
     }>,
@@ -934,6 +960,7 @@ export class InspectionsService {
             inputType: item.inputType,
             isRequired: item.isRequired,
             isDefectTrigger: item.isDefectTrigger,
+            severity: item.severity,
             sortOrder: item.sortOrder,
             optionsJson: item.optionsJson,
             value: this.serializeStoredValue(resultMap.get(item.id)),
@@ -954,6 +981,27 @@ export class InspectionsService {
       })),
       items: inspection.itemResults.map((item) => this.serializeInspectionItemResult(item)),
     };
+  }
+
+  private buildDefectCreateData(
+    itemResults: Array<{
+      id: string;
+      isDefect: boolean;
+      severity: DefectSeverity | null;
+    }>,
+  ) {
+    const now = new Date();
+
+    return itemResults
+      .filter((item) => item.isDefect)
+      .map((item) => ({
+        id: randomUUID(),
+        inspectionItemResultId: item.id,
+        status: DefectStatus.OPEN,
+        severity: item.severity ?? DefectSeverity.MEDIUM,
+        createdAt: now,
+        updatedAt: now,
+      }));
   }
 
   private serializeStoredValue(

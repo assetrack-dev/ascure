@@ -50,6 +50,28 @@ function recentDefectStatusClassName(status: string) {
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
+function recentDefectSeverityClassName(severity: string | null | undefined) {
+  const normalizedSeverity = severity?.toUpperCase();
+
+  if (normalizedSeverity === "CRITICAL") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  if (normalizedSeverity === "HIGH") {
+    return "border-orange-200 bg-orange-50 text-orange-700";
+  }
+
+  if (normalizedSeverity === "MEDIUM") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (normalizedSeverity === "LOW") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"] }) {
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
@@ -65,6 +87,7 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
               <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
                 <th className="px-4 py-3">Asset</th>
                 <th className="px-4 py-3">Defect</th>
+                <th className="px-4 py-3">Severity</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Created</th>
               </tr>
@@ -79,6 +102,13 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
                       {defect.assetCode}
                     </td>
                     <td className="min-w-64 px-4 py-4 text-slate-700">{defect.label}</td>
+                    <td className="whitespace-nowrap px-4 py-4">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${recentDefectSeverityClassName(defect.severity)}`}
+                      >
+                        {defect.severity ?? "UNSPECIFIED"}
+                      </span>
+                    </td>
                     <td className="whitespace-nowrap px-4 py-4">
                       <span
                         className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${recentDefectStatusClassName(defect.status)}`}
@@ -215,7 +245,7 @@ function DashboardContent() {
                   <MetricCard
                     title="Critical Defects"
                     value={metrics.criticalDefects}
-                    detail="Ready for severity data from the API."
+                    detail="Defects marked as critical severity."
                     icon={ShieldAlert}
                     tone="danger"
                   />

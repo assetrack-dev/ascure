@@ -2,6 +2,8 @@ export type ChecklistTemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
 export type ChecklistFieldType = "YES_NO" | "DROPDOWN" | "TEXT" | "NUMBER" | "DATE" | "DATETIME";
 
+export type DefectSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
 export interface AssetType {
   id: string;
   code: string;
@@ -26,6 +28,7 @@ export interface ChecklistTemplateItem {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  severity?: DefectSeverity | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -55,6 +58,7 @@ export interface ChecklistTemplateItemPayload {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  severity?: DefectSeverity;
   options?: ChecklistTemplateOption[];
 }
 

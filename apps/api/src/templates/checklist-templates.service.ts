@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DefectSeverity,
   InspectionItemInputType,
   InspectionTemplateStatus,
   Prisma,
@@ -62,6 +63,7 @@ type DesiredChecklistItem = {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  severity: DefectSeverity;
   sectionId?: string;
 };
 
@@ -261,6 +263,7 @@ export class ChecklistTemplatesService {
               isRequired: item.isRequired,
               isActive: item.isActive,
               isDefectTrigger: item.isDefectTrigger,
+              severity: item.severity,
               sortOrder: item.sortOrder,
               optionsJson:
                 item.optionsJson === null
@@ -423,6 +426,7 @@ export class ChecklistTemplatesService {
             isRequired: item.isRequired,
             isActive: item.isActive,
             isDefectTrigger: item.isDefectTrigger,
+            severity: item.severity,
           },
         });
         continue;
@@ -439,6 +443,7 @@ export class ChecklistTemplatesService {
           isRequired: item.isRequired,
           isActive: item.isActive,
           isDefectTrigger: item.isDefectTrigger,
+          severity: item.severity,
           sortOrder: item.sortOrder,
           optionsJson:
             item.optionsJson === null
@@ -499,6 +504,7 @@ export class ChecklistTemplatesService {
         isRequired: item.isRequired ?? existingItem?.isRequired ?? true,
         isActive: item.isActive ?? existingItem?.isActive ?? true,
         isDefectTrigger: item.isDefectTrigger ?? existingItem?.isDefectTrigger ?? true,
+        severity: item.severity ?? existingItem?.severity ?? DefectSeverity.MEDIUM,
       };
     });
 
@@ -528,6 +534,7 @@ export class ChecklistTemplatesService {
       isRequired: item.isRequired,
       isActive: item.isActive,
       isDefectTrigger: item.isDefectTrigger,
+      severity: item.severity,
     };
   }
 
@@ -548,6 +555,7 @@ export class ChecklistTemplatesService {
       isRequired: item.isRequired,
       isActive: item.isActive,
       isDefectTrigger: item.isDefectTrigger,
+      severity: item.severity,
       sortOrder: item.sortOrder,
       optionsJson:
         item.optionsJson === null
@@ -787,6 +795,7 @@ export class ChecklistTemplatesService {
         isRequired: item.isRequired,
         isActive: item.isActive,
         isDefectTrigger: item.isDefectTrigger,
+        severity: item.severity,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       })),
