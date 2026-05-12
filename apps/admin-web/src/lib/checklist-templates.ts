@@ -44,6 +44,16 @@ export function activateChecklistTemplate(token: string, templateId: string) {
   );
 }
 
+export function duplicateChecklistTemplate(token: string, templateId: string) {
+  return apiRequest<ChecklistTemplate>(
+    `/inspection-templates/${encodeURIComponent(templateId)}/duplicate`,
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
 export function archiveChecklistTemplate(token: string, templateId: string) {
   return apiRequest<ChecklistTemplate>(`/inspection-templates/${encodeURIComponent(templateId)}`, {
     method: "DELETE",

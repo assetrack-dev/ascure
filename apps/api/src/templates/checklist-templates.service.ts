@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -215,6 +216,71 @@ export class ChecklistTemplatesService {
     });
 
     return this.findAndSerialize(user.tenantId, template.id);
+  }
+
+  async duplicate(user: RequestUser, templateId: string) {
+    const sourceTemplate = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
+
+    try {
+      const duplicatedTemplate = await this.prisma.$transaction(async (tx) => {
+        const nextVersion = await this.getNextVersion(tx, sourceTemplate.assetTypeId);
+        const duplicate = await tx.inspectionTemplate.create({
+          data: {
+            tenantId: user.tenantId,
+            assetTypeId: sourceTemplate.assetTypeId,
+            version: nextVersion,
+            name: this.buildDuplicateTemplateName(sourceTemplate),
+            status: InspectionTemplateStatus.DRAFT,
+            isActive: false,
+            publishedAt: null,
+          },
+        });
+
+        for (const section of sourceTemplate.sections) {
+          const duplicatedSection = await tx.inspectionTemplateSection.create({
+            data: {
+              templateId: duplicate.id,
+              title: section.title,
+              description: section.description,
+              sortOrder: section.sortOrder,
+            },
+          });
+
+          if (section.items.length === 0) {
+            continue;
+          }
+
+          await tx.inspectionTemplateItem.createMany({
+            data: section.items.map((item) => ({
+              templateId: duplicate.id,
+              sectionId: duplicatedSection.id,
+              key: item.key,
+              label: item.label,
+              helperText: item.helperText,
+              inputType: item.inputType,
+              isRequired: item.isRequired,
+              isActive: item.isActive,
+              isDefectTrigger: item.isDefectTrigger,
+              sortOrder: item.sortOrder,
+              optionsJson:
+                item.optionsJson === null
+                  ? Prisma.DbNull
+                  : (item.optionsJson as Prisma.InputJsonValue),
+            })),
+          });
+        }
+
+        return duplicate;
+      });
+
+      return this.findAndSerialize(user.tenantId, duplicatedTemplate.id);
+    } catch (error) {
+      this.rethrowKnownPrismaError(
+        error,
+        'Unable to duplicate the template because the next version number is no longer available.',
+      );
+      throw error;
+    }
   }
 
   private async createPatchedVersion(
@@ -609,6 +675,14 @@ export class ChecklistTemplatesService {
     return (latestTemplate?.version ?? 0) + 1;
   }
 
+  private buildDuplicateTemplateName(template: ChecklistTemplateRecord) {
+    const baseName = template.name.trim();
+    const versionPattern = new RegExp(`\\bv\\s*${template.version}\\b`, 'i');
+    const suffix = versionPattern.test(baseName) ? ' Copy' : ` V${template.version} Copy`;
+
+    return `${baseName.slice(0, 255 - suffix.length)}${suffix}`;
+  }
+
   private async findTemplateOrThrow(
     client: PrismaClientLike,
     tenantId: string,
@@ -751,5 +825,11 @@ export class ChecklistTemplatesService {
 
   private isUuid(value: string) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  private rethrowKnownPrismaError(error: unknown, message: string): never | void {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new ConflictException(message);
+    }
   }
 }

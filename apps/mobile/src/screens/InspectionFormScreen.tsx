@@ -5,10 +5,15 @@ import { captureRef } from 'react-native-view-shot';
 import { Alert, Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import {
-  buildChecklistItemsPayload,
-  createInitialChecklistDraftValues,
+  buildChecklistItemsPayloadFromDraft,
+  buildResultsPayload,
+  createInitialDraftValues,
   formatDateTime,
-  validateChecklistDraft,
+  hasAnyInspectionDraftValue,
+  normalizeInspectionInputType,
+  normalizeSelectOptions,
+  validateInspectionDraft,
+  validateInspectionDraftForSave,
 } from '../utils';
 import {
   AppButton,
@@ -24,10 +29,9 @@ import {
   TextField,
 } from '../ui';
 import {
-  ChecklistDraftValues,
+  DraftValues,
   InspectionFormResponse,
   InspectionImageUploadInput,
-  InspectionItemResultValue,
   InspectionTemplateSection,
   InspectionTemplateItem,
 } from '../types';
@@ -53,7 +57,6 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
 };
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
-const RESULT_OPTIONS: InspectionItemResultValue[] = ['PASS', 'FAIL', 'NA'];
 
 export function InspectionFormScreen({
   token,
@@ -69,7 +72,7 @@ export function InspectionFormScreen({
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
-  const [draftValues, setDraftValues] = useState<ChecklistDraftValues>({});
+  const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -86,6 +89,12 @@ export function InspectionFormScreen({
   } | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
+  const checklistSections = form?.template.sections.filter((section) => section.items.length > 0) ?? [];
+  const checklistItemCount = checklistSections.reduce(
+    (total, section) => total + section.items.length,
+    0,
+  );
+  const isTemplateEmpty = !isLoading && Boolean(form) && checklistItemCount === 0;
   const isBusy = isLoading || isSavingDraft || isSubmitting || isCapturingPhoto;
 
   const loadForm = useCallback(async () => {
@@ -94,9 +103,10 @@ export function InspectionFormScreen({
       setSaveNotice(null);
       setIsLoading(true);
 
+      // TODO: Cache this pinned inspection form when offline sync is added.
       const formResponse = await api.getInspectionForm(token, inspectionId);
       setForm(formResponse);
-      setDraftValues(createInitialChecklistDraftValues(formResponse));
+      setDraftValues(createInitialDraftValues(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await onUnauthorized(loadError);
@@ -175,15 +185,11 @@ export function InspectionFormScreen({
     };
   }, [pendingOverlayPhoto]);
 
-  function updateDraftValue(itemId: string, changes: Partial<ChecklistDraftValues[string]>) {
+  function updateDraftValue(itemId: string, value: DraftValues[string]) {
     setSaveNotice(null);
     setDraftValues((current) => ({
       ...current,
-      [itemId]: {
-        result: current[itemId]?.result ?? null,
-        remark: current[itemId]?.remark ?? '',
-        ...changes,
-      },
+      [itemId]: value,
     }));
   }
 
@@ -354,19 +360,33 @@ export function InspectionFormScreen({
       return;
     }
 
-    const validationMessage = validateChecklistDraft(form, draftValues);
+    if (checklistItemCount === 0) {
+      setError('No active checklist template items are available for this inspection.');
+      return;
+    }
+
+    const validationMessage = validateInspectionDraft(form, draftValues);
 
     if (validationMessage) {
-      setError(formatChecklistValidationMessage(validationMessage));
+      setError(validationMessage);
       return;
     }
 
-    const checklistItems = buildChecklistItemsPayload(form, draftValues);
+    const { supportedResults, unsupportedLabels } = buildResultsPayload(form, draftValues);
 
-    if (checklistItems.length === 0) {
-      setError('This form does not contain any checklist items for submission.');
+    if (unsupportedLabels.length > 0) {
+      setError(`This mobile form does not support: ${unsupportedLabels.join(', ')}`);
       return;
     }
+
+    if (supportedResults.length === 0) {
+      setError('This form does not contain any supported checklist items for submission.');
+      return;
+    }
+
+    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
+      includeEmpty: true,
+    });
 
     try {
       setIsSubmitting(true);
@@ -374,6 +394,7 @@ export function InspectionFormScreen({
       setSaveNotice(null);
 
       await api.saveInspectionResults(token, inspectionId, {
+        results: supportedResults,
         items: checklistItems,
       });
 
@@ -397,13 +418,35 @@ export function InspectionFormScreen({
       return;
     }
 
-    const checklistItems = buildChecklistItemsPayload(form, draftValues);
-
-    if (checklistItems.length === 0) {
-      setError('Select at least one YES, NO, or N/A before saving.');
+    if (checklistItemCount === 0) {
+      setError('No active checklist template items are available for this inspection.');
       setSaveNotice(null);
       return;
     }
+
+    const validationMessage = validateInspectionDraftForSave(form, draftValues);
+
+    if (validationMessage) {
+      setError(validationMessage);
+      setSaveNotice(null);
+      return;
+    }
+
+    const { supportedResults, unsupportedLabels } = buildResultsPayload(form, draftValues);
+
+    if (unsupportedLabels.length > 0) {
+      setError(`This mobile form does not support: ${unsupportedLabels.join(', ')}`);
+      setSaveNotice(null);
+      return;
+    }
+
+    if (supportedResults.length === 0 || !hasAnyInspectionDraftValue(form, draftValues)) {
+      setError('Complete at least one checklist field before saving.');
+      setSaveNotice(null);
+      return;
+    }
+
+    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues);
 
     try {
       setIsSavingDraft(true);
@@ -411,11 +454,12 @@ export function InspectionFormScreen({
       setSaveNotice(null);
 
       const savedForm = await api.saveInspectionResults(token, inspectionId, {
-        items: checklistItems,
+        results: supportedResults,
+        ...(checklistItems.length > 0 ? { items: checklistItems } : {}),
       });
 
       setForm(savedForm);
-      setDraftValues(createInitialChecklistDraftValues(savedForm));
+      setDraftValues(createInitialDraftValues(savedForm));
       setSaveNotice(`Draft saved ${formatDraftSavedTime(new Date())}.`);
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.status === 401) {
@@ -452,7 +496,7 @@ export function InspectionFormScreen({
                 onPress={handleSaveDraft}
                 variant="secondary"
                 loading={isSavingDraft}
-                disabled={isBusy || isSubmitted}
+                disabled={isBusy || isSubmitted || isTemplateEmpty}
               />
             </View>
             <View style={styles.footerActionPrimary}>
@@ -460,7 +504,7 @@ export function InspectionFormScreen({
                 label={isSubmitting ? 'Submitting...' : 'Submit'}
                 onPress={handleSubmitInspection}
                 loading={isSubmitting}
-                disabled={isBusy || isSubmitted}
+                disabled={isBusy || isSubmitted || isTemplateEmpty}
               />
             </View>
           </View>
@@ -508,14 +552,14 @@ export function InspectionFormScreen({
             onRemovePhoto={handleRemovePhoto}
           />
 
-          {form.template.sections.length === 0 ? (
+          {checklistItemCount === 0 ? (
             <EmptyState
-              title="No checklist items"
-              description="This inspection template does not contain any sections or checklist items."
+              title="No active checklist items"
+              description="No active checklist template is available for this asset type. Ask an admin to activate a template before submitting."
             />
           ) : (
             <View style={styles.checklistStack}>
-              {form.template.sections.map((section, sectionIndex) => (
+              {checklistSections.map((section, sectionIndex) => (
                 <ChecklistSectionCard
                   key={section.id}
                   section={section}
@@ -671,11 +715,11 @@ function ChecklistSectionCard({
 }: {
   section: InspectionTemplateSection;
   sectionIndex: number;
-  draftValues: ChecklistDraftValues;
+  draftValues: DraftValues;
   isSubmitted: boolean;
   onUpdateDraftValue: (
     itemId: string,
-    changes: Partial<ChecklistDraftValues[string]>,
+    value: DraftValues[string],
   ) => void;
 }) {
   const normalizedTitle = section.title.trim().toUpperCase();
@@ -714,7 +758,7 @@ function ChecklistSectionCard({
             item={item}
             value={draftValues[item.id]}
             disabled={isSubmitted}
-            onChange={(changes) => onUpdateDraftValue(item.id, changes)}
+            onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
           />
         ))}
       </View>
@@ -729,10 +773,12 @@ function ChecklistItemCard({
   onChange,
 }: {
   item: InspectionTemplateItem;
-  value: ChecklistDraftValues[string] | undefined;
+  value: DraftValues[string] | undefined;
   disabled: boolean;
-  onChange: (changes: Partial<ChecklistDraftValues[string]>) => void;
+  onChange: (value: DraftValues[string]) => void;
 }) {
+  const inputType = normalizeInspectionInputType(item.inputType);
+
   return (
     <View style={styles.itemCard}>
       <View style={styles.itemHeader}>
@@ -742,57 +788,170 @@ function ChecklistItemCard({
         {item.isRequired ? <Text style={styles.requiredLabel}>Required</Text> : null}
       </View>
       {item.helperText ? <Text style={styles.helperText}>{item.helperText}</Text> : null}
-      <View style={styles.resultControl}>
-        <Text style={styles.controlLabel}>Condition</Text>
-        <View style={styles.resultButtonRow}>
-          {RESULT_OPTIONS.map((result) => (
-            <ResultButton
-              key={result}
-              result={result}
-              selected={value?.result === result}
-              disabled={disabled}
-              onPress={() => onChange({ result })}
-            />
-          ))}
+      {inputType === 'TEXT' ? (
+        <TextField
+          label="Response"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="Enter response"
+          editable={!disabled}
+          multiline
+        />
+      ) : null}
+      {inputType === 'NUMBER' ? (
+        <TextField
+          label="Number"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="Enter number"
+          keyboardType="decimal-pad"
+          editable={!disabled}
+        />
+      ) : null}
+      {inputType === 'BOOLEAN' ? (
+        <BooleanField
+          value={typeof value === 'boolean' ? value : null}
+          disabled={disabled}
+          isRequired={item.isRequired}
+          onChange={onChange}
+        />
+      ) : null}
+      {inputType === 'SELECT' ? (
+        <DropdownField
+          item={item}
+          value={typeof value === 'string' ? value : ''}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : null}
+      {!inputType ? (
+        <View style={styles.unsupportedFieldPanel}>
+          <Text style={styles.unsupportedFieldText}>
+            Unsupported field type: {formatFieldType(item.inputType)}.
+          </Text>
         </View>
-      </View>
-      <TextField
-        label="Remark"
-        value={value?.remark ?? ''}
-        onChangeText={(remark) => onChange({ remark })}
-        placeholder="Optional remark"
-        editable={!disabled}
-        multiline
-      />
+      ) : null}
     </View>
   );
 }
 
-function ResultButton({
-  result,
+function BooleanField({
+  value,
+  disabled,
+  isRequired,
+  onChange,
+}: {
+  value: boolean | null;
+  disabled: boolean;
+  isRequired: boolean;
+  onChange: (value: boolean | null) => void;
+}) {
+  return (
+    <View style={styles.resultControl}>
+      <Text style={styles.controlLabel}>Response</Text>
+      <View style={styles.resultButtonRow}>
+        <ChoiceButton
+          label="YES"
+          selected={value === true}
+          disabled={disabled}
+          tone="success"
+          onPress={() => onChange(true)}
+        />
+        <ChoiceButton
+          label="NO"
+          selected={value === false}
+          disabled={disabled}
+          tone="danger"
+          onPress={() => onChange(false)}
+        />
+        {!isRequired ? (
+          <ChoiceButton
+            label="N/A"
+            selected={value === null}
+            disabled={disabled}
+            tone="neutral"
+            onPress={() => onChange(null)}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function DropdownField({
+  item,
+  value,
+  disabled,
+  onChange,
+}: {
+  item: InspectionTemplateItem;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const options = normalizeSelectOptions(item.optionsJson);
+
+  if (options.length === 0) {
+    return (
+      <View style={styles.unsupportedFieldPanel}>
+        <Text style={styles.unsupportedFieldText}>No dropdown options configured.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.resultControl}>
+      <Text style={styles.controlLabel}>Response</Text>
+      <View style={styles.optionStack}>
+        {options.map((option) => (
+          <DropdownOptionButton
+            key={option.value}
+            label={option.label}
+            selected={value === option.value}
+            disabled={disabled}
+            onPress={() => onChange(option.value)}
+          />
+        ))}
+        {!item.isRequired ? (
+          <DropdownOptionButton
+            label="N/A"
+            selected={value === ''}
+            disabled={disabled}
+            onPress={() => onChange('')}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function ChoiceButton({
+  label,
   selected,
   disabled,
+  tone,
   onPress,
 }: {
-  result: InspectionItemResultValue;
+  label: string;
   selected: boolean;
   disabled: boolean;
+  tone: 'success' | 'danger' | 'neutral';
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={getResultOptionLabel(result)}
+      accessibilityLabel={label}
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.choiceButton,
         selected && styles.choiceButtonSelected,
-        result === 'PASS' && selected && styles.choiceButtonPassSelected,
-        result === 'FAIL' && styles.choiceButtonFail,
-        result === 'FAIL' && selected && styles.choiceButtonFailSelected,
-        result === 'NA' && selected && styles.choiceButtonNaSelected,
+        tone === 'success' && selected && styles.choiceButtonPassSelected,
+        tone === 'danger' && styles.choiceButtonFail,
+        tone === 'danger' && selected && styles.choiceButtonFailSelected,
+        tone === 'neutral' && selected && styles.choiceButtonNaSelected,
         disabled && styles.choiceButtonDisabled,
         pressed && !disabled && styles.choiceButtonPressed,
       ]}
@@ -801,13 +960,48 @@ function ResultButton({
         style={[
           styles.choiceButtonText,
           selected && styles.choiceButtonTextSelected,
-          result === 'PASS' && selected && styles.choiceButtonPassTextSelected,
-          result === 'FAIL' && styles.choiceButtonFailText,
-          result === 'FAIL' && selected && styles.choiceButtonFailTextSelected,
-          result === 'NA' && selected && styles.choiceButtonNaTextSelected,
+          tone === 'success' && selected && styles.choiceButtonPassTextSelected,
+          tone === 'danger' && styles.choiceButtonFailText,
+          tone === 'danger' && selected && styles.choiceButtonFailTextSelected,
+          tone === 'neutral' && selected && styles.choiceButtonNaTextSelected,
         ]}
       >
-        {getResultOptionLabel(result)}
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function DropdownOptionButton({
+  label,
+  selected,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.optionButton,
+        selected && styles.optionButtonSelected,
+        disabled && styles.choiceButtonDisabled,
+        pressed && !disabled && styles.choiceButtonPressed,
+      ]}
+    >
+      <View style={[styles.optionIndicator, selected && styles.optionIndicatorSelected]}>
+        {selected ? <View style={styles.optionIndicatorInner} /> : null}
+      </View>
+      <Text style={[styles.optionButtonText, selected && styles.optionButtonTextSelected]}>
+        {label}
       </Text>
     </Pressable>
   );
@@ -873,24 +1067,22 @@ function PhotoActionButton({
   );
 }
 
-function getResultOptionLabel(result: InspectionItemResultValue) {
-  if (result === 'PASS') {
-    return 'YES';
-  }
-
-  if (result === 'FAIL') {
-    return 'NO';
-  }
-
-  return 'N/A';
-}
-
-function formatChecklistValidationMessage(message: string) {
-  return message.replace('PASS, FAIL, or NA', 'YES, NO, or N/A');
-}
-
 function formatDraftSavedTime(value: Date) {
   return `${padNumber(value.getHours())}:${padNumber(value.getMinutes())}`;
+}
+
+function formatFieldType(value: string) {
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === 'BOOLEAN') {
+    return 'YES / NO';
+  }
+
+  if (normalized === 'SELECT') {
+    return 'DROPDOWN';
+  }
+
+  return normalized || 'UNKNOWN';
 }
 
 function getSectionTone(sectionTitle: string) {
@@ -1397,6 +1589,66 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#e2e8f0',
     padding: 5,
+  },
+  optionStack: {
+    gap: 8,
+  },
+  optionButton: {
+    minHeight: 52,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  optionButtonSelected: {
+    borderColor: '#111827',
+    backgroundColor: '#f8fafc',
+  },
+  optionButtonText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  optionButtonTextSelected: {
+    color: '#111827',
+  },
+  optionIndicator: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  optionIndicatorSelected: {
+    borderColor: '#111827',
+  },
+  optionIndicatorInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#111827',
+  },
+  unsupportedFieldPanel: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    padding: 12,
+  },
+  unsupportedFieldText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: '#991b1b',
   },
   choiceButton: {
     flex: 1,

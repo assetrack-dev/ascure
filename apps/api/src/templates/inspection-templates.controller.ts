@@ -39,6 +39,12 @@ export class InspectionTemplatesController {
     return this.checklistTemplatesService.activate(user, params.id);
   }
 
+  @Post(':id/duplicate')
+  @Roles(UserRole.ADMIN)
+  duplicate(@CurrentUser() user: RequestUser, @Param() params: ChecklistTemplateIdParamDto) {
+    return this.checklistTemplatesService.duplicate(user, params.id);
+  }
+
   @Put(':id')
   @Roles(UserRole.ADMIN)
   replace(

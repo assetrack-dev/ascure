@@ -40,15 +40,43 @@ export function formatInspectionStatus(status: 'DRAFT' | 'SUBMITTED') {
 
 export function createInitialDraftValues(form: InspectionFormResponse): DraftValues {
   const values: DraftValues = {};
+  const storedItems = form.items ?? [];
+  const storedByChecklistItemId = new Map(
+    storedItems
+      .filter((item) => item.checklistItemId)
+      .map((item) => [item.checklistItemId, item]),
+  );
+  const storedByLabel = new Map(
+    storedItems.map((item) => [normalizeLabelKey(item.label), item]),
+  );
 
   for (const section of form.template.sections) {
     for (const item of section.items) {
-      if (item.inputType === 'BOOLEAN') {
-        values[item.id] = item.value?.valueBoolean ?? null;
+      const inputType = normalizeInspectionInputType(item.inputType);
+      const storedItem =
+        storedByChecklistItemId.get(item.id) ?? storedByLabel.get(normalizeLabelKey(item.label));
+
+      if (inputType === 'BOOLEAN') {
+        if (typeof item.value?.valueBoolean === 'boolean') {
+          values[item.id] = item.value.valueBoolean;
+          continue;
+        }
+
+        if (storedItem?.result === 'PASS') {
+          values[item.id] = true;
+          continue;
+        }
+
+        if (storedItem?.result === 'FAIL') {
+          values[item.id] = false;
+          continue;
+        }
+
+        values[item.id] = null;
         continue;
       }
 
-      if (item.inputType === 'NUMBER') {
+      if (inputType === 'NUMBER') {
         values[item.id] =
           item.value?.valueNumber === null || item.value?.valueNumber === undefined
             ? ''
@@ -56,12 +84,12 @@ export function createInitialDraftValues(form: InspectionFormResponse): DraftVal
         continue;
       }
 
-      if (item.inputType === 'SELECT') {
+      if (inputType === 'SELECT') {
         values[item.id] = item.value?.valueText ?? '';
         continue;
       }
 
-      values[item.id] = item.value?.valueText ?? '';
+      values[item.id] = item.value?.valueText ?? storedItem?.remark ?? '';
     }
   }
 
@@ -198,28 +226,29 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
 
   for (const section of form.template.sections) {
     for (const item of section.items) {
+      const inputType = normalizeInspectionInputType(item.inputType);
       const rawValue = getDraftValue(item.id, draftValues);
 
       if (
         item.isRequired &&
-        item.inputType !== 'TEXT' &&
-        item.inputType !== 'BOOLEAN' &&
-        item.inputType !== 'NUMBER' &&
-        item.inputType !== 'SELECT'
+        inputType !== 'TEXT' &&
+        inputType !== 'BOOLEAN' &&
+        inputType !== 'NUMBER' &&
+        inputType !== 'SELECT'
       ) {
         unsupportedRequiredItems.push(item.label);
         continue;
       }
 
       if (item.isRequired) {
-        if (item.inputType === 'BOOLEAN') {
+        if (inputType === 'BOOLEAN') {
           if (typeof rawValue !== 'boolean') {
             missingRequiredItems.push(item.label);
             continue;
           }
         }
 
-        if (item.inputType === 'NUMBER') {
+        if (inputType === 'NUMBER') {
           const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
           if (!normalized) {
@@ -228,7 +257,7 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
           }
         }
 
-        if (item.inputType === 'TEXT' || item.inputType === 'SELECT') {
+        if (inputType === 'TEXT' || inputType === 'SELECT') {
           const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
           if (!normalized) {
@@ -238,7 +267,7 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
         }
       }
 
-      if (item.inputType !== 'NUMBER') {
+      if (inputType !== 'NUMBER') {
         continue;
       }
 
@@ -269,23 +298,54 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
   return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
 }
 
+export function validateInspectionDraftForSave(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+) {
+  const invalidNumbers: string[] = [];
+
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      if (normalizeInspectionInputType(item.inputType) !== 'NUMBER') {
+        continue;
+      }
+
+      const rawValue = getDraftValue(item.id, draftValues);
+      const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+      if (normalized && !Number.isFinite(Number(normalized))) {
+        invalidNumbers.push(item.label);
+      }
+    }
+  }
+
+  if (invalidNumbers.length === 0) {
+    return null;
+  }
+
+  return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
+}
+
 export function buildResultsPayload(form: InspectionFormResponse, draftValues: DraftValues) {
   const supportedResults: SaveInspectionResultItemInput[] = [];
   const unsupportedLabels: string[] = [];
 
   for (const section of form.template.sections) {
     for (const item of section.items) {
+      const inputType = normalizeInspectionInputType(item.inputType);
       const rawValue = getDraftValue(item.id, draftValues);
 
-      if (item.inputType === 'TEXT') {
+      if (inputType === 'TEXT') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
         supportedResults.push({
           templateItemId: item.id,
-          valueText: typeof rawValue === 'string' ? rawValue : '',
+          valueText: normalized === '' ? null : normalized,
         });
         continue;
       }
 
-      if (item.inputType === 'NUMBER') {
+      if (inputType === 'NUMBER') {
         const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
         supportedResults.push({
           templateItemId: item.id,
@@ -294,7 +354,7 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
-      if (item.inputType === 'BOOLEAN') {
+      if (inputType === 'BOOLEAN') {
         supportedResults.push({
           templateItemId: item.id,
           valueBoolean: typeof rawValue === 'boolean' ? rawValue : null,
@@ -302,7 +362,7 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
-      if (item.inputType === 'SELECT') {
+      if (inputType === 'SELECT') {
         const normalized = typeof rawValue === 'string' ? rawValue : '';
         supportedResults.push({
           templateItemId: item.id,
@@ -316,6 +376,129 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
   }
 
   return { supportedResults, unsupportedLabels };
+}
+
+export function buildChecklistItemsPayloadFromDraft(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+  options: { includeEmpty?: boolean } = {},
+) {
+  const items: SaveInspectionItemResultInput[] = [];
+
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      if (!normalizeInspectionInputType(item.inputType)) {
+        continue;
+      }
+
+      const rawValue = getDraftValue(item.id, draftValues);
+
+      if (!options.includeEmpty && !hasInspectionDraftValue(item, rawValue)) {
+        continue;
+      }
+
+      const remark = getInspectionDraftDisplayValue(item, rawValue);
+
+      items.push({
+        checklistItemId: item.id,
+        label: item.label,
+        result: getInspectionItemResultValue(item, rawValue),
+        remark,
+      });
+    }
+  }
+
+  return items;
+}
+
+export function hasAnyInspectionDraftValue(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+) {
+  for (const section of form.template.sections) {
+    for (const item of section.items) {
+      if (hasInspectionDraftValue(item, getDraftValue(item.id, draftValues))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function getInspectionDraftDisplayValue(
+  item: InspectionTemplateItem,
+  rawValue: DraftValues[string],
+) {
+  const inputType = normalizeInspectionInputType(item.inputType);
+
+  if (inputType === 'BOOLEAN') {
+    if (rawValue === true) {
+      return 'Yes';
+    }
+
+    if (rawValue === false) {
+      return 'No';
+    }
+
+    return null;
+  }
+
+  if (inputType === 'SELECT') {
+    if (typeof rawValue !== 'string' || !rawValue.trim()) {
+      return null;
+    }
+
+    return getSelectOptionLabel(item, rawValue) ?? rawValue.trim();
+  }
+
+  if (typeof rawValue !== 'string') {
+    return null;
+  }
+
+  const normalized = rawValue.trim();
+
+  return normalized || null;
+}
+
+export function hasInspectionDraftValue(
+  item: InspectionTemplateItem,
+  rawValue: DraftValues[string],
+) {
+  const inputType = normalizeInspectionInputType(item.inputType);
+
+  if (inputType === 'BOOLEAN') {
+    return typeof rawValue === 'boolean';
+  }
+
+  if (inputType === 'TEXT' || inputType === 'NUMBER' || inputType === 'SELECT') {
+    return typeof rawValue === 'string' && rawValue.trim() !== '';
+  }
+
+  return false;
+}
+
+export function normalizeInspectionInputType(inputType: string) {
+  const normalizedInputType = inputType.trim().toUpperCase();
+
+  if (normalizedInputType === 'YES_NO') {
+    return 'BOOLEAN';
+  }
+
+  if (normalizedInputType === 'DROPDOWN') {
+    return 'SELECT';
+  }
+
+  if (
+    normalizedInputType === 'TEXT' ||
+    normalizedInputType === 'NUMBER' ||
+    normalizedInputType === 'BOOLEAN' ||
+    normalizedInputType === 'SELECT'
+  ) {
+    return normalizedInputType;
+  }
+
+  return null;
 }
 
 export function getAssetInspections(visit: SiteVisit, assetId: string) {
@@ -369,4 +552,81 @@ export function findItemById(
   }
 
   return undefined;
+}
+
+function getInspectionItemResultValue(
+  item: InspectionTemplateItem,
+  rawValue: DraftValues[string],
+): InspectionItemResultValue {
+  const inputType = normalizeInspectionInputType(item.inputType);
+
+  if (inputType === 'BOOLEAN') {
+    if (rawValue === true) {
+      return 'PASS';
+    }
+
+    if (rawValue === false) {
+      return 'FAIL';
+    }
+
+    return 'NA';
+  }
+
+  if (inputType === 'SELECT') {
+    if (typeof rawValue !== 'string' || !rawValue.trim()) {
+      return 'NA';
+    }
+
+    return inferSelectInspectionResult(item, rawValue);
+  }
+
+  return hasInspectionDraftValue(item, rawValue) ? 'PASS' : 'NA';
+}
+
+function inferSelectInspectionResult(
+  item: InspectionTemplateItem,
+  selectedValue: string,
+): InspectionItemResultValue {
+  const selectedLabel = getSelectOptionLabel(item, selectedValue);
+  const normalizedSelection = [selectedValue, selectedLabel ?? ''].join(' ').toLowerCase();
+  const tokens = normalizedSelection
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+  if (
+    /\bn\/?a\b/.test(normalizedSelection) ||
+    normalizedSelection.includes('not applicable') ||
+    normalizedSelection.includes('not_applicable')
+  ) {
+    return 'NA';
+  }
+
+  if (
+    tokens.some((token) =>
+      [
+        'no',
+        'fail',
+        'failed',
+        'defect',
+        'defective',
+        'bad',
+        'abnormal',
+        'reject',
+        'rejected',
+        'unsatisfactory',
+      ].includes(token),
+    )
+  ) {
+    return 'FAIL';
+  }
+
+  return 'PASS';
+}
+
+function getSelectOptionLabel(item: InspectionTemplateItem, selectedValue: string) {
+  const selectedOption = normalizeSelectOptions(item.optionsJson).find(
+    (option) => option.value === selectedValue,
+  );
+
+  return selectedOption?.label;
 }

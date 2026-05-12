@@ -100,6 +100,15 @@ export function AssetDetailScreen({
       setIsStartingInspection(true);
       setActionError(null);
 
+      const activeTemplate = await api.getChecklistTemplateByAssetType(token, asset.assetType);
+
+      if (activeTemplate.items.length === 0) {
+        setActionError(
+          'No active checklist template is available for this asset type. Ask an admin to activate one before starting an inspection.',
+        );
+        return;
+      }
+
       const inspection = await api.createInspection(token, {
         siteVisitId: visitId,
         assetId,
@@ -115,7 +124,13 @@ export function AssetDetailScreen({
         return;
       }
 
-      setActionError(error instanceof Error ? error.message : 'Unable to start inspection.');
+      setActionError(
+        error instanceof ApiError && error.status === 404
+          ? 'No active checklist template is available for this asset type. Ask an admin to activate one before starting an inspection.'
+          : error instanceof Error
+            ? error.message
+            : 'Unable to start inspection.',
+      );
     } finally {
       setIsStartingInspection(false);
     }

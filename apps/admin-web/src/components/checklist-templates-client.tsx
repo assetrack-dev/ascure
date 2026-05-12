@@ -1,13 +1,30 @@
 "use client";
 
-import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, Dispatch, FormEvent, SetStateAction } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { DragEndEvent } from "@dnd-kit/core";
 import {
-  ArrowDown,
-  ArrowUp,
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   CheckCircle2,
   ClipboardList,
+  Copy,
+  GripVertical,
   Pencil,
   Plus,
   RefreshCw,
@@ -24,6 +41,7 @@ import {
   activateChecklistTemplate,
   archiveChecklistTemplate,
   createChecklistTemplate,
+  duplicateChecklistTemplate,
   fetchAssetTypes,
   fetchChecklistTemplates,
   updateChecklistTemplate,
@@ -69,9 +87,9 @@ const FIELD_TYPES: Array<{ label: string; value: ChecklistFieldType }> = [
 ];
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
-  { label: "Draft", value: "DRAFT" },
-  { label: "Active", value: "ACTIVE" },
-  { label: "Archived", value: "ARCHIVED" },
+  { label: "DRAFT", value: "DRAFT" },
+  { label: "ACTIVE", value: "ACTIVE" },
+  { label: "ARCHIVED", value: "ARCHIVED" },
 ];
 const inputClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
@@ -180,23 +198,89 @@ function formatDate(value: string | undefined) {
   }).format(date);
 }
 
-function statusBadgeClassName(status: ChecklistTemplateStatus) {
-  if (status === "ACTIVE") {
-    return "border-green-200 bg-green-50 text-green-700";
-  }
-
-  if (status === "DRAFT") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-
-  return "border-slate-200 bg-slate-50 text-slate-600";
+function templateVersionLabel(template: ChecklistTemplate) {
+  return `${template.assetTypeCode ?? template.assetType} V${template.version}`;
 }
 
-function StatusBadge({ status }: { status: ChecklistTemplateStatus }) {
+function duplicateTemplateNamePreview(template: ChecklistTemplate) {
+  const versionPattern = new RegExp(`\\bv\\s*${template.version}\\b`, "i");
+  const suffix = versionPattern.test(template.name) ? " Copy" : ` V${template.version} Copy`;
+
+  return `${template.name.slice(0, 255 - suffix.length)}${suffix}`;
+}
+
+const STATUS_META: Record<
+  ChecklistTemplateStatus,
+  {
+    badgeClassName: string;
+    dotClassName: string;
+    listDescription: string;
+    modalDescription: string;
+    panelClassName: string;
+    rowClassName: string;
+  }
+> = {
+  ACTIVE: {
+    badgeClassName: "border-teal-200 bg-teal-50 text-teal-800",
+    dotClassName: "bg-teal-600",
+    listDescription: "Currently used by mobile inspections.",
+    modalDescription: "This active version is currently used by mobile inspections.",
+    panelClassName: "border-teal-200 bg-teal-50 text-teal-900",
+    rowClassName: "bg-teal-50/30 hover:bg-teal-50/70",
+  },
+  DRAFT: {
+    badgeClassName: "border-amber-200 bg-amber-50 text-amber-800",
+    dotClassName: "bg-amber-500",
+    listDescription: "Not used by mobile inspections.",
+    modalDescription: "This draft is not used by mobile inspections until activated.",
+    panelClassName: "border-amber-200 bg-amber-50 text-amber-900",
+    rowClassName: "hover:bg-amber-50/40",
+  },
+  ARCHIVED: {
+    badgeClassName: "border-slate-200 bg-slate-100 text-slate-600",
+    dotClassName: "bg-slate-400",
+    listDescription: "Archived; edits create a draft.",
+    modalDescription: "This archived version should not be edited directly. Saving changes creates a new draft version.",
+    panelClassName: "border-slate-200 bg-slate-50 text-slate-700",
+    rowClassName: "bg-slate-50/70 hover:bg-slate-100/80",
+  },
+};
+
+function resolveTemplateStatus(template: Pick<ChecklistTemplate, "status" | "isActive">) {
+  if (template.isActive || template.status === "ACTIVE") {
+    return "ACTIVE";
+  }
+
+  if (template.status === "ARCHIVED") {
+    return "ARCHIVED";
+  }
+
+  return "DRAFT";
+}
+
+function StatusBadge({
+  status,
+  showDescription = false,
+}: {
+  status: ChecklistTemplateStatus;
+  showDescription?: boolean;
+}) {
+  const meta = STATUS_META[status];
+
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusBadgeClassName(status)}`}>
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${meta.badgeClassName}`}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${meta.dotClassName}`} />
+        {status}
+      </span>
+      {showDescription ? (
+        <span className="max-w-48 whitespace-normal text-xs leading-snug text-[var(--muted)]">
+          {meta.listDescription}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -295,6 +379,161 @@ function TemplatesLoading() {
   );
 }
 
+interface SortableTemplateItemCardProps {
+  item: TemplateFormItem;
+  index: number;
+  itemCount: number;
+  onUpdateItem: (itemLocalId: string, changes: Partial<TemplateFormItem>) => void;
+  onRemoveItem: (itemLocalId: string) => void;
+}
+
+const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
+  item,
+  index,
+  itemCount,
+  onUpdateItem,
+  onRemoveItem,
+}: SortableTemplateItemCardProps) {
+  const isOnlyItem = itemCount <= 1;
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: item.localId,
+    disabled: isOnlyItem,
+  });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`min-w-0 rounded-lg border bg-white p-4 shadow-[var(--shadow-soft)] transition-[border-color,box-shadow,background-color] duration-200 ${
+        isDragging
+          ? "relative z-10 border-[var(--brand)] shadow-xl ring-2 ring-teal-100"
+          : "border-slate-200 hover:border-slate-300 hover:shadow-[var(--shadow-card)]"
+      }`}
+    >
+      <div className="grid grid-cols-12 items-end gap-3">
+        <div className="col-span-12 min-w-0 sm:col-span-6 md:col-span-2 xl:col-span-2">
+          <span className="text-xs font-semibold text-slate-500">Order</span>
+          <div className="mt-1.5 flex items-center gap-2">
+            <button
+              type="button"
+              ref={setActivatorNodeRef}
+              disabled={isOnlyItem}
+              className="inline-flex h-10 w-10 shrink-0 cursor-grab touch-none items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] active:cursor-grabbing disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              aria-label={`Drag checklist item ${index + 1}`}
+              title="Drag to reorder"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical size={18} />
+            </button>
+            <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-600">
+              {index + 1}
+            </span>
+          </div>
+        </div>
+
+        <label className="col-span-12 block min-w-0 md:col-span-6 xl:col-span-4">
+          <span className="text-sm font-semibold text-slate-700">Label</span>
+          <input
+            type="text"
+            value={item.label}
+            onChange={(event) => onUpdateItem(item.localId, { label: event.target.value })}
+            className={`${inputClassName} mt-1.5`}
+            maxLength={255}
+            required={item.isActive}
+          />
+        </label>
+
+        <label className="col-span-12 block min-w-0 sm:col-span-6 md:col-span-4 xl:col-span-2">
+          <span className="text-sm font-semibold text-slate-700">Field Type</span>
+          <select
+            value={item.fieldType}
+            onChange={(event) =>
+              onUpdateItem(item.localId, {
+                fieldType: event.target.value as ChecklistFieldType,
+              })
+            }
+            className={`${inputClassName} mt-1.5`}
+          >
+            {FIELD_TYPES.map((fieldType) => (
+              <option key={fieldType.value} value={fieldType.value}>
+                {fieldType.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="col-span-12 grid min-w-0 grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:col-span-4 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(7.5rem,auto)]">
+          <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={item.isRequired}
+              onChange={(event) => onUpdateItem(item.localId, { isRequired: event.target.checked })}
+              className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">Required</span>
+          </label>
+
+          <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={item.isDefectTrigger}
+              onChange={(event) =>
+                onUpdateItem(item.localId, { isDefectTrigger: event.target.checked })
+              }
+              className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">Defect</span>
+          </label>
+
+          <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={item.isActive}
+              onChange={(event) => onUpdateItem(item.localId, { isActive: event.target.checked })}
+              className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">Active</span>
+          </label>
+
+          <button
+            type="button"
+            onClick={() => onRemoveItem(item.localId)}
+            className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50"
+          >
+            <Trash2 size={14} className="shrink-0" />
+            {item.id ? "Deactivate" : "Remove"}
+          </button>
+        </div>
+      </div>
+
+      {item.fieldType === "DROPDOWN" ? (
+        <label className="mt-3 block min-w-0">
+          <span className="text-sm font-semibold text-slate-700">Dropdown Options</span>
+          <textarea
+            value={item.optionsText}
+            onChange={(event) => onUpdateItem(item.localId, { optionsText: event.target.value })}
+            className={`${textareaClassName} mt-1.5`}
+            placeholder="One per line. Use Label | value when the stored value differs."
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+});
+
 function TemplateFormModal({
   mode,
   values,
@@ -312,57 +551,111 @@ function TemplateFormModal({
   selectedTemplate: ChecklistTemplate | null;
   error: string;
   isSaving: boolean;
-  onChange: (values: TemplateFormState) => void;
+  onChange: Dispatch<SetStateAction<TemplateFormState>>;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isCreateMode = mode === "create";
+  const selectedStatus = selectedTemplate ? resolveTemplateStatus(selectedTemplate) : "DRAFT";
+  const selectedStatusMeta = STATUS_META[selectedStatus];
+  const itemIds = useMemo(() => values.items.map((item) => item.localId), [values.items]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
-  function updateItem(itemLocalId: string, changes: Partial<TemplateFormItem>) {
-    onChange({
-      ...values,
-      items: values.items.map((item) => (item.localId === itemLocalId ? { ...item, ...changes } : item)),
-    });
-  }
+  const updateItem = useCallback(
+    (itemLocalId: string, changes: Partial<TemplateFormItem>) => {
+      onChange((currentValues) => ({
+        ...currentValues,
+        items: currentValues.items.map((item) =>
+          item.localId === itemLocalId ? { ...item, ...changes } : item,
+        ),
+      }));
+    },
+    [onChange],
+  );
 
-  function moveItem(itemLocalId: string, direction: -1 | 1) {
-    const currentIndex = values.items.findIndex((item) => item.localId === itemLocalId);
-    const targetIndex = currentIndex + direction;
+  const addItem = useCallback(() => {
+    onChange((currentValues) => ({
+      ...currentValues,
+      items: [...currentValues.items, createBlankItem()],
+    }));
+  }, [onChange]);
 
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= values.items.length) {
-      return;
-    }
+  const removeItem = useCallback(
+    (itemLocalId: string) => {
+      onChange((currentValues) => {
+        const item = currentValues.items.find((entry) => entry.localId === itemLocalId);
 
-    const nextItems = [...values.items];
-    const [item] = nextItems.splice(currentIndex, 1);
-    nextItems.splice(targetIndex, 0, item);
-    onChange({ ...values, items: nextItems });
-  }
+        if (!item) {
+          return currentValues;
+        }
 
-  function removeItem(itemLocalId: string) {
-    const item = values.items.find((entry) => entry.localId === itemLocalId);
+        if (item.id) {
+          return {
+            ...currentValues,
+            items: currentValues.items.map((entry) =>
+              entry.localId === itemLocalId ? { ...entry, isActive: false } : entry,
+            ),
+          };
+        }
 
-    if (!item) {
-      return;
-    }
+        const nextItems = currentValues.items.filter((entry) => entry.localId !== itemLocalId);
 
-    if (item.id) {
-      updateItem(itemLocalId, { isActive: false });
-      return;
-    }
+        return {
+          ...currentValues,
+          items: nextItems.length > 0 ? nextItems : [createBlankItem()],
+        };
+      });
+    },
+    [onChange],
+  );
 
-    const nextItems = values.items.filter((entry) => entry.localId !== itemLocalId);
-    onChange({ ...values, items: nextItems.length > 0 ? nextItems : [createBlankItem()] });
-  }
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+
+      if (!over || active.id === over.id) {
+        return;
+      }
+
+      onChange((currentValues) => {
+        const activeId = String(active.id);
+        const overId = String(over.id);
+        const oldIndex = currentValues.items.findIndex((item) => item.localId === activeId);
+        const newIndex = currentValues.items.findIndex((item) => item.localId === overId);
+
+        if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) {
+          return currentValues;
+        }
+
+        return {
+          ...currentValues,
+          items: arrayMove(currentValues.items, oldIndex, newIndex),
+        };
+      });
+    },
+    [onChange],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-6">
       <div className="w-full max-w-6xl rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <div>
-            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-              {isCreateMode ? "New Checklist Template" : `Template v${selectedTemplate?.version ?? ""}`}
-            </p>
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+                {isCreateMode ? "New Checklist Template" : `Template v${selectedTemplate?.version ?? ""}`}
+              </p>
+              {!isCreateMode && selectedTemplate ? <StatusBadge status={selectedStatus} /> : null}
+            </div>
             <h2 className="mt-1 text-lg font-bold text-slate-900">
               {isCreateMode ? "Create Template Draft" : "Edit Checklist Template"}
             </h2>
@@ -384,7 +677,20 @@ function TemplateFormModal({
             </div>
           ) : null}
 
-          {!isCreateMode && selectedTemplate?.status !== "DRAFT" ? (
+          {!isCreateMode && selectedTemplate ? (
+            <div className={`rounded-lg border px-3 py-2 text-sm ${selectedStatusMeta.panelClassName}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={selectedStatus} />
+                <span className="font-semibold">Version {selectedTemplate.version}</span>
+                <span className="text-xs">
+                  {selectedTemplate.assetTypeCode ?? selectedTemplate.assetType}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5">{selectedStatusMeta.modalDescription}</p>
+            </div>
+          ) : null}
+
+          {!isCreateMode && selectedStatus !== "DRAFT" ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               Saving structure changes to a used active or archived template creates a new draft version.
             </div>
@@ -395,7 +701,12 @@ function TemplateFormModal({
               <span className="text-sm font-semibold text-slate-700">Asset Type</span>
               <select
                 value={values.assetTypeId}
-                onChange={(event) => onChange({ ...values, assetTypeId: event.target.value })}
+                onChange={(event) =>
+                  onChange((currentValues) => ({
+                    ...currentValues,
+                    assetTypeId: event.target.value,
+                  }))
+                }
                 className={`${inputClassName} mt-1.5`}
                 disabled={!isCreateMode}
                 required
@@ -414,7 +725,12 @@ function TemplateFormModal({
               <input
                 type="text"
                 value={values.name}
-                onChange={(event) => onChange({ ...values, name: event.target.value })}
+                onChange={(event) =>
+                  onChange((currentValues) => ({
+                    ...currentValues,
+                    name: event.target.value,
+                  }))
+                }
                 className={`${inputClassName} mt-1.5`}
                 required
                 maxLength={255}
@@ -432,7 +748,7 @@ function TemplateFormModal({
               </div>
               <button
                 type="button"
-                onClick={() => onChange({ ...values, items: [...values.items, createBlankItem()] })}
+                onClick={addItem}
                 className={secondaryButtonClassName}
               >
                 <Plus size={16} />
@@ -440,123 +756,22 @@ function TemplateFormModal({
               </button>
             </div>
 
-            <div className="space-y-3 p-4">
-              {values.items.map((item, index) => (
-                <div key={item.localId} className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-[var(--shadow-soft)]">
-                  <div className="grid grid-cols-12 items-end gap-3">
-                    <div className="col-span-12 min-w-0 sm:col-span-4 md:col-span-3 xl:col-span-1">
-                      <span className="text-xs font-semibold text-slate-500">Order</span>
-                      <div className="mt-1.5 flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => moveItem(item.localId, -1)}
-                          disabled={index === 0}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                          aria-label="Move item up"
-                        >
-                          <ArrowUp size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveItem(item.localId, 1)}
-                          disabled={index === values.items.length - 1}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                          aria-label="Move item down"
-                        >
-                          <ArrowDown size={16} />
-                        </button>
-                      </div>
-                    </div>
-
-                    <label className="col-span-12 block min-w-0 md:col-span-6 xl:col-span-4">
-                      <span className="text-sm font-semibold text-slate-700">Label</span>
-                      <input
-                        type="text"
-                        value={item.label}
-                        onChange={(event) => updateItem(item.localId, { label: event.target.value })}
-                        className={`${inputClassName} mt-1.5`}
-                        maxLength={255}
-                        required={item.isActive}
-                      />
-                    </label>
-
-                    <label className="col-span-12 block min-w-0 sm:col-span-6 md:col-span-3 xl:col-span-2">
-                      <span className="text-sm font-semibold text-slate-700">Field Type</span>
-                      <select
-                        value={item.fieldType}
-                        onChange={(event) =>
-                          updateItem(item.localId, {
-                            fieldType: event.target.value as ChecklistFieldType,
-                          })
-                        }
-                        className={`${inputClassName} mt-1.5`}
-                      >
-                        {FIELD_TYPES.map((fieldType) => (
-                          <option key={fieldType.value} value={fieldType.value}>
-                            {fieldType.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <div className="col-span-12 grid min-w-0 grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:col-span-5 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(7.5rem,auto)]">
-                      <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={item.isRequired}
-                          onChange={(event) => updateItem(item.localId, { isRequired: event.target.checked })}
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-                        />
-                        <span className="truncate">Required</span>
-                      </label>
-
-                      <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={item.isDefectTrigger}
-                          onChange={(event) =>
-                            updateItem(item.localId, { isDefectTrigger: event.target.checked })
-                          }
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-                        />
-                        <span className="truncate">Defect</span>
-                      </label>
-
-                      <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={item.isActive}
-                          onChange={(event) => updateItem(item.localId, { isActive: event.target.checked })}
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-                        />
-                        <span className="truncate">Active</span>
-                      </label>
-
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.localId)}
-                        className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50"
-                      >
-                        <Trash2 size={14} className="shrink-0" />
-                        {item.id ? "Deactivate" : "Remove"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {item.fieldType === "DROPDOWN" ? (
-                    <label className="mt-3 block min-w-0">
-                      <span className="text-sm font-semibold text-slate-700">Dropdown Options</span>
-                      <textarea
-                        value={item.optionsText}
-                        onChange={(event) => updateItem(item.localId, { optionsText: event.target.value })}
-                        className={`${textareaClassName} mt-1.5`}
-                        placeholder="One per line. Use Label | value when the stored value differs."
-                      />
-                    </label>
-                  ) : null}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+                <div className="space-y-3 p-4">
+                  {values.items.map((item, index) => (
+                    <SortableTemplateItemCard
+                      key={item.localId}
+                      item={item}
+                      index={index}
+                      itemCount={values.items.length}
+                      onUpdateItem={updateItem}
+                      onRemoveItem={removeItem}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
+              </SortableContext>
+            </DndContext>
           </section>
 
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
@@ -569,6 +784,102 @@ function TemplateFormModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function DuplicateTemplateModal({
+  template,
+  error,
+  isDuplicating,
+  onClose,
+  onConfirm,
+}: {
+  template: ChecklistTemplate;
+  error: string;
+  isDuplicating: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const sourceLabel = templateVersionLabel(template);
+  const sourceStatus = resolveTemplateStatus(template);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6">
+      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+              Duplicate Template
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">
+              Create a duplicate draft from {sourceLabel}?
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isDuplicating}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            aria-label="Close duplicate template modal"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          {error ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={sourceStatus} />
+              <span className="text-sm font-semibold text-slate-900">{template.name}</span>
+            </div>
+            <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-500">New status</div>
+                <div className="mt-1">
+                  <StatusBadge status="DRAFT" />
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-500">Suggested name</div>
+                <div className="mt-1 font-semibold text-slate-900">
+                  {duplicateTemplateNamePreview(template)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-sm leading-6 text-[var(--muted)]">
+            The duplicate will be editable and inactive. Existing inspections and the current active template stay unchanged.
+          </p>
+
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isDuplicating}
+              className={secondaryButtonClassName}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={isDuplicating}
+              className={primaryButtonClassName}
+            >
+              <Copy size={16} />
+              {isDuplicating ? "Duplicating" : "Create Draft"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -589,6 +900,9 @@ function ChecklistTemplatesContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<ChecklistTemplate | null>(null);
+  const [duplicateTemplate, setDuplicateTemplate] = useState<ChecklistTemplate | null>(null);
+  const [duplicateError, setDuplicateError] = useState("");
+  const [highlightedTemplateId, setHighlightedTemplateId] = useState<string | null>(null);
   const [formValues, setFormValues] = useState<TemplateFormState>(defaultForm());
   const [modalError, setModalError] = useState("");
 
@@ -651,9 +965,10 @@ function ChecklistTemplatesContent() {
 
     return templates
       .filter((template) => {
+        const templateStatus = resolveTemplateStatus(template);
         const matchesAssetType =
           assetTypeFilter === "ALL" || template.assetTypeId === assetTypeFilter;
-        const matchesStatus = statusFilter === "ALL" || template.status === statusFilter;
+        const matchesStatus = statusFilter === "ALL" || templateStatus === statusFilter;
         const matchesSearch =
           !normalizedSearch ||
           [
@@ -661,7 +976,7 @@ function ChecklistTemplatesContent() {
             template.assetType,
             template.assetTypeCode,
             template.assetTypeName,
-            template.status,
+            templateStatus,
             `v${template.version}`,
           ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
 
@@ -679,8 +994,9 @@ function ChecklistTemplatesContent() {
   }, [assetTypeFilter, search, statusFilter, templates]);
 
   const isAdmin = session?.user?.role === "ADMIN";
-  const activeCount = templates.filter((template) => template.status === "ACTIVE").length;
-  const draftCount = templates.filter((template) => template.status === "DRAFT").length;
+  const activeCount = templates.filter((template) => resolveTemplateStatus(template) === "ACTIVE").length;
+  const draftCount = templates.filter((template) => resolveTemplateStatus(template) === "DRAFT").length;
+  const archivedCount = templates.filter((template) => resolveTemplateStatus(template) === "ARCHIVED").length;
 
   function resetFilters() {
     setSearch("");
@@ -720,6 +1036,26 @@ function ChecklistTemplatesContent() {
     setModalMode(null);
     setSelectedTemplate(null);
     setModalError("");
+  }
+
+  function openDuplicateModal(template: ChecklistTemplate) {
+    if (!isAdmin || actionTemplateId) {
+      return;
+    }
+
+    setDuplicateTemplate(template);
+    setDuplicateError("");
+    setError("");
+    setNotice("");
+  }
+
+  function closeDuplicateModal() {
+    if (duplicateTemplate && actionTemplateId === duplicateTemplate.id) {
+      return;
+    }
+
+    setDuplicateTemplate(null);
+    setDuplicateError("");
   }
 
   async function handleTemplateSubmit(event: FormEvent<HTMLFormElement>) {
@@ -779,6 +1115,41 @@ function ChecklistTemplatesContent() {
       setModalError(requestErrorMessage(submitError, "Unable to save checklist template."));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleDuplicateConfirm() {
+    if (!session?.token || !duplicateTemplate || actionTemplateId) {
+      return;
+    }
+
+    const sourceTemplate = duplicateTemplate;
+
+    setActionTemplateId(sourceTemplate.id);
+    setDuplicateError("");
+    setError("");
+    setNotice("");
+
+    try {
+      const duplicatedTemplate = await duplicateChecklistTemplate(session.token, sourceTemplate.id);
+      setTemplates((currentTemplates) => upsertTemplate(currentTemplates, duplicatedTemplate));
+      setHighlightedTemplateId(duplicatedTemplate.id);
+      setAssetTypeFilter(duplicatedTemplate.assetTypeId);
+      setStatusFilter("DRAFT");
+      setDuplicateTemplate(null);
+      openEditModal(duplicatedTemplate);
+      setNotice(
+        `Draft ${templateVersionLabel(duplicatedTemplate)} created from ${templateVersionLabel(sourceTemplate)}.`,
+      );
+    } catch (duplicateErrorValue) {
+      if (duplicateErrorValue instanceof ApiError && duplicateErrorValue.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setDuplicateError(requestErrorMessage(duplicateErrorValue, "Unable to duplicate template."));
+    } finally {
+      setActionTemplateId(null);
     }
   }
 
@@ -876,11 +1247,14 @@ function ChecklistTemplatesContent() {
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   {templates.length} versions
                 </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {activeCount} active
+                <span className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800 shadow-[var(--shadow-soft)]">
+                  {activeCount} ACTIVE
                 </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {draftCount} drafts
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]">
+                  {draftCount} DRAFT
+                </span>
+                <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[var(--shadow-soft)]">
+                  {archivedCount} ARCHIVED
                 </span>
               </div>
             </div>
@@ -1000,16 +1374,31 @@ function ChecklistTemplatesContent() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredTemplates.map((template) => {
                         const isActionRunning = actionTemplateId === template.id;
+                        const isAnyActionRunning = actionTemplateId !== null;
+                        const isHighlighted = highlightedTemplateId === template.id;
+                        const templateStatus = resolveTemplateStatus(template);
+                        const isArchived = templateStatus === "ARCHIVED";
 
                         return (
-                          <tr key={template.id} className="transition hover:bg-teal-50/40">
+                          <tr
+                            key={template.id}
+                            className={`transition ${STATUS_META[templateStatus].rowClassName} ${
+                              isHighlighted ? "outline outline-2 outline-offset-[-2px] outline-amber-300" : ""
+                            }`}
+                          >
                             <td className="px-5 py-4">
                               <div className="flex items-start gap-3">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500">
                                   <ClipboardList size={17} />
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="font-semibold text-slate-900">{template.name}</div>
+                                  <div
+                                    className={`font-semibold ${
+                                      isArchived ? "text-slate-500" : "text-slate-900"
+                                    }`}
+                                  >
+                                    {template.name}
+                                  </div>
                                   <div className="mt-0.5 text-xs text-[var(--muted)]">
                                     Version {template.version}
                                   </div>
@@ -1022,8 +1411,8 @@ function ChecklistTemplatesContent() {
                                 {template.assetTypeName ?? "Asset type"}
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4">
-                              <StatusBadge status={template.status} />
+                            <td className="min-w-48 px-5 py-4">
+                              <StatusBadge status={templateStatus} showDescription />
                             </td>
                             <td className="whitespace-nowrap px-5 py-4 text-slate-700">
                               {template.itemCount}
@@ -1038,6 +1427,15 @@ function ChecklistTemplatesContent() {
                               <div className="flex flex-wrap justify-end gap-2">
                                 <button
                                   type="button"
+                                  onClick={() => openDuplicateModal(template)}
+                                  disabled={!isAdmin || isAnyActionRunning}
+                                  className={rowActionButtonClassName}
+                                >
+                                  <Copy size={14} />
+                                  Duplicate
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => openEditModal(template)}
                                   className={rowActionButtonClassName}
                                 >
@@ -1047,7 +1445,7 @@ function ChecklistTemplatesContent() {
                                 <button
                                   type="button"
                                   onClick={() => handleActivate(template)}
-                                  disabled={!isAdmin || template.status === "ACTIVE" || isActionRunning}
+                                  disabled={!isAdmin || templateStatus === "ACTIVE" || isActionRunning}
                                   className={rowActionButtonClassName}
                                 >
                                   <CheckCircle2 size={14} />
@@ -1056,7 +1454,7 @@ function ChecklistTemplatesContent() {
                                 <button
                                   type="button"
                                   onClick={() => handleArchive(template)}
-                                  disabled={!isAdmin || template.status === "ARCHIVED" || isActionRunning}
+                                  disabled={!isAdmin || templateStatus === "ARCHIVED" || isActionRunning}
                                   className={dangerButtonClassName}
                                 >
                                   <Trash2 size={14} />
@@ -1102,6 +1500,16 @@ function ChecklistTemplatesContent() {
           onChange={setFormValues}
           onClose={closeModal}
           onSubmit={handleTemplateSubmit}
+        />
+      ) : null}
+
+      {duplicateTemplate ? (
+        <DuplicateTemplateModal
+          template={duplicateTemplate}
+          error={duplicateError}
+          isDuplicating={actionTemplateId === duplicateTemplate.id}
+          onClose={closeDuplicateModal}
+          onConfirm={handleDuplicateConfirm}
         />
       ) : null}
     </AppShell>
