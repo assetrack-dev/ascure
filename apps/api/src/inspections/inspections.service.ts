@@ -13,6 +13,8 @@ import {
   InspectionCompletionStatus,
   InspectionItemInputType,
   Prisma,
+  SiteVisitStatus,
+  UserRole,
 } from '@prisma/client';
 import {
   buildInspectionImagePath,
@@ -38,6 +40,12 @@ type UploadedInspectionImageFile = {
   buffer: Buffer;
 };
 
+const ACTIVE_SITE_VISIT_STATUSES = [
+  SiteVisitStatus.ACTIVE,
+  SiteVisitStatus.OPEN,
+  SiteVisitStatus.IN_PROGRESS,
+] as const;
+
 @Injectable()
 export class InspectionsService {
   constructor(
@@ -46,11 +54,15 @@ export class InspectionsService {
   ) {}
 
   async create(user: RequestUser, dto: CreateInspectionDto) {
+    this.assertCanMutate(user);
+
     const siteVisit = await this.prisma.siteVisit.findFirst({
       where: {
         id: dto.siteVisitId,
         tenantId: user.tenantId,
-        status: 'ACTIVE',
+        status: {
+          in: [...ACTIVE_SITE_VISIT_STATUSES],
+        },
         ...this.siteVisitAccessScope(user),
       },
       include: {
@@ -93,16 +105,36 @@ export class InspectionsService {
 
     const template = await this.templatesService.getActiveTemplate(user, asset.assetTypeId);
 
-    return this.prisma.inspection.create({
-      data: {
-        tenantId: user.tenantId,
-        siteVisitId: siteVisit.id,
-        assetId: asset.id,
-        templateId: template.id,
-        createdByUserId: user.id,
-        inspectionCycle: dto.inspectionCycle ?? 1,
-      },
-      include: this.inspectionInclude(),
+    return this.prisma.$transaction(async (tx) => {
+      const inspection = await tx.inspection.create({
+        data: {
+          tenantId: user.tenantId,
+          siteVisitId: siteVisit.id,
+          assetId: asset.id,
+          templateId: template.id,
+          createdByUserId: user.id,
+          inspectionCycle: dto.inspectionCycle ?? 1,
+        },
+        include: this.inspectionInclude(),
+      });
+
+      await tx.siteVisitAsset.upsert({
+        where: {
+          siteVisitId_assetId: {
+            siteVisitId: siteVisit.id,
+            assetId: asset.id,
+          },
+        },
+        create: {
+          siteVisitId: siteVisit.id,
+          assetId: asset.id,
+          addedByUserId: user.id,
+          source: 'INSPECTION',
+        },
+        update: {},
+      });
+
+      return inspection;
     });
   }
 
@@ -174,6 +206,8 @@ export class InspectionsService {
   }
 
   async saveResults(user: RequestUser, inspectionId: string, dto: SaveInspectionResultsDto) {
+    this.assertCanMutate(user);
+
     const inspection = await this.getAccessibleInspection(inspectionId, user);
 
     if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
@@ -288,6 +322,8 @@ export class InspectionsService {
   }
 
   async submit(user: RequestUser, inspectionId: string) {
+    this.assertCanMutate(user);
+
     const inspection = await this.getAccessibleInspection(inspectionId, user);
 
     if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
@@ -358,6 +394,8 @@ export class InspectionsService {
     file: UploadedInspectionImageFile | undefined,
     dto: UploadInspectionImageDto,
   ) {
+    this.assertCanMutate(user);
+
     if (!file?.buffer?.length) {
       throw new BadRequestException('Image file is required.');
     }
@@ -610,6 +648,12 @@ export class InspectionsService {
         },
       },
     };
+  }
+
+  private assertCanMutate(user: RequestUser) {
+    if (user.role === UserRole.VIEWER) {
+      throw new ForbiddenException('VIEWER role is read-only for inspection actions.');
+    }
   }
 
   private flattenTemplateItems(

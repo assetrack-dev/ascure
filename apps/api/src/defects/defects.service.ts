@@ -1,6 +1,16 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { DefectSeverity, DefectStatus, DefectTimelineEventType } from '@prisma/client';
+import {
+  DefectSeverity,
+  DefectStatus,
+  DefectTimelineEventType,
+  UserRole,
+} from '@prisma/client';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -118,6 +128,8 @@ export class DefectsService {
   }
 
   async updateStatus(user: RequestUser, defectId: string, dto: UpdateDefectStatusDto) {
+    this.assertCanMutate(user);
+
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const actionRemark =
       dto.actionRemark === undefined
@@ -185,6 +197,8 @@ export class DefectsService {
     defectId: string,
     dto: UpdateDefectAssignmentDto,
   ) {
+    this.assertCanMutate(user);
+
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const hasAssignedUserId = Object.prototype.hasOwnProperty.call(
       dto,
@@ -271,6 +285,8 @@ export class DefectsService {
     defectId: string,
     dto: UpdateDefectDueDateDto,
   ) {
+    this.assertCanMutate(user);
+
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const hasDueDate = Object.prototype.hasOwnProperty.call(dto, 'dueDate');
 
@@ -316,6 +332,8 @@ export class DefectsService {
   }
 
   async addComment(user: RequestUser, defectId: string, dto: CreateDefectCommentDto) {
+    this.assertCanMutate(user);
+
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const comment = this.normalizeOptionalString(dto.comment);
 
@@ -939,6 +957,12 @@ export class DefectsService {
         },
       },
     };
+  }
+
+  private assertCanMutate(user: RequestUser) {
+    if (user.role === UserRole.VIEWER) {
+      throw new ForbiddenException('VIEWER role is read-only for defect actions.');
+    }
   }
 
   private normalizeOptionalString(value?: string | null) {

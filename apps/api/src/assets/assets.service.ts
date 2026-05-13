@@ -1,10 +1,17 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AssetStatus, InspectionCompletionStatus, Prisma } from '@prisma/client';
+import {
+  AssetStatus,
+  InspectionCompletionStatus,
+  Prisma,
+  SiteVisitStatus,
+  UserRole,
+} from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -16,6 +23,8 @@ export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(user: RequestUser, dto: CreateAssetDto) {
+    this.assertCanMutate(user);
+
     const substation = await this.prisma.substation.findFirst({
       where: {
         id: dto.substationId,
@@ -46,13 +55,17 @@ export class AssetsService {
       throw new NotFoundException('Asset type not found.');
     }
 
+    let linkedSiteVisit: { id: string } | null = null;
+
     if (dto.createdDuringVisitId) {
       const siteVisit = await this.prisma.siteVisit.findFirst({
         where: {
           id: dto.createdDuringVisitId,
           tenantId: user.tenantId,
           substationId: dto.substationId,
-          status: 'ACTIVE',
+          status: {
+            in: this.activeSiteVisitStatuses(),
+          },
           ...this.siteVisitAccessScope(user),
         },
         select: {
@@ -63,26 +76,51 @@ export class AssetsService {
       if (!siteVisit) {
         throw new NotFoundException('Active site visit not found for asset creation.');
       }
+
+      linkedSiteVisit = siteVisit;
     }
 
     try {
-      return await this.prisma.asset.create({
-        data: {
-          tenantId: user.tenantId,
-          substationId: dto.substationId,
-          assetTypeId: dto.assetTypeId,
-          assetCode: dto.assetCode,
-          name: this.normalizeOptionalString(dto.name),
-          latitude: dto.latitude,
-          longitude: dto.longitude,
-          metadata:
-            dto.metadata === undefined
-              ? undefined
-              : (dto.metadata as Prisma.InputJsonValue),
-          status: dto.status ?? AssetStatus.ACTIVE,
-          createdDuringVisitId: dto.createdDuringVisitId,
-        },
-        include: this.assetInclude(),
+      return await this.prisma.$transaction(async (tx) => {
+        const asset = await tx.asset.create({
+          data: {
+            tenantId: user.tenantId,
+            substationId: dto.substationId,
+            assetTypeId: dto.assetTypeId,
+            assetCode: dto.assetCode,
+            name: this.normalizeOptionalString(dto.name),
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            metadata:
+              dto.metadata === undefined
+                ? undefined
+                : (dto.metadata as Prisma.InputJsonValue),
+            status: dto.status ?? AssetStatus.ACTIVE,
+            createdDuringVisitId: dto.createdDuringVisitId,
+            createdByUserId: user.id,
+          },
+          include: this.assetInclude(),
+        });
+
+        if (linkedSiteVisit) {
+          await tx.siteVisitAsset.upsert({
+            where: {
+              siteVisitId_assetId: {
+                siteVisitId: linkedSiteVisit.id,
+                assetId: asset.id,
+              },
+            },
+            create: {
+              siteVisitId: linkedSiteVisit.id,
+              assetId: asset.id,
+              addedByUserId: user.id,
+              source: 'CREATED_DURING_VISIT',
+            },
+            update: {},
+          });
+        }
+
+        return asset;
       });
     } catch (error) {
       if (
@@ -283,6 +321,8 @@ export class AssetsService {
     id: string,
     dto: UpdateAssetStatusDto,
   ) {
+    this.assertCanMutate(user);
+
     const asset = await this.prisma.asset.findFirst({
       where: {
         id,
@@ -309,6 +349,8 @@ export class AssetsService {
   }
 
   async update(user: RequestUser, id: string, dto: UpdateAssetDto) {
+    this.assertCanMutate(user);
+
     const asset = await this.prisma.asset.findFirst({
       where: {
         id,
@@ -480,6 +522,20 @@ export class AssetsService {
     });
 
     return remarkResult?.valueText?.trim() ?? '';
+  }
+
+  private assertCanMutate(user: RequestUser) {
+    if (user.role === UserRole.VIEWER) {
+      throw new ForbiddenException('VIEWER role is read-only for asset actions.');
+    }
+  }
+
+  private activeSiteVisitStatuses() {
+    return [
+      SiteVisitStatus.ACTIVE,
+      SiteVisitStatus.OPEN,
+      SiteVisitStatus.IN_PROGRESS,
+    ];
   }
 
   private normalizeOptionalString(value?: string) {

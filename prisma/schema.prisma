@@ -17,9 +17,25 @@ enum UserRole {
 }
 
 enum SiteVisitStatus {
+  OPEN
+  IN_PROGRESS
   ACTIVE
   COMPLETED
   CANCELLED
+}
+
+enum SiteVisitType {
+  DISCOVERY
+  REINSPECTION
+  SPECIAL
+  AUDIT
+}
+
+enum SiteVisitValidationStatus {
+  PENDING
+  VALIDATED
+  WARNING
+  FAILED
 }
 
 enum InspectionTemplateStatus {
@@ -81,21 +97,21 @@ enum AssetStatus {
 }
 
 model Tenant {
-  id                   String               @id @default(uuid()) @db.Uuid
-  name                 String
-  code                 String               @unique
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  departments          Department[]
-  teams                Team[]
-  users                User[]
-  substations          Substation[]
-  assetTypes           AssetType[]
-  assets               Asset[]
-  siteVisits           SiteVisit[]
-  inspectionTemplates  InspectionTemplate[]
-  inspections          Inspection[]
-  images               Image[]
+  id                  String               @id @default(uuid()) @db.Uuid
+  name                String
+  code                String               @unique
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  departments         Department[]
+  teams               Team[]
+  users               User[]
+  substations         Substation[]
+  assetTypes          AssetType[]
+  assets              Asset[]
+  siteVisits          SiteVisit[]
+  inspectionTemplates InspectionTemplate[]
+  inspections         Inspection[]
+  images              Image[]
 }
 
 model Department {
@@ -114,44 +130,47 @@ model Department {
 }
 
 model Team {
-  id           String       @id @default(uuid()) @db.Uuid
-  tenantId     String       @db.Uuid
-  departmentId String?      @db.Uuid
-  name         String
-  code         String
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  members      TeamMember[]
-  siteVisits   SiteVisit[]
-  assignedDefects Defect[]   @relation("DefectAssignedTeam")
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @db.Uuid
+  departmentId    String?      @db.Uuid
+  name            String
+  code            String
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department      Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  members         TeamMember[]
+  siteVisits      SiteVisit[]
+  assignedDefects Defect[]     @relation("DefectAssignedTeam")
 
   @@unique([tenantId, code])
   @@index([tenantId])
 }
 
 model User {
-  id               String          @id @default(uuid()) @db.Uuid
-  tenantId         String          @db.Uuid
-  departmentId     String?         @db.Uuid
-  email            String          @unique
-  name             String
-  passwordHash     String
-  role             UserRole
-  isActive         Boolean         @default(true)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department       Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  teamMemberships  TeamMember[]
-  siteVisitUsers   SiteVisitUser[]
-  createdVisits    SiteVisit[]     @relation("SiteVisitCreatedBy")
-  createdInspects  Inspection[]    @relation("InspectionCreatedBy")
-  createdImages    Image[]         @relation("ImageCreatedBy")
+  id                    String                @id @default(uuid()) @db.Uuid
+  tenantId              String                @db.Uuid
+  departmentId          String?               @db.Uuid
+  email                 String                @unique
+  name                  String
+  passwordHash          String
+  role                  UserRole
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  tenant                Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department            Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  teamMemberships       TeamMember[]
+  siteVisitUsers        SiteVisitUser[]
+  createdVisits         SiteVisit[]           @relation("SiteVisitCreatedBy")
+  validatedVisits       SiteVisit[]           @relation("SiteVisitValidatedBy")
+  createdAssets         Asset[]               @relation("AssetCreatedBy")
+  siteVisitAssetsAdded  SiteVisitAsset[]      @relation("SiteVisitAssetAddedBy")
+  createdInspects       Inspection[]          @relation("InspectionCreatedBy")
+  createdImages         Image[]               @relation("ImageCreatedBy")
   defectTimelineEntries DefectTimelineEntry[] @relation("DefectTimelineCreatedBy")
-  assignedDefects  Defect[]        @relation("DefectAssignedUser")
+  assignedDefects       Defect[]              @relation("DefectAssignedUser")
 
   @@index([tenantId])
 }
@@ -205,23 +224,26 @@ model AssetType {
 }
 
 model Asset {
-  id                   String       @id @default(uuid()) @db.Uuid
-  tenantId             String       @db.Uuid
-  substationId         String       @db.Uuid
-  assetTypeId          String       @db.Uuid
-  assetCode            String       @map("code")
+  id                   String           @id @default(uuid()) @db.Uuid
+  tenantId             String           @db.Uuid
+  substationId         String           @db.Uuid
+  assetTypeId          String           @db.Uuid
+  assetCode            String           @map("code")
   name                 String?
   latitude             Float?
   longitude            Float?
   metadata             Json?
-  status               AssetStatus  @default(ACTIVE)
-  createdDuringVisitId String?      @db.Uuid
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
-  tenant               Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  substation           Substation   @relation(fields: [substationId], references: [id], onDelete: Cascade)
-  assetType            AssetType    @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  createdDuringVisit   SiteVisit?   @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
+  status               AssetStatus      @default(ACTIVE)
+  createdDuringVisitId String?          @db.Uuid
+  createdByUserId      String?          @db.Uuid
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  tenant               Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  substation           Substation       @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  assetType            AssetType        @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  createdDuringVisit   SiteVisit?       @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
+  createdBy            User?            @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  siteVisitAssets      SiteVisitAsset[]
   inspections          Inspection[]
   images               Image[]
 
@@ -230,32 +252,62 @@ model Asset {
   @@index([substationId])
   @@index([assetTypeId])
   @@index([createdDuringVisitId])
+  @@index([createdByUserId])
 }
 
 model SiteVisit {
-  id              String           @id @default(uuid()) @db.Uuid
-  tenantId        String           @db.Uuid
-  teamId          String           @db.Uuid
-  substationId    String           @db.Uuid
-  createdByUserId String           @db.Uuid
-  status          SiteVisitStatus  @default(ACTIVE)
-  startedAt       DateTime         @default(now())
-  endedAt         DateTime?
-  notes           String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  team            Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  substation      Substation       @relation(fields: [substationId], references: [id], onDelete: Restrict)
-  createdBy       User             @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  users           SiteVisitUser[]
-  createdAssets   Asset[]
-  inspections     Inspection[]
-  images          Image[]
+  id                    String                     @id @default(uuid()) @db.Uuid
+  tenantId              String                     @db.Uuid
+  teamId                String                     @db.Uuid
+  substationId          String                     @db.Uuid
+  createdByUserId       String                     @db.Uuid
+  validatedByUserId     String?                    @db.Uuid
+  status                SiteVisitStatus            @default(ACTIVE)
+  cycleNumber           Int?
+  visitType             SiteVisitType?
+  mainhead              String?
+  pencawangCode         String?
+  pencawangName         String?
+  functionalLocation    String?
+  checkInLatitude       Float?
+  checkInLongitude      Float?
+  checkInAccuracyMeters Float?
+  checkInCapturedAt     DateTime?
+  validationStatus      SiteVisitValidationStatus?
+  validatedAt           DateTime?
+  validationSummary     String?
+  feederId              String?
+  feederRouteId         String?
+  gisGeometryVersion    String?
+  completionNotes       String?
+  cancelReason          String?
+  startedAt             DateTime                   @default(now())
+  completedAt           DateTime?
+  endedAt               DateTime?
+  notes                 String?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  tenant                Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  team                  Team                       @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  substation            Substation                 @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  createdBy             User                       @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  validatedBy           User?                      @relation("SiteVisitValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
+  users                 SiteVisitUser[]
+  createdAssets         Asset[]
+  visitAssets           SiteVisitAsset[]
+  inspections           Inspection[]
+  images                Image[]
 
   @@index([tenantId])
   @@index([teamId, status])
   @@index([substationId])
+  @@index([validatedByUserId])
+  @@index([cycleNumber])
+  @@index([visitType])
+  @@index([validationStatus])
+  @@index([feederId])
+  @@index([feederRouteId])
+  @@index([completedAt])
 }
 
 model SiteVisitUser {
@@ -272,21 +324,41 @@ model SiteVisitUser {
   @@index([userId])
 }
 
+model SiteVisitAsset {
+  id            String    @id @default(uuid()) @db.Uuid
+  siteVisitId   String    @db.Uuid
+  assetId       String    @db.Uuid
+  addedByUserId String?   @db.Uuid
+  source        String?
+  notes         String?
+  addedAt       DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  siteVisit     SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  asset         Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  addedBy       User?     @relation("SiteVisitAssetAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([siteVisitId, assetId])
+  @@index([assetId])
+  @@index([addedByUserId])
+  @@index([siteVisitId, addedAt])
+}
+
 model InspectionTemplate {
-  id         String                     @id @default(uuid()) @db.Uuid
-  tenantId   String                     @db.Uuid
-  assetTypeId String                    @db.Uuid
-  version    Int
-  name       String
-  status     InspectionTemplateStatus   @default(DRAFT)
-  isActive   Boolean                    @default(false)
-  createdAt  DateTime                   @default(now())
-  updatedAt  DateTime                   @updatedAt
+  id          String                      @id @default(uuid()) @db.Uuid
+  tenantId    String                      @db.Uuid
+  assetTypeId String                      @db.Uuid
+  version     Int
+  name        String
+  status      InspectionTemplateStatus    @default(DRAFT)
+  isActive    Boolean                     @default(false)
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
   publishedAt DateTime?
-  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assetType  AssetType                  @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  sections   InspectionTemplateSection[]
-  items      InspectionTemplateItem[]
+  tenant      Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetType   AssetType                   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  sections    InspectionTemplateSection[]
+  items       InspectionTemplateItem[]
   inspections Inspection[]
 
   @@unique([assetTypeId, version])
@@ -309,24 +381,24 @@ model InspectionTemplateSection {
 }
 
 model InspectionTemplateItem {
-  id          String                   @id @default(uuid()) @db.Uuid
-  templateId  String                   @db.Uuid
-  sectionId   String                   @db.Uuid
-  key         String
-  label       String
-  helperText  String?
-  inputType   InspectionItemInputType
-  isRequired  Boolean                  @default(false)
-  isActive    Boolean                  @default(true)
-  isDefectTrigger Boolean               @default(true)
-  severity    DefectSeverity           @default(MEDIUM)
-  sortOrder   Int                      @default(0)
-  optionsJson Json?
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
-  template    InspectionTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  section     InspectionTemplateSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  results     InspectionResult[]
+  id              String                    @id @default(uuid()) @db.Uuid
+  templateId      String                    @db.Uuid
+  sectionId       String                    @db.Uuid
+  key             String
+  label           String
+  helperText      String?
+  inputType       InspectionItemInputType
+  isRequired      Boolean                   @default(false)
+  isActive        Boolean                   @default(true)
+  isDefectTrigger Boolean                   @default(true)
+  severity        DefectSeverity            @default(MEDIUM)
+  sortOrder       Int                       @default(0)
+  optionsJson     Json?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  template        InspectionTemplate        @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  section         InspectionTemplateSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  results         InspectionResult[]
 
   @@unique([templateId, key])
   @@index([sectionId, sortOrder])
@@ -396,21 +468,21 @@ model InspectionItemResult {
 }
 
 model Defect {
-  id                     String               @id @default(uuid()) @db.Uuid
-  inspectionItemResultId String               @unique @db.Uuid
-  assignedUserId         String?              @db.Uuid
-  assignedTeamId         String?              @db.Uuid
-  status                 DefectStatus         @default(OPEN)
-  severity               DefectSeverity       @default(MEDIUM)
+  id                     String                @id @default(uuid()) @db.Uuid
+  inspectionItemResultId String                @unique @db.Uuid
+  assignedUserId         String?               @db.Uuid
+  assignedTeamId         String?               @db.Uuid
+  status                 DefectStatus          @default(OPEN)
+  severity               DefectSeverity        @default(MEDIUM)
   actionRemark           String?
   dueDate                DateTime?
   resolvedAt             DateTime?
   closedAt               DateTime?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
-  inspectionItemResult   InspectionItemResult @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
-  assignedUser           User?                @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  assignedTeam           Team?                @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  inspectionItemResult   InspectionItemResult  @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  assignedUser           User?                 @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeam           Team?                 @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   timelineEntries        DefectTimelineEntry[]
 
   @@index([assignedUserId])
@@ -436,18 +508,18 @@ model DefectTimelineEntry {
 }
 
 model InspectionResult {
-  id             String      @id @default(uuid()) @db.Uuid
-  inspectionId   String      @db.Uuid
-  templateItemId String      @db.Uuid
+  id             String                 @id @default(uuid()) @db.Uuid
+  inspectionId   String                 @db.Uuid
+  templateItemId String                 @db.Uuid
   valueText      String?
-  valueNumber    Decimal?    @db.Decimal(18, 4)
+  valueNumber    Decimal?               @db.Decimal(18, 4)
   valueBoolean   Boolean?
-  valueDate      DateTime?   @db.Date
+  valueDate      DateTime?              @db.Date
   valueDateTime  DateTime?
   valueJson      Json?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  inspection     Inspection  @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  inspection     Inspection             @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
   templateItem   InspectionTemplateItem @relation(fields: [templateItemId], references: [id], onDelete: Restrict)
   images         Image[]
 
