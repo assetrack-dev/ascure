@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { DefectSeverity, DefectStatus } from '@prisma/client';
+import { DefectSeverity, DefectStatus, DefectTimelineEventType } from '@prisma/client';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
 
 @Injectable()
@@ -93,25 +94,92 @@ export class DefectsService {
 
   async updateStatus(user: RequestUser, defectId: string, dto: UpdateDefectStatusDto) {
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const actionRemark =
+      dto.actionRemark === undefined
+        ? undefined
+        : this.normalizeOptionalString(dto.actionRemark);
+    const now = new Date();
     const data: {
       status: DefectStatus;
       closedAt: Date | null;
       actionRemark?: string | null;
     } = {
       status: dto.status,
-      closedAt: dto.status === DefectStatus.CLOSED ? new Date() : null,
+      closedAt:
+        dto.status === DefectStatus.CLOSED
+          ? defect.closedAt ?? now
+          : null,
     };
 
-    if (dto.actionRemark !== undefined) {
-      data.actionRemark = this.normalizeOptionalString(dto.actionRemark);
+    if (actionRemark !== undefined) {
+      data.actionRemark = actionRemark;
     }
 
-    await this.prisma.defect.update({
-      where: {
-        id: defect.id,
-      },
-      data,
+    const shouldCreateTimelineEntry =
+      defect.status !== dto.status || Boolean(actionRemark);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data,
+      });
+
+      if (!shouldCreateTimelineEntry) {
+        return;
+      }
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type:
+            defect.status === dto.status
+              ? DefectTimelineEventType.COMMENT
+              : DefectTimelineEventType.STATUS_CHANGED,
+          fromStatus: defect.status === dto.status ? null : defect.status,
+          toStatus: defect.status === dto.status ? null : dto.status,
+          comment: actionRemark ?? null,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
     });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async addComment(user: RequestUser, defectId: string, dto: CreateDefectCommentDto) {
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const comment = this.normalizeOptionalString(dto.comment);
+
+    if (!comment) {
+      throw new BadRequestException('Comment is required.');
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction([
+      this.prisma.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          comment,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      }),
+      this.prisma.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          updatedAt: now,
+        },
+      }),
+    ]);
 
     return this.getDetail(user, defect.id);
   }
@@ -232,21 +300,87 @@ export class DefectsService {
 
   private defectDetailInclude() {
     return {
+      timelineEntries: {
+        orderBy: {
+          createdAt: 'asc' as const,
+        },
+        select: {
+          id: true,
+          type: true,
+          fromStatus: true,
+          toStatus: true,
+          comment: true,
+          createdAt: true,
+          createdBy: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              role: true,
+            },
+          },
+        },
+      },
       inspectionItemResult: {
         include: {
           inspection: {
             select: {
               id: true,
               assetId: true,
+              templateId: true,
               inspectionCycle: true,
+              completionStatus: true,
               submittedAt: true,
               createdAt: true,
+              updatedAt: true,
+              template: {
+                select: {
+                  id: true,
+                  name: true,
+                  version: true,
+                },
+              },
+              createdBy: {
+                select: {
+                  id: true,
+                  email: true,
+                  name: true,
+                  role: true,
+                },
+              },
+              siteVisit: {
+                select: {
+                  id: true,
+                  status: true,
+                  startedAt: true,
+                  endedAt: true,
+                  team: {
+                    select: {
+                      id: true,
+                      code: true,
+                      name: true,
+                    },
+                  },
+                  substation: {
+                    select: {
+                      id: true,
+                      code: true,
+                      name: true,
+                      location: true,
+                    },
+                  },
+                },
+              },
               asset: {
                 select: {
                   id: true,
                   assetCode: true,
+                  name: true,
+                  latitude: true,
+                  longitude: true,
                   substation: {
                     select: {
+                      id: true,
                       code: true,
                       name: true,
                       location: true,
@@ -254,6 +388,7 @@ export class DefectsService {
                   },
                   assetType: {
                     select: {
+                      id: true,
                       code: true,
                       name: true,
                     },
@@ -358,11 +493,13 @@ export class DefectsService {
     return {
       id: defect.id,
       inspectionItemResultId: item.id,
+      checklistItemId: item.checklistItemId,
       status: defect.status,
       severity: defect.severity,
       actionRemark: defect.actionRemark,
       closedAt: defect.closedAt?.toISOString() ?? null,
       label: item.label,
+      result: item.result,
       checklistRemark: item.remark,
       inspectionId: inspection.id,
       assetId: inspection.assetId,
@@ -377,7 +514,45 @@ export class DefectsService {
         name: inspection.asset.substation.name,
         location: inspection.asset.substation.location,
       },
+      asset: {
+        id: inspection.asset.id,
+        assetCode: inspection.asset.assetCode,
+        name: inspection.asset.name,
+        latitude: inspection.asset.latitude,
+        longitude: inspection.asset.longitude,
+        assetType: {
+          id: inspection.asset.assetType.id,
+          code: inspection.asset.assetType.code,
+          name: inspection.asset.assetType.name,
+        },
+        substation: {
+          id: inspection.asset.substation.id,
+          code: inspection.asset.substation.code,
+          name: inspection.asset.substation.name,
+          location: inspection.asset.substation.location,
+        },
+      },
       cycleNumber: inspection.inspectionCycle,
+      inspection: {
+        id: inspection.id,
+        templateId: inspection.templateId,
+        cycleNumber: inspection.inspectionCycle,
+        completionStatus: inspection.completionStatus,
+        submittedAt: inspection.submittedAt?.toISOString() ?? null,
+        createdAt: inspection.createdAt.toISOString(),
+        updatedAt: inspection.updatedAt.toISOString(),
+        createdBy: inspection.createdBy,
+        template: inspection.template,
+        siteVisit: {
+          id: inspection.siteVisit.id,
+          status: inspection.siteVisit.status,
+          startedAt: inspection.siteVisit.startedAt.toISOString(),
+          endedAt: inspection.siteVisit.endedAt?.toISOString() ?? null,
+          team: inspection.siteVisit.team,
+          substation: inspection.siteVisit.substation,
+        },
+      },
+      submittedBy: inspection.createdBy,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
       createdAt: defect.createdAt.toISOString(),
       updatedAt: defect.updatedAt.toISOString(),
@@ -394,7 +569,41 @@ export class DefectsService {
         timestamp: image.timestamp?.toISOString() ?? null,
         createdAt: image.createdAt.toISOString(),
       })),
+      timeline: this.serializeDefectTimeline(defect),
     };
+  }
+
+  private serializeDefectTimeline(
+    defect: NonNullable<Awaited<ReturnType<DefectsService['findAccessibleDefectById']>>>,
+  ) {
+    const entries = defect.timelineEntries.map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+      fromStatus: entry.fromStatus,
+      toStatus: entry.toStatus,
+      comment: entry.comment,
+      createdAt: entry.createdAt.toISOString(),
+      createdBy: entry.createdBy,
+    }));
+
+    if (!entries.some((entry) => entry.type === DefectTimelineEventType.CREATED)) {
+      entries.unshift({
+        id: `${defect.id}-created`,
+        type: DefectTimelineEventType.CREATED,
+        fromStatus: null,
+        toStatus: defect.status,
+        comment: 'Defect opened from failed inspection item.',
+        createdAt: defect.createdAt.toISOString(),
+        createdBy: null,
+      });
+    }
+
+    return entries.sort((left, right) => {
+      const leftDate = new Date(left.createdAt).getTime();
+      const rightDate = new Date(right.createdAt).getTime();
+
+      return leftDate - rightDate;
+    });
   }
 
   private inspectionAccessScope(user: RequestUser) {

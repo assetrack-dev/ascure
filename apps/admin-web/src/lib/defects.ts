@@ -1,5 +1,15 @@
 import { apiRequest } from "@/lib/api";
-import type { DefectListItem, DefectSeverity, DefectStatus } from "@/types/defects";
+import type {
+  DefectActor,
+  DefectDetail,
+  DefectEvidenceImage,
+  DefectListItem,
+  DefectSeverity,
+  DefectStatus,
+  DefectTimelineEntry,
+  DefectTimelineEventType,
+  DefectWorkflowStatus,
+} from "@/types/defects";
 
 type ApiRecord = Record<string, unknown>;
 
@@ -42,6 +52,12 @@ function firstString(record: ApiRecord | null, keys: string[]) {
 
 function nestedRecord(record: ApiRecord | null, key: string) {
   return asRecord(record?.[key]);
+}
+
+function readArray(record: ApiRecord | null, key: string) {
+  const value = record?.[key];
+
+  return Array.isArray(value) ? value : [];
 }
 
 function readNumber(record: ApiRecord | null, key: string) {
@@ -109,11 +125,41 @@ function normalizeStatus(value: string | null): DefectStatus {
     return "IN_PROGRESS";
   }
 
-  if (normalizedValue === "CLOSED" || normalizedValue === "RESOLVED") {
+  if (normalizedValue === "MONITORING") {
+    return "MONITORING";
+  }
+
+  if (normalizedValue === "RESOLVED") {
+    return "RESOLVED";
+  }
+
+  if (normalizedValue === "CLOSED") {
     return "CLOSED";
   }
 
   return "UNKNOWN";
+}
+
+function normalizeNullableStatus(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  return normalizeStatus(value);
+}
+
+function normalizeTimelineEventType(value: string | null): DefectTimelineEventType {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "CREATED" ||
+    normalizedValue === "STATUS_CHANGED" ||
+    normalizedValue === "COMMENT"
+  ) {
+    return normalizedValue;
+  }
+
+  return "COMMENT";
 }
 
 function readDate(record: ApiRecord | null) {
@@ -209,10 +255,281 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   };
 }
 
+function normalizeActor(rawActor: unknown): DefectActor | null {
+  const record = asRecord(rawActor);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = firstString(record, ["id", "userId"]);
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    email: firstString(record, ["email"]),
+    name: firstString(record, ["name"]),
+    role: firstString(record, ["role"]),
+  };
+}
+
+function normalizeImage(rawImage: unknown, index: number): DefectEvidenceImage | null {
+  const record = asRecord(rawImage);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = firstString(record, ["id", "imageId"]) ?? `image-${index}`;
+
+  return {
+    id,
+    inspectionId: firstString(record, ["inspectionId"]) ?? undefined,
+    url: firstString(record, ["url", "uri"]),
+    path: firstString(record, ["path", "storageKey"]),
+    filename: firstString(record, ["filename", "fileName"]),
+    mimeType: firstString(record, ["mimeType", "contentType"]),
+    sizeBytes: readNumber(record, "sizeBytes"),
+    latitude: readNumber(record, "latitude"),
+    longitude: readNumber(record, "longitude"),
+    timestamp: firstString(record, ["timestamp"]),
+    createdAt: firstString(record, ["createdAt"]) ?? undefined,
+  };
+}
+
+function normalizeTimelineEntry(
+  rawEntry: unknown,
+  index: number,
+  fallbackDefect: DefectListItem,
+): DefectTimelineEntry | null {
+  const record = asRecord(rawEntry);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = firstString(record, ["id"]) ?? `timeline-${index}`;
+  const createdAt = firstString(record, ["createdAt", "date"]) ?? fallbackDefect.createdAt ?? "";
+
+  if (!createdAt) {
+    return null;
+  }
+
+  return {
+    id,
+    type: normalizeTimelineEventType(firstString(record, ["type", "eventType"])),
+    fromStatus: normalizeNullableStatus(firstString(record, ["fromStatus"])),
+    toStatus: normalizeNullableStatus(firstString(record, ["toStatus", "status"])),
+    comment: firstString(record, ["comment", "remark", "message"]),
+    createdAt,
+    createdBy: normalizeActor(record.createdBy),
+  };
+}
+
+function normalizeTimeline(record: ApiRecord, fallbackDefect: DefectListItem) {
+  const rawTimeline =
+    readArray(record, "timeline").length > 0
+      ? readArray(record, "timeline")
+      : readArray(record, "history");
+  const timeline = rawTimeline
+    .map((entry, index) => normalizeTimelineEntry(entry, index, fallbackDefect))
+    .filter((entry): entry is DefectTimelineEntry => Boolean(entry));
+
+  if (timeline.length > 0) {
+    return timeline;
+  }
+
+  return [
+    {
+      id: `${fallbackDefect.id}-created`,
+      type: "CREATED" as const,
+      fromStatus: null,
+      toStatus: fallbackDefect.status,
+      comment: fallbackDefect.remark ?? "Defect opened from failed inspection item.",
+      createdAt: fallbackDefect.createdAt ?? fallbackDefect.date ?? new Date().toISOString(),
+      createdBy: null,
+    },
+  ];
+}
+
+function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
+  const record = asRecord(rawDefect);
+  const baseDefect = normalizeDefect(rawDefect, 0);
+
+  if (!record || !baseDefect) {
+    return null;
+  }
+
+  const asset = nestedRecord(record, "asset");
+  const assetType = nestedRecord(asset, "assetType");
+  const substation = nestedRecord(record, "substation") ?? nestedRecord(asset, "substation");
+  const inspection = nestedRecord(record, "inspection");
+  const siteVisit = nestedRecord(inspection, "siteVisit");
+  const siteVisitTeam = nestedRecord(siteVisit, "team");
+  const siteVisitSubstation = nestedRecord(siteVisit, "substation");
+  const template = nestedRecord(inspection, "template");
+  const submittedBy = normalizeActor(record.submittedBy ?? inspection?.createdBy);
+  const images = readArray(record, "images")
+    .map(normalizeImage)
+    .filter((image): image is DefectEvidenceImage => Boolean(image));
+
+  return {
+    ...baseDefect,
+    checklistItemId: firstString(record, ["checklistItemId"]),
+    checklistRemark: firstString(record, ["checklistRemark", "remark"]),
+    result: firstString(record, ["result", "inspectionResultValue"]),
+    cycleNumber:
+      readNumber(record, "cycleNumber") ??
+      readNumber(inspection, "cycleNumber") ??
+      undefined,
+    updatedAt: firstString(record, ["updatedAt"]),
+    closedAt: firstString(record, ["closedAt"]),
+    asset: asset
+      ? {
+          id: firstString(asset, ["id"]) ?? baseDefect.assetId ?? "",
+          assetCode:
+            firstString(asset, ["assetCode", "code"]) ??
+            baseDefect.assetCode,
+          name: firstString(asset, ["name"]),
+          latitude: readNumber(asset, "latitude"),
+          longitude: readNumber(asset, "longitude"),
+          assetType: assetType
+            ? {
+                id: firstString(assetType, ["id"]) ?? undefined,
+                code: firstString(assetType, ["code"]),
+                name: firstString(assetType, ["name"]),
+              }
+            : null,
+          substation: substation
+            ? {
+                id: firstString(substation, ["id"]) ?? undefined,
+                code: firstString(substation, ["code"]),
+                name: firstString(substation, ["name"]),
+                location: firstString(substation, ["location"]),
+              }
+            : null,
+        }
+      : null,
+    inspection: inspection
+      ? {
+          id: firstString(inspection, ["id"]) ?? baseDefect.inspectionId ?? "",
+          templateId: firstString(inspection, ["templateId"]) ?? undefined,
+          cycleNumber: readNumber(inspection, "cycleNumber") ?? undefined,
+          completionStatus: firstString(inspection, ["completionStatus"]) ?? undefined,
+          submittedAt: firstString(inspection, ["submittedAt"]),
+          createdAt: firstString(inspection, ["createdAt"]),
+          updatedAt: firstString(inspection, ["updatedAt"]),
+          createdBy: submittedBy,
+          template: template
+            ? {
+                id: firstString(template, ["id"]) ?? undefined,
+                name: firstString(template, ["name"]),
+                version: readNumber(template, "version"),
+              }
+            : null,
+          siteVisit: siteVisit
+            ? {
+                id: firstString(siteVisit, ["id"]) ?? undefined,
+                status: firstString(siteVisit, ["status"]) ?? undefined,
+                startedAt: firstString(siteVisit, ["startedAt"]),
+                endedAt: firstString(siteVisit, ["endedAt"]),
+                team: siteVisitTeam
+                  ? {
+                      id: firstString(siteVisitTeam, ["id"]) ?? undefined,
+                      code: firstString(siteVisitTeam, ["code"]),
+                      name: firstString(siteVisitTeam, ["name"]),
+                    }
+                  : null,
+                substation: siteVisitSubstation
+                  ? {
+                      id: firstString(siteVisitSubstation, ["id"]) ?? undefined,
+                      code: firstString(siteVisitSubstation, ["code"]),
+                      name: firstString(siteVisitSubstation, ["name"]),
+                      location: firstString(siteVisitSubstation, ["location"]),
+                    }
+                  : null,
+              }
+            : null,
+        }
+      : null,
+    submittedBy,
+    substation: substation
+      ? {
+          code: firstString(substation, ["code"]),
+          name: firstString(substation, ["name"]),
+          location: firstString(substation, ["location"]),
+        }
+      : null,
+    images,
+    timeline: normalizeTimeline(record, baseDefect),
+  };
+}
+
 export async function fetchDefects(token: string): Promise<DefectListItem[]> {
   const payload = await apiRequest<unknown>("/defects", { token });
 
   return extractDefectArray(payload)
     .map(normalizeDefect)
     .filter((defect): defect is DefectListItem => Boolean(defect));
+}
+
+export async function fetchDefectDetail(
+  token: string,
+  defectId: string,
+): Promise<DefectDetail> {
+  const payload = await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}`, {
+    token,
+  });
+  const defect = normalizeDefectDetail(payload);
+
+  if (!defect) {
+    throw new Error("Unable to read defect detail.");
+  }
+
+  return defect;
+}
+
+export async function updateDefectStatus(
+  token: string,
+  defectId: string,
+  status: DefectWorkflowStatus,
+  actionRemark?: string | null,
+): Promise<DefectDetail> {
+  const payload = await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/status`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({
+      status,
+      ...(actionRemark !== undefined ? { actionRemark } : {}),
+    }),
+  });
+  const defect = normalizeDefectDetail(payload);
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function addDefectComment(
+  token: string,
+  defectId: string,
+  comment: string,
+): Promise<DefectDetail> {
+  const payload = await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/comments`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ comment }),
+  });
+  const defect = normalizeDefectDetail(payload);
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
 }

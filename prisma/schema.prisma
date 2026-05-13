@@ -52,6 +52,8 @@ enum InspectionItemResultValue {
 enum DefectStatus {
   OPEN
   IN_PROGRESS
+  MONITORING
+  RESOLVED
   CLOSED
 }
 
@@ -60,6 +62,12 @@ enum DefectSeverity {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum DefectTimelineEventType {
+  CREATED
+  STATUS_CHANGED
+  COMMENT
 }
 
 enum AssetStatus {
@@ -139,6 +147,7 @@ model User {
   createdVisits    SiteVisit[]     @relation("SiteVisitCreatedBy")
   createdInspects  Inspection[]    @relation("InspectionCreatedBy")
   createdImages    Image[]         @relation("ImageCreatedBy")
+  defectTimelineEntries DefectTimelineEntry[] @relation("DefectTimelineCreatedBy")
 
   @@index([tenantId])
 }
@@ -392,6 +401,23 @@ model Defect {
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
   inspectionItemResult   InspectionItemResult @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  timelineEntries        DefectTimelineEntry[]
+}
+
+model DefectTimelineEntry {
+  id              String                  @id @default(uuid()) @db.Uuid
+  defectId        String                  @db.Uuid
+  type            DefectTimelineEventType
+  fromStatus      DefectStatus?
+  toStatus        DefectStatus?
+  comment         String?
+  createdByUserId String?                 @db.Uuid
+  createdAt       DateTime                @default(now())
+  defect          Defect                  @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  createdBy       User?                   @relation("DefectTimelineCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([defectId, createdAt])
+  @@index([createdByUserId])
 }
 
 model InspectionResult {

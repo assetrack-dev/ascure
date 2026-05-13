@@ -75,7 +75,13 @@ export class DashboardService {
     );
     const openDefects = countsByStatus.get(DefectStatus.OPEN) ?? 0;
     const inProgressDefects = countsByStatus.get(DefectStatus.IN_PROGRESS) ?? 0;
+    const monitoringDefects = countsByStatus.get(DefectStatus.MONITORING) ?? 0;
+    const resolvedDefects = countsByStatus.get(DefectStatus.RESOLVED) ?? 0;
     const closedDefects = countsByStatus.get(DefectStatus.CLOSED) ?? 0;
+    const totalDefects = defectStatusCounts.reduce(
+      (total, entry) => total + entry._count._all,
+      0,
+    );
     const countsBySeverity = new Map(
       defectSeverityCounts.map((entry) => [entry.severity, entry._count._all]),
     );
@@ -92,9 +98,11 @@ export class DashboardService {
     return {
       totalAssets,
       totalInspections,
-      totalDefects: openDefects + inProgressDefects + closedDefects,
+      totalDefects,
       openDefects,
       inProgressDefects,
+      monitoringDefects,
+      resolvedDefects,
       closedDefects,
       criticalDefects: countsBySeverity.get(DefectSeverity.CRITICAL) ?? 0,
       defectsBySeverity,

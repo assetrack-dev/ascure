@@ -43,6 +43,14 @@ function recentDefectStatusClassName(status: string) {
     return "border-green-200 bg-green-50 text-green-700";
   }
 
+  if (normalizedStatus === "RESOLVED") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (normalizedStatus === "MONITORING") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+
   if (normalizedStatus === "IN_PROGRESS") {
     return "border-blue-200 bg-blue-50 text-blue-700";
   }

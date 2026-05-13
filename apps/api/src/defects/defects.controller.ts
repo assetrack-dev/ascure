@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
 import { DefectsService } from './defects.service';
 
@@ -33,5 +34,14 @@ export class DefectsController {
     @Body() dto: UpdateDefectStatusDto,
   ) {
     return this.defectsService.updateStatus(user, params.id, dto);
+  }
+
+  @Post(':id/comments')
+  addComment(
+    @CurrentUser() user: RequestUser,
+    @Param() params: DefectIdParamDto,
+    @Body() dto: CreateDefectCommentDto,
+  ) {
+    return this.defectsService.addComment(user, params.id, dto);
   }
 }

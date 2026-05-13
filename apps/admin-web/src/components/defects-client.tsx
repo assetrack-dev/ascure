@@ -18,12 +18,17 @@ import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchDefects } from "@/lib/defects";
 import type { AuthSession } from "@/types/auth";
-import type { DefectListItem, DefectSeverity, DefectStatus } from "@/types/defects";
+import type {
+  DefectListItem,
+  DefectSeverity,
+  DefectStatus,
+  DefectWorkflowStatus,
+} from "@/types/defects";
 
 type SortKey = "assetCode" | "defectType" | "severity" | "status" | "date" | "location";
 type SortDirection = "asc" | "desc";
 type SeverityFilter = "ALL" | DefectSeverity;
-type StatusFilter = "ALL" | "OPEN" | "CLOSED";
+type StatusFilter = "ALL" | DefectWorkflowStatus;
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -36,6 +41,9 @@ const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
   { label: "Open", value: "OPEN" },
+  { label: "In Progress", value: "IN_PROGRESS" },
+  { label: "Monitoring", value: "MONITORING" },
+  { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
 const SEVERITY_RANK: Record<DefectSeverity, number> = {
@@ -47,8 +55,10 @@ const SEVERITY_RANK: Record<DefectSeverity, number> = {
 const STATUS_RANK: Record<DefectStatus, number> = {
   OPEN: 0,
   IN_PROGRESS: 1,
-  CLOSED: 2,
-  UNKNOWN: 3,
+  MONITORING: 2,
+  RESOLVED: 3,
+  CLOSED: 4,
+  UNKNOWN: 5,
 };
 const filterControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
@@ -189,6 +199,10 @@ function StatusBadge({ status }: { status: DefectStatus }) {
       ? "border-red-200 bg-red-50 text-red-700"
       : status === "CLOSED"
         ? "border-green-200 bg-green-50 text-green-700"
+        : status === "RESOLVED"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : status === "MONITORING"
+            ? "border-violet-200 bg-violet-50 text-violet-700"
         : status === "IN_PROGRESS"
           ? "border-blue-200 bg-blue-50 text-blue-700"
           : "border-slate-200 bg-slate-50 text-slate-600";
@@ -362,6 +376,10 @@ function DefectsContent() {
     setStatusFilter("ALL");
     setStartDate("");
     setEndDate("");
+  }
+
+  function openDefect(defectId: string) {
+    router.push(`/defects/${encodeURIComponent(defectId)}`);
   }
 
   return (
@@ -551,7 +569,16 @@ function DefectsContent() {
                       {paginatedDefects.map((defect) => (
                         <tr
                           key={defect.id}
-                          className="transition hover:bg-teal-50/40"
+                          tabIndex={0}
+                          onClick={() => openDefect(defect.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openDefect(defect.id);
+                            }
+                          }}
+                          className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
+                          aria-label={`Open defect ${defect.defectType} for ${defect.assetCode}`}
                         >
                           <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-900">
                             {defect.assetCode}
