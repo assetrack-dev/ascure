@@ -13,13 +13,31 @@ export type DefectWorkflowStatus = (typeof DEFECT_WORKFLOW_STATUSES)[number];
 
 export type DefectStatus = DefectWorkflowStatus | "UNKNOWN";
 
-export type DefectTimelineEventType = "CREATED" | "STATUS_CHANGED" | "COMMENT";
+export type DefectSlaState =
+  | "OVERDUE"
+  | "ON_TRACK"
+  | "NO_DUE_DATE"
+  | "STOPPED"
+  | "UNKNOWN";
+
+export type DefectTimelineEventType =
+  | "CREATED"
+  | "STATUS_CHANGED"
+  | "ASSIGNMENT_CHANGED"
+  | "DUE_DATE_CHANGED"
+  | "COMMENT";
 
 export interface DefectActor {
   id: string;
   email?: string | null;
   name?: string | null;
   role?: string | null;
+}
+
+export interface DefectAssignedTeam {
+  id: string;
+  code?: string | null;
+  name?: string | null;
 }
 
 export interface DefectTimelineEntry {
@@ -49,6 +67,11 @@ export interface DefectEvidenceImage {
 export interface DefectListItem {
   id: string;
   inspectionItemResultId?: string;
+  assignedUserId?: string | null;
+  assignedTeamId?: string | null;
+  assignedUser?: DefectActor | null;
+  assignedTeam?: DefectAssignedTeam | null;
+  assignedTo?: string | null;
   inspectionId?: string;
   assetId?: string;
   assetCode: string;
@@ -60,7 +83,11 @@ export interface DefectListItem {
   location: string | null;
   remark?: string | null;
   actionRemark?: string | null;
+  dueDate?: string | null;
+  resolvedAt?: string | null;
   closedAt?: string | null;
+  isOverdue?: boolean;
+  slaState?: DefectSlaState;
   submittedAt?: string | null;
   createdAt?: string | null;
 }

@@ -67,6 +67,8 @@ enum DefectSeverity {
 enum DefectTimelineEventType {
   CREATED
   STATUS_CHANGED
+  ASSIGNMENT_CHANGED
+  DUE_DATE_CHANGED
   COMMENT
 }
 
@@ -124,6 +126,7 @@ model Team {
   department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   members      TeamMember[]
   siteVisits   SiteVisit[]
+  assignedDefects Defect[]   @relation("DefectAssignedTeam")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -148,6 +151,7 @@ model User {
   createdInspects  Inspection[]    @relation("InspectionCreatedBy")
   createdImages    Image[]         @relation("ImageCreatedBy")
   defectTimelineEntries DefectTimelineEntry[] @relation("DefectTimelineCreatedBy")
+  assignedDefects  Defect[]        @relation("DefectAssignedUser")
 
   @@index([tenantId])
 }
@@ -394,14 +398,25 @@ model InspectionItemResult {
 model Defect {
   id                     String               @id @default(uuid()) @db.Uuid
   inspectionItemResultId String               @unique @db.Uuid
+  assignedUserId         String?              @db.Uuid
+  assignedTeamId         String?              @db.Uuid
   status                 DefectStatus         @default(OPEN)
   severity               DefectSeverity       @default(MEDIUM)
   actionRemark           String?
+  dueDate                DateTime?
+  resolvedAt             DateTime?
   closedAt               DateTime?
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
   inspectionItemResult   InspectionItemResult @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  assignedUser           User?                @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeam           Team?                @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   timelineEntries        DefectTimelineEntry[]
+
+  @@index([assignedUserId])
+  @@index([assignedTeamId])
+  @@index([dueDate])
+  @@index([status, dueDate])
 }
 
 model DefectTimelineEntry {

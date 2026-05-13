@@ -1,10 +1,12 @@
 import { apiRequest } from "@/lib/api";
 import type {
   DefectActor,
+  DefectAssignedTeam,
   DefectDetail,
   DefectEvidenceImage,
   DefectListItem,
   DefectSeverity,
+  DefectSlaState,
   DefectStatus,
   DefectTimelineEntry,
   DefectTimelineEventType,
@@ -79,6 +81,32 @@ function readNumber(record: ApiRecord | null, key: string) {
   return null;
 }
 
+function readBoolean(record: ApiRecord | null, key: string) {
+  if (!record || !(key in record)) {
+    return null;
+  }
+
+  const value = record[key];
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalizedValue = value.trim().toLowerCase();
+
+    if (normalizedValue === "true") {
+      return true;
+    }
+
+    if (normalizedValue === "false") {
+      return false;
+    }
+  }
+
+  return null;
+}
+
 function normalizeSeverity(value: string | null): DefectSeverity | null {
   const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
 
@@ -140,6 +168,46 @@ function normalizeStatus(value: string | null): DefectStatus {
   return "UNKNOWN";
 }
 
+function normalizeSlaState(value: string | null): DefectSlaState {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "OVERDUE" ||
+    normalizedValue === "ON_TRACK" ||
+    normalizedValue === "NO_DUE_DATE" ||
+    normalizedValue === "STOPPED"
+  ) {
+    return normalizedValue;
+  }
+
+  return "UNKNOWN";
+}
+
+function computeSlaState(status: DefectStatus, dueDate: string | null): DefectSlaState {
+  if (status === "CLOSED" || status === "RESOLVED") {
+    return "STOPPED";
+  }
+
+  if (!dueDate) {
+    return "NO_DUE_DATE";
+  }
+
+  const parsedDueDate = new Date(dueDate);
+
+  if (Number.isNaN(parsedDueDate.getTime())) {
+    return "UNKNOWN";
+  }
+
+  if (
+    (status === "OPEN" || status === "IN_PROGRESS" || status === "MONITORING") &&
+    parsedDueDate.getTime() < Date.now()
+  ) {
+    return "OVERDUE";
+  }
+
+  return "ON_TRACK";
+}
+
 function normalizeNullableStatus(value: string | null) {
   if (!value) {
     return null;
@@ -154,6 +222,8 @@ function normalizeTimelineEventType(value: string | null): DefectTimelineEventTy
   if (
     normalizedValue === "CREATED" ||
     normalizedValue === "STATUS_CHANGED" ||
+    normalizedValue === "ASSIGNMENT_CHANGED" ||
+    normalizedValue === "DUE_DATE_CHANGED" ||
     normalizedValue === "COMMENT"
   ) {
     return normalizedValue;
@@ -221,6 +291,13 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   const asset = nestedRecord(record, "asset");
   const date = readDate(record);
   const inspectionItemResultId = firstString(record, ["inspectionItemResultId", "itemResultId"]);
+  const assignedUser = normalizeActor(record.assignedUser);
+  const assignedTeam = normalizeTeam(record.assignedTeam);
+  const dueDate = firstString(record, ["dueDate"]);
+  const status = normalizeStatus(firstString(record, ["status"]));
+  const normalizedSlaState = normalizeSlaState(firstString(record, ["slaState"]));
+  const slaState =
+    normalizedSlaState === "UNKNOWN" ? computeSlaState(status, dueDate) : normalizedSlaState;
   const id =
     firstString(record, ["id", "defectId"]) ??
     inspectionItemResultId ??
@@ -233,6 +310,13 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   return {
     id,
     inspectionItemResultId: inspectionItemResultId ?? undefined,
+    assignedUserId: firstString(record, ["assignedUserId", "assigneeUserId"]),
+    assignedTeamId: firstString(record, ["assignedTeamId", "assigneeTeamId"]),
+    assignedUser,
+    assignedTeam,
+    assignedTo:
+      firstString(record, ["assignedTo", "assignee"]) ??
+      formatAssignmentDisplay(assignedUser, assignedTeam),
     inspectionId: firstString(record, ["inspectionId"]) ?? undefined,
     assetId: firstString(record, ["assetId"]) ?? undefined,
     assetCode,
@@ -244,12 +328,16 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
     severity: normalizeSeverity(
       firstString(record, ["severity", "defectSeverity", "priority"]),
     ),
-    status: normalizeStatus(firstString(record, ["status"])),
+    status,
     date,
     location: readLocation(record),
     remark: firstString(record, ["remark", "checklistRemark", "description"]),
     actionRemark: firstString(record, ["actionRemark"]),
+    dueDate,
+    resolvedAt: firstString(record, ["resolvedAt"]),
     closedAt: firstString(record, ["closedAt"]),
+    isOverdue: readBoolean(record, "isOverdue") ?? slaState === "OVERDUE",
+    slaState,
     submittedAt: firstString(record, ["submittedAt"]),
     createdAt: firstString(record, ["createdAt"]),
   };
@@ -274,6 +362,38 @@ function normalizeActor(rawActor: unknown): DefectActor | null {
     name: firstString(record, ["name"]),
     role: firstString(record, ["role"]),
   };
+}
+
+function normalizeTeam(rawTeam: unknown): DefectAssignedTeam | null {
+  const record = asRecord(rawTeam);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = firstString(record, ["id", "teamId"]);
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    code: firstString(record, ["code"]),
+    name: firstString(record, ["name"]),
+  };
+}
+
+function formatAssignmentDisplay(
+  assignedUser: DefectActor | null,
+  assignedTeam: DefectAssignedTeam | null,
+) {
+  const labels = [
+    assignedUser?.name?.trim() || assignedUser?.email?.trim() || null,
+    assignedTeam?.name?.trim() || assignedTeam?.code?.trim() || null,
+  ].filter((label): label is string => Boolean(label));
+
+  return labels.length > 0 ? labels.join(" / ") : "Unassigned";
 }
 
 function normalizeImage(rawImage: unknown, index: number): DefectEvidenceImage | null {
@@ -507,6 +627,62 @@ export async function updateDefectStatus(
     }),
   });
   const defect = normalizeDefectDetail(payload);
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function updateDefectAssignment(
+  token: string,
+  defectId: string,
+  payload: {
+    assignedUserId?: string | null;
+    assignedTeamId?: string | null;
+  },
+): Promise<DefectDetail> {
+  const body: {
+    assignedUserId?: string | null;
+    assignedTeamId?: string | null;
+  } = {};
+
+  if ("assignedUserId" in payload) {
+    body.assignedUserId = payload.assignedUserId;
+  }
+
+  if ("assignedTeamId" in payload) {
+    body.assignedTeamId = payload.assignedTeamId;
+  }
+
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/assignment`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function updateDefectDueDate(
+  token: string,
+  defectId: string,
+  dueDate: string | null,
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/due-date`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ dueDate }),
+    }),
+  );
 
   if (!defect) {
     throw new Error("Unable to read updated defect detail.");

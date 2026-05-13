@@ -20,9 +20,13 @@ export class MasterDataController {
     return this.masterDataService.listAssetTypes(user);
   }
 
+  @Get('teams')
+  listTeams(@CurrentUser() user: RequestUser) {
+    return this.masterDataService.listTeams(user);
+  }
+
   @Get('assets')
   listAssets(@CurrentUser() user: RequestUser, @Query() query: ListAssetsQueryDto) {
     return this.masterDataService.listAssets(user, query.substation_id);
   }
 }
-

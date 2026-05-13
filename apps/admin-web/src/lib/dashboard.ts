@@ -13,6 +13,7 @@ interface Asset {
 }
 
 const SEVERITY_LABELS = ["Critical", "High", "Medium", "Low"];
+const SLA_LABELS = ["Overdue", "On Track", "No Due Date", "Stopped"];
 
 function numberOrZero(value: unknown) {
   const numericValue = Number(value);
@@ -71,6 +72,16 @@ function normalizeSeverityData(input: unknown) {
   }));
 }
 
+function normalizeSlaData(input: unknown) {
+  const values = normalizeChartData(input);
+  const byLabel = new Map(values.map((item) => [item.label.toLowerCase(), item.value]));
+
+  return SLA_LABELS.map((label) => ({
+    label,
+    value: byLabel.get(label.toLowerCase()) ?? 0,
+  }));
+}
+
 async function fetchAssetsByType(token: string): Promise<ChartDatum[]> {
   const substations = await apiRequest<Substation[]>("/substations", { token });
   const assetsBySubstation = await Promise.all(
@@ -110,6 +121,7 @@ export async function fetchDashboardMetrics(token: string): Promise<DashboardMet
   }
 
   const defectsBySeverity = normalizeSeverityData(dashboard.defectsBySeverity);
+  const defectsBySlaState = normalizeSlaData(dashboard.defectsBySlaState);
   const criticalFromChart =
     defectsBySeverity.find((item) => item.label === "Critical")?.value ?? 0;
 
@@ -118,9 +130,17 @@ export async function fetchDashboardMetrics(token: string): Promise<DashboardMet
     totalDefects: numberOrZero(dashboard.totalDefects),
     openDefects: numberOrZero(dashboard.openDefects),
     criticalDefects: numberOrZero(dashboard.criticalDefects ?? criticalFromChart),
+    overdueDefects: numberOrZero(dashboard.overdueDefects),
+    criticalOverdueDefects: numberOrZero(dashboard.criticalOverdueDefects),
     totalInspections: numberOrZero(dashboard.totalInspections),
     defectsBySeverity,
+    defectsByAssignee: normalizeChartData(dashboard.defectsByAssignee),
+    defectsByTeam: normalizeChartData(dashboard.defectsByTeam),
+    defectsBySlaState,
     assetsByType,
     recentDefects: Array.isArray(dashboard.recentDefects) ? dashboard.recentDefects : [],
+    criticalOverdueAlerts: Array.isArray(dashboard.criticalOverdueAlerts)
+      ? dashboard.criticalOverdueAlerts
+      : [],
   };
 }

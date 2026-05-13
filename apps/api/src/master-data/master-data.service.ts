@@ -30,6 +30,28 @@ export class MasterDataService {
     });
   }
 
+  listTeams(user: RequestUser) {
+    return this.prisma.team.findMany({
+      where: {
+        tenantId: user.tenantId,
+        isActive: true,
+      },
+      orderBy: {
+        name: 'asc',
+      },
+      select: {
+        id: true,
+        tenantId: true,
+        departmentId: true,
+        code: true,
+        name: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
   async listAssets(user: RequestUser, substationId?: string) {
     const assets = await this.prisma.asset.findMany({
       where: {

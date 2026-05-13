@@ -15,6 +15,17 @@ export interface UserDepartment {
   name: string;
 }
 
+export interface ManagedTeam {
+  id: string;
+  tenantId: string;
+  departmentId: string | null;
+  code: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ManagedUser {
   id: string;
   tenantId: string;

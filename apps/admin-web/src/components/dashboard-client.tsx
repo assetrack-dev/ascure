@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Archive,
   Bug,
+  Clock3,
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
@@ -21,8 +22,8 @@ import type { DashboardMetrics } from "@/types/dashboard";
 
 function DashboardLoading() {
   return (
-    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, index) => (
+    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
           className="h-36 animate-pulse rounded-xl border border-[var(--line)] bg-white shadow-[var(--shadow-soft)]"
@@ -80,6 +81,36 @@ function recentDefectSeverityClassName(severity: string | null | undefined) {
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
+function formatDate(date: string | null | undefined) {
+  if (!date) {
+    return "Not set";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return date;
+  }
+
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsedDate);
+}
+
+function formatSlaState(state: string | null | undefined) {
+  if (!state) {
+    return "Unknown";
+  }
+
+  return state
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"] }) {
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
@@ -97,6 +128,8 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
                 <th className="px-4 py-3">Defect</th>
                 <th className="px-4 py-3">Severity</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">SLA</th>
+                <th className="px-4 py-3">Due</th>
                 <th className="px-4 py-3">Created</th>
               </tr>
             </thead>
@@ -124,12 +157,22 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
                         {displayStatus}
                       </span>
                     </td>
+                    <td className="whitespace-nowrap px-4 py-4">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${
+                          defect.isOverdue
+                            ? "border-red-200 bg-red-50 text-red-700"
+                            : "border-slate-200 bg-slate-50 text-slate-600"
+                        }`}
+                      >
+                        {formatSlaState(defect.slaState)}
+                      </span>
+                    </td>
                     <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                    {new Intl.DateTimeFormat("en-MY", {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    }).format(new Date(defect.createdAt))}
+                      {formatDate(defect.dueDate)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-4 text-slate-600">
+                    {formatDate(defect.createdAt)}
                     </td>
                   </tr>
                 );
@@ -139,6 +182,56 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
         ) : (
           <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
             No recent defects returned by the API.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CriticalOverdueAlerts({
+  defects,
+}: {
+  defects: DashboardMetrics["criticalOverdueAlerts"];
+}) {
+  return (
+    <section className="rounded-xl border border-red-200 bg-red-50/50 p-5 shadow-[var(--shadow-card)]">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-base font-semibold text-red-900">Critical Overdue Alerts</h2>
+        <span className="text-sm font-semibold text-red-700">{defects.length} active</span>
+      </div>
+
+      <div className="mt-5 overflow-x-auto">
+        {defects.length > 0 ? (
+          <table className="min-w-full text-left text-sm">
+            <thead>
+              <tr className="border-y border-red-200 bg-white/70 text-xs font-semibold uppercase text-red-800">
+                <th className="px-4 py-3">Asset</th>
+                <th className="px-4 py-3">Defect</th>
+                <th className="px-4 py-3">Assignee</th>
+                <th className="px-4 py-3">Due</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-red-100">
+              {defects.map((defect) => (
+                <tr key={defect.id}>
+                  <td className="whitespace-nowrap px-4 py-4 font-semibold text-red-950">
+                    {defect.assetCode}
+                  </td>
+                  <td className="min-w-64 px-4 py-4 text-red-900">{defect.label}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-red-800">
+                    {defect.assignedTo || "Unassigned"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 font-semibold text-red-800">
+                    {formatDate(defect.dueDate)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="rounded-lg border border-dashed border-red-200 bg-white/70 px-4 py-8 text-center text-sm text-red-700">
+            No critical defects are overdue.
           </div>
         )}
       </div>
@@ -228,7 +321,7 @@ function DashboardContent() {
               </div>
             ) : metrics ? (
               <div className="space-y-6">
-                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCard
                     title="Total Assets"
                     value={metrics.totalAssets}
@@ -257,6 +350,20 @@ function DashboardContent() {
                     icon={ShieldAlert}
                     tone="danger"
                   />
+                  <MetricCard
+                    title="Overdue Defects"
+                    value={metrics.overdueDefects}
+                    detail="Open, in-progress, or monitoring defects past due."
+                    icon={Clock3}
+                    tone="danger"
+                  />
+                  <MetricCard
+                    title="Critical Overdue"
+                    value={metrics.criticalOverdueDefects}
+                    detail="Critical defects currently past due."
+                    icon={ShieldAlert}
+                    tone="danger"
+                  />
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
@@ -267,6 +374,24 @@ function DashboardContent() {
                     tone="rose"
                   />
                   <SimpleBarChart
+                    title="Defects by SLA State"
+                    data={metrics.defectsBySlaState}
+                    emptyLabel="SLA state counts are pending backend data."
+                    tone="amber"
+                  />
+                  <SimpleBarChart
+                    title="Defects by Assignee"
+                    data={metrics.defectsByAssignee}
+                    emptyLabel="No assignee counts are available yet."
+                    tone="teal"
+                  />
+                  <SimpleBarChart
+                    title="Defects by Team"
+                    data={metrics.defectsByTeam}
+                    emptyLabel="No assigned team counts are available yet."
+                    tone="teal"
+                  />
+                  <SimpleBarChart
                     title="Assets by Type"
                     data={metrics.assetsByType}
                     emptyLabel="No asset type counts are available yet."
@@ -274,6 +399,7 @@ function DashboardContent() {
                   />
                 </div>
 
+                <CriticalOverdueAlerts defects={metrics.criticalOverdueAlerts} />
                 <RecentDefects defects={metrics.recentDefects} />
               </div>
             ) : null}

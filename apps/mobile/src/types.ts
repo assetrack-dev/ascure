@@ -298,7 +298,7 @@ export type AssetInspectionHistoryItem = {
   images?: InspectionImage[];
 };
 
-export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
+export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'MONITORING' | 'RESOLVED' | 'CLOSED';
 
 export type DefectSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 

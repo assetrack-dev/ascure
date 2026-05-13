@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  AlertTriangle,
   CalendarDays,
   Camera,
   CheckCircle2,
@@ -20,8 +21,11 @@ import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   addDefectComment,
   fetchDefectDetail,
+  updateDefectAssignment,
+  updateDefectDueDate,
   updateDefectStatus,
 } from "@/lib/defects";
+import { fetchTeams, fetchUsers } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import {
   DEFECT_WORKFLOW_STATUSES,
@@ -32,6 +36,7 @@ import {
   type DefectTimelineEntry,
   type DefectWorkflowStatus,
 } from "@/types/defects";
+import type { ManagedTeam, ManagedUser } from "@/types/users";
 
 const statusOptions: Array<{ label: string; value: DefectWorkflowStatus }> = [
   { label: "Open", value: "OPEN" },
@@ -86,6 +91,54 @@ function formatDateTime(date: string | null | undefined) {
   }).format(parsedDate);
 }
 
+function formatDate(date: string | null | undefined) {
+  if (!date) {
+    return "Not set";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return date;
+  }
+
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsedDate);
+}
+
+function toDateInputValue(date: string | null | undefined) {
+  if (!date) {
+    return "";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
+}
+
+function formatSlaState(state: DefectDetail["slaState"]) {
+  if (!state || state === "UNKNOWN") {
+    return "Unknown";
+  }
+
+  return state
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatAssignee(defect: DefectDetail) {
+  return defect.assignedTo?.trim() || "Unassigned";
+}
+
 function formatNullable(value: string | null | undefined) {
   return value?.trim() || "Not recorded";
 }
@@ -134,6 +187,23 @@ function StatusBadge({ status }: { status: DefectStatus }) {
   );
 }
 
+function SlaBadge({ defect }: { defect: DefectDetail }) {
+  const className = defect.isOverdue
+    ? "border-red-200 bg-red-50 text-red-700"
+    : defect.slaState === "ON_TRACK"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : defect.slaState === "STOPPED"
+        ? "border-slate-200 bg-slate-50 text-slate-600"
+        : "border-amber-200 bg-amber-50 text-amber-700";
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {defect.isOverdue ? <AlertTriangle size={13} /> : null}
+      {formatSlaState(defect.slaState)}
+    </span>
+  );
+}
+
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div className={fieldClassName}>
@@ -176,6 +246,14 @@ function TimelineIcon({ entry }: { entry: DefectTimelineEntry }) {
     return <CheckCircle2 size={16} />;
   }
 
+  if (entry.type === "ASSIGNMENT_CHANGED") {
+    return <UserRound size={16} />;
+  }
+
+  if (entry.type === "DUE_DATE_CHANGED") {
+    return <CalendarDays size={16} />;
+  }
+
   if (entry.type === "COMMENT") {
     return <MessageSquare size={16} />;
   }
@@ -190,6 +268,14 @@ function timelineTitle(entry: DefectTimelineEntry) {
 
   if (entry.type === "COMMENT") {
     return "Comment";
+  }
+
+  if (entry.type === "ASSIGNMENT_CHANGED") {
+    return "Assignment updated";
+  }
+
+  if (entry.type === "DUE_DATE_CHANGED") {
+    return "Due date updated";
   }
 
   return "Created";
@@ -211,13 +297,20 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [defect, setDefect] = useState<DefectDetail | null>(null);
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [teams, setTeams] = useState<ManagedTeam[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<DefectWorkflowStatus>("OPEN");
+  const [selectedAssignedUserId, setSelectedAssignedUserId] = useState("");
+  const [selectedAssignedTeamId, setSelectedAssignedTeamId] = useState("");
+  const [selectedDueDate, setSelectedDueDate] = useState("");
   const [actionRemark, setActionRemark] = useState("");
   const [comment, setComment] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+  const [isSavingDueDate, setIsSavingDueDate] = useState(false);
   const [isAddingComment, setIsAddingComment] = useState(false);
 
   const handleLogout = useCallback(() => {
@@ -229,6 +322,9 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     setDefect(nextDefect);
     setActionRemark(nextDefect.actionRemark ?? "");
     setSelectedStatus(isWorkflowStatus(nextDefect.status) ? nextDefect.status : "OPEN");
+    setSelectedAssignedUserId(nextDefect.assignedUserId ?? "");
+    setSelectedAssignedTeamId(nextDefect.assignedTeamId ?? "");
+    setSelectedDueDate(toDateInputValue(nextDefect.dueDate));
   }, []);
 
   const loadDefect = useCallback(
@@ -259,17 +355,51 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     [applyDefect, defectId, handleLogout],
   );
 
+  const loadAssignmentOptions = useCallback(
+    async (token: string) => {
+      try {
+        const [nextUsers, nextTeams] = await Promise.all([
+          fetchUsers(token),
+          fetchTeams(token),
+        ]);
+
+        setUsers(nextUsers.filter((managedUser) => managedUser.isActive));
+        setTeams(nextTeams.filter((team) => team.isActive));
+      } catch (optionsError) {
+        if (optionsError instanceof ApiError && optionsError.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        setError(
+          optionsError instanceof Error
+            ? optionsError.message
+            : "Unable to load assignment options.",
+        );
+      }
+    },
+    [handleLogout],
+  );
+
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
 
     if (storedSession?.token) {
       void loadDefect(storedSession.token);
+
+      if (storedSession.user?.role === "ADMIN") {
+        void loadAssignmentOptions(storedSession.token);
+      }
     }
-  }, [loadDefect]);
+  }, [loadAssignmentOptions, loadDefect]);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
   const canSaveStatus = Boolean(session?.token && defect && !isReadOnly && !isSavingStatus);
+  const canSaveAssignment = Boolean(
+    session?.token && defect && !isReadOnly && !isSavingAssignment,
+  );
+  const canSaveDueDate = Boolean(session?.token && defect && !isReadOnly && !isSavingDueDate);
   const canAddComment = Boolean(
     session?.token &&
       defect &&
@@ -316,6 +446,71 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       setError(statusError instanceof Error ? statusError.message : "Unable to update status.");
     } finally {
       setIsSavingStatus(false);
+    }
+  }
+
+  async function handleAssignmentUpdate() {
+    if (!session?.token || !defect || isReadOnly) {
+      return;
+    }
+
+    setIsSavingAssignment(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const nextDefect = await updateDefectAssignment(session.token, defect.id, {
+        assignedUserId: selectedAssignedUserId || null,
+        assignedTeamId: selectedAssignedTeamId || null,
+      });
+
+      applyDefect(nextDefect);
+      setNotice("Assignment updated.");
+    } catch (assignmentError) {
+      if (assignmentError instanceof ApiError && assignmentError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(
+        assignmentError instanceof Error
+          ? assignmentError.message
+          : "Unable to update assignment.",
+      );
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  }
+
+  async function handleDueDateUpdate() {
+    if (!session?.token || !defect || isReadOnly) {
+      return;
+    }
+
+    setIsSavingDueDate(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const nextDefect = await updateDefectDueDate(
+        session.token,
+        defect.id,
+        selectedDueDate || null,
+      );
+
+      applyDefect(nextDefect);
+      setNotice("Due date updated.");
+    } catch (dueDateError) {
+      if (dueDateError instanceof ApiError && dueDateError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(
+        dueDateError instanceof Error ? dueDateError.message : "Unable to update due date.",
+      );
+    } finally {
+      setIsSavingDueDate(false);
     }
   }
 
@@ -372,6 +567,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                 </span>
                 {defect ? <SeverityBadge severity={defect.severity} /> : null}
                 {defect ? <StatusBadge status={defect.status} /> : null}
+                {defect ? <SlaBadge defect={defect} /> : null}
               </div>
             </div>
 
@@ -426,6 +622,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                     <div className="flex flex-wrap gap-2">
                       <SeverityBadge severity={defect.severity} />
                       <StatusBadge status={defect.status} />
+                      <SlaBadge defect={defect} />
                     </div>
                   </div>
 
@@ -443,6 +640,9 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       label="Technician"
                       value={formatNullable(defect.submittedBy?.name ?? defect.submittedBy?.email)}
                     />
+                    <DetailField label="Assigned To" value={formatAssignee(defect)} />
+                    <DetailField label="Due Date" value={formatDate(defect.dueDate)} />
+                    <DetailField label="SLA State" value={formatSlaState(defect.slaState)} />
                     <DetailField label="Latest Update" value={formatDateTime(defect.updatedAt)} />
                   </dl>
                 </section>
@@ -568,6 +768,94 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                   </div>
 
                   <aside className="space-y-6">
+                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                      <h2 className="text-base font-semibold text-[var(--foreground)]">
+                        Assignment & SLA
+                      </h2>
+                      <div className="mt-4 space-y-4">
+                        <label className="block">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            Assigned User
+                          </span>
+                          <select
+                            value={selectedAssignedUserId}
+                            onChange={(event) => setSelectedAssignedUserId(event.target.value)}
+                            disabled={isReadOnly || isSavingAssignment}
+                            className={`mt-2 ${controlClassName}`}
+                          >
+                            <option value="">Unassigned</option>
+                            {users.map((managedUser) => (
+                              <option key={managedUser.id} value={managedUser.id}>
+                                {managedUser.name || managedUser.email}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {teams.length > 0 ? (
+                          <label className="block">
+                            <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                              Assigned Team
+                            </span>
+                            <select
+                              value={selectedAssignedTeamId}
+                              onChange={(event) => setSelectedAssignedTeamId(event.target.value)}
+                              disabled={isReadOnly || isSavingAssignment}
+                              className={`mt-2 ${controlClassName}`}
+                            >
+                              <option value="">Unassigned</option>
+                              {teams.map((team) => (
+                                <option key={team.id} value={team.id}>
+                                  {team.name || team.code}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
+
+                        <button
+                          type="button"
+                          onClick={handleAssignmentUpdate}
+                          disabled={!canSaveAssignment}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          {isSavingAssignment ? (
+                            <RefreshCw size={16} className="animate-spin" />
+                          ) : (
+                            <UserRound size={16} />
+                          )}
+                          Update Assignment
+                        </button>
+
+                        <label className="block border-t border-slate-100 pt-4">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            Due Date
+                          </span>
+                          <input
+                            type="date"
+                            value={selectedDueDate}
+                            onChange={(event) => setSelectedDueDate(event.target.value)}
+                            disabled={isReadOnly || isSavingDueDate}
+                            className={`mt-2 ${controlClassName}`}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={handleDueDateUpdate}
+                          disabled={!canSaveDueDate}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          {isSavingDueDate ? (
+                            <RefreshCw size={16} className="animate-spin" />
+                          ) : (
+                            <CalendarDays size={16} />
+                          )}
+                          Update Due Date
+                        </button>
+                      </div>
+                    </section>
+
                     <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                       <h2 className="text-base font-semibold text-[var(--foreground)]">
                         Status Update

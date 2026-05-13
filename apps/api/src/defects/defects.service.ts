@@ -5,7 +5,17 @@ import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
+import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
+import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
+
+const ACTIVE_SLA_STATUSES = new Set<DefectStatus>([
+  DefectStatus.OPEN,
+  DefectStatus.IN_PROGRESS,
+  DefectStatus.MONITORING,
+]);
+
+type DefectSlaState = 'OVERDUE' | 'ON_TRACK' | 'NO_DUE_DATE' | 'STOPPED';
 
 @Injectable()
 export class DefectsService {
@@ -28,6 +38,21 @@ export class DefectsService {
         createdAt: 'desc',
       },
       include: {
+        assignedUser: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+          },
+        },
+        assignedTeam: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
         inspectionItemResult: {
           select: {
             id: true,
@@ -102,12 +127,17 @@ export class DefectsService {
     const data: {
       status: DefectStatus;
       closedAt: Date | null;
+      resolvedAt: Date | null;
       actionRemark?: string | null;
     } = {
       status: dto.status,
       closedAt:
         dto.status === DefectStatus.CLOSED
           ? defect.closedAt ?? now
+          : null,
+      resolvedAt:
+        dto.status === DefectStatus.RESOLVED || dto.status === DefectStatus.CLOSED
+          ? defect.resolvedAt ?? now
           : null,
     };
 
@@ -141,6 +171,141 @@ export class DefectsService {
           fromStatus: defect.status === dto.status ? null : defect.status,
           toStatus: defect.status === dto.status ? null : dto.status,
           comment: actionRemark ?? null,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async updateAssignment(
+    user: RequestUser,
+    defectId: string,
+    dto: UpdateDefectAssignmentDto,
+  ) {
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const hasAssignedUserId = Object.prototype.hasOwnProperty.call(
+      dto,
+      'assignedUserId',
+    );
+    const hasAssignedTeamId = Object.prototype.hasOwnProperty.call(
+      dto,
+      'assignedTeamId',
+    );
+
+    if (!hasAssignedUserId && !hasAssignedTeamId) {
+      throw new BadRequestException(
+        'At least one assignment field must be provided.',
+      );
+    }
+
+    const nextAssignedUserId = hasAssignedUserId
+      ? dto.assignedUserId ?? null
+      : defect.assignedUserId;
+    const nextAssignedTeamId = hasAssignedTeamId
+      ? dto.assignedTeamId ?? null
+      : defect.assignedTeamId;
+
+    const [updatedAssignedUser, updatedAssignedTeam] = await Promise.all([
+      hasAssignedUserId && nextAssignedUserId
+        ? this.findAssignableUser(user.tenantId, nextAssignedUserId)
+        : Promise.resolve(null),
+      hasAssignedTeamId && nextAssignedTeamId
+        ? this.findAssignableTeam(user.tenantId, nextAssignedTeamId)
+        : Promise.resolve(null),
+    ]);
+    const nextAssignedUser = hasAssignedUserId
+      ? updatedAssignedUser
+      : defect.assignedUser;
+    const nextAssignedTeam = hasAssignedTeamId
+      ? updatedAssignedTeam
+      : defect.assignedTeam;
+
+    const userChanged = defect.assignedUserId !== nextAssignedUserId;
+    const teamChanged = defect.assignedTeamId !== nextAssignedTeamId;
+
+    if (!userChanged && !teamChanged) {
+      return this.getDetail(user, defect.id);
+    }
+
+    const now = new Date();
+    const previousAssignee = this.formatAssignmentLabel(
+      defect.assignedUser,
+      defect.assignedTeam,
+    );
+    const nextAssignee = this.formatAssignmentLabel(
+      nextAssignedUserId ? nextAssignedUser : null,
+      nextAssignedTeamId ? nextAssignedTeam : null,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          ...(hasAssignedUserId ? { assignedUserId: nextAssignedUserId } : {}),
+          ...(hasAssignedTeamId ? { assignedTeamId: nextAssignedTeamId } : {}),
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.ASSIGNMENT_CHANGED,
+          comment: `Assignment changed from ${previousAssignee} to ${nextAssignee}.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async updateDueDate(
+    user: RequestUser,
+    defectId: string,
+    dto: UpdateDefectDueDateDto,
+  ) {
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const hasDueDate = Object.prototype.hasOwnProperty.call(dto, 'dueDate');
+
+    if (!hasDueDate) {
+      throw new BadRequestException('A due date field must be provided.');
+    }
+
+    const nextDueDate = this.parseDueDate(dto.dueDate);
+    const previousDueDateTime = defect.dueDate?.getTime() ?? null;
+    const nextDueDateTime = nextDueDate?.getTime() ?? null;
+
+    if (previousDueDateTime === nextDueDateTime) {
+      return this.getDetail(user, defect.id);
+    }
+
+    const now = new Date();
+    const previousDueDate = this.formatDueDate(defect.dueDate);
+    const nextDueDateLabel = this.formatDueDate(nextDueDate);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          dueDate: nextDueDate,
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.DUE_DATE_CHANGED,
+          comment: `Due date changed from ${previousDueDate} to ${nextDueDateLabel}.`,
           createdByUserId: user.id,
           createdAt: now,
         },
@@ -300,6 +465,21 @@ export class DefectsService {
 
   private defectDetailInclude() {
     return {
+      assignedUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+      assignedTeam: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
       timelineEntries: {
         orderBy: {
           createdAt: 'asc' as const,
@@ -421,10 +601,25 @@ export class DefectsService {
 
   private serializeDefectListItem(defect: {
     id: string;
+    assignedUserId: string | null;
+    assignedTeamId: string | null;
     status: DefectStatus;
     severity: DefectSeverity;
     actionRemark: string | null;
+    dueDate: Date | null;
+    resolvedAt: Date | null;
     closedAt: Date | null;
+    assignedUser: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+    } | null;
+    assignedTeam: {
+      id: string;
+      code: string;
+      name: string;
+    } | null;
     inspectionItemResult: {
       id: string;
       inspectionId: string;
@@ -452,10 +647,16 @@ export class DefectsService {
   }) {
     const item = defect.inspectionItemResult;
     const inspection = item.inspection;
+    const slaState = this.calculateSlaState(defect.status, defect.dueDate);
 
     return {
       id: defect.id,
       inspectionItemResultId: item.id,
+      assignedUserId: defect.assignedUserId,
+      assignedTeamId: defect.assignedTeamId,
+      assignedUser: defect.assignedUser,
+      assignedTeam: defect.assignedTeam,
+      assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
       inspectionId: item.inspectionId,
       assetId: inspection.assetId,
       assetCode: inspection.asset.assetCode,
@@ -476,7 +677,11 @@ export class DefectsService {
       status: defect.status,
       severity: defect.severity,
       actionRemark: defect.actionRemark,
+      dueDate: defect.dueDate?.toISOString() ?? null,
+      resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      isOverdue: slaState === 'OVERDUE',
+      slaState,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
       createdAt: item.createdAt.toISOString(),
     };
@@ -489,6 +694,7 @@ export class DefectsService {
 
     const item = defect.inspectionItemResult;
     const inspection = item.inspection;
+    const slaState = this.calculateSlaState(defect.status, defect.dueDate);
 
     return {
       id: defect.id,
@@ -496,8 +702,17 @@ export class DefectsService {
       checklistItemId: item.checklistItemId,
       status: defect.status,
       severity: defect.severity,
+      assignedUserId: defect.assignedUserId,
+      assignedTeamId: defect.assignedTeamId,
+      assignedUser: defect.assignedUser,
+      assignedTeam: defect.assignedTeam,
+      assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
       actionRemark: defect.actionRemark,
+      dueDate: defect.dueDate?.toISOString() ?? null,
+      resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      isOverdue: slaState === 'OVERDUE',
+      slaState,
       label: item.label,
       result: item.result,
       checklistRemark: item.remark,
@@ -604,6 +819,107 @@ export class DefectsService {
 
       return leftDate - rightDate;
     });
+  }
+
+  private async findAssignableUser(tenantId: string, userId: string) {
+    const assignedUser = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        tenantId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+      },
+    });
+
+    if (!assignedUser) {
+      throw new NotFoundException('Assigned user not found.');
+    }
+
+    return assignedUser;
+  }
+
+  private async findAssignableTeam(tenantId: string, teamId: string) {
+    const assignedTeam = await this.prisma.team.findFirst({
+      where: {
+        id: teamId,
+        tenantId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+      },
+    });
+
+    if (!assignedTeam) {
+      throw new NotFoundException('Assigned team not found.');
+    }
+
+    return assignedTeam;
+  }
+
+  private parseDueDate(value: string | null | undefined) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+      return null;
+    }
+
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)
+      ? new Date(`${trimmedValue}T23:59:59.999Z`)
+      : new Date(trimmedValue);
+
+    if (Number.isNaN(dueDate.getTime())) {
+      throw new BadRequestException('Due date must be a valid date.');
+    }
+
+    return dueDate;
+  }
+
+  private calculateSlaState(
+    status: DefectStatus,
+    dueDate: Date | null,
+    now = new Date(),
+  ): DefectSlaState {
+    if (status === DefectStatus.CLOSED || status === DefectStatus.RESOLVED) {
+      return 'STOPPED';
+    }
+
+    if (!dueDate) {
+      return 'NO_DUE_DATE';
+    }
+
+    if (ACTIVE_SLA_STATUSES.has(status) && dueDate.getTime() < now.getTime()) {
+      return 'OVERDUE';
+    }
+
+    return 'ON_TRACK';
+  }
+
+  private formatAssignmentLabel(
+    assignedUser: { name: string | null; email?: string | null } | null,
+    assignedTeam: { name: string | null; code?: string | null } | null,
+  ) {
+    const labels = [
+      assignedUser?.name?.trim() || assignedUser?.email?.trim() || null,
+      assignedTeam?.name?.trim() || assignedTeam?.code?.trim() || null,
+    ].filter((label): label is string => Boolean(label));
+
+    return labels.length > 0 ? labels.join(' / ') : 'Unassigned';
+  }
+
+  private formatDueDate(dueDate: Date | null) {
+    return dueDate ? dueDate.toISOString().slice(0, 10) : 'No due date';
   }
 
   private inspectionAccessScope(user: RequestUser) {

@@ -1,5 +1,10 @@
 import { apiRequest } from "@/lib/api";
-import type { CreateUserPayload, ManagedUser, UpdateUserPayload } from "@/types/users";
+import type {
+  CreateUserPayload,
+  ManagedTeam,
+  ManagedUser,
+  UpdateUserPayload,
+} from "@/types/users";
 
 function normalizeDepartmentId(departmentId: string | null | undefined) {
   if (departmentId === undefined) {
@@ -17,6 +22,10 @@ function normalizeDepartmentId(departmentId: string | null | undefined) {
 
 export function fetchUsers(token: string) {
   return apiRequest<ManagedUser[]>("/users", { token });
+}
+
+export function fetchTeams(token: string) {
+  return apiRequest<ManagedTeam[]>("/teams", { token });
 }
 
 export function createUser(token: string, payload: CreateUserPayload) {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
@@ -25,10 +26,19 @@ import type {
   DefectWorkflowStatus,
 } from "@/types/defects";
 
-type SortKey = "assetCode" | "defectType" | "severity" | "status" | "date" | "location";
+type SortKey =
+  | "assetCode"
+  | "defectType"
+  | "severity"
+  | "status"
+  | "assignedTo"
+  | "date"
+  | "dueDate"
+  | "location";
 type SortDirection = "asc" | "desc";
 type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
+type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -120,6 +130,30 @@ function formatDate(date: string | null) {
   }).format(parsedDate);
 }
 
+function formatDueDate(date: string | null | undefined) {
+  if (!date) {
+    return "No due date";
+  }
+
+  return formatDate(date);
+}
+
+function formatSlaState(state: DefectListItem["slaState"]) {
+  if (!state || state === "UNKNOWN") {
+    return "Unknown";
+  }
+
+  return state
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatAssignee(defect: DefectListItem) {
+  return defect.assignedTo?.trim() || "Unassigned";
+}
+
 function toDateInputValue(date: string | null) {
   if (!date) {
     return "";
@@ -156,8 +190,17 @@ function getSortValue(defect: DefectListItem, sortKey: SortKey) {
     return Number.isFinite(parsedDate) ? parsedDate : 0;
   }
 
+  if (sortKey === "dueDate") {
+    const parsedDate = defect.dueDate ? new Date(defect.dueDate).getTime() : 0;
+    return Number.isFinite(parsedDate) ? parsedDate : 0;
+  }
+
   if (sortKey === "location") {
     return normalizeSearchText(defect.location);
+  }
+
+  if (sortKey === "assignedTo") {
+    return normalizeSearchText(formatAssignee(defect));
   }
 
   return normalizeSearchText(defect[sortKey]);
@@ -214,6 +257,23 @@ function StatusBadge({ status }: { status: DefectStatus }) {
   );
 }
 
+function SlaBadge({ defect }: { defect: DefectListItem }) {
+  const className = defect.isOverdue
+    ? "border-red-200 bg-red-50 text-red-700"
+    : defect.slaState === "ON_TRACK"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : defect.slaState === "STOPPED"
+        ? "border-slate-200 bg-slate-50 text-slate-600"
+        : "border-amber-200 bg-amber-50 text-amber-700";
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {defect.isOverdue ? <AlertTriangle size={13} /> : null}
+      {formatSlaState(defect.slaState)}
+    </span>
+  );
+}
+
 function SortButton({
   label,
   sortKey,
@@ -251,6 +311,8 @@ function DefectsContent() {
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [assignedUserFilter, setAssignedUserFilter] = useState<AssignedUserFilter>("ALL");
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -296,7 +358,38 @@ function DefectsContent() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, severityFilter, statusFilter, startDate, endDate, pageSize]);
+  }, [
+    search,
+    severityFilter,
+    statusFilter,
+    assignedUserFilter,
+    overdueOnly,
+    startDate,
+    endDate,
+    pageSize,
+  ]);
+
+  const assignedUserOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    defects.forEach((defect) => {
+      if (!defect.assignedUserId) {
+        return;
+      }
+
+      options.set(
+        defect.assignedUserId,
+        defect.assignedUser?.name?.trim() ||
+          defect.assignedUser?.email?.trim() ||
+          defect.assignedTo?.trim() ||
+          "Assigned user",
+      );
+    });
+
+    return Array.from(options.entries()).sort((left, right) =>
+      left[1].localeCompare(right[1], "en", { sensitivity: "base" }),
+    );
+  }, [defects]);
 
   const filteredDefects = useMemo(() => {
     const normalizedSearch = normalizeSearchText(search);
@@ -306,6 +399,12 @@ function DefectsContent() {
       const matchesSeverity =
         severityFilter === "ALL" || defect.severity === severityFilter;
       const matchesStatus = statusFilter === "ALL" || defect.status === statusFilter;
+      const matchesAssignedUser =
+        assignedUserFilter === "ALL" ||
+        (assignedUserFilter === "UNASSIGNED"
+          ? !defect.assignedUserId
+          : defect.assignedUserId === assignedUserFilter);
+      const matchesOverdue = !overdueOnly || Boolean(defect.isOverdue);
       const matchesStartDate = !startDate || (defectDate && defectDate >= startDate);
       const matchesEndDate = !endDate || (defectDate && defectDate <= endDate);
       const matchesSearch =
@@ -317,6 +416,9 @@ function DefectsContent() {
           formatSeverity(defect.severity),
           formatStatus(defect.status),
           formatDate(defect.date),
+          formatDueDate(defect.dueDate),
+          formatAssignee(defect),
+          formatSlaState(defect.slaState),
           defect.location,
           defect.remark,
           defect.actionRemark,
@@ -325,12 +427,23 @@ function DefectsContent() {
       return (
         matchesSeverity &&
         matchesStatus &&
+        matchesAssignedUser &&
+        matchesOverdue &&
         matchesStartDate &&
         matchesEndDate &&
         matchesSearch
       );
     });
-  }, [defects, endDate, search, severityFilter, startDate, statusFilter]);
+  }, [
+    assignedUserFilter,
+    defects,
+    endDate,
+    overdueOnly,
+    search,
+    severityFilter,
+    startDate,
+    statusFilter,
+  ]);
 
   const sortedDefects = useMemo(() => {
     return [...filteredDefects].sort((left, right) => {
@@ -374,6 +487,8 @@ function DefectsContent() {
     setSearch("");
     setSeverityFilter("ALL");
     setStatusFilter("ALL");
+    setAssignedUserFilter("ALL");
+    setOverdueOnly(false);
     setStartDate("");
     setEndDate("");
   }
@@ -402,6 +517,10 @@ function DefectsContent() {
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   {defects.length} total
                 </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 shadow-[var(--shadow-soft)]">
+                  <AlertTriangle size={13} />
+                  {defects.filter((defect) => defect.isOverdue).length} overdue
+                </span>
               </div>
             </div>
 
@@ -426,7 +545,7 @@ function DefectsContent() {
             ) : (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_repeat(4,minmax(150px,auto))_auto]">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(6,minmax(135px,auto))_auto]">
                     <label className="relative block">
                       <span className="sr-only">Search defects</span>
                       <Search
@@ -475,6 +594,25 @@ function DefectsContent() {
                     </label>
 
                     <label className="block">
+                      <span className="sr-only">Assigned user</span>
+                      <select
+                        value={assignedUserFilter}
+                        onChange={(event) =>
+                          setAssignedUserFilter(event.target.value as AssignedUserFilter)
+                        }
+                        className={filterControlClassName}
+                      >
+                        <option value="ALL">All assignees</option>
+                        <option value="UNASSIGNED">Unassigned</option>
+                        {assignedUserOptions.map(([id, label]) => (
+                          <option key={id} value={id}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
                       <span className="sr-only">Start date</span>
                       <input
                         type="date"
@@ -492,6 +630,16 @@ function DefectsContent() {
                         onChange={(event) => setEndDate(event.target.value)}
                         className={filterControlClassName}
                       />
+                    </label>
+
+                    <label className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                      <input
+                        type="checkbox"
+                        checked={overdueOnly}
+                        onChange={(event) => setOverdueOnly(event.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                      />
+                      Overdue only
                     </label>
 
                     <button
@@ -547,8 +695,26 @@ function DefectsContent() {
                         </th>
                         <th className="whitespace-nowrap px-5 py-3.5">
                           <SortButton
+                            label="Assignee"
+                            sortKey="assignedTo"
+                            activeSortKey={sortKey}
+                            direction={sortDirection}
+                            onSort={handleSort}
+                          />
+                        </th>
+                        <th className="whitespace-nowrap px-5 py-3.5">
+                          <SortButton
                             label="Date"
                             sortKey="date"
+                            activeSortKey={sortKey}
+                            direction={sortDirection}
+                            onSort={handleSort}
+                          />
+                        </th>
+                        <th className="whitespace-nowrap px-5 py-3.5">
+                          <SortButton
+                            label="Due Date"
+                            sortKey="dueDate"
                             activeSortKey={sortKey}
                             direction={sortDirection}
                             onSort={handleSort}
@@ -598,7 +764,18 @@ function DefectsContent() {
                             <StatusBadge status={defect.status} />
                           </td>
                           <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                            {formatAssignee(defect)}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                             {formatDate(defect.date)}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4">
+                            <div className="flex flex-col items-start gap-2">
+                              <span className="text-sm text-slate-600">
+                                {formatDueDate(defect.dueDate)}
+                              </span>
+                              <SlaBadge defect={defect} />
+                            </div>
                           </td>
                           <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                             {defect.location ?? "Not recorded"}
