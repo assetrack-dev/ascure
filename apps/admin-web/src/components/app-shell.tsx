@@ -7,6 +7,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   LogOut,
+  MapPinned,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -32,6 +33,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/assets",
       label: "Assets",
       icon: Archive,
+    },
+    {
+      href: "/site-visits",
+      label: "Site Visits",
+      icon: MapPinned,
     },
     {
       href: "/defects",

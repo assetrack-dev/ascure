@@ -1,7 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { DefectSeverity, DefectStatus, Prisma } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import {
+  DefectSeverity,
+  DefectStatus,
+  Prisma,
+  SiteVisitStatus,
+  SiteVisitType,
+  SiteVisitValidationStatus,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import {
+  calculateOperationalHealthStatus,
+  parseOperationalOverdueThresholdHours,
+} from '../common/operational-health';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ACTIVE_SLA_STATUSES = [
@@ -14,13 +26,20 @@ type DefectSlaState = 'OVERDUE' | 'ON_TRACK' | 'NO_DUE_DATE' | 'STOPPED';
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async getDashboard(user: RequestUser) {
     await this.ensureDefectsForAccessibleItems(user);
 
     const defectWhere = this.accessibleDefectWhere(user);
     const now = new Date();
+    const overdueThresholdHours = this.getOverdueThresholdHours();
+    const activeVisitCutoff = new Date(
+      now.getTime() - overdueThresholdHours * 60 * 60 * 1000,
+    );
     const overdueDefectWhere: Prisma.DefectWhereInput = {
       ...defectWhere,
       status: {
@@ -47,6 +66,17 @@ export class DashboardService {
       defectTeamCounts,
       defectsForSlaState,
       criticalOverdueItems,
+      siteVisitStatusCounts,
+      siteVisitValidationCounts,
+      siteVisitTypeCounts,
+      activeSiteVisitCount,
+      completedSiteVisitCount,
+      overdueSiteVisitCount,
+      activeFieldTeamCounts,
+      activeFieldTeams,
+      siteVisitsForHealth,
+      latestSiteVisitActivity,
+      activeMappedVisitCount,
     ] = await Promise.all([
       this.prisma.asset.count({
         where: this.accessibleAssetWhere(user),
@@ -185,6 +215,104 @@ export class DashboardService {
           },
         },
       }),
+      this.prisma.siteVisit.groupBy({
+        by: ['status'],
+        where: this.accessibleSiteVisitWhere(user),
+        _count: {
+          _all: true,
+        },
+      }),
+      this.prisma.siteVisit.groupBy({
+        by: ['validationStatus'],
+        where: this.accessibleSiteVisitWhere(user),
+        _count: {
+          _all: true,
+        },
+      }),
+      this.prisma.siteVisit.groupBy({
+        by: ['visitType'],
+        where: this.accessibleSiteVisitWhere(user),
+        _count: {
+          _all: true,
+        },
+      }),
+      this.prisma.siteVisit.count({
+        where: {
+          ...this.accessibleSiteVisitWhere(user),
+          status: {
+            in: this.activeSiteVisitStatuses(),
+          },
+        },
+      }),
+      this.prisma.siteVisit.count({
+        where: {
+          ...this.accessibleSiteVisitWhere(user),
+          status: SiteVisitStatus.COMPLETED,
+        },
+      }),
+      this.prisma.siteVisit.count({
+        where: {
+          ...this.accessibleSiteVisitWhere(user),
+          status: {
+            in: this.activeSiteVisitStatuses(),
+          },
+          startedAt: {
+            lt: activeVisitCutoff,
+          },
+        },
+      }),
+      this.prisma.siteVisit.groupBy({
+        by: ['teamId'],
+        where: {
+          ...this.accessibleSiteVisitWhere(user),
+          status: {
+            in: this.activeSiteVisitStatuses(),
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+      this.prisma.team.findMany({
+        where: {
+          tenantId: user.tenantId,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      }),
+      this.prisma.siteVisit.findMany({
+        where: this.accessibleSiteVisitWhere(user),
+        select: {
+          status: true,
+          validationStatus: true,
+          startedAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.siteVisit.aggregate({
+        where: this.accessibleSiteVisitWhere(user),
+        _max: {
+          updatedAt: true,
+        },
+      }),
+      this.prisma.siteVisit.count({
+        where: {
+          ...this.accessibleSiteVisitWhere(user),
+          status: {
+            in: this.activeSiteVisitStatuses(),
+          },
+          checkInLatitude: {
+            not: null,
+          },
+          checkInLongitude: {
+            not: null,
+          },
+        },
+      }),
     ]);
 
     const [assignedUsers, assignedTeams] = await Promise.all([
@@ -288,6 +416,72 @@ export class DashboardService {
       label: this.formatSlaState(slaState),
       value: slaCounts.get(slaState) ?? 0,
     }));
+    const visitsByStatus = this.siteVisitStatusLabels().map((status) => ({
+      label: this.formatEnumLabel(status),
+      value:
+        siteVisitStatusCounts.find((entry) => entry.status === status)?._count._all ??
+        0,
+    }));
+    const visitsByValidationStatus = this.siteVisitValidationLabels().map(
+      (validationStatus) => ({
+        label: this.formatEnumLabel(validationStatus),
+        value:
+          siteVisitValidationCounts.find(
+            (entry) => entry.validationStatus === validationStatus,
+          )?._count._all ?? 0,
+      }),
+    );
+    const visitsByType = this.siteVisitTypeLabels().map((visitType) => ({
+      label: this.formatEnumLabel(visitType),
+      value:
+        siteVisitTypeCounts.find((entry) => entry.visitType === visitType)?._count
+          ._all ?? 0,
+    }));
+    const fieldTeamsById = new Map(
+      activeFieldTeams.map((team) => [team.id, team.name || team.code]),
+    );
+    const activeVisitsByTeam = activeFieldTeamCounts
+      .map((entry) => ({
+        label: fieldTeamsById.get(entry.teamId) ?? 'Unknown team',
+        value: entry._count._all,
+      }))
+      .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label));
+    const activeFieldTeamCount = activeFieldTeamCounts.length;
+    const totalSiteVisits = siteVisitStatusCounts.reduce(
+      (total, entry) => total + entry._count._all,
+      0,
+    );
+    const cancelledSiteVisits =
+      siteVisitStatusCounts.find((entry) => entry.status === SiteVisitStatus.CANCELLED)
+        ?._count._all ?? 0;
+    const completionDenominator = Math.max(totalSiteVisits - cancelledSiteVisits, 0);
+    const completionRate =
+      completionDenominator === 0
+        ? 0
+        : Math.round((completedSiteVisitCount / completionDenominator) * 100);
+    const healthCounts = siteVisitsForHealth.reduce(
+      (counts, siteVisit) => {
+        const healthStatus = calculateOperationalHealthStatus({
+          status: siteVisit.status,
+          validationStatus: siteVisit.validationStatus,
+          startedAt: siteVisit.startedAt,
+          lastActivityAt: siteVisit.updatedAt,
+          now,
+          overdueThresholdHours,
+        });
+
+        counts.set(healthStatus, (counts.get(healthStatus) ?? 0) + 1);
+
+        return counts;
+      },
+      new Map<string, number>(),
+    );
+    const visitsByOperationalHealth = ['HEALTHY', 'WARNING', 'CRITICAL'].map(
+      (status) => ({
+        label: this.formatEnumLabel(status),
+        value: healthCounts.get(status) ?? 0,
+      }),
+    );
 
     return {
       totalAssets,
@@ -305,6 +499,21 @@ export class DashboardService {
       defectsByAssignee,
       defectsByTeam,
       defectsBySlaState,
+      activeVisits: activeSiteVisitCount,
+      completedVisits: completedSiteVisitCount,
+      overdueVisits: overdueSiteVisitCount,
+      completionRate,
+      activeFieldTeams: activeFieldTeamCount,
+      operationalOverdueThresholdHours: overdueThresholdHours,
+      visitsByStatus,
+      visitsByValidationStatus,
+      visitsByType,
+      activeVisitsByTeam,
+      visitsByOperationalHealth,
+      activeMappedVisits: activeMappedVisitCount,
+      latestVisitActivityAt:
+        latestSiteVisitActivity._max.updatedAt?.toISOString() ?? null,
+      operationalLastRefreshedAt: now.toISOString(),
       criticalOverdueAlerts: criticalOverdueItems.map((defect) => ({
         id: defect.id,
         assetCode: defect.inspectionItemResult.inspection.asset.assetCode,
@@ -443,6 +652,13 @@ export class DashboardService {
     };
   }
 
+  private accessibleSiteVisitWhere(user: RequestUser): Prisma.SiteVisitWhereInput {
+    return {
+      tenantId: user.tenantId,
+      ...this.siteVisitAccessScope(user),
+    };
+  }
+
   private inspectionAccessScope(user: RequestUser): Prisma.InspectionWhereInput {
     if (user.role === 'ADMIN') {
       return {};
@@ -460,5 +676,73 @@ export class DashboardService {
         },
       },
     };
+  }
+
+  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
+    if (user.role === 'ADMIN') {
+      return {};
+    }
+
+    return {
+      team: {
+        members: {
+          some: {
+            userId: user.id,
+            isActive: true,
+          },
+        },
+      },
+    };
+  }
+
+  private activeSiteVisitStatuses() {
+    return [
+      SiteVisitStatus.ACTIVE,
+      SiteVisitStatus.OPEN,
+      SiteVisitStatus.IN_PROGRESS,
+    ];
+  }
+
+  private siteVisitStatusLabels() {
+    return [
+      SiteVisitStatus.ACTIVE,
+      SiteVisitStatus.OPEN,
+      SiteVisitStatus.IN_PROGRESS,
+      SiteVisitStatus.COMPLETED,
+      SiteVisitStatus.CANCELLED,
+    ];
+  }
+
+  private siteVisitValidationLabels() {
+    return [
+      SiteVisitValidationStatus.PENDING,
+      SiteVisitValidationStatus.VALIDATED,
+      SiteVisitValidationStatus.WARNING,
+      SiteVisitValidationStatus.FAILED,
+    ];
+  }
+
+  private siteVisitTypeLabels() {
+    return [
+      SiteVisitType.DISCOVERY,
+      SiteVisitType.REINSPECTION,
+      SiteVisitType.SPECIAL,
+      SiteVisitType.AUDIT,
+    ];
+  }
+
+  private formatEnumLabel(value: string) {
+    return value
+      .toLowerCase()
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  private getOverdueThresholdHours() {
+    return parseOperationalOverdueThresholdHours(
+      this.configService.get<string>('OPERATIONAL_VISIT_OVERDUE_HOURS') ??
+        this.configService.get<string>('SITE_VISIT_OVERDUE_HOURS'),
+    );
   }
 }

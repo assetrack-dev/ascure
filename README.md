@@ -47,6 +47,7 @@ Copy `.env.example` to `.env` and update values as needed.
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ascure?schema=public"
 JWT_SECRET="change-me-for-local-development"
 PORT=3000
+OPERATIONAL_VISIT_OVERDUE_HOURS=24
 ```
 
 ## Local Setup

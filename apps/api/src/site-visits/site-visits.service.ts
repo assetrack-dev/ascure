@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import {
   InspectionCompletionStatus,
@@ -14,6 +15,11 @@ import {
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import {
+  calculateOperationalHealthStatus,
+  isSiteVisitOverdue,
+  parseOperationalOverdueThresholdHours,
+} from '../common/operational-health';
 import { PrismaService } from '../prisma/prisma.service';
 import { CancelSiteVisitDto } from './dto/cancel-site-visit.dto';
 import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
@@ -111,12 +117,100 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
   },
 });
 
+const SITE_VISIT_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
+  ...SITE_VISIT_BASE_INCLUDE,
+  visitAssets: {
+    include: SITE_VISIT_ASSET_INCLUDE,
+    orderBy: {
+      addedAt: 'asc',
+    },
+  },
+  images: {
+    orderBy: {
+      createdAt: 'asc',
+    },
+    select: {
+      id: true,
+      fileName: true,
+      storageKey: true,
+      contentType: true,
+      url: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+  inspections: {
+    include: {
+      asset: {
+        select: {
+          id: true,
+          assetCode: true,
+          name: true,
+          assetType: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          substation: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              location: true,
+            },
+          },
+        },
+      },
+      template: {
+        select: {
+          id: true,
+          name: true,
+          version: true,
+        },
+      },
+      createdBy: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+      inspectionImages: {
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      itemResults: {
+        select: {
+          id: true,
+          label: true,
+          result: true,
+          remark: true,
+          isDefect: true,
+          severity: true,
+          createdAt: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  },
+});
+
 type SiteVisitBase = Prisma.SiteVisitGetPayload<{
   include: typeof SITE_VISIT_BASE_INCLUDE;
 }>;
 
 type SiteVisitAssetLink = Prisma.SiteVisitAssetGetPayload<{
   include: typeof SITE_VISIT_ASSET_INCLUDE;
+}>;
+
+type SiteVisitDetail = Prisma.SiteVisitGetPayload<{
+  include: typeof SITE_VISIT_DETAIL_INCLUDE;
 }>;
 
 type SiteVisitRollup = {
@@ -129,7 +223,10 @@ type SiteVisitRollup = {
 
 @Injectable()
 export class SiteVisitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async create(user: RequestUser, dto: CreateSiteVisitDto) {
     this.assertCanMutate(user);
@@ -250,17 +347,30 @@ export class SiteVisitsService {
   }
 
   async list(user: RequestUser, query: ListSiteVisitsQueryDto) {
-    return this.prisma.siteVisit.findMany({
-      where: {
-        tenantId: user.tenantId,
-        ...this.statusFilter(query.status),
-        ...this.accessScope(user),
-      },
+    const siteVisits = await this.prisma.siteVisit.findMany({
+      where: this.buildListWhere(user, query),
       include: SITE_VISIT_BASE_INCLUDE,
       orderBy: {
         startedAt: 'desc',
       },
     });
+    const siteVisitIds = siteVisits.map((siteVisit) => siteVisit.id);
+    const [rollupsByVisitId, lastActivityByVisitId] = await Promise.all([
+      this.getRollups(siteVisitIds),
+      this.getLastActivityByVisitId(siteVisitIds, siteVisits),
+    ]);
+    const now = new Date();
+    const overdueThresholdHours = this.getOverdueThresholdHours();
+
+    return siteVisits.map((siteVisit) =>
+      this.serializeSiteVisitListItem(
+        siteVisit,
+        rollupsByVisitId.get(siteVisit.id) ?? this.emptyRollup(),
+        lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
+        now,
+        overdueThresholdHours,
+      ),
+    );
   }
 
   async getById(user: RequestUser, id: string) {
@@ -270,37 +380,27 @@ export class SiteVisitsService {
         tenantId: user.tenantId,
         ...this.accessScope(user),
       },
-      include: {
-        ...SITE_VISIT_BASE_INCLUDE,
-        inspections: {
-          include: {
-            asset: {
-              select: {
-                id: true,
-                assetCode: true,
-                name: true,
-              },
-            },
-            inspectionImages: {
-              orderBy: {
-                createdAt: 'asc',
-              },
-            },
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-        },
-      },
+      include: SITE_VISIT_DETAIL_INCLUDE,
     });
 
     if (!siteVisit) {
       throw new NotFoundException('Site visit not found.');
     }
 
-    const rollup = await this.getRollup(siteVisit.id);
+    const [rollup, lastActivityByVisitId] = await Promise.all([
+      this.getRollup(siteVisit.id),
+      this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
+    ]);
+    const now = new Date();
+    const overdueThresholdHours = this.getOverdueThresholdHours();
 
-    return this.serializeSiteVisitDetail(siteVisit, rollup);
+    return this.serializeSiteVisitDetail(
+      siteVisit,
+      rollup,
+      lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
+      now,
+      overdueThresholdHours,
+    );
   }
 
   async join(user: RequestUser, id: string) {
@@ -479,53 +579,150 @@ export class SiteVisitsService {
   }
 
   private async getRollup(siteVisitId: string): Promise<SiteVisitRollup> {
-    const linkedAssetIds = await this.getEffectiveVisitAssetIds(siteVisitId);
+    const rollups = await this.getRollups([siteVisitId]);
 
-    if (linkedAssetIds.length === 0) {
-      return {
-        totalAssets: 0,
-        inspectedAssets: 0,
-        pendingAssets: 0,
-        defectsFound: 0,
-        completionPercentage: 0,
-      };
+    return rollups.get(siteVisitId) ?? this.emptyRollup();
+  }
+
+  private async getRollups(siteVisitIds: string[]): Promise<Map<string, SiteVisitRollup>> {
+    const rollups = new Map<string, SiteVisitRollup>();
+
+    for (const siteVisitId of siteVisitIds) {
+      rollups.set(siteVisitId, this.emptyRollup());
     }
 
-    const [submittedInspections, defectsFound] = await Promise.all([
-      this.prisma.inspection.findMany({
+    if (siteVisitIds.length === 0) {
+      return rollups;
+    }
+
+    const [
+      linkedAssets,
+      createdAssets,
+      inspections,
+      defectResults,
+    ] = await Promise.all([
+      this.prisma.siteVisitAsset.findMany({
         where: {
-          siteVisitId,
-          assetId: {
-            in: linkedAssetIds,
+          siteVisitId: {
+            in: siteVisitIds,
           },
-          completionStatus: InspectionCompletionStatus.SUBMITTED,
         },
-        distinct: ['assetId'],
         select: {
+          siteVisitId: true,
           assetId: true,
         },
       }),
-      this.prisma.inspectionItemResult.count({
+      this.prisma.asset.findMany({
+        where: {
+          createdDuringVisitId: {
+            in: siteVisitIds,
+          },
+        },
+        select: {
+          id: true,
+          createdDuringVisitId: true,
+        },
+      }),
+      this.prisma.inspection.findMany({
+        where: {
+          siteVisitId: {
+            in: siteVisitIds,
+          },
+        },
+        select: {
+          siteVisitId: true,
+          assetId: true,
+          completionStatus: true,
+        },
+      }),
+      this.prisma.inspectionItemResult.findMany({
         where: {
           isDefect: true,
           inspection: {
-            siteVisitId,
+            siteVisitId: {
+              in: siteVisitIds,
+            },
+          },
+        },
+        select: {
+          inspection: {
+            select: {
+              siteVisitId: true,
+            },
           },
         },
       }),
     ]);
 
-    const totalAssets = linkedAssetIds.length;
-    const inspectedAssets = submittedInspections.length;
-    const pendingAssets = Math.max(totalAssets - inspectedAssets, 0);
+    const assetIdsByVisitId = new Map<string, Set<string>>();
+    const inspectedAssetIdsByVisitId = new Map<string, Set<string>>();
+    const defectsByVisitId = new Map<string, number>();
+    const ensureAssetSet = (map: Map<string, Set<string>>, siteVisitId: string) => {
+      const existingSet = map.get(siteVisitId);
 
+      if (existingSet) {
+        return existingSet;
+      }
+
+      const nextSet = new Set<string>();
+      map.set(siteVisitId, nextSet);
+
+      return nextSet;
+    };
+
+    for (const link of linkedAssets) {
+      ensureAssetSet(assetIdsByVisitId, link.siteVisitId).add(link.assetId);
+    }
+
+    for (const asset of createdAssets) {
+      if (!asset.createdDuringVisitId) {
+        continue;
+      }
+
+      ensureAssetSet(assetIdsByVisitId, asset.createdDuringVisitId).add(asset.id);
+    }
+
+    for (const inspection of inspections) {
+      ensureAssetSet(assetIdsByVisitId, inspection.siteVisitId).add(inspection.assetId);
+
+      if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
+        ensureAssetSet(inspectedAssetIdsByVisitId, inspection.siteVisitId).add(
+          inspection.assetId,
+        );
+      }
+    }
+
+    for (const result of defectResults) {
+      const siteVisitId = result.inspection.siteVisitId;
+      defectsByVisitId.set(siteVisitId, (defectsByVisitId.get(siteVisitId) ?? 0) + 1);
+    }
+
+    for (const siteVisitId of siteVisitIds) {
+      const totalAssets = assetIdsByVisitId.get(siteVisitId)?.size ?? 0;
+      const inspectedAssets = inspectedAssetIdsByVisitId.get(siteVisitId)?.size ?? 0;
+      const pendingAssets = Math.max(totalAssets - inspectedAssets, 0);
+      const defectsFound = defectsByVisitId.get(siteVisitId) ?? 0;
+
+      rollups.set(siteVisitId, {
+        totalAssets,
+        inspectedAssets,
+        pendingAssets,
+        defectsFound,
+        completionPercentage:
+          totalAssets === 0 ? 0 : Math.round((inspectedAssets / totalAssets) * 100),
+      });
+    }
+
+    return rollups;
+  }
+
+  private emptyRollup(): SiteVisitRollup {
     return {
-      totalAssets,
-      inspectedAssets,
-      pendingAssets,
-      defectsFound,
-      completionPercentage:
-        totalAssets === 0 ? 0 : Math.round((inspectedAssets / totalAssets) * 100),
+      totalAssets: 0,
+      inspectedAssets: 0,
+      pendingAssets: 0,
+      defectsFound: 0,
+      completionPercentage: 0,
     };
   }
 
@@ -572,6 +769,161 @@ export class SiteVisitsService {
     }
 
     return Array.from(assetIds);
+  }
+
+  private async getLastActivityByVisitId(
+    siteVisitIds: string[],
+    siteVisits: Array<Pick<SiteVisitBase, 'id' | 'startedAt' | 'updatedAt'>>,
+  ) {
+    const lastActivityByVisitId = new Map<string, Date>();
+
+    for (const siteVisit of siteVisits) {
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        siteVisit.id,
+        siteVisit.updatedAt ?? siteVisit.startedAt,
+      );
+    }
+
+    if (siteVisitIds.length === 0) {
+      return lastActivityByVisitId;
+    }
+
+    const [
+      inspectionActivity,
+      visitAssetActivity,
+      siteVisitImageActivity,
+      inspectionImageActivity,
+    ] = await Promise.all([
+      this.prisma.inspection.groupBy({
+        by: ['siteVisitId'],
+        where: {
+          siteVisitId: {
+            in: siteVisitIds,
+          },
+        },
+        _max: {
+          createdAt: true,
+          updatedAt: true,
+          submittedAt: true,
+        },
+      }),
+      this.prisma.siteVisitAsset.groupBy({
+        by: ['siteVisitId'],
+        where: {
+          siteVisitId: {
+            in: siteVisitIds,
+          },
+        },
+        _max: {
+          addedAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.image.groupBy({
+        by: ['siteVisitId'],
+        where: {
+          siteVisitId: {
+            in: siteVisitIds,
+          },
+        },
+        _max: {
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.inspectionImage.findMany({
+        where: {
+          inspection: {
+            siteVisitId: {
+              in: siteVisitIds,
+            },
+          },
+        },
+        select: {
+          createdAt: true,
+          inspection: {
+            select: {
+              siteVisitId: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    for (const activity of inspectionActivity) {
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.createdAt,
+      );
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.updatedAt,
+      );
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.submittedAt,
+      );
+    }
+
+    for (const activity of visitAssetActivity) {
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.addedAt,
+      );
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.updatedAt,
+      );
+    }
+
+    for (const activity of siteVisitImageActivity) {
+      if (!activity.siteVisitId) {
+        continue;
+      }
+
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.createdAt,
+      );
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.siteVisitId,
+        activity._max.updatedAt,
+      );
+    }
+
+    for (const activity of inspectionImageActivity) {
+      this.setMaxActivityDate(
+        lastActivityByVisitId,
+        activity.inspection.siteVisitId,
+        activity.createdAt,
+      );
+    }
+
+    return lastActivityByVisitId;
+  }
+
+  private setMaxActivityDate(
+    activityByVisitId: Map<string, Date>,
+    siteVisitId: string,
+    activityDate?: Date | null,
+  ) {
+    if (!activityDate) {
+      return;
+    }
+
+    const currentActivityDate = activityByVisitId.get(siteVisitId);
+
+    if (!currentActivityDate || activityDate > currentActivityDate) {
+      activityByVisitId.set(siteVisitId, activityDate);
+    }
   }
 
   private async materializeImplicitVisitAssetLinks(siteVisitId: string) {
@@ -692,24 +1044,28 @@ export class SiteVisitsService {
     };
   }
 
-  private serializeSiteVisitDetail(
-    siteVisit: SiteVisitBase & {
-      inspections?: Array<{
-        id: string;
-        assetId: string;
-        completionStatus: InspectionCompletionStatus;
-      }>;
-    },
+  private serializeSiteVisitListItem(
+    siteVisit: SiteVisitBase,
     rollup: SiteVisitRollup,
+    lastActivityAt: Date,
+    now: Date,
+    overdueThresholdHours: number,
   ) {
-    const teamMembers = siteVisit.users.map((entry) => ({
-      id: entry.user.id,
-      email: entry.user.email,
-      name: entry.user.name,
-      role: entry.user.role,
-      siteVisitUserId: entry.id,
-      joinedAt: entry.joinedAt,
-    }));
+    const teamMembers = this.serializeTeamMembers(siteVisit);
+    const isOverdue = isSiteVisitOverdue({
+      status: siteVisit.status,
+      startedAt: siteVisit.startedAt,
+      now,
+      overdueThresholdHours,
+    });
+    const operationalHealthStatus = calculateOperationalHealthStatus({
+      status: siteVisit.status,
+      validationStatus: siteVisit.validationStatus,
+      startedAt: siteVisit.startedAt,
+      lastActivityAt,
+      now,
+      overdueThresholdHours,
+    });
 
     return {
       ...siteVisit,
@@ -719,7 +1075,82 @@ export class SiteVisitsService {
       summary: rollup,
       ...rollup,
       teamMembers,
+      lastActivityAt: lastActivityAt.toISOString(),
+      operationalHealthStatus,
+      isOverdue,
+      overdueThresholdHours,
     };
+  }
+
+  private serializeSiteVisitDetail(
+    siteVisit: SiteVisitDetail,
+    rollup: SiteVisitRollup,
+    lastActivityAt: Date,
+    now: Date,
+    overdueThresholdHours: number,
+  ) {
+    const teamMembers = this.serializeTeamMembers(siteVisit);
+    const isOverdue = isSiteVisitOverdue({
+      status: siteVisit.status,
+      startedAt: siteVisit.startedAt,
+      now,
+      overdueThresholdHours,
+    });
+    const operationalHealthStatus = calculateOperationalHealthStatus({
+      status: siteVisit.status,
+      validationStatus: siteVisit.validationStatus,
+      startedAt: siteVisit.startedAt,
+      lastActivityAt,
+      now,
+      overdueThresholdHours,
+    });
+
+    return {
+      ...siteVisit,
+      completedAt:
+        siteVisit.completedAt ??
+        (siteVisit.status === SiteVisitStatus.COMPLETED ? siteVisit.endedAt : null),
+      summary: rollup,
+      ...rollup,
+      teamMembers,
+      visitAssets: siteVisit.visitAssets.map((link) =>
+        this.serializeSiteVisitAssetLink(link),
+      ),
+      linkedAssets: siteVisit.visitAssets.map((link) =>
+        this.serializeSiteVisitAssetLink(link),
+      ),
+      lastActivityAt: lastActivityAt.toISOString(),
+      operationalHealthStatus,
+      isOverdue,
+      overdueThresholdHours,
+      operationalMetadata: {
+        mainhead: siteVisit.mainhead,
+        pencawangCode: siteVisit.pencawangCode ?? siteVisit.substation.code,
+        pencawangName: siteVisit.pencawangName ?? siteVisit.substation.name,
+        functionalLocation:
+          siteVisit.functionalLocation ?? siteVisit.substation.location,
+        visitType: siteVisit.visitType,
+        cycleNumber: siteVisit.cycleNumber,
+        checkInLatitude: siteVisit.checkInLatitude,
+        checkInLongitude: siteVisit.checkInLongitude,
+        checkInAccuracyMeters: siteVisit.checkInAccuracyMeters,
+        checkInCapturedAt: siteVisit.checkInCapturedAt,
+        feederId: siteVisit.feederId,
+        feederRouteId: siteVisit.feederRouteId,
+        gisGeometryVersion: siteVisit.gisGeometryVersion,
+      },
+    };
+  }
+
+  private serializeTeamMembers(siteVisit: SiteVisitBase) {
+    return siteVisit.users.map((entry) => ({
+      id: entry.user.id,
+      email: entry.user.email,
+      name: entry.user.name,
+      role: entry.user.role,
+      siteVisitUserId: entry.id,
+      joinedAt: entry.joinedAt,
+    }));
   }
 
   private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
@@ -737,8 +1168,8 @@ export class SiteVisitsService {
   }
 
   private assertCanMutate(user: RequestUser) {
-    if (user.role === UserRole.VIEWER) {
-      throw new ForbiddenException('VIEWER role is read-only for operational workflow actions.');
+    if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
+      throw new ForbiddenException('This role is read-only for operational workflow actions.');
     }
   }
 
@@ -756,6 +1187,31 @@ export class SiteVisitsService {
     }
 
     return date;
+  }
+
+  private buildListWhere(
+    user: RequestUser,
+    query: ListSiteVisitsQueryDto,
+  ): Prisma.SiteVisitWhereInput {
+    const filters: Prisma.SiteVisitWhereInput[] = [
+      {
+        tenantId: user.tenantId,
+      },
+      this.accessScope(user),
+      this.statusFilter(query.status),
+      this.validationStatusFilter(query.validationStatus),
+      this.visitTypeFilter(query.visitType),
+      this.teamFilter(query.teamId),
+      this.userFilter(query.userId),
+      this.mainheadFilter(query.mainhead),
+      this.pencawangFilter(query.pencawang),
+      this.dateFilter(query.dateFrom, query.dateTo),
+      this.searchFilter(query.search),
+    ].filter((filter) => Object.keys(filter).length > 0);
+
+    return {
+      AND: filters,
+    };
   }
 
   private statusFilter(
@@ -776,6 +1232,235 @@ export class SiteVisitsService {
     return {
       status: status as SiteVisitStatus,
     };
+  }
+
+  private validationStatusFilter(
+    validationStatus: ListSiteVisitsQueryDto['validationStatus'],
+  ): Prisma.SiteVisitWhereInput {
+    return validationStatus ? { validationStatus } : {};
+  }
+
+  private visitTypeFilter(
+    visitType: ListSiteVisitsQueryDto['visitType'],
+  ): Prisma.SiteVisitWhereInput {
+    return visitType ? { visitType } : {};
+  }
+
+  private teamFilter(teamId: ListSiteVisitsQueryDto['teamId']): Prisma.SiteVisitWhereInput {
+    return teamId ? { teamId } : {};
+  }
+
+  private userFilter(userId: ListSiteVisitsQueryDto['userId']): Prisma.SiteVisitWhereInput {
+    if (!userId) {
+      return {};
+    }
+
+    return {
+      users: {
+        some: {
+          userId,
+        },
+      },
+    };
+  }
+
+  private mainheadFilter(mainhead?: string): Prisma.SiteVisitWhereInput {
+    const value = this.normalizeOptionalString(mainhead);
+
+    if (!value) {
+      return {};
+    }
+
+    return {
+      mainhead: {
+        contains: value,
+        mode: 'insensitive',
+      },
+    };
+  }
+
+  private pencawangFilter(pencawang?: string): Prisma.SiteVisitWhereInput {
+    const value = this.normalizeOptionalString(pencawang);
+
+    if (!value) {
+      return {};
+    }
+
+    return {
+      OR: [
+        {
+          pencawangCode: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          pencawangName: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          substation: {
+            code: {
+              contains: value,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          substation: {
+            name: {
+              contains: value,
+              mode: 'insensitive',
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  private searchFilter(search?: string): Prisma.SiteVisitWhereInput {
+    const value = this.normalizeOptionalString(search);
+
+    if (!value) {
+      return {};
+    }
+
+    return {
+      OR: [
+        {
+          mainhead: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          pencawangCode: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          pencawangName: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          functionalLocation: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          notes: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          completionNotes: {
+            contains: value,
+            mode: 'insensitive',
+          },
+        },
+        {
+          team: {
+            OR: [
+              {
+                code: {
+                  contains: value,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                name: {
+                  contains: value,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+        },
+        {
+          substation: {
+            OR: [
+              {
+                code: {
+                  contains: value,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                name: {
+                  contains: value,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                location: {
+                  contains: value,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+        },
+        {
+          users: {
+            some: {
+              user: {
+                OR: [
+                  {
+                    name: {
+                      contains: value,
+                      mode: 'insensitive',
+                    },
+                  },
+                  {
+                    email: {
+                      contains: value,
+                      mode: 'insensitive',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  private dateFilter(dateFrom?: string, dateTo?: string): Prisma.SiteVisitWhereInput {
+    const startedAt: Prisma.DateTimeFilter = {};
+
+    if (dateFrom) {
+      startedAt.gte = this.parseListDate(dateFrom, false);
+    }
+
+    if (dateTo) {
+      startedAt.lte = this.parseListDate(dateTo, true);
+    }
+
+    return Object.keys(startedAt).length > 0 ? { startedAt } : {};
+  }
+
+  private parseListDate(value: string, endOfDay: boolean) {
+    const date =
+      endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? new Date(`${value}T23:59:59.999Z`)
+        : new Date(value);
+
+    return date;
+  }
+
+  private getOverdueThresholdHours() {
+    return parseOperationalOverdueThresholdHours(
+      this.configService.get<string>('OPERATIONAL_VISIT_OVERDUE_HOURS') ??
+        this.configService.get<string>('SITE_VISIT_OVERDUE_HOURS'),
+    );
   }
 
   private normalizeCreateStatus(status: CreateSiteVisitDto['status']): SiteVisitStatus {

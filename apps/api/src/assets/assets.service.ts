@@ -525,8 +525,8 @@ export class AssetsService {
   }
 
   private assertCanMutate(user: RequestUser) {
-    if (user.role === UserRole.VIEWER) {
-      throw new ForbiddenException('VIEWER role is read-only for asset actions.');
+    if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
+      throw new ForbiddenException('This role is read-only for asset actions.');
     }
   }
 

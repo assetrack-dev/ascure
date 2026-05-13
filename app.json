@@ -1,3 +1,12 @@
 {
-  "expo": {}
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "67539625-8d92-4574-b3b4-e8d17f171661"
+      }
+    },
+    "android": {
+      "package": "local.ascure.field"
+    }
+  }
 }

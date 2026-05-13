@@ -137,7 +137,7 @@ Recommended retention:
 - Nginx routes `/api/v1` and `/uploads` to the API container.
 - Nginx routes admin web traffic to the admin web container.
 - Certbot certificate is issued and auto-renewal is tested.
-- `DATABASE_URL`, `JWT_SECRET`, and admin web API URL are production values.
+- `DATABASE_URL`, `JWT_SECRET`, `OPERATIONAL_VISIT_OVERDUE_HOURS`, and admin web API URL are production values.
 - PostgreSQL volume is persistent.
 - API uploads volume maps to `/app/uploads`.
 - `pnpm-lock.yaml` is committed.

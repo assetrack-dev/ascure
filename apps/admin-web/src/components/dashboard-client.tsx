@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Activity,
   AlertTriangle,
   Archive,
   Bug,
+  CheckCircle2,
   Clock3,
   RefreshCw,
   ShieldAlert,
+  Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -19,6 +22,8 @@ import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchDashboardMetrics } from "@/lib/dashboard";
 import type { AuthSession } from "@/types/auth";
 import type { DashboardMetrics } from "@/types/dashboard";
+
+const AUTO_REFRESH_MS = 60000;
 
 function DashboardLoading() {
   return (
@@ -245,6 +250,8 @@ function DashboardContent() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -252,8 +259,13 @@ function DashboardContent() {
   }, [router]);
 
   const loadDashboard = useCallback(
-    async (token: string) => {
-      setIsLoading(true);
+    async (token: string, showLoading = true) => {
+      if (showLoading) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+
       setError("");
 
       try {
@@ -269,7 +281,11 @@ function DashboardContent() {
           dashboardError instanceof Error ? dashboardError.message : "Unable to load dashboard.",
         );
       } finally {
-        setIsLoading(false);
+        if (showLoading) {
+          setIsLoading(false);
+        } else {
+          setIsRefreshing(false);
+        }
       }
     },
     [handleLogout],
@@ -284,6 +300,18 @@ function DashboardContent() {
     }
   }, [loadDashboard]);
 
+  useEffect(() => {
+    if (!autoRefresh || !session?.token) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDashboard(session.token, false);
+    }, AUTO_REFRESH_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [autoRefresh, loadDashboard, session?.token]);
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -297,17 +325,33 @@ function DashboardContent() {
                 ASCURE Admin
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Asset and defect visibility for utility field inspection workflows.
+                Field visit, asset, and defect visibility for utility operations.
               </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                  <input
+                    type="checkbox"
+                    checked={autoRefresh}
+                    onChange={(event) => setAutoRefresh(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                  />
+                  Auto-refresh 60s
+                </label>
+                {metrics?.latestVisitActivityAt ? (
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                    Last activity {formatDate(metrics.latestVisitActivityAt)}
+                  </span>
+                ) : null}
+              </div>
             </div>
 
             <button
               type="button"
-              onClick={() => (session?.token ? loadDashboard(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
+              onClick={() => (session?.token ? loadDashboard(session.token, false) : undefined)}
+              disabled={(isLoading && !metrics) || isRefreshing || !session?.token}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
             >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
               Refresh
             </button>
           </div>
@@ -321,6 +365,79 @@ function DashboardContent() {
               </div>
             ) : metrics ? (
               <div className="space-y-6">
+                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                  <MetricCard
+                    title="Active Visits"
+                    value={metrics.activeVisits}
+                    detail={`Open field operations. Overdue threshold ${metrics.operationalOverdueThresholdHours || 24}h.`}
+                    icon={Activity}
+                    tone={metrics.overdueVisits > 0 ? "warning" : "neutral"}
+                  />
+                  <MetricCard
+                    title="Completed Visits"
+                    value={metrics.completedVisits}
+                    detail="Visits completed by field teams."
+                    icon={CheckCircle2}
+                    tone="success"
+                  />
+                  <MetricCard
+                    title="Overdue Visits"
+                    value={metrics.overdueVisits}
+                    detail="Active visits beyond the configured threshold."
+                    icon={Clock3}
+                    tone={metrics.overdueVisits > 0 ? "danger" : "neutral"}
+                  />
+                  <MetricCard
+                    title="Total Defects"
+                    value={metrics.totalDefects}
+                    detail="All defects detected from submitted inspections."
+                    icon={Bug}
+                    tone="warning"
+                  />
+                  <MetricCard
+                    title="Completion Rate"
+                    value={metrics.completionRate}
+                    suffix="%"
+                    detail="Completed visits across non-cancelled operations."
+                    icon={ShieldAlert}
+                    tone="success"
+                  />
+                  <MetricCard
+                    title="Active Field Teams"
+                    value={metrics.activeFieldTeams}
+                    detail={`${metrics.activeMappedVisits} active visits have check-in coordinates.`}
+                    icon={Users}
+                    tone="neutral"
+                  />
+                </div>
+
+                <div className="grid gap-6 xl:grid-cols-2">
+                  <SimpleBarChart
+                    title="Visits by Operational Health"
+                    data={metrics.visitsByOperationalHealth}
+                    emptyLabel="No operational health counts are available yet."
+                    tone="amber"
+                  />
+                  <SimpleBarChart
+                    title="Visits by Status"
+                    data={metrics.visitsByStatus}
+                    emptyLabel="No site visit status counts are available yet."
+                    tone="teal"
+                  />
+                  <SimpleBarChart
+                    title="Visits by Validation"
+                    data={metrics.visitsByValidationStatus}
+                    emptyLabel="No validation status counts are available yet."
+                    tone="rose"
+                  />
+                  <SimpleBarChart
+                    title="Active Visits by Team"
+                    data={metrics.activeVisitsByTeam}
+                    emptyLabel="No active team counts are available yet."
+                    tone="teal"
+                  />
+                </div>
+
                 <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCard
                     title="Total Assets"
@@ -367,6 +484,12 @@ function DashboardContent() {
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
+                  <SimpleBarChart
+                    title="Visits by Type"
+                    data={metrics.visitsByType}
+                    emptyLabel="No visit type counts are available yet."
+                    tone="teal"
+                  />
                   <SimpleBarChart
                     title="Defects by Severity"
                     data={metrics.defectsBySeverity}
