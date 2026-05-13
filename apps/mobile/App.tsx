@@ -112,6 +112,8 @@ type Route =
 const EMPTY_SYNC_QUEUE_SNAPSHOT: SyncQueueSnapshot = {
   items: [],
   completed: [],
+  visitCompletions: [],
+  completedVisitCompletions: [],
 };
 
 export default function App() {
@@ -485,6 +487,7 @@ export default function App() {
         substationId={route.substationId}
         successMessage={route.successMessage}
         isOffline={isOffline}
+        syncQueueSnapshot={syncQueueSnapshot}
         onBack={goBack}
         onOpenAddAsset={() =>
           setRoute({

@@ -20,6 +20,7 @@ import {
   SaveInspectionResultItemInput,
   SessionUser,
   SiteVisit,
+  SiteVisitAssetLink,
   Team,
   Substation,
   UpdateChecklistTemplateInput,
@@ -50,6 +51,10 @@ export class ApiError extends Error {
     this.status = status;
     this.payload = payload;
   }
+}
+
+export function isEndpointUnavailableError(error: unknown) {
+  return error instanceof ApiError && (error.status === 404 || error.status === 405);
 }
 
 async function request<T>(path: string, options: RequestOptions = {}) {
@@ -257,6 +262,57 @@ export const api = {
     return request<SiteVisit>(`/site-visits/${siteVisitId}`, { token });
   },
 
+  async joinSiteVisit(token: string, siteVisitId: string) {
+    return request<SiteVisit>(`/site-visits/${siteVisitId}/join`, {
+      method: 'POST',
+      token,
+    });
+  },
+
+  async getSiteVisitAssets(token: string, siteVisitId: string) {
+    const response = await request<Array<SiteVisitAssetLink | Asset>>(
+      `/site-visits/${siteVisitId}/assets`,
+      { token },
+    );
+
+    return normalizeSiteVisitAssets(response);
+  },
+
+  async getAssetsForVisit(token: string, siteVisitId: string, substationId: string) {
+    try {
+      return await this.getSiteVisitAssets(token, siteVisitId);
+    } catch (error) {
+      if (isEndpointUnavailableError(error)) {
+        return this.getAssets(token, substationId);
+      }
+
+      throw error;
+    }
+  },
+
+  linkSiteVisitAsset(token: string, siteVisitId: string, assetId: string) {
+    return request<SiteVisitAssetLink>(`/site-visits/${siteVisitId}/assets`, {
+      method: 'POST',
+      token,
+      body: {
+        assetId,
+        source: 'MOBILE_VISIT_LIST',
+      },
+    });
+  },
+
+  completeSiteVisit(
+    token: string,
+    siteVisitId: string,
+    input: { completedAt?: string; completionNotes?: string },
+  ) {
+    return request<SiteVisit>(`/site-visits/${siteVisitId}/complete`, {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  },
+
   getAssets(token: string, substationId: string) {
     const query = encodeURIComponent(substationId);
 
@@ -402,6 +458,18 @@ export const api = {
     });
   },
 };
+
+function normalizeSiteVisitAssets(entries: Array<SiteVisitAssetLink | Asset>) {
+  return entries
+    .map((entry) => {
+      if (entry && typeof entry === 'object' && 'asset' in entry) {
+        return entry.asset;
+      }
+
+      return entry as Asset;
+    })
+    .filter(Boolean);
+}
 
 async function uploadInspectionImage(
   token: string,

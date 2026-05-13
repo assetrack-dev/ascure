@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Children, type ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
@@ -15,7 +15,13 @@ import {
 } from '../ui';
 import {
   CompletedInspectionSyncRecord,
+  CompletedVisitCompletionSyncRecord,
+  getCompletedQueueCount,
+  getFailedQueueCount,
+  getPendingQueueCount,
+  getSyncingQueueCount,
   OfflineInspectionQueueItem,
+  OfflineVisitCompletionQueueItem,
   SyncQueueDisplayStatus,
   SyncQueueRunResult,
   SyncQueueSnapshot,
@@ -43,14 +49,24 @@ export function SyncQueueScreen({
       syncing: snapshot.items.filter((item) => item.status === 'SYNCING'),
       failed: snapshot.items.filter((item) => item.status === 'FAILED'),
       completed: snapshot.completed,
+      pendingVisitCompletions: snapshot.visitCompletions.filter(
+        (item) => item.status === 'PENDING_SYNC',
+      ),
+      syncingVisitCompletions: snapshot.visitCompletions.filter(
+        (item) => item.status === 'SYNCING',
+      ),
+      failedVisitCompletions: snapshot.visitCompletions.filter(
+        (item) => item.status === 'FAILED',
+      ),
+      completedVisitCompletions: snapshot.completedVisitCompletions,
     }),
     [snapshot],
   );
-  const activeCount = snapshot.items.length;
+  const activeCount = snapshot.items.length + snapshot.visitCompletions.length;
   const summaryStatus = getQueueSummaryStatus({
-    pendingCount: groupedItems.pending.length,
-    syncingCount: groupedItems.syncing.length,
-    failedCount: groupedItems.failed.length,
+    pendingCount: getPendingQueueCount(snapshot),
+    syncingCount: getSyncingQueueCount(snapshot),
+    failedCount: getFailedQueueCount(snapshot),
   });
 
   async function handleRetry() {
@@ -61,16 +77,16 @@ export function SyncQueueScreen({
       const result = await onRetry();
 
       if (result.completed > 0) {
-        setNotice(`${result.completed} inspection${result.completed === 1 ? '' : 's'} synced.`);
+        setNotice(`${result.completed} item${result.completed === 1 ? '' : 's'} synced.`);
         return;
       }
 
       if (result.failed > 0) {
-        setError('Some inspections still need a stable connection. Local data was kept.');
+        setError('Some queued work still needs a stable connection. Local data was kept.');
         return;
       }
 
-      setNotice('No pending inspections to sync.');
+      setNotice('No pending work to sync.');
     } catch (retryError) {
       setError(retryError instanceof Error ? retryError.message : 'Unable to run sync.');
     }
@@ -79,7 +95,7 @@ export function SyncQueueScreen({
   return (
     <Screen
       title="Sync Queue"
-      subtitle="Offline inspection submissions waiting for upload."
+      subtitle="Offline inspection submissions and visit completion waiting for upload."
       leftAction={{
         icon: 'back',
         onPress: onBack,
@@ -102,10 +118,10 @@ export function SyncQueueScreen({
           <StatusBadge status={summaryStatus} />
         </View>
         <View style={styles.statsGrid}>
-          <QueueStat label="Pending" value={groupedItems.pending.length} />
-          <QueueStat label="Syncing" value={groupedItems.syncing.length} />
-          <QueueStat label="Failed" value={groupedItems.failed.length} />
-          <QueueStat label="Completed" value={groupedItems.completed.length} />
+          <QueueStat label="Pending" value={getPendingQueueCount(snapshot)} />
+          <QueueStat label="Syncing" value={getSyncingQueueCount(snapshot)} />
+          <QueueStat label="Failed" value={getFailedQueueCount(snapshot)} />
+          <QueueStat label="Completed" value={getCompletedQueueCount(snapshot)} />
         </View>
         <View style={styles.retryActionWrap}>
           <AppButton
@@ -117,15 +133,21 @@ export function SyncQueueScreen({
         </View>
       </View>
 
-      <QueueSection title="Syncing" emptyText="No inspections are syncing right now.">
+      <QueueSection title="Syncing" emptyText="No queued work is syncing right now.">
         {groupedItems.syncing.map((item) => (
           <QueueItemCard key={item.id} item={item} />
         ))}
+        {groupedItems.syncingVisitCompletions.map((item) => (
+          <VisitCompletionQueueCard key={item.id} item={item} />
+        ))}
       </QueueSection>
 
-      <QueueSection title="Pending" emptyText="No inspections are waiting to sync.">
+      <QueueSection title="Pending" emptyText="No queued work is waiting to sync.">
         {groupedItems.pending.map((item) => (
           <QueueItemCard key={item.id} item={item} />
+        ))}
+        {groupedItems.pendingVisitCompletions.map((item) => (
+          <VisitCompletionQueueCard key={item.id} item={item} />
         ))}
       </QueueSection>
 
@@ -133,11 +155,17 @@ export function SyncQueueScreen({
         {groupedItems.failed.map((item) => (
           <QueueItemCard key={item.id} item={item} />
         ))}
+        {groupedItems.failedVisitCompletions.map((item) => (
+          <VisitCompletionQueueCard key={item.id} item={item} />
+        ))}
       </QueueSection>
 
       <QueueSection title="Completed" emptyText="No completed sync history yet.">
         {groupedItems.completed.map((record) => (
           <CompletedQueueCard key={record.id} record={record} />
+        ))}
+        {groupedItems.completedVisitCompletions.map((record) => (
+          <CompletedVisitCompletionCard key={record.id} record={record} />
         ))}
       </QueueSection>
     </Screen>
@@ -153,7 +181,7 @@ function QueueSection({
   emptyText: string;
   children: ReactNode;
 }) {
-  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  const hasChildren = Children.count(children) > 0;
 
   return (
     <Card>
@@ -192,6 +220,34 @@ function QueueItemCard({ item }: { item: OfflineInspectionQueueItem }) {
   );
 }
 
+function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueItem }) {
+  return (
+    <View style={styles.queueCard}>
+      <View style={styles.itemHeader}>
+        <View style={styles.itemTitleWrap}>
+          <Text style={styles.assetCode}>Complete Visit</Text>
+          <Text style={styles.assetName} numberOfLines={2}>
+            {item.summary.substationName}
+          </Text>
+        </View>
+        <StatusBadge status={item.status} />
+      </View>
+      <KeyValueRow label="Team" value={item.summary.teamName} />
+      <KeyValueRow
+        label="Progress"
+        value={`${item.summary.inspectedAssets}/${item.summary.totalAssets} assets`}
+      />
+      <KeyValueRow label="Queued" value={formatDateTime(item.createdAt)} />
+      <KeyValueRow label="Attempts" value={String(item.attemptCount)} />
+      {item.errorMessage ? (
+        <View style={styles.inlineError}>
+          <Text style={styles.inlineErrorText}>{item.errorMessage}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function CompletedQueueCard({ record }: { record: CompletedInspectionSyncRecord }) {
   return (
     <View style={styles.queueCard}>
@@ -206,6 +262,28 @@ function CompletedQueueCard({ record }: { record: CompletedInspectionSyncRecord 
       </View>
       <KeyValueRow label="Pencawang" value={record.summary.substationName} />
       <KeyValueRow label="Photos" value={String(record.photoCount)} />
+      <KeyValueRow label="Completed" value={formatDateTime(record.completedAt)} />
+    </View>
+  );
+}
+
+function CompletedVisitCompletionCard({
+  record,
+}: {
+  record: CompletedVisitCompletionSyncRecord;
+}) {
+  return (
+    <View style={styles.queueCard}>
+      <View style={styles.itemHeader}>
+        <View style={styles.itemTitleWrap}>
+          <Text style={styles.assetCode}>Visit Completed</Text>
+          <Text style={styles.assetName} numberOfLines={2}>
+            {record.summary.substationName}
+          </Text>
+        </View>
+        <StatusBadge status={record.status} />
+      </View>
+      <KeyValueRow label="Team" value={record.summary.teamName} />
       <KeyValueRow label="Completed" value={formatDateTime(record.completedAt)} />
     </View>
   );

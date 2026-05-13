@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { API_BASE_URL, api, ApiError } from '../api';
+import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
 import {
   getActiveQueueCount,
   getFailedQueueCount,
@@ -64,6 +64,7 @@ export function HomeScreen({
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [joiningVisitId, setJoiningVisitId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadHomeData = useCallback(async () => {
@@ -98,6 +99,33 @@ export function HomeScreen({
     loadHomeData();
   }, [loadHomeData]);
 
+  const handleOpenVisit = useCallback(
+    async (visit: SiteVisit) => {
+      try {
+        setError(null);
+        setJoiningVisitId(visit.id);
+
+        const joinedVisit = await api.joinSiteVisit(token, visit.id);
+        onOpenVisit(joinedVisit);
+      } catch (joinError) {
+        if (joinError instanceof ApiError && joinError.status === 401) {
+          await onUnauthorized(joinError);
+          return;
+        }
+
+        if (isEndpointUnavailableError(joinError)) {
+          onOpenVisit(visit);
+          return;
+        }
+
+        setError(joinError instanceof Error ? joinError.message : 'Unable to join this site visit.');
+      } finally {
+        setJoiningVisitId(null);
+      }
+    },
+    [onOpenVisit, onUnauthorized, token],
+  );
+
   return (
     <View style={styles.root}>
       <Screen
@@ -125,7 +153,7 @@ export function HomeScreen({
         <WarningBanner
           message={
             isOffline
-              ? 'Offline mode: inspections can be queued and will sync when connection returns.'
+              ? 'Offline mode: inspections and visit completion can be queued until connection returns.'
               : null
           }
         />
@@ -154,7 +182,10 @@ export function HomeScreen({
                   <ActiveVisitRow
                     key={visit.id}
                     visit={visit}
-                    onPress={() => onOpenVisit(visit)}
+                    isJoining={joiningVisitId === visit.id}
+                    onPress={() => {
+                      void handleOpenVisit(visit);
+                    }}
                   />
                 ))}
               </View>
@@ -195,12 +226,21 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   );
 }
 
-function ActiveVisitRow({ visit, onPress }: { visit: SiteVisit; onPress: () => void }) {
+function ActiveVisitRow({
+  visit,
+  isJoining,
+  onPress,
+}: {
+  visit: SiteVisit;
+  isJoining: boolean;
+  onPress: () => void;
+}) {
   const thumbnailUri = getVisitThumbnailUri(visit);
 
   return (
     <Pressable
       onPress={onPress}
+      disabled={isJoining}
       style={({ pressed }) => [styles.visitRow, pressed && styles.visitRowPressed]}
     >
       <View style={styles.thumbnailFrame}>
@@ -220,7 +260,9 @@ function ActiveVisitRow({ visit, onPress }: { visit: SiteVisit; onPress: () => v
         <Text style={styles.functionalLocation}>{visit.substation.code || 'Not available'}</Text>
       </View>
 
-      <Text style={styles.rowArrow}>{'>'}</Text>
+      <Text style={isJoining ? styles.joiningText : styles.rowArrow}>
+        {isJoining ? 'Joining' : '>'}
+      </Text>
     </Pressable>
   );
 }
@@ -360,7 +402,7 @@ function SyncQueueSummaryCard({
     >
       <View style={styles.syncSummaryTextWrap}>
         <Text style={styles.syncSummaryTitle}>
-          {failedCount > 0 ? 'Sync needs attention' : isSyncing || syncingCount > 0 ? 'Syncing inspections' : 'Pending sync'}
+          {failedCount > 0 ? 'Sync needs attention' : isSyncing || syncingCount > 0 ? 'Syncing offline work' : 'Pending sync'}
         </Text>
         <Text style={styles.syncSummaryMeta}>
           {pendingCount} pending, {syncingCount} syncing, {failedCount} failed
@@ -565,6 +607,14 @@ const styles = StyleSheet.create({
     width: 18,
     color: uiTheme.colors.textMuted,
     fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  joiningText: {
+    minWidth: 58,
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
     textAlign: 'right',
   },

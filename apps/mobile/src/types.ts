@@ -127,6 +127,14 @@ export interface InspectionSummary {
   images?: InspectionImage[];
 }
 
+export interface SiteVisitSummary {
+  totalAssets: number;
+  inspectedAssets: number;
+  pendingAssets: number;
+  defectsFound: number;
+  completionPercentage: number;
+}
+
 export interface SiteVisitImage {
   uri?: string | null;
   url?: string | null;
@@ -142,15 +150,38 @@ export interface SiteVisit {
   status: string;
   startedAt: string;
   endedAt: string | null;
+  completedAt?: string | null;
   notes: string | null;
+  completionNotes?: string | null;
   createdAt?: string;
   updatedAt?: string;
   team: Pick<Team, 'id' | 'code' | 'name'>;
   substation: Pick<Substation, 'id' | 'code' | 'name' | 'location'>;
   createdBy?: Pick<SessionUser, 'id' | 'email' | 'name' | 'role'>;
   users?: SiteVisitUser[];
+  teamMembers?: Array<Pick<SessionUser, 'id' | 'email' | 'name' | 'role'> & {
+    siteVisitUserId?: string;
+    joinedAt?: string;
+  }>;
   inspections?: InspectionSummary[];
   images?: SiteVisitImage[];
+  summary?: SiteVisitSummary;
+  totalAssets?: number;
+  inspectedAssets?: number;
+  pendingAssets?: number;
+  defectsFound?: number;
+  completionPercentage?: number;
+}
+
+export interface SiteVisitAssetLink {
+  id: string;
+  siteVisitId: string;
+  assetId: string;
+  addedByUserId?: string | null;
+  addedAt?: string;
+  source?: string | null;
+  notes?: string | null;
+  asset: Asset;
 }
 
 export interface LoginResponse {

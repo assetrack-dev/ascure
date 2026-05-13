@@ -338,7 +338,7 @@ export function MapScreen({
       setIsLoading(true);
       setError(null);
 
-      const assetList = await loadAssetsForMap(token, substationId);
+      const assetList = await loadAssetsForMap(token, substationId, visitId);
       const nextDefectMarkers = await loadDefectMarkers(token, assetList);
       const nextRegion = createRegion([
         ...assetList.map(getAssetCoordinate).filter(isCoordinate),
@@ -361,7 +361,7 @@ export function MapScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, substationId, token]);
+  }, [onUnauthorized, substationId, token, visitId]);
 
   useEffect(() => {
     loadMapData();
@@ -932,7 +932,11 @@ function DefectCallout({ defect }: { defect: DefectMapMarker }) {
   );
 }
 
-async function loadAssetsForMap(token: string, substationId?: string) {
+async function loadAssetsForMap(token: string, substationId?: string, visitId?: string) {
+  if (substationId && visitId) {
+    return api.getAssetsForVisit(token, visitId, substationId);
+  }
+
   if (substationId) {
     return api.getAssets(token, substationId);
   }
