@@ -13,6 +13,7 @@ import {
   SectionTitle,
   StatusChip,
   SuccessBanner,
+  WarningBanner,
   uiTheme,
 } from '../ui';
 import { Asset, SiteVisit } from '../types';
@@ -52,6 +53,7 @@ export function VisitDetailScreen({
   visitId,
   substationId,
   successMessage,
+  isOffline,
   onBack,
   onOpenAddAsset,
   onOpenAssetMap,
@@ -62,6 +64,7 @@ export function VisitDetailScreen({
   visitId: string;
   substationId: string;
   successMessage?: string;
+  isOffline: boolean;
   onBack: () => void;
   onOpenAddAsset: () => void;
   onOpenAssetMap: () => void;
@@ -113,6 +116,13 @@ export function VisitDetailScreen({
       }}
     >
       <ErrorBanner message={error} />
+      <WarningBanner
+        message={
+          isOffline
+            ? 'Offline mode: submitted inspections stay in Sync Queue until connection returns.'
+            : null
+        }
+      />
       <SuccessBanner message={successMessage} />
       {isLoading ? <LoadingBlock label="Loading visit and assets..." /> : null}
 

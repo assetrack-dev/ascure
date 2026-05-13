@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, BackHandler, PanResponder, View } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { api, ApiError } from './src/api';
 import { loadStoredToken, removeStoredToken, storeToken } from './src/storage';
 import { AddAssetScreen } from './src/screens/AddAssetScreen';
@@ -16,9 +17,17 @@ import { InspectionDetailScreen } from './src/screens/InspectionDetailScreen';
 import { InspectionFormScreen } from './src/screens/InspectionFormScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { MapScreen } from './src/screens/MapScreen';
+import { SyncQueueScreen } from './src/screens/SyncQueueScreen';
 import { VisitDetailScreen } from './src/screens/VisitDetailScreen';
 import { LoadingScreen } from './src/ui';
 import { Asset, SessionUser } from './src/types';
+import {
+  getActiveQueueCount,
+  subscribeSyncQueue,
+  syncQueuedInspections,
+  SyncQueueRunResult,
+  SyncQueueSnapshot,
+} from './src/syncQueue';
 
 type InspectionDetailRoute =
   | {
@@ -74,6 +83,7 @@ type Route =
   | { name: 'home' }
   | { name: 'Dashboard' }
   | { name: 'DefectList' }
+  | { name: 'SyncQueue' }
   | DefectDetailRoute
   | { name: 'check-in' }
   | { name: 'visit-detail'; visitId: string; substationId: string; successMessage?: string }
@@ -99,11 +109,22 @@ type Route =
   | { name: 'inspection-form'; inspectionId: string; visitId: string; substationId: string }
   | { name: 'ImagePreview'; uri: string; title?: string; returnTo: ImagePreviewReturnRoute };
 
+const EMPTY_SYNC_QUEUE_SNAPSHOT: SyncQueueSnapshot = {
+  items: [],
+  completed: [],
+};
+
 export default function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [route, setRoute] = useState<Route>({ name: 'login' });
+  const [syncQueueSnapshot, setSyncQueueSnapshot] = useState<SyncQueueSnapshot>(
+    EMPTY_SYNC_QUEUE_SNAPSHOT,
+  );
+  const [isSyncingQueue, setIsSyncingQueue] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const syncQueueSnapshotRef = useRef(syncQueueSnapshot);
 
   useEffect(() => {
     let isMounted = true;
@@ -167,6 +188,76 @@ export default function App() {
     [handleLogout],
   );
 
+  useEffect(() => {
+    syncQueueSnapshotRef.current = syncQueueSnapshot;
+  }, [syncQueueSnapshot]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const unsubscribe = subscribeSyncQueue((snapshot) => {
+      if (isMounted) {
+        syncQueueSnapshotRef.current = snapshot;
+        setSyncQueueSnapshot(snapshot);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const runQueueSync = useCallback(async (): Promise<SyncQueueRunResult> => {
+    if (!token) {
+      return {
+        completed: 0,
+        failed: 0,
+        skipped: 0,
+      };
+    }
+
+    try {
+      setIsSyncingQueue(true);
+
+      return await syncQueuedInspections(token);
+    } catch (syncError) {
+      if (syncError instanceof ApiError && syncError.status === 401) {
+        await handleUnauthorized(syncError);
+      }
+
+      throw syncError;
+    } finally {
+      setIsSyncingQueue(false);
+    }
+  }, [handleUnauthorized, token]);
+
+  useEffect(() => {
+    if (!token) {
+      return undefined;
+    }
+
+    function handleNetworkState(isConnected: boolean | null, isInternetReachable: boolean | null) {
+      const canReachNetwork = isConnected === true && isInternetReachable !== false;
+      const nextIsOffline = isConnected === false || isInternetReachable === false;
+
+      setIsOffline(nextIsOffline);
+      if (canReachNetwork && getActiveQueueCount(syncQueueSnapshotRef.current) > 0) {
+        void runQueueSync().catch(() => undefined);
+      }
+    }
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      handleNetworkState(state.isConnected, state.isInternetReachable);
+    });
+
+    void NetInfo.fetch().then((state) => {
+      handleNetworkState(state.isConnected, state.isInternetReachable);
+    });
+
+    return unsubscribe;
+  }, [runQueueSync, token]);
+
   const goBack = useCallback(() => {
     if (route.name === 'login' || route.name === 'home') {
       return false;
@@ -227,6 +318,11 @@ export default function App() {
     }
 
     if (route.name === 'DefectList') {
+      setRoute({ name: 'home' });
+      return true;
+    }
+
+    if (route.name === 'SyncQueue') {
       setRoute({ name: 'home' });
       return true;
     }
@@ -388,6 +484,7 @@ export default function App() {
         visitId={route.visitId}
         substationId={route.substationId}
         successMessage={route.successMessage}
+        isOffline={isOffline}
         onBack={goBack}
         onOpenAddAsset={() =>
           setRoute({
@@ -552,6 +649,18 @@ export default function App() {
         }
         onUnauthorized={handleUnauthorized}
       />
+    );
+  }
+
+  if (route.name === 'SyncQueue') {
+    return withBackGesture(
+      <SyncQueueScreen
+        snapshot={syncQueueSnapshot}
+        isSyncing={isSyncingQueue}
+        isOffline={isOffline}
+        onBack={goBack}
+        onRetry={runQueueSync}
+      />,
     );
   }
 
@@ -721,6 +830,7 @@ export default function App() {
           })
         }
         onUnauthorized={handleUnauthorized}
+        isOffline={isOffline}
       />
     );
   }
@@ -734,6 +844,7 @@ export default function App() {
       onOpenDashboard={() => setRoute({ name: 'Dashboard' })}
       onOpenAssetMap={() => setRoute({ name: 'asset-map' })}
       onOpenDefects={() => setRoute({ name: 'DefectList' })}
+      onOpenSyncQueue={() => setRoute({ name: 'SyncQueue' })}
       onOpenVisit={(visit) =>
         setRoute({
           name: 'visit-detail',
@@ -743,6 +854,9 @@ export default function App() {
       }
       onLogout={handleLogout}
       onUnauthorized={handleUnauthorized}
+      syncQueueSnapshot={syncQueueSnapshot}
+      isSyncingQueue={isSyncingQueue}
+      isOffline={isOffline}
     />
   );
 }

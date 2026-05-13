@@ -235,6 +235,18 @@ export function SuccessBanner({ message }: { message?: string | null }) {
   );
 }
 
+export function WarningBanner({ message }: { message?: string | null }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <View style={styles.warningBanner}>
+      <Text style={styles.warningText}>{message}</Text>
+    </View>
+  );
+}
+
 export function LoadingBlock({ label }: { label: string }) {
   return (
     <View style={styles.loadingBlock}>
@@ -571,6 +583,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#166534',
+    fontWeight: '600',
+  },
+  warningBanner: {
+    backgroundColor: uiTheme.colors.warningSoft,
+    borderRadius: uiTheme.radius.control,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    padding: 14,
+  },
+  warningText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#92400e',
     fontWeight: '600',
   },
   loadingBlock: {

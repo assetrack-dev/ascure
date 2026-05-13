@@ -2,8 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
-import { Alert, Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
+import {
+  cleanupLocalInspectionPhotos,
+  enqueueInspectionSubmission,
+  isRetryableSyncError,
+  persistCapturedInspectionPhoto,
+} from '../syncQueue';
 import {
   buildChecklistItemsPayloadFromDraft,
   buildResultsPayload,
@@ -27,6 +33,7 @@ import {
   StatusChip,
   SuccessBanner,
   TextField,
+  WarningBanner,
 } from '../ui';
 import {
   DraftValues,
@@ -64,12 +71,14 @@ export function InspectionFormScreen({
   onBack,
   onSubmitted,
   onUnauthorized,
+  isOffline,
 }: {
   token: string;
   inspectionId: string;
   onBack: () => void;
   onSubmitted: (successMessage: string) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
+  isOffline: boolean;
 }) {
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
@@ -82,7 +91,10 @@ export function InspectionFormScreen({
   const [selectedPhotoUri, setSelectedPhotoUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [photoUploadNotice, setPhotoUploadNotice] = useState<string | null>(null);
   const overlayCaptureRef = useRef<View>(null);
+  const photosRef = useRef<CapturedInspectionPhoto[]>([]);
+  const photoUploadPromisesRef = useRef<Record<string, Promise<void>>>({});
   const overlayPromiseHandlersRef = useRef<{
     resolve: (uri: string) => void;
     reject: (error: Error) => void;
@@ -103,7 +115,6 @@ export function InspectionFormScreen({
       setSaveNotice(null);
       setIsLoading(true);
 
-      // TODO: Cache this pinned inspection form when offline sync is added.
       const formResponse = await api.getInspectionForm(token, inspectionId);
       setForm(formResponse);
       setDraftValues(createInitialDraftValues(formResponse));
@@ -124,8 +135,13 @@ export function InspectionFormScreen({
   }, [loadForm]);
 
   useEffect(() => {
-    setPhotos([]);
+    setPhotoList(() => []);
+    setPhotoUploadNotice(null);
   }, [inspectionId]);
+
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
 
   useEffect(() => {
     setSelectedPhotoUri(null);
@@ -194,22 +210,53 @@ export function InspectionFormScreen({
   }
 
   function updatePhoto(photoId: string, changes: Partial<CapturedInspectionPhoto>) {
-    setPhotos((current) =>
+    setPhotoList((current) =>
       current.map((photo) => (photo.id === photoId ? { ...photo, ...changes } : photo)),
     );
   }
 
+  function setPhotoList(updater: (current: CapturedInspectionPhoto[]) => CapturedInspectionPhoto[]) {
+    setPhotos((current) => {
+      const nextPhotos = updater(current);
+      photosRef.current = nextPhotos;
+
+      return nextPhotos;
+    });
+  }
+
+  async function uploadPhotoToServer(photo: CapturedInspectionPhoto) {
+    updatePhoto(photo.id, {
+      uploadState: 'uploading',
+      uploadError: undefined,
+    });
+
+    const uploadedPhoto = await api.uploadInspectionImage(token, inspectionId, photo);
+    setPhotoUploadNotice(null);
+
+    updatePhoto(photo.id, {
+      uploadedImageId: uploadedPhoto.id,
+      uploadedUrl: uploadedPhoto.url,
+      url: uploadedPhoto.url,
+      uploadState: 'uploaded',
+      uploadError: undefined,
+    });
+  }
+
+  async function uploadPhotoWithTracking(photo: CapturedInspectionPhoto) {
+    const uploadPromise = uploadPhotoToServer(photo);
+
+    photoUploadPromisesRef.current[photo.id] = uploadPromise;
+
+    try {
+      await uploadPromise;
+    } finally {
+      delete photoUploadPromisesRef.current[photo.id];
+    }
+  }
+
   async function uploadPhotoInBackground(photo: CapturedInspectionPhoto) {
     try {
-      const uploadedPhoto = await api.uploadInspectionImage(token, inspectionId, photo);
-
-      updatePhoto(photo.id, {
-        uploadedImageId: uploadedPhoto.id,
-        uploadedUrl: uploadedPhoto.url,
-        url: uploadedPhoto.url,
-        uploadState: 'uploaded',
-        uploadError: undefined,
-      });
+      await uploadPhotoWithTracking(photo);
     } catch (uploadError) {
       if (uploadError instanceof ApiError && uploadError.status === 401) {
         updatePhoto(photo.id, {
@@ -227,10 +274,40 @@ export function InspectionFormScreen({
         uploadState: 'error',
         uploadError: message,
       });
-      Alert.alert(
-        'Photo upload failed',
-        `${message}\n\nYou can continue the inspection. The local preview will stay available.`,
-      );
+
+      if (isRetryableSyncError(uploadError)) {
+        setPhotoUploadNotice(
+          'Photo upload paused. The photo is kept locally and will sync when the inspection syncs.',
+        );
+        return;
+      }
+
+      setError(message);
+    }
+  }
+
+  async function uploadPhotosForSubmission(photoSnapshot: CapturedInspectionPhoto[]) {
+    for (const photo of photoSnapshot) {
+      if (photo.uploadedImageId || photo.uploadedUrl || photo.uploadState === 'uploaded') {
+        continue;
+      }
+
+      const existingUpload = photoUploadPromisesRef.current[photo.id];
+
+      try {
+        if (existingUpload) {
+          await existingUpload;
+        } else {
+          await uploadPhotoWithTracking(photo);
+        }
+      } catch (uploadError) {
+        updatePhoto(photo.id, {
+          uploadState: 'error',
+          uploadError:
+            uploadError instanceof Error ? uploadError.message : 'Unable to upload inspection photo.',
+        });
+        throw uploadError;
+      }
     }
   }
 
@@ -278,6 +355,7 @@ export function InspectionFormScreen({
     const position = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
+    const photoId = createLocalPhotoId(photoTimestamp);
     const overlayImageUri = await createOverlayPhoto({
       originalUri: capturedAsset.uri,
       timestamp: photoTimestamp,
@@ -290,10 +368,17 @@ export function InspectionFormScreen({
         capturedAsset.height,
       )),
     });
+    const persistedPhoto = await persistCapturedInspectionPhoto({
+      id: photoId,
+      uri: overlayImageUri,
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      timestamp: photoTimestamp,
+    });
 
     return {
-      id: createLocalPhotoId(photoTimestamp),
-      uri: overlayImageUri,
+      id: photoId,
+      uri: persistedPhoto.uri,
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
       timestamp: photoTimestamp,
@@ -312,7 +397,7 @@ export function InspectionFormScreen({
         return;
       }
 
-      setPhotos((current) => [...current, nextPhoto]);
+      setPhotoList((current) => [...current, nextPhoto]);
       void uploadPhotoInBackground(nextPhoto);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : 'Unable to capture inspection photo.');
@@ -332,7 +417,7 @@ export function InspectionFormScreen({
         return;
       }
 
-      setPhotos((current) => current.map((photo) => (photo.id === photoId ? nextPhoto : photo)));
+      setPhotoList((current) => current.map((photo) => (photo.id === photoId ? nextPhoto : photo)));
       void uploadPhotoInBackground(nextPhoto);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : 'Unable to capture inspection photo.');
@@ -342,7 +427,7 @@ export function InspectionFormScreen({
   }
 
   function handleRemovePhoto(photoId: string) {
-    setPhotos((current) => current.filter((photo) => photo.id !== photoId));
+    setPhotoList((current) => current.filter((photo) => photo.id !== photoId));
   }
 
   async function createOverlayPhoto(photo: PendingOverlayPhoto) {
@@ -387,23 +472,42 @@ export function InspectionFormScreen({
     const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
       includeEmpty: true,
     });
+    const submissionPayload = {
+      results: supportedResults,
+      items: checklistItems,
+    };
 
     try {
       setIsSubmitting(true);
       setError(null);
       setSaveNotice(null);
 
-      await api.saveInspectionResults(token, inspectionId, {
-        results: supportedResults,
-        items: checklistItems,
-      });
+      await api.saveInspectionResults(token, inspectionId, submissionPayload);
+
+      await uploadPhotosForSubmission(photosRef.current);
 
       await api.submitInspection(token, inspectionId);
+      await cleanupLocalInspectionPhotos(photosRef.current);
 
       onSubmitted('Inspection submitted successfully.');
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         await onUnauthorized(submitError);
+        return;
+      }
+
+      if (isRetryableSyncError(submitError)) {
+        const message =
+          submitError instanceof Error ? submitError.message : 'Connection unavailable during submit.';
+
+        await enqueueInspectionSubmission({
+          form,
+          payload: submissionPayload,
+          photos: photosRef.current,
+          errorMessage: message,
+        });
+
+        onSubmitted('Inspection saved to Sync Queue. It will retry when connection returns.');
         return;
       }
 
@@ -487,6 +591,13 @@ export function InspectionFormScreen({
       footer={
         <View style={styles.stickyActionArea}>
           <ErrorBanner message={error} />
+          <WarningBanner
+            message={
+              isOffline
+                ? 'Offline mode: captured photos and submitted inspections will stay on this device until connection returns.'
+                : photoUploadNotice
+            }
+          />
           {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
           {!isSubmitted ? <SuccessBanner message={saveNotice} /> : null}
           <View style={styles.footerActions}>

@@ -27,6 +27,9 @@ import {
 } from './types';
 
 const DEFAULT_API_BASE_URL = 'http://10.149.246.224:3000/api/v1';
+const NETWORK_ERROR_LOG_THROTTLE_MS = 30000;
+
+const networkErrorLogTimes = new Map<string, number>();
 
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL;
@@ -75,11 +78,7 @@ async function request<T>(path: string, options: RequestOptions = {}) {
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
   } catch (error) {
-    console.error('[API NETWORK ERROR]', {
-      url,
-      method,
-      error,
-    });
+    logNetworkError({ url, method, error });
     throw error;
   }
 
@@ -98,6 +97,31 @@ async function request<T>(path: string, options: RequestOptions = {}) {
   }
 
   return payload as T;
+}
+
+function logNetworkError({
+  url,
+  method,
+  error,
+}: {
+  url: string;
+  method: string;
+  error: unknown;
+}) {
+  const key = `${method} ${url}`;
+  const now = Date.now();
+  const previousLogTime = networkErrorLogTimes.get(key) ?? 0;
+
+  if (now - previousLogTime < NETWORK_ERROR_LOG_THROTTLE_MS) {
+    return;
+  }
+
+  networkErrorLogTimes.set(key, now);
+  console.warn('[API NETWORK ERROR]', {
+    url,
+    method,
+    error,
+  });
 }
 
 function tryParsePayload(rawText: string) {
@@ -423,11 +447,7 @@ async function uploadInspectionImage(
 
     return payload as InspectionImage;
   } catch (error) {
-    console.error('[UPLOAD ERROR]', {
-      url,
-      method: 'POST',
-      error,
-    });
+    logNetworkError({ url, method: 'POST upload', error });
 
     throw error;
   } finally {

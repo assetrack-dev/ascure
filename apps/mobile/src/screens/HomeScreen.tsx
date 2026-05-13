@@ -2,12 +2,20 @@ import { useCallback, useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { API_BASE_URL, api, ApiError } from '../api';
 import {
+  getActiveQueueCount,
+  getFailedQueueCount,
+  getPendingQueueCount,
+  getSyncingQueueCount,
+  SyncQueueSnapshot,
+} from '../syncQueue';
+import {
   Card,
   EmptyState,
   ErrorBanner,
   LoadingBlock,
   Screen,
   SectionTitle,
+  WarningBanner,
   uiTheme,
 } from '../ui';
 import { SessionUser, SiteVisit, Team } from '../types';
@@ -28,9 +36,13 @@ export function HomeScreen({
   onOpenDashboard,
   onOpenAssetMap,
   onOpenDefects,
+  onOpenSyncQueue,
   onOpenVisit,
   onLogout,
   onUnauthorized,
+  syncQueueSnapshot,
+  isSyncingQueue,
+  isOffline,
 }: {
   token: string;
   initialUser: SessionUser;
@@ -39,9 +51,13 @@ export function HomeScreen({
   onOpenDashboard: () => void;
   onOpenAssetMap: () => void;
   onOpenDefects: () => void;
+  onOpenSyncQueue: () => void;
   onOpenVisit: (visit: SiteVisit) => void;
   onLogout: () => Promise<void>;
   onUnauthorized: (error?: unknown) => Promise<void>;
+  syncQueueSnapshot: SyncQueueSnapshot;
+  isSyncingQueue: boolean;
+  isOffline: boolean;
 }) {
   const [user, setUser] = useState(initialUser);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -106,7 +122,19 @@ export function HomeScreen({
         ]}
       >
         <ErrorBanner message={error} />
+        <WarningBanner
+          message={
+            isOffline
+              ? 'Offline mode: inspections can be queued and will sync when connection returns.'
+              : null
+          }
+        />
         {isLoading ? <LoadingBlock label="Loading active sites..." /> : null}
+        <SyncQueueSummaryCard
+          snapshot={syncQueueSnapshot}
+          isSyncing={isSyncingQueue}
+          onOpen={onOpenSyncQueue}
+        />
 
         {!isLoading ? (
           <Card>
@@ -143,7 +171,9 @@ export function HomeScreen({
         onOpenDashboard={onOpenDashboard}
         onOpenAssetMap={onOpenAssetMap}
         onOpenDefects={onOpenDefects}
+        onOpenSyncQueue={onOpenSyncQueue}
         onLogout={onLogout}
+        syncQueueSnapshot={syncQueueSnapshot}
       />
     </View>
   );
@@ -203,7 +233,9 @@ function HomeDrawer({
   onOpenDashboard,
   onOpenAssetMap,
   onOpenDefects,
+  onOpenSyncQueue,
   onLogout,
+  syncQueueSnapshot,
 }: {
   visible: boolean;
   user: SessionUser;
@@ -212,8 +244,12 @@ function HomeDrawer({
   onOpenDashboard: () => void;
   onOpenAssetMap: () => void;
   onOpenDefects: () => void;
+  onOpenSyncQueue: () => void;
   onLogout: () => Promise<void>;
+  syncQueueSnapshot: SyncQueueSnapshot;
 }) {
+  const activeSyncCount = getActiveQueueCount(syncQueueSnapshot);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.drawerRoot}>
@@ -273,6 +309,13 @@ function HomeDrawer({
                   onOpenDefects();
                 }}
               />
+              <DrawerItem
+                label={activeSyncCount > 0 ? `Sync Queue (${activeSyncCount})` : 'Sync Queue'}
+                onPress={() => {
+                  onClose();
+                  onOpenSyncQueue();
+                }}
+              />
             </View>
 
             <DrawerItem
@@ -287,6 +330,44 @@ function HomeDrawer({
         </View>
       </View>
     </Modal>
+  );
+}
+
+function SyncQueueSummaryCard({
+  snapshot,
+  isSyncing,
+  onOpen,
+}: {
+  snapshot: SyncQueueSnapshot;
+  isSyncing: boolean;
+  onOpen: () => void;
+}) {
+  const activeCount = getActiveQueueCount(snapshot);
+
+  if (activeCount === 0) {
+    return null;
+  }
+
+  const pendingCount = getPendingQueueCount(snapshot);
+  const syncingCount = getSyncingQueueCount(snapshot);
+  const failedCount = getFailedQueueCount(snapshot);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onOpen}
+      style={({ pressed }) => [styles.syncSummaryCard, pressed && styles.visitRowPressed]}
+    >
+      <View style={styles.syncSummaryTextWrap}>
+        <Text style={styles.syncSummaryTitle}>
+          {failedCount > 0 ? 'Sync needs attention' : isSyncing || syncingCount > 0 ? 'Syncing inspections' : 'Pending sync'}
+        </Text>
+        <Text style={styles.syncSummaryMeta}>
+          {pendingCount} pending, {syncingCount} syncing, {failedCount} failed
+        </Text>
+      </View>
+      <Text style={styles.rowArrow}>{'>'}</Text>
+    </Pressable>
   );
 }
 
@@ -372,6 +453,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  syncSummaryCard: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    backgroundColor: uiTheme.colors.warningSoft,
+    padding: 14,
+  },
+  syncSummaryTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  syncSummaryTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  syncSummaryMeta: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   countText: {
     minWidth: 36,
