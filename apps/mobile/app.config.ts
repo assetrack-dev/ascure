@@ -5,7 +5,7 @@ export default {
     name: 'ASCURE',
     slug: 'ascure',
     scheme: 'ascure',
-    version: '1.0.0',
+    version: '1.1.0',
     orientation: 'portrait',
     userInterfaceStyle: 'light',
 
@@ -47,6 +47,7 @@ export default {
 
     android: {
       package: 'local.ascure.field',
+      versionCode: 2,
       usesCleartextTraffic: true,
       permissions: ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION'],
       config: {
