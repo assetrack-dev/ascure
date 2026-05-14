@@ -99,6 +99,8 @@ const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
 const paginationButtonClassName =
   "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+const filterLabelClassName =
+  "mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500";
 
 function SiteVisitsLoading() {
   return (
@@ -184,6 +186,90 @@ function displayPencawang(visit: SiteVisitListItem) {
   );
 }
 
+function parseTimestamp(date: string | null | undefined) {
+  const timestamp = date ? new Date(date).getTime() : Number.NaN;
+
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatRelativeActivity(date: string | null | undefined) {
+  const timestamp = parseTimestamp(date);
+
+  if (!timestamp) {
+    return "No activity";
+  }
+
+  const diffMilliseconds = Date.now() - timestamp;
+
+  if (diffMilliseconds < 0) {
+    return formatDateTime(date);
+  }
+
+  const minutes = Math.floor(diffMilliseconds / 60000);
+
+  if (minutes < 1) {
+    return "Updated just now";
+  }
+
+  if (minutes < 60) {
+    return `Updated ${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+
+  if (hours < 24) {
+    return `Updated ${hours}h ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+
+  if (days < 7) {
+    return `Updated ${days}d ago`;
+  }
+
+  return formatDateTime(date);
+}
+
+function activityIndicatorClassName(date: string | null | undefined) {
+  const timestamp = parseTimestamp(date);
+
+  if (!timestamp) {
+    return "bg-slate-300";
+  }
+
+  const diffHours = (Date.now() - timestamp) / 3600000;
+
+  if (diffHours <= 1) {
+    return "bg-emerald-500";
+  }
+
+  if (diffHours <= 24) {
+    return "bg-amber-500";
+  }
+
+  return "bg-slate-400";
+}
+
+function formatRefreshTime(date: Date | null) {
+  if (!date) {
+    return "Last refreshed pending";
+  }
+
+  return `Last refreshed ${new Intl.DateTimeFormat("en-MY", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date)}`;
+}
+
+function formatValidationLabel(status: SiteVisitValidationStatus) {
+  if (status === "PENDING" || status === "UNKNOWN") {
+    return "Awaiting Validation";
+  }
+
+  return formatEnum(status);
+}
+
 function getSortValue(visit: SiteVisitListItem, sortKey: SortKey) {
   if (sortKey === "health") {
     return HEALTH_RANK[visit.operationalHealthStatus];
@@ -259,10 +345,19 @@ function HealthBadge({ status }: { status: OperationalHealthStatus }) {
       : status === "WARNING"
         ? "border-amber-200 bg-amber-50 text-amber-800"
         : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  const dotClassName =
+    status === "CRITICAL"
+      ? "bg-red-500"
+      : status === "WARNING"
+        ? "bg-amber-500"
+        : "bg-emerald-500";
 
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${className}`}>
-      {status}
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${className}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
+      {formatEnum(status)}
     </span>
   );
 }
@@ -273,10 +368,21 @@ function StatusBadge({ status }: { status: SiteVisitStatus }) {
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
       : status === "CANCELLED"
         ? "border-slate-200 bg-slate-50 text-slate-600"
-        : "border-blue-200 bg-blue-50 text-blue-700";
+        : status === "ACTIVE"
+          ? "border-teal-200 bg-teal-50 text-teal-700"
+          : "border-blue-200 bg-blue-50 text-blue-700";
+  const dotClassName =
+    status === "COMPLETED"
+      ? "bg-emerald-500"
+      : status === "CANCELLED"
+        ? "bg-slate-400"
+        : "bg-teal-500";
 
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
       {formatEnum(status)}
     </span>
   );
@@ -294,7 +400,7 @@ function ValidationBadge({ status }: { status: SiteVisitValidationStatus }) {
 
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatEnum(status)}
+      {formatValidationLabel(status)}
     </span>
   );
 }
@@ -303,7 +409,7 @@ function ProgressBar({ percentage }: { percentage: number }) {
   const boundedPercentage = Math.min(Math.max(percentage, 0), 100);
 
   return (
-    <div className="min-w-36">
+    <div className="w-full min-w-0">
       <div className="mb-1 flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
         <span>{boundedPercentage}%</span>
       </div>
@@ -317,35 +423,117 @@ function ProgressBar({ percentage }: { percentage: number }) {
   );
 }
 
+function DefectChip({ count }: { count: number }) {
+  const hasDefects = count > 0;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
+        hasDefects
+          ? "border-red-200 bg-red-50 text-red-700"
+          : "border-slate-200 bg-slate-50 text-slate-600"
+      }`}
+    >
+      {hasDefects ? <AlertTriangle size={13} /> : null}
+      {hasDefects ? `${count.toLocaleString()} defect${count === 1 ? "" : "s"}` : "0 defects"}
+    </span>
+  );
+}
+
+function ActivityStatus({ date }: { date: string | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${activityIndicatorClassName(date)}`}
+        />
+        <span className="truncate">{formatRelativeActivity(date)}</span>
+      </div>
+      {date ? (
+        <div className="mt-1 truncate text-xs text-[var(--muted)]">{formatDateTime(date)}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function OperationalStat({
   label,
   value,
   icon: Icon,
   tone = "neutral",
+  progress,
 }: {
   label: string;
   value: number | string;
   icon: typeof Activity;
-  tone?: "neutral" | "success" | "warning" | "danger";
+  tone?: "neutral" | "success" | "warning" | "danger" | "live" | "progress";
+  progress?: number;
 }) {
-  const toneClassName =
+  const styles =
     tone === "danger"
-      ? "border-red-200 bg-red-50 text-red-700"
+      ? {
+          card: "border-red-200 bg-red-50/50 shadow-red-100/60",
+          icon: "border-red-200 bg-white text-red-700",
+          signal: "bg-red-500",
+          bar: "bg-red-600",
+        }
       : tone === "warning"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
+        ? {
+            card: "border-amber-200 bg-amber-50/60 shadow-amber-100/60",
+            icon: "border-amber-200 bg-white text-amber-800",
+            signal: "bg-amber-500",
+            bar: "bg-amber-500",
+          }
         : tone === "success"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-700";
+          ? {
+              card: "border-emerald-200 bg-emerald-50/50 shadow-emerald-100/60",
+              icon: "border-emerald-200 bg-white text-emerald-700",
+              signal: "bg-emerald-500",
+              bar: "bg-emerald-600",
+            }
+          : tone === "live"
+            ? {
+                card: "border-teal-200 bg-teal-50/50 shadow-teal-100/60",
+                icon: "border-teal-200 bg-white text-teal-700",
+                signal: "bg-emerald-500",
+                bar: "bg-[var(--brand)]",
+              }
+            : tone === "progress"
+              ? {
+                  card: "border-slate-200 bg-white",
+                  icon: "border-teal-200 bg-teal-50 text-teal-700",
+                  signal: "bg-[var(--brand)]",
+                  bar: "bg-[var(--brand)]",
+                }
+              : {
+                  card: "border-[var(--line)] bg-white",
+                  icon: "border-slate-200 bg-slate-50 text-slate-700",
+                  signal: "bg-slate-400",
+                  bar: "bg-slate-500",
+                };
+  const boundedProgress =
+    typeof progress === "number" ? Math.min(Math.max(progress, 0), 100) : null;
 
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-4 shadow-[var(--shadow-soft)]">
+    <div className={`rounded-xl border p-4 shadow-[var(--shadow-soft)] ${styles.card}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase text-[var(--muted)]">{label}</p>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${toneClassName}`}>
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 rounded-full ${styles.signal}`} />
+          <p className="text-xs font-bold uppercase text-[var(--muted)]">{label}</p>
+        </div>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${styles.icon}`}>
           <Icon size={17} />
         </div>
       </div>
       <p className="mt-3 text-2xl font-bold text-slate-950">{value}</p>
+      {boundedProgress !== null ? (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`h-full rounded-full ${styles.bar}`}
+            style={{ width: `${boundedProgress}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -386,6 +574,7 @@ function SiteVisitsContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
   const [mainheadFilter, setMainheadFilter] = useState("");
   const [pencawangFilter, setPencawangFilter] = useState("");
@@ -420,6 +609,7 @@ function SiteVisitsContent() {
       try {
         const nextVisits = await fetchSiteVisits(token);
         setVisits(nextVisits);
+        setLastRefreshedAt(new Date());
       } catch (visitsError) {
         if (visitsError instanceof ApiError && visitsError.status === 401) {
           handleLogout();
@@ -583,6 +773,12 @@ function SiteVisitsContent() {
   const activeVisitCount = visits.filter((visit) =>
     ["ACTIVE", "OPEN", "IN_PROGRESS"].includes(visit.status),
   ).length;
+  const activeTeamCount = new Set(
+    visits
+      .filter((visit) => ["ACTIVE", "OPEN", "IN_PROGRESS"].includes(visit.status))
+      .map((visit) => visit.team?.id ?? visit.team?.code ?? visit.team?.name)
+      .filter((teamIdentifier): teamIdentifier is string => Boolean(teamIdentifier)),
+  ).size;
   const completedVisitCount = visits.filter((visit) => visit.status === "COMPLETED").length;
   const overdueVisitCount = visits.filter((visit) => visit.isOverdue).length;
   const criticalVisitCount = visits.filter(
@@ -629,7 +825,7 @@ function SiteVisitsContent() {
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
-        <div className="mx-auto max-w-7xl">
+        <div className="mx-auto max-w-[92rem]">
           <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase text-[var(--brand)]">
@@ -638,10 +834,14 @@ function SiteVisitsContent() {
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
                 Site Visits
               </h1>
+              <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
+                Live visit monitoring across teams, assets, progress, defects, and validation.
+                {isReadOnly ? " Read-only session." : " Admin session."}
+              </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
-                  {isReadOnly ? "Read-only" : "Full access"}
+                <span className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-700 shadow-[var(--shadow-soft)]">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Operations Live
                 </span>
                 <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   <input
@@ -653,7 +853,10 @@ function SiteVisitsContent() {
                   Auto-refresh 60s
                 </label>
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {visits.length} total
+                  {formatRefreshTime(lastRefreshedAt)}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                  {visits.length} visits
                 </span>
               </div>
             </div>
@@ -679,18 +882,11 @@ function SiteVisitsContent() {
             ) : (
               <div className="space-y-6">
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-                  <OperationalStat label="Active" value={activeVisitCount} icon={Activity} />
                   <OperationalStat
-                    label="Completed"
-                    value={completedVisitCount}
-                    icon={ShieldCheck}
-                    tone="success"
-                  />
-                  <OperationalStat
-                    label="Overdue"
-                    value={overdueVisitCount}
-                    icon={Clock3}
-                    tone={overdueVisitCount > 0 ? "danger" : "neutral"}
+                    label="Active"
+                    value={activeVisitCount}
+                    icon={Activity}
+                    tone="live"
                   />
                   <OperationalStat
                     label="Critical"
@@ -699,176 +895,218 @@ function SiteVisitsContent() {
                     tone={criticalVisitCount > 0 ? "danger" : "neutral"}
                   />
                   <OperationalStat
+                    label="Overdue"
+                    value={overdueVisitCount}
+                    icon={Clock3}
+                    tone={overdueVisitCount > 0 ? "danger" : "neutral"}
+                  />
+                  <OperationalStat
                     label="Completion"
                     value={`${averageCompletion}%`}
                     icon={CalendarDays}
+                    tone="progress"
+                    progress={averageCompletion}
+                  />
+                  <OperationalStat
+                    label="Completed"
+                    value={completedVisitCount}
+                    icon={ShieldCheck}
                     tone="success"
                   />
                 </div>
 
-                <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+                <div className="grid gap-6 2xl:grid-cols-4">
+                  <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] 2xl:col-span-3">
                   <div className="border-b border-slate-200 p-5">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(9,minmax(128px,auto))_auto]">
-                      <label className="relative block">
-                        <span className="sr-only">Search visits</span>
-                        <Search
-                          size={17}
-                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                        />
-                        <input
-                          type="search"
-                          value={search}
-                          onChange={(event) => setSearch(event.target.value)}
-                          placeholder="Search operations"
-                          className={searchControlClassName}
-                        />
-                      </label>
+                    <div className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1.6fr)_repeat(4,minmax(150px,1fr))]">
+                        <label className="block">
+                          <span className={filterLabelClassName}>Search</span>
+                          <span className="relative block">
+                            <Search
+                              size={17}
+                              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                            />
+                            <input
+                              type="search"
+                              value={search}
+                              onChange={(event) => setSearch(event.target.value)}
+                              placeholder="Search visits, teams, users"
+                              className={searchControlClassName}
+                            />
+                          </span>
+                        </label>
 
-                      <label className="block">
-                        <span className="sr-only">Status</span>
-                        <select
-                          value={statusFilter}
-                          onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                          className={filterControlClassName}
+                        <label className="block">
+                          <span className={filterLabelClassName}>Status</span>
+                          <select
+                            value={statusFilter}
+                            onChange={(event) =>
+                              setStatusFilter(event.target.value as StatusFilter)
+                            }
+                            className={filterControlClassName}
+                          >
+                            {STATUS_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Health</span>
+                          <select
+                            value={healthFilter}
+                            onChange={(event) =>
+                              setHealthFilter(event.target.value as HealthFilter)
+                            }
+                            className={filterControlClassName}
+                          >
+                            {HEALTH_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Validation</span>
+                          <select
+                            value={validationFilter}
+                            onChange={(event) =>
+                              setValidationFilter(event.target.value as ValidationFilter)
+                            }
+                            className={filterControlClassName}
+                          >
+                            {VALIDATION_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Visit Type</span>
+                          <select
+                            value={visitTypeFilter}
+                            onChange={(event) =>
+                              setVisitTypeFilter(event.target.value as VisitTypeFilter)
+                            }
+                            className={filterControlClassName}
+                          >
+                            {VISIT_TYPE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.7fr)_minmax(120px,0.85fr)_minmax(150px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.8fr)_auto]">
+                        <div>
+                          <span className={filterLabelClassName}>Team/User</span>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <label className="block">
+                              <span className="sr-only">Team</span>
+                              <select
+                                value={teamFilter}
+                                onChange={(event) => setTeamFilter(event.target.value)}
+                                className={filterControlClassName}
+                              >
+                                <option value="ALL">All teams</option>
+                                {teamOptions.map(([id, label]) => (
+                                  <option key={id} value={id}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="sr-only">Team member</span>
+                              <input
+                                type="text"
+                                value={memberFilter}
+                                onChange={(event) => setMemberFilter(event.target.value)}
+                                placeholder="User"
+                                className={filterControlClassName}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>MAINHEAD</span>
+                          <input
+                            type="text"
+                            value={mainheadFilter}
+                            onChange={(event) => setMainheadFilter(event.target.value)}
+                            placeholder="MAINHEAD"
+                            className={filterControlClassName}
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Pencawang</span>
+                          <input
+                            type="text"
+                            value={pencawangFilter}
+                            onChange={(event) => setPencawangFilter(event.target.value)}
+                            placeholder="Pencawang"
+                            className={filterControlClassName}
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Date From</span>
+                          <input
+                            type="date"
+                            value={startDate}
+                            onChange={(event) => setStartDate(event.target.value)}
+                            className={filterControlClassName}
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Date To</span>
+                          <input
+                            type="date"
+                            value={endDate}
+                            onChange={(event) => setEndDate(event.target.value)}
+                            className={filterControlClassName}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={resetFilters}
+                          className={`${secondaryButtonClassName} w-full self-end xl:w-auto`}
                         >
-                          {STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Health</span>
-                        <select
-                          value={healthFilter}
-                          onChange={(event) => setHealthFilter(event.target.value as HealthFilter)}
-                          className={filterControlClassName}
-                        >
-                          {HEALTH_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Validation</span>
-                        <select
-                          value={validationFilter}
-                          onChange={(event) =>
-                            setValidationFilter(event.target.value as ValidationFilter)
-                          }
-                          className={filterControlClassName}
-                        >
-                          {VALIDATION_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Visit type</span>
-                        <select
-                          value={visitTypeFilter}
-                          onChange={(event) =>
-                            setVisitTypeFilter(event.target.value as VisitTypeFilter)
-                          }
-                          className={filterControlClassName}
-                        >
-                          {VISIT_TYPE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Team</span>
-                        <select
-                          value={teamFilter}
-                          onChange={(event) => setTeamFilter(event.target.value)}
-                          className={filterControlClassName}
-                        >
-                          <option value="ALL">All teams</option>
-                          {teamOptions.map(([id, label]) => (
-                            <option key={id} value={id}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">MAINHEAD</span>
-                        <input
-                          type="text"
-                          value={mainheadFilter}
-                          onChange={(event) => setMainheadFilter(event.target.value)}
-                          placeholder="MAINHEAD"
-                          className={filterControlClassName}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Pencawang</span>
-                        <input
-                          type="text"
-                          value={pencawangFilter}
-                          onChange={(event) => setPencawangFilter(event.target.value)}
-                          placeholder="Pencawang"
-                          className={filterControlClassName}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Team member</span>
-                        <input
-                          type="text"
-                          value={memberFilter}
-                          onChange={(event) => setMemberFilter(event.target.value)}
-                          placeholder="Team/user"
-                          className={filterControlClassName}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">Start date</span>
-                        <input
-                          type="date"
-                          value={startDate}
-                          onChange={(event) => setStartDate(event.target.value)}
-                          className={filterControlClassName}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="sr-only">End date</span>
-                        <input
-                          type="date"
-                          value={endDate}
-                          onChange={(event) => setEndDate(event.target.value)}
-                          className={filterControlClassName}
-                        />
-                      </label>
-
-                      <button type="button" onClick={resetFilters} className={secondaryButtonClassName}>
-                        <X size={16} />
-                        Reset
-                      </button>
+                          <X size={16} />
+                          Reset
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
+                  <div className="overflow-x-auto xl:overflow-visible">
+                    <table className="w-full min-w-[920px] table-fixed text-left text-sm xl:min-w-0">
+                      <colgroup>
+                        <col className="w-[9%]" />
+                        <col className="w-[9%]" />
+                        <col className="w-[22%]" />
+                        <col className="w-[13%]" />
+                        <col className="w-[13%]" />
+                        <col className="w-[9%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[13%]" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Health"
                               sortKey="health"
@@ -877,7 +1115,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Status"
                               sortKey="status"
@@ -886,7 +1124,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="min-w-64 px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Pencawang"
                               sortKey="pencawang"
@@ -895,16 +1133,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
-                            <SortButton
-                              label="MAINHEAD"
-                              sortKey="mainhead"
-                              activeSortKey={sortKey}
-                              direction={sortDirection}
-                              onSort={handleSort}
-                            />
-                          </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Team"
                               sortKey="team"
@@ -913,7 +1142,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Progress"
                               sortKey="progress"
@@ -922,7 +1151,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Defects"
                               sortKey="defects"
@@ -931,20 +1160,11 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">Validation</th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
+                          <th className="px-3 py-3.5">Validation</th>
+                          <th className="px-3 py-3.5">
                             <SortButton
                               label="Last Activity"
                               sortKey="lastActivity"
-                              activeSortKey={sortKey}
-                              direction={sortDirection}
-                              onSort={handleSort}
-                            />
-                          </th>
-                          <th className="whitespace-nowrap px-5 py-3.5">
-                            <SortButton
-                              label="Started"
-                              sortKey="startedAt"
                               activeSortKey={sortKey}
                               direction={sortDirection}
                               onSort={handleSort}
@@ -967,46 +1187,48 @@ function SiteVisitsContent() {
                             className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
                             aria-label={`Open site visit ${displayPencawang(visit)}`}
                           >
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className="px-3 py-4 align-top">
                               <HealthBadge status={visit.operationalHealthStatus} />
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className="px-3 py-4 align-top">
                               <StatusBadge status={visit.status} />
                             </td>
-                            <td className="px-5 py-4">
-                              <div className="font-semibold text-slate-900">
-                                {displayPencawang(visit)}
-                              </div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">
-                                {formatEnum(visit.visitType)} / Cycle {visit.cycleNumber ?? "N/A"}
+                            <td className="px-3 py-4 align-top">
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold text-slate-900">
+                                  {displayPencawang(visit)}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
+                                  <span>{visit.mainhead ?? "MAINHEAD not recorded"}</span>
+                                  <span>
+                                    {formatEnum(visit.visitType)} / Cycle{" "}
+                                    {visit.cycleNumber ?? "N/A"}
+                                  </span>
+                                </div>
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              {visit.mainhead ?? "Not recorded"}
-                            </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              <div className="font-medium text-slate-900">{displayTeam(visit)}</div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">
+                            <td className="px-3 py-4 align-top text-slate-700">
+                              <div className="truncate font-medium text-slate-900">
+                                {displayTeam(visit)}
+                              </div>
+                              <div className="mt-1 truncate text-xs text-[var(--muted)]">
                                 {visit.teamMembers.length} members
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className="px-3 py-4 align-top">
                               <ProgressBar percentage={visit.completionPercentage} />
-                              <div className="mt-1 text-xs text-slate-500">
+                              <div className="mt-1 truncate text-xs text-slate-500">
                                 {visit.inspectedAssets}/{visit.totalAssets} assets
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-900">
-                              {visit.defectsFound.toLocaleString()}
+                            <td className="px-3 py-4 align-top">
+                              <DefectChip count={visit.defectsFound} />
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className="px-3 py-4 align-top">
                               <ValidationBadge status={visit.validationStatus} />
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                              {formatDateTime(visit.lastActivityAt)}
-                            </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                              {formatDateTime(visit.startedAt)}
+                            <td className="px-3 py-4 align-top text-slate-600">
+                              <ActivityStatus date={visit.lastActivityAt} />
                             </td>
                           </tr>
                         ))}
@@ -1079,7 +1301,57 @@ function SiteVisitsContent() {
                       </div>
                     </div>
                   </div>
-                </section>
+                  </section>
+
+                  <aside className="hidden 2xl:col-span-1 2xl:block">
+                    <div className="sticky top-6 rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold uppercase text-[var(--muted)]">
+                            GIS Operations Slot
+                          </p>
+                          <h2 className="mt-1 text-lg font-bold text-slate-950">
+                            Map Panel Ready
+                          </h2>
+                        </div>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-teal-200 bg-teal-50 text-teal-700">
+                          <Activity size={17} />
+                        </div>
+                      </div>
+
+                      <div className="mt-5 h-56 overflow-hidden rounded-lg border border-dashed border-slate-300 bg-[linear-gradient(90deg,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:24px_24px]">
+                        <div className="flex h-full items-center justify-center bg-white/55 p-5 text-center">
+                          <div>
+                            <p className="text-sm font-bold text-slate-900">Operational layer</p>
+                            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                              Reserved for visit overlays, field team traces, and validation alerts.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid gap-3">
+                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                            <Users size={14} />
+                            Active teams
+                          </span>
+                          <span className="text-sm font-bold text-slate-950">
+                            {activeTeamCount}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          <span className="text-xs font-semibold text-slate-600">
+                            Visible visits
+                          </span>
+                          <span className="text-sm font-bold text-slate-950">
+                            {sortedVisits.length}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
               </div>
             )}
           </div>
