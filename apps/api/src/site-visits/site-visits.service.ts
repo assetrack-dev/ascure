@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
+import { mkdir, writeFile } from 'fs/promises';
+import { extname, resolve } from 'path';
 import {
   InspectionCompletionStatus,
   Prisma,
@@ -20,6 +22,11 @@ import {
   isSiteVisitOverdue,
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
+import {
+  buildSiteVisitImagePath,
+  buildSiteVisitImagesDirectory,
+  buildSiteVisitImageUrl,
+} from '../common/uploads.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { CancelSiteVisitDto } from './dto/cancel-site-visit.dto';
 import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
@@ -221,6 +228,13 @@ type SiteVisitRollup = {
   completionPercentage: number;
 };
 
+type UploadedSiteVisitImageFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
+
 @Injectable()
 export class SiteVisitsService {
   constructor(
@@ -401,6 +415,46 @@ export class SiteVisitsService {
       now,
       overdueThresholdHours,
     );
+  }
+
+  async uploadImage(
+    user: RequestUser,
+    id: string,
+    file: UploadedSiteVisitImageFile | undefined,
+  ) {
+    this.assertCanMutate(user);
+
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required.');
+    }
+
+    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+    this.assertVisitIsMutable(siteVisit);
+
+    const uploadDirectory = buildSiteVisitImagesDirectory(siteVisit.id);
+
+    await mkdir(uploadDirectory, { recursive: true });
+
+    const fileExtension = this.getSafeFileExtension(file.originalname);
+    const fileName = `${Date.now()}-${randomUUID()}${fileExtension}`;
+    const storageKey = buildSiteVisitImagePath(siteVisit.id, fileName);
+    const filePath = resolve(uploadDirectory, fileName);
+
+    await writeFile(filePath, file.buffer);
+
+    const image = await this.prisma.image.create({
+      data: {
+        tenantId: user.tenantId,
+        siteVisitId: siteVisit.id,
+        createdByUserId: user.id,
+        fileName,
+        storageKey,
+        contentType: file.mimetype || null,
+        url: buildSiteVisitImageUrl(siteVisit.id, fileName),
+      },
+    });
+
+    return this.serializeSiteVisitImage(image);
   }
 
   async join(user: RequestUser, id: string) {
@@ -1165,6 +1219,37 @@ export class SiteVisitsService {
       addedBy: link.addedBy,
       asset: link.asset,
     };
+  }
+
+  private serializeSiteVisitImage(image: {
+    id: string;
+    fileName: string;
+    storageKey: string;
+    contentType: string | null;
+    url: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: image.id,
+      fileName: image.fileName,
+      storageKey: image.storageKey,
+      contentType: image.contentType,
+      url: image.url,
+      path: image.storageKey,
+      createdAt: image.createdAt.toISOString(),
+      updatedAt: image.updatedAt.toISOString(),
+    };
+  }
+
+  private getSafeFileExtension(originalName: string | undefined) {
+    const extension = extname(originalName || '').toLowerCase();
+
+    if (/^\.[a-z0-9]{1,10}$/.test(extension)) {
+      return extension;
+    }
+
+    return '.jpg';
   }
 
   private assertCanMutate(user: RequestUser) {

@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -33,6 +44,24 @@ export class SiteVisitsController {
   @Post(':id/join')
   join(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
     return this.siteVisitsService.join(user, params.id);
+  }
+
+  @Post(':id/images')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @UploadedFile()
+    file:
+      | {
+          originalname: string;
+          mimetype: string;
+          size: number;
+          buffer: Buffer;
+        }
+      | undefined,
+  ) {
+    return this.siteVisitsService.uploadImage(user, params.id, file);
   }
 
   @Get(':id/assets')

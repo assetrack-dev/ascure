@@ -28,6 +28,8 @@ export interface Team {
   updatedAt?: string;
 }
 
+export type SiteVisitType = 'DISCOVERY' | 'REINSPECTION' | 'SPECIAL' | 'AUDIT';
+
 export interface Substation {
   id: string;
   tenantId?: string;
@@ -136,9 +138,13 @@ export interface SiteVisitSummary {
 }
 
 export interface SiteVisitImage {
+  id?: string;
   uri?: string | null;
   url?: string | null;
   path?: string | null;
+  fileName?: string;
+  contentType?: string | null;
+  createdAt?: string;
 }
 
 export interface SiteVisit {
@@ -148,6 +154,15 @@ export interface SiteVisit {
   substationId: string;
   createdByUserId?: string;
   status: string;
+  visitType?: SiteVisitType | null;
+  mainhead?: string | null;
+  pencawangCode?: string | null;
+  pencawangName?: string | null;
+  functionalLocation?: string | null;
+  checkInLatitude?: number | null;
+  checkInLongitude?: number | null;
+  checkInAccuracyMeters?: number | null;
+  checkInCapturedAt?: string | null;
   startedAt: string;
   endedAt: string | null;
   completedAt?: string | null;
@@ -298,6 +313,11 @@ export interface InspectionImageUploadInput {
   longitude: number;
   timestamp: string;
   type?: string | null;
+}
+
+export interface SiteVisitImageUploadInput {
+  uri: string;
+  timestamp?: string;
 }
 
 export interface InspectionImage {

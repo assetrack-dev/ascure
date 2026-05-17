@@ -466,6 +466,7 @@ export default function App() {
     return (
       <CheckInScreen
         token={token}
+        user={user}
         onBack={() => setRoute({ name: 'home' })}
         onCreated={(visit) =>
           setRoute({
@@ -797,15 +798,17 @@ export default function App() {
                 })
               : setRoute({ name: 'home' })
         }
-        onSaved={(successMessage) =>
-          route.visitId && route.substationId
-            ? setRoute({
-                name: 'visit-detail',
-                visitId: route.visitId,
-                substationId: route.substationId,
-                successMessage,
-              })
-            : setRoute({ name: 'home' })
+        onSaved={(asset) =>
+          setRoute({
+            name: 'asset-detail',
+            visitId: route.visitId,
+            substationId: asset.substationId || route.substationId || '',
+            assetId: asset.id,
+            assetSnapshot: asset,
+            returnTo: route.returnTo,
+            mapVisitId: route.returnTo === 'asset-map' ? route.visitId : undefined,
+            mapSubstationId: route.returnTo === 'asset-map' ? route.substationId : undefined,
+          })
         }
         onUnauthorized={handleUnauthorized}
       />

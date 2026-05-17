@@ -300,12 +300,28 @@ export function VisitDetailScreen({
 
           <Card>
             <SectionTitle>Visit Summary</SectionTitle>
-            <KeyValueRow label="Pencawang" value={`${visit.substation.code} - ${visit.substation.name}`} />
+            <KeyValueRow
+              label="Pencawang"
+              value={`${visit.pencawangCode ?? visit.substation.code} - ${visit.pencawangName ?? visit.substation.name}`}
+            />
+            {visit.functionalLocation ? (
+              <KeyValueRow label="Functional Location" value={visit.functionalLocation} />
+            ) : null}
+            {visit.mainhead ? <KeyValueRow label="MAINHEAD" value={visit.mainhead} /> : null}
+            {visit.visitType ? <KeyValueRow label="Visit Type" value={formatVisitType(visit.visitType)} /> : null}
             <KeyValueRow label="Team" value={`${visit.team.code} - ${visit.team.name}`} />
             <KeyValueRow label="Started" value={formatDateTime(visit.startedAt)} />
             {visit.completedAt ? <KeyValueRow label="Completed" value={formatDateTime(visit.completedAt)} /> : null}
             <KeyValueRow label="Created By" value={visit.createdBy?.name ?? 'Unknown'} />
-            {visit.substation.location ? <KeyValueRow label="Location" value={visit.substation.location} /> : null}
+            {hasCheckInCoordinate(visit) ? (
+              <KeyValueRow
+                label="Check-In GPS"
+                value={`${formatOptionalCoordinate(visit.checkInLatitude)}, ${formatOptionalCoordinate(visit.checkInLongitude)}`}
+              />
+            ) : null}
+            {visit.checkInAccuracyMeters !== null && visit.checkInAccuracyMeters !== undefined ? (
+              <KeyValueRow label="GPS Accuracy" value={`+/-${Math.round(visit.checkInAccuracyMeters)} m`} />
+            ) : null}
             <StatusChip label={formatStatusLabel(visit.status)} tone={getVisitStatusTone(visit.status)} />
           </Card>
 
@@ -741,6 +757,27 @@ function formatStatusLabel(value: string) {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function formatVisitType(value: string) {
+  if (value === 'SPECIAL') {
+    return 'Emergency';
+  }
+
+  return formatStatusLabel(value);
+}
+
+function hasCheckInCoordinate(visit: SiteVisit) {
+  return (
+    typeof visit.checkInLatitude === 'number' &&
+    typeof visit.checkInLongitude === 'number' &&
+    Number.isFinite(visit.checkInLatitude) &&
+    Number.isFinite(visit.checkInLongitude)
+  );
+}
+
+function formatOptionalCoordinate(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(6) : 'Not available';
 }
 
 function getVisitStatusTone(status: string) {

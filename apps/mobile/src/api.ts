@@ -20,6 +20,8 @@ import {
   SaveInspectionResultItemInput,
   SessionUser,
   SiteVisit,
+  SiteVisitImage,
+  SiteVisitImageUploadInput,
   SiteVisitAssetLink,
   Team,
   Substation,
@@ -250,7 +252,23 @@ export const api = {
     return request<SiteVisit[]>('/site-visits?status=ACTIVE', { token });
   },
 
-  createSiteVisit(token: string, input: { teamId: string; substationId: string; notes?: string }) {
+  createSiteVisit(
+    token: string,
+    input: {
+      teamId: string;
+      substationId: string;
+      notes?: string;
+      visitType?: SiteVisit['visitType'];
+      mainhead?: string;
+      pencawangCode?: string;
+      pencawangName?: string;
+      functionalLocation?: string;
+      checkInLatitude?: number;
+      checkInLongitude?: number;
+      checkInAccuracyMeters?: number;
+      checkInCapturedAt?: string;
+    },
+  ) {
     return request<SiteVisit>('/site-visits', {
       method: 'POST',
       token,
@@ -451,6 +469,10 @@ export const api = {
     return uploadInspectionImage(token, inspectionId, photo);
   },
 
+  uploadSiteVisitImage(token: string, siteVisitId: string, photo: SiteVisitImageUploadInput) {
+    return uploadSiteVisitImage(token, siteVisitId, photo);
+  },
+
   submitInspection(token: string, inspectionId: string) {
     return request(`/inspections/${inspectionId}/submit`, {
       method: 'POST',
@@ -514,6 +536,57 @@ async function uploadInspectionImage(
     }
 
     return payload as InspectionImage;
+  } catch (error) {
+    logNetworkError({ url, method: 'POST upload', error });
+
+    throw error;
+  } finally {
+    if (uploadUri !== photo.uri) {
+      void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(() => undefined);
+    }
+  }
+}
+
+async function uploadSiteVisitImage(
+  token: string,
+  siteVisitId: string,
+  photo: SiteVisitImageUploadInput,
+) {
+  const url = `${API_BASE_URL}/site-visits/${siteVisitId}/images`;
+  const uploadFilename = createUploadFilename(photo.timestamp ?? new Date().toISOString());
+  const uploadUri = await createUploadFileUri(photo.uri, uploadFilename);
+
+  console.log('[UPLOAD REQUEST]', {
+    url,
+    method: 'POST',
+    fileUri: uploadUri,
+    fieldName: 'file',
+  });
+
+  try {
+    const response = await FileSystem.uploadAsync(url, uploadUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'image/jpeg',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = tryParsePayload(response.body);
+
+    console.log('[UPLOAD RESPONSE]', {
+      url,
+      method: 'POST',
+      status: response.status,
+      payload,
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiError(extractErrorMessage(payload, response.status), response.status, payload);
+    }
+
+    return payload as SiteVisitImage;
   } catch (error) {
     logNetworkError({ url, method: 'POST upload', error });
 

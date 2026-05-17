@@ -255,9 +255,11 @@ function ActiveVisitRow({
 
       <View style={styles.visitTextWrap}>
         <Text style={styles.rowLabel}>Nama Pencawang</Text>
-        <Text style={styles.visitName}>{visit.substation.name}</Text>
+        <Text style={styles.visitName}>{visit.pencawangName ?? visit.substation.name}</Text>
         <Text style={styles.rowLabel}>Functional Location</Text>
-        <Text style={styles.functionalLocation}>{visit.substation.code || 'Not available'}</Text>
+        <Text style={styles.functionalLocation}>
+          {visit.functionalLocation ?? visit.substation.location ?? visit.substation.code ?? 'Not available'}
+        </Text>
       </View>
 
       <Text style={isJoining ? styles.joiningText : styles.rowArrow}>

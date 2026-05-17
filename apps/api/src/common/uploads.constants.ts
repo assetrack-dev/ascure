@@ -5,6 +5,7 @@ export const UPLOADS_DIRECTORY = resolve(
 );
 
 export const INSPECTION_IMAGES_URL_PREFIX = '/uploads/inspections';
+export const SITE_VISIT_IMAGES_URL_PREFIX = '/uploads/site-visits';
 
 export function buildInspectionImagesDirectory(inspectionId: string) {
   return resolve(UPLOADS_DIRECTORY, 'inspections', inspectionId);
@@ -16,4 +17,16 @@ export function buildInspectionImagePath(inspectionId: string, filename: string)
 
 export function buildInspectionImageUrl(inspectionId: string, filename: string) {
   return `${INSPECTION_IMAGES_URL_PREFIX}/${inspectionId}/${filename}`;
+}
+
+export function buildSiteVisitImagesDirectory(siteVisitId: string) {
+  return resolve(UPLOADS_DIRECTORY, 'site-visits', siteVisitId);
+}
+
+export function buildSiteVisitImagePath(siteVisitId: string, filename: string) {
+  return `site-visits/${siteVisitId}/${filename}`;
+}
+
+export function buildSiteVisitImageUrl(siteVisitId: string, filename: string) {
+  return `${SITE_VISIT_IMAGES_URL_PREFIX}/${siteVisitId}/${filename}`;
 }
