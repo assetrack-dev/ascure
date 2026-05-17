@@ -21,8 +21,9 @@ export class CreateSiteVisitDto {
   @IsUUID()
   teamId!: string;
 
+  @IsOptional()
   @IsUUID()
-  substationId!: string;
+  substationId?: string;
 
   @IsOptional()
   @IsIn(['ACTIVE', 'OPEN', 'IN_PROGRESS'])

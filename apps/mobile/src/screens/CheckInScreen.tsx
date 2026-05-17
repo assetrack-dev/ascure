@@ -25,6 +25,8 @@ type CapturedSitePhoto = {
   timestamp: string;
 };
 
+type PencawangMode = 'EXISTING' | 'NEW';
+
 type CreateSiteVisitInput = Parameters<typeof api.createSiteVisit>[1];
 
 type VisitTypeOption = {
@@ -74,6 +76,7 @@ export function CheckInScreen({
   const [teams, setTeams] = useState<Team[]>([]);
   const [substations, setSubstations] = useState<Substation[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
+  const [pencawangMode, setPencawangMode] = useState<PencawangMode>('EXISTING');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedSubstationId, setSelectedSubstationId] = useState<string>('');
   const [visitType, setVisitType] = useState<SiteVisitType>('DISCOVERY');
@@ -83,7 +86,7 @@ export function CheckInScreen({
   const [mainhead, setMainhead] = useState('');
   const [checkInLatitude, setCheckInLatitude] = useState('');
   const [checkInLongitude, setCheckInLongitude] = useState('');
-  const [checkInAccuracyMeters, setCheckInAccuracyMeters] = useState<number | null>(null);
+  const [checkInAccuracyMeters, setCheckInAccuracyMeters] = useState('');
   const [checkInCapturedAt, setCheckInCapturedAt] = useState<string | null>(null);
   const [sitePhotos, setSitePhotos] = useState<CapturedSitePhoto[]>([]);
   const [notes, setNotes] = useState('');
@@ -101,18 +104,38 @@ export function CheckInScreen({
   );
 
   const selectedSubstation = useMemo(
-    () => substations.find((substation) => substation.id === selectedSubstationId) ?? null,
-    [selectedSubstationId, substations],
+    () =>
+      pencawangMode === 'EXISTING'
+        ? substations.find((substation) => substation.id === selectedSubstationId) ?? null
+        : null,
+    [pencawangMode, selectedSubstationId, substations],
   );
 
   const selectedActiveVisit = useMemo(
     () =>
-      activeVisits.find(
-        (visit) =>
-          visit.substationId === selectedSubstationId && isActiveVisitStatus(visit.status),
-      ) ?? null,
-    [activeVisits, selectedSubstationId],
+      pencawangMode === 'EXISTING'
+        ? activeVisits.find(
+            (visit) =>
+              visit.substationId === selectedSubstationId && isActiveVisitStatus(visit.status),
+          ) ?? null
+        : null,
+    [activeVisits, pencawangMode, selectedSubstationId],
   );
+
+  const canCreateCheckIn =
+    Boolean(selectedTeamId) &&
+    !isLoading &&
+    (pencawangMode === 'EXISTING'
+      ? Boolean(selectedSubstationId)
+      : Boolean(
+          pencawangName.trim() &&
+            functionalLocation.trim() &&
+            pencawangCode.trim() &&
+            mainhead.trim() &&
+            checkInLatitude.trim() &&
+            checkInLongitude.trim() &&
+            checkInAccuracyMeters.trim(),
+        ));
 
   const loadOptions = useCallback(async () => {
     try {
@@ -137,13 +160,13 @@ export function CheckInScreen({
         setSelectedTeamId('');
       }
 
-      if (substationList.length > 0) {
+      if (pencawangMode === 'EXISTING' && substationList.length > 0) {
         setSelectedSubstationId((currentValue) =>
           substationList.some((substation) => substation.id === currentValue)
             ? currentValue
             : substationList[0].id,
         );
-      } else {
+      } else if (pencawangMode === 'NEW' || substationList.length === 0) {
         setSelectedSubstationId('');
       }
 
@@ -158,7 +181,7 @@ export function CheckInScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, token]);
+  }, [onUnauthorized, pencawangMode, token]);
 
   useEffect(() => {
     loadOptions();
@@ -173,6 +196,34 @@ export function CheckInScreen({
     setPencawangCode(selectedSubstation.code);
     setFunctionalLocation(selectedSubstation.location ?? selectedSubstation.code);
   }, [selectedSubstation]);
+
+  function handleSelectPencawangMode(nextMode: PencawangMode) {
+    setPencawangMode(nextMode);
+    setError(null);
+
+    if (nextMode === 'NEW') {
+      setSelectedSubstationId('');
+      setPencawangName('');
+      setPencawangCode('');
+      setFunctionalLocation('');
+      setMainhead('');
+      return;
+    }
+
+    const nextSubstation = substations[0];
+
+    if (nextSubstation) {
+      applyExistingSubstation(nextSubstation);
+    }
+  }
+
+  function applyExistingSubstation(substation: Substation) {
+    setSelectedSubstationId(substation.id);
+    setPencawangName(substation.name);
+    setPencawangCode(substation.code);
+    setFunctionalLocation(substation.location ?? substation.code);
+    setMainhead('');
+  }
 
   async function prefillCurrentLocation() {
     try {
@@ -327,6 +378,7 @@ export function CheckInScreen({
     const normalizedFunctionalLocation = functionalLocation.trim();
     const normalizedMainhead = mainhead.trim();
     const parsedLatitude = parseCoordinate(checkInLatitude, -90, 90);
+    const parsedAccuracy = parseNonNegativeNumber(checkInAccuracyMeters);
 
     if (parsedLatitude === 'invalid') {
       setError('GPS latitude must be a valid number between -90 and 90.');
@@ -345,9 +397,51 @@ export function CheckInScreen({
       return null;
     }
 
+    if (parsedAccuracy === 'invalid') {
+      setError('GPS accuracy must be a valid number greater than or equal to 0.');
+      return null;
+    }
+
+    if (pencawangMode === 'EXISTING' && !selectedSubstationId) {
+      setError('Please select an existing Pencawang.');
+      return null;
+    }
+
+    if (pencawangMode === 'NEW') {
+      if (!normalizedPencawangName) {
+        setError('Nama Pencawang is required for a new Pencawang.');
+        return null;
+      }
+
+      if (!normalizedFunctionalLocation) {
+        setError('Functional Location is required for a new Pencawang.');
+        return null;
+      }
+
+      if (!normalizedPencawangCode) {
+        setError('Kod Pencawang is required for a new Pencawang.');
+        return null;
+      }
+
+      if (!normalizedMainhead) {
+        setError('MAINHEAD is required for a new Pencawang.');
+        return null;
+      }
+
+      if (parsedLatitude === undefined || parsedLongitude === undefined) {
+        setError('GPS latitude and longitude are required for a new Pencawang.');
+        return null;
+      }
+
+      if (parsedAccuracy === undefined) {
+        setError('GPS accuracy is required for a new Pencawang.');
+        return null;
+      }
+    }
+
     return {
       teamId: selectedTeamId,
-      substationId: selectedSubstationId,
+      substationId: pencawangMode === 'EXISTING' ? selectedSubstationId : undefined,
       visitType,
       pencawangName: normalizedPencawangName || undefined,
       pencawangCode: normalizedPencawangCode || undefined,
@@ -355,7 +449,7 @@ export function CheckInScreen({
       mainhead: normalizedMainhead || undefined,
       checkInLatitude: parsedLatitude,
       checkInLongitude: parsedLongitude,
-      checkInAccuracyMeters: checkInAccuracyMeters ?? undefined,
+      checkInAccuracyMeters: parsedAccuracy,
       checkInCapturedAt: checkInCapturedAt ?? undefined,
       notes: notes.trim() || undefined,
     };
@@ -402,8 +496,8 @@ export function CheckInScreen({
     setCheckInLongitude(formatCoordinate(position.coords.longitude));
     setCheckInAccuracyMeters(
       typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
-        ? position.coords.accuracy
-        : null,
+        ? formatAccuracyMeters(position.coords.accuracy)
+        : '',
     );
     setCheckInCapturedAt(new Date(position.timestamp).toISOString());
   }
@@ -419,13 +513,11 @@ export function CheckInScreen({
 
   function handleManualLatitude(nextValue: string) {
     setCheckInLatitude(nextValue);
-    setCheckInAccuracyMeters(null);
     setCheckInCapturedAt(null);
   }
 
   function handleManualLongitude(nextValue: string) {
     setCheckInLongitude(nextValue);
-    setCheckInAccuracyMeters(null);
     setCheckInCapturedAt(null);
   }
 
@@ -493,12 +585,29 @@ export function CheckInScreen({
 
           <Card>
             <SectionTitle>Pencawang Details</SectionTitle>
-            {substations.length === 0 ? (
+            <View style={styles.modeChoiceList}>
+              <SelectCard
+                label="Existing Pencawang"
+                description="Select from master data"
+                selected={pencawangMode === 'EXISTING'}
+                onPress={() => handleSelectPencawangMode('EXISTING')}
+              />
+              <SelectCard
+                label="New Pencawang"
+                description="Enter site details manually"
+                selected={pencawangMode === 'NEW'}
+                onPress={() => handleSelectPencawangMode('NEW')}
+              />
+            </View>
+
+            {pencawangMode === 'EXISTING' && substations.length === 0 ? (
               <EmptyState
                 title="No substations"
                 description="The backend did not return any active substations for this tenant."
               />
-            ) : (
+            ) : null}
+
+            {pencawangMode === 'EXISTING' && substations.length > 0 ? (
               <View style={styles.selectList}>
                 {substations.map((substation) => (
                   <SelectCard
@@ -506,31 +615,31 @@ export function CheckInScreen({
                     label={`${substation.code} - ${substation.name}`}
                     description={substation.location || null}
                     selected={selectedSubstationId === substation.id}
-                    onPress={() => setSelectedSubstationId(substation.id)}
+                    onPress={() => applyExistingSubstation(substation)}
                   />
                 ))}
               </View>
-            )}
+            ) : null}
             <TextField
-              label="Nama Pencawang"
+              label={pencawangMode === 'NEW' ? 'Nama Pencawang *' : 'Nama Pencawang'}
               value={pencawangName}
               onChangeText={setPencawangName}
               placeholder="Nama pencawang di lokasi"
             />
             <TextField
-              label="Functional Location"
+              label={pencawangMode === 'NEW' ? 'Functional Location *' : 'Functional Location'}
               value={functionalLocation}
               onChangeText={setFunctionalLocation}
               placeholder="Functional location / alamat operasi"
             />
             <TextField
-              label="Kod Pencawang"
+              label={pencawangMode === 'NEW' ? 'Kod Pencawang *' : 'Kod Pencawang'}
               value={pencawangCode}
               onChangeText={setPencawangCode}
               placeholder="Kod pencawang"
             />
             <TextField
-              label="MAINHEAD"
+              label={pencawangMode === 'NEW' ? 'MAINHEAD *' : 'MAINHEAD'}
               value={mainhead}
               onChangeText={setMainhead}
               placeholder="Masukkan MAINHEAD jika ada"
@@ -571,16 +680,13 @@ export function CheckInScreen({
               placeholder="e.g. 101.690000"
               keyboardType="numbers-and-punctuation"
             />
-            <View style={styles.readOnlyPanel}>
-              <FieldSummary
-                label="GPS Accuracy"
-                value={
-                  checkInAccuracyMeters === null
-                    ? 'Not available'
-                    : `+/-${Math.round(checkInAccuracyMeters)} m`
-                }
-              />
-            </View>
+            <TextField
+              label={pencawangMode === 'NEW' ? 'GPS Accuracy (m) *' : 'GPS Accuracy (m)'}
+              value={checkInAccuracyMeters}
+              onChangeText={setCheckInAccuracyMeters}
+              placeholder="e.g. 8"
+              keyboardType="numbers-and-punctuation"
+            />
             <AppButton
               label={isLocating ? 'Reading Current GPS...' : 'Use Current GPS'}
               onPress={handleUseCurrentGps}
@@ -657,7 +763,7 @@ export function CheckInScreen({
         }
         onPress={handleCreateVisit}
         loading={isSubmitting}
-        disabled={!selectedTeamId || !selectedSubstationId || isLoading}
+        disabled={!canCreateCheckIn}
       />
     </Screen>
   );
@@ -703,6 +809,10 @@ function formatCoordinate(value: number) {
   return value.toFixed(6);
 }
 
+function formatAccuracyMeters(value: number) {
+  return value.toFixed(1).replace(/\.0$/, '');
+}
+
 function parseCoordinate(
   rawValue: string,
   minimum: number,
@@ -717,6 +827,22 @@ function parseCoordinate(
   const parsedValue = Number(normalizedValue);
 
   if (!Number.isFinite(parsedValue) || parsedValue < minimum || parsedValue > maximum) {
+    return 'invalid' as const;
+  }
+
+  return parsedValue;
+}
+
+function parseNonNegativeNumber(rawValue: string) {
+  const normalizedValue = rawValue.trim();
+
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  const parsedValue = Number(normalizedValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
     return 'invalid' as const;
   }
 
@@ -769,6 +895,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   selectList: {
+    gap: 10,
+  },
+  modeChoiceList: {
     gap: 10,
   },
   photoGrid: {

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -280,23 +281,7 @@ export class SiteVisitsService {
       }
     }
 
-    const substation = await this.prisma.substation.findFirst({
-      where: {
-        id: dto.substationId,
-        tenantId: user.tenantId,
-        isActive: true,
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        location: true,
-      },
-    });
-
-    if (!substation) {
-      throw new NotFoundException('Substation not found.');
-    }
+    const substation = await this.resolveCreateSubstation(user, dto);
 
     const activeTeamMembers = await this.prisma.teamMember.findMany({
       where: {
@@ -313,34 +298,47 @@ export class SiteVisitsService {
     const visitUserIds = new Set(activeTeamMembers.map((member) => member.userId));
     visitUserIds.add(user.id);
 
-    return this.prisma.siteVisit.create({
-      data: {
-        tenantId: user.tenantId,
-        teamId: dto.teamId,
-        substationId: dto.substationId,
-        createdByUserId: user.id,
-        status: this.normalizeCreateStatus(dto.status),
-        cycleNumber: dto.cycleNumber,
-        visitType: dto.visitType,
-        mainhead: this.normalizeOptionalString(dto.mainhead),
-        pencawangCode: this.normalizeOptionalString(dto.pencawangCode) ?? substation.code,
-        pencawangName: this.normalizeOptionalString(dto.pencawangName) ?? substation.name,
-        functionalLocation:
-          this.normalizeOptionalString(dto.functionalLocation) ?? substation.location,
-        checkInLatitude: dto.checkInLatitude,
-        checkInLongitude: dto.checkInLongitude,
-        checkInAccuracyMeters: dto.checkInAccuracyMeters,
-        checkInCapturedAt: dto.checkInCapturedAt ? new Date(dto.checkInCapturedAt) : undefined,
-        validationStatus: SiteVisitValidationStatus.PENDING,
-        notes: this.normalizeOptionalString(dto.notes),
-        users: {
-          create: Array.from(visitUserIds).map((userId) => ({
-            userId,
-          })),
+    try {
+      return await this.prisma.siteVisit.create({
+        data: {
+          tenantId: user.tenantId,
+          teamId: dto.teamId,
+          substationId: substation.id,
+          createdByUserId: user.id,
+          status: this.normalizeCreateStatus(dto.status),
+          cycleNumber: dto.cycleNumber,
+          visitType: dto.visitType,
+          mainhead: this.normalizeOptionalString(dto.mainhead),
+          pencawangCode: dto.substationId
+            ? this.normalizeOptionalString(dto.pencawangCode) ?? substation.code
+            : substation.code,
+          pencawangName: this.normalizeOptionalString(dto.pencawangName) ?? substation.name,
+          functionalLocation:
+            this.normalizeOptionalString(dto.functionalLocation) ?? substation.location,
+          checkInLatitude: dto.checkInLatitude,
+          checkInLongitude: dto.checkInLongitude,
+          checkInAccuracyMeters: dto.checkInAccuracyMeters,
+          checkInCapturedAt: dto.checkInCapturedAt ? new Date(dto.checkInCapturedAt) : undefined,
+          validationStatus: SiteVisitValidationStatus.PENDING,
+          notes: this.normalizeOptionalString(dto.notes),
+          users: {
+            create: Array.from(visitUserIds).map((userId) => ({
+              userId,
+            })),
+          },
         },
-      },
-      include: SITE_VISIT_BASE_INCLUDE,
-    });
+        include: SITE_VISIT_BASE_INCLUDE,
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('A Pencawang with this code already exists.');
+      }
+
+      throw error;
+    }
   }
 
   async list(user: RequestUser, query: ListSiteVisitsQueryDto) {
@@ -587,6 +585,128 @@ export class SiteVisitsService {
     });
 
     return this.getById(user, siteVisit.id);
+  }
+
+  private async resolveCreateSubstation(user: RequestUser, dto: CreateSiteVisitDto) {
+    if (dto.substationId) {
+      const substation = await this.prisma.substation.findFirst({
+        where: {
+          id: dto.substationId,
+          tenantId: user.tenantId,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          location: true,
+        },
+      });
+
+      if (!substation) {
+        throw new NotFoundException('Substation not found.');
+      }
+
+      return substation;
+    }
+
+    this.validateManualPencawangCreate(dto);
+
+    const pencawangCode = this.normalizePencawangCode(dto.pencawangCode);
+    const pencawangName = this.normalizeOptionalString(dto.pencawangName);
+    const functionalLocation = this.normalizeOptionalString(dto.functionalLocation);
+
+    if (!pencawangCode || !pencawangName || !functionalLocation) {
+      throw new BadRequestException('New Pencawang details are required.');
+    }
+
+    const existingSubstation = await this.prisma.substation.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        OR: [
+          {
+            code: {
+              equals: pencawangCode,
+              mode: 'insensitive',
+            },
+          },
+          {
+            name: {
+              equals: pencawangName,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingSubstation) {
+      throw new ConflictException('A Pencawang with this code or name already exists. Use Existing Pencawang mode to check in.');
+    }
+
+    try {
+      return await this.prisma.substation.create({
+        data: {
+          tenantId: user.tenantId,
+          code: pencawangCode,
+          name: pencawangName,
+          location: functionalLocation,
+        },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          location: true,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('A Pencawang with this code already exists. Use Existing Pencawang mode to check in.');
+      }
+
+      throw error;
+    }
+  }
+
+  private validateManualPencawangCreate(dto: CreateSiteVisitDto) {
+    const missingFields: Array<{ key: string; label: string }> = [];
+
+    if (!this.normalizeOptionalString(dto.pencawangName)) {
+      missingFields.push({ key: 'pencawangName', label: 'Nama Pencawang' });
+    }
+
+    if (!this.normalizeOptionalString(dto.functionalLocation)) {
+      missingFields.push({ key: 'functionalLocation', label: 'Functional Location' });
+    }
+
+    if (!this.normalizeOptionalString(dto.pencawangCode)) {
+      missingFields.push({ key: 'pencawangCode', label: 'Kod Pencawang' });
+    }
+
+    if (!this.normalizeOptionalString(dto.mainhead)) {
+      missingFields.push({ key: 'mainhead', label: 'MAINHEAD' });
+    }
+
+    if (dto.checkInLatitude === undefined || dto.checkInLongitude === undefined) {
+      missingFields.push({ key: 'checkInLocation', label: 'GPS location' });
+    }
+
+    if (dto.checkInAccuracyMeters === undefined) {
+      missingFields.push({ key: 'checkInAccuracyMeters', label: 'GPS accuracy' });
+    }
+
+    if (missingFields.length > 0) {
+      throw new BadRequestException({
+        message: 'New Pencawang check-in requires manual site details.',
+        missingFields,
+      });
+    }
   }
 
   private async findAccessibleSiteVisit(user: RequestUser, id: string) {
@@ -1541,6 +1661,10 @@ export class SiteVisitsService {
     }
 
     return SiteVisitStatus.ACTIVE;
+  }
+
+  private normalizePencawangCode(value?: string | null) {
+    return this.normalizeOptionalString(value)?.toUpperCase() ?? null;
   }
 
   private accessScope(user: RequestUser): Prisma.SiteVisitWhereInput {

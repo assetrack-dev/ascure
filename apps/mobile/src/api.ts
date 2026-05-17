@@ -260,7 +260,7 @@ export const api = {
     token: string,
     input: {
       teamId: string;
-      substationId: string;
+      substationId?: string;
       notes?: string;
       visitType?: SiteVisit['visitType'];
       mainhead?: string;
