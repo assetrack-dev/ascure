@@ -475,6 +475,13 @@ export default function App() {
             substationId: visit.substationId,
           })
         }
+        onOpenExistingVisit={(visit) =>
+          setRoute({
+            name: 'visit-detail',
+            visitId: visit.id,
+            substationId: visit.substationId,
+          })
+        }
         onUnauthorized={handleUnauthorized}
       />
     );

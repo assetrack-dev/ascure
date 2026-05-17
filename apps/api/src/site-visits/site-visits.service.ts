@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -297,22 +296,6 @@ export class SiteVisitsService {
 
     if (!substation) {
       throw new NotFoundException('Substation not found.');
-    }
-
-    const existingActiveVisit = await this.prisma.siteVisit.findFirst({
-      where: {
-        tenantId: user.tenantId,
-        teamId: dto.teamId,
-        substationId: dto.substationId,
-        status: {
-          in: [...ACTIVE_SITE_VISIT_STATUSES],
-        },
-      },
-      include: SITE_VISIT_BASE_INCLUDE,
-    });
-
-    if (existingActiveVisit) {
-      throw new ConflictException('An active site visit already exists for this team at the selected substation.');
     }
 
     const activeTeamMembers = await this.prisma.teamMember.findMany({

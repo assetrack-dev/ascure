@@ -25,6 +25,8 @@ type CapturedSitePhoto = {
   timestamp: string;
 };
 
+type CreateSiteVisitInput = Parameters<typeof api.createSiteVisit>[1];
+
 type VisitTypeOption = {
   label: string;
   value: SiteVisitType;
@@ -59,16 +61,19 @@ export function CheckInScreen({
   user,
   onBack,
   onCreated,
+  onOpenExistingVisit,
   onUnauthorized,
 }: {
   token: string;
   user: SessionUser;
   onBack: () => void;
   onCreated: (visit: SiteVisit) => void;
+  onOpenExistingVisit: (visit: SiteVisit) => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [substations, setSubstations] = useState<Substation[]>([]);
+  const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedSubstationId, setSelectedSubstationId] = useState<string>('');
   const [visitType, setVisitType] = useState<SiteVisitType>('DISCOVERY');
@@ -100,18 +105,29 @@ export function CheckInScreen({
     [selectedSubstationId, substations],
   );
 
+  const selectedActiveVisit = useMemo(
+    () =>
+      activeVisits.find(
+        (visit) =>
+          visit.substationId === selectedSubstationId && isActiveVisitStatus(visit.status),
+      ) ?? null,
+    [activeVisits, selectedSubstationId],
+  );
+
   const loadOptions = useCallback(async () => {
     try {
       setError(null);
       setIsLoading(true);
 
-      const [teamList, substationList] = await Promise.all([
+      const [teamList, substationList, activeVisitList] = await Promise.all([
         api.getTeams(token),
         api.getSubstations(token),
+        loadActiveVisitsForWarning(token),
       ]);
 
       setTeams(teamList);
       setSubstations(substationList);
+      setActiveVisits(activeVisitList);
 
       if (teamList.length > 0) {
         setSelectedTeamId((currentValue) =>
@@ -249,7 +265,63 @@ export function CheckInScreen({
     }
   }
 
-  async function handleCreateVisit() {
+  function handleCreateVisit() {
+    const payload = buildCreateVisitPayload();
+
+    if (!payload) {
+      return;
+    }
+
+    if (selectedActiveVisit) {
+      Alert.alert(
+        'Active visit exists',
+        `${formatVisitPencawang(selectedActiveVisit)} already has an active visit. Open it or continue with a separate new check-in.`,
+        [
+          {
+            text: 'Open Existing Visit',
+            onPress: () => {
+              void handleOpenExistingVisit(selectedActiveVisit);
+            },
+          },
+          {
+            text: 'Continue New Check-In',
+            onPress: () => {
+              void createVisit(payload);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    void createVisit(payload);
+  }
+
+  async function handleOpenExistingVisit(visit: SiteVisit) {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+
+      const joinedVisit = await api.joinSiteVisit(token, visit.id);
+      onOpenExistingVisit(joinedVisit);
+    } catch (openError) {
+      if (openError instanceof ApiError && openError.status === 401) {
+        await onUnauthorized(openError);
+        return;
+      }
+
+      if (isEndpointUnavailableError(openError)) {
+        onOpenExistingVisit(visit);
+        return;
+      }
+
+      setError(openError instanceof Error ? openError.message : 'Unable to open this active visit.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function buildCreateVisitPayload(): CreateSiteVisitInput | null {
     const normalizedPencawangName = pencawangName.trim();
     const normalizedPencawangCode = pencawangCode.trim();
     const normalizedFunctionalLocation = functionalLocation.trim();
@@ -258,39 +330,43 @@ export function CheckInScreen({
 
     if (parsedLatitude === 'invalid') {
       setError('GPS latitude must be a valid number between -90 and 90.');
-      return;
+      return null;
     }
 
     const parsedLongitude = parseCoordinate(checkInLongitude, -180, 180);
 
     if (parsedLongitude === 'invalid') {
       setError('GPS longitude must be a valid number between -180 and 180.');
-      return;
+      return null;
     }
 
     if ((parsedLatitude === undefined) !== (parsedLongitude === undefined)) {
       setError('GPS location must include both latitude and longitude.');
-      return;
+      return null;
     }
 
+    return {
+      teamId: selectedTeamId,
+      substationId: selectedSubstationId,
+      visitType,
+      pencawangName: normalizedPencawangName || undefined,
+      pencawangCode: normalizedPencawangCode || undefined,
+      functionalLocation: normalizedFunctionalLocation || undefined,
+      mainhead: normalizedMainhead || undefined,
+      checkInLatitude: parsedLatitude,
+      checkInLongitude: parsedLongitude,
+      checkInAccuracyMeters: checkInAccuracyMeters ?? undefined,
+      checkInCapturedAt: checkInCapturedAt ?? undefined,
+      notes: notes.trim() || undefined,
+    };
+  }
+
+  async function createVisit(payload: CreateSiteVisitInput) {
     try {
       setIsSubmitting(true);
       setError(null);
 
-      const visit = await api.createSiteVisit(token, {
-        teamId: selectedTeamId,
-        substationId: selectedSubstationId,
-        visitType,
-        pencawangName: normalizedPencawangName || undefined,
-        pencawangCode: normalizedPencawangCode || undefined,
-        functionalLocation: normalizedFunctionalLocation || undefined,
-        mainhead: normalizedMainhead || undefined,
-        checkInLatitude: parsedLatitude,
-        checkInLongitude: parsedLongitude,
-        checkInAccuracyMeters: checkInAccuracyMeters ?? undefined,
-        checkInCapturedAt: checkInCapturedAt ?? undefined,
-        notes: notes.trim() || undefined,
-      });
+      const visit = await api.createSiteVisit(token, payload);
 
       try {
         await uploadSitePhotos(visit.id);
@@ -598,6 +674,29 @@ function FieldSummary({ label, value }: { label: string; value: string }) {
 
 function formatTeam(team: Team | null) {
   return team ? `${team.code} - ${team.name}` : 'No team selected';
+}
+
+async function loadActiveVisitsForWarning(token: string) {
+  try {
+    return await api.getActiveSiteVisits(token);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      throw error;
+    }
+
+    return [];
+  }
+}
+
+function formatVisitPencawang(visit: SiteVisit) {
+  const code = visit.pencawangCode ?? visit.substation.code;
+  const name = visit.pencawangName ?? visit.substation.name;
+
+  return code ? `${code} - ${name}` : name;
+}
+
+function isActiveVisitStatus(status: string) {
+  return status === 'ACTIVE' || status === 'OPEN' || status === 'IN_PROGRESS';
 }
 
 function formatCoordinate(value: number) {

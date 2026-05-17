@@ -252,6 +252,10 @@ export const api = {
     return request<SiteVisit[]>('/site-visits?status=ACTIVE', { token });
   },
 
+  getCompletedSiteVisits(token: string) {
+    return request<SiteVisit[]>('/site-visits?status=COMPLETED', { token });
+  },
+
   createSiteVisit(
     token: string,
     input: {

@@ -19,6 +19,7 @@ import {
   uiTheme,
 } from '../ui';
 import { SessionUser, SiteVisit, Team } from '../types';
+import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -62,6 +63,7 @@ export function HomeScreen({
   const [user, setUser] = useState(initialUser);
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
+  const [completedVisits, setCompletedVisits] = useState<SiteVisit[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [joiningVisitId, setJoiningVisitId] = useState<string | null>(null);
@@ -72,16 +74,18 @@ export function HomeScreen({
       setError(null);
       setIsLoading(true);
 
-      const [me, teamList, visitList] = await Promise.all([
+      const [me, teamList, activeVisitList, completedVisitList] = await Promise.all([
         api.getMe(token),
         api.getTeams(token),
         api.getActiveSiteVisits(token),
+        api.getCompletedSiteVisits(token),
       ]);
-      const visitsWithImageData = await loadVisitDetails(token, visitList);
+      const activeVisitsWithImageData = await loadVisitDetails(token, activeVisitList);
 
       setUser(me);
       setTeams(teamList);
-      setActiveVisits(visitsWithImageData);
+      setActiveVisits(activeVisitsWithImageData);
+      setCompletedVisits(completedVisitList);
       onUserRefreshed(me);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
@@ -89,7 +93,7 @@ export function HomeScreen({
         return;
       }
 
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load active sites.');
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load visits.');
     } finally {
       setIsLoading(false);
     }
@@ -104,6 +108,11 @@ export function HomeScreen({
       try {
         setError(null);
         setJoiningVisitId(visit.id);
+
+        if (isCompletedVisit(visit)) {
+          onOpenVisit(visit);
+          return;
+        }
 
         const joinedVisit = await api.joinSiteVisit(token, visit.id);
         onOpenVisit(joinedVisit);
@@ -129,7 +138,7 @@ export function HomeScreen({
   return (
     <View style={styles.root}>
       <Screen
-        title="Active Sites"
+        title="Visits"
         leftAction={{
           icon: 'menu',
           onPress: () => setIsDrawerOpen(true),
@@ -157,7 +166,7 @@ export function HomeScreen({
               : null
           }
         />
-        {isLoading ? <LoadingBlock label="Loading active sites..." /> : null}
+        {isLoading ? <LoadingBlock label="Loading visits..." /> : null}
         <SyncQueueSummaryCard
           snapshot={syncQueueSnapshot}
           isSyncing={isSyncingQueue}
@@ -167,7 +176,7 @@ export function HomeScreen({
         {!isLoading ? (
           <Card>
             <View style={styles.listHeader}>
-              <SectionTitle>Active Sites</SectionTitle>
+              <SectionTitle>Active Visits</SectionTitle>
               <Text style={styles.countText}>{activeVisits.length}</Text>
             </View>
 
@@ -179,10 +188,43 @@ export function HomeScreen({
             ) : (
               <View style={styles.visitList}>
                 {activeVisits.map((visit) => (
-                  <ActiveVisitRow
+                  <VisitRow
                     key={visit.id}
                     visit={visit}
                     isJoining={joiningVisitId === visit.id}
+                    onPress={() => {
+                      void handleOpenVisit(visit);
+                    }}
+                  />
+                ))}
+              </View>
+            )}
+          </Card>
+        ) : null}
+
+        {!isLoading ? (
+          <Card>
+            <View style={styles.listHeader}>
+              <SectionTitle>Completed Visits</SectionTitle>
+              <Text style={styles.countText}>{completedVisits.length}</Text>
+            </View>
+
+            {completedVisits.length === 0 ? (
+              <EmptyState
+                title="No completed visits"
+                description="Completed site visits will stay available here for recheck or correction."
+              />
+            ) : (
+              <View style={styles.visitList}>
+                {completedVisits.map((visit) => (
+                  <VisitRow
+                    key={visit.id}
+                    visit={visit}
+                    isJoining={false}
+                    metaLabel={{
+                      label: 'Completed',
+                      value: formatDateTime(visit.completedAt ?? visit.endedAt ?? visit.startedAt),
+                    }}
                     onPress={() => {
                       void handleOpenVisit(visit);
                     }}
@@ -226,13 +268,18 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   );
 }
 
-function ActiveVisitRow({
+function VisitRow({
   visit,
   isJoining,
+  metaLabel,
   onPress,
 }: {
   visit: SiteVisit;
   isJoining: boolean;
+  metaLabel?: {
+    label: string;
+    value: string;
+  };
   onPress: () => void;
 }) {
   const thumbnailUri = getVisitThumbnailUri(visit);
@@ -260,6 +307,12 @@ function ActiveVisitRow({
         <Text style={styles.functionalLocation}>
           {visit.functionalLocation ?? visit.substation.location ?? visit.substation.code ?? 'Not available'}
         </Text>
+        {metaLabel ? (
+          <>
+            <Text style={styles.rowLabel}>{metaLabel.label}</Text>
+            <Text style={styles.functionalLocation}>{metaLabel.value}</Text>
+          </>
+        ) : null}
       </View>
 
       <Text style={isJoining ? styles.joiningText : styles.rowArrow}>
@@ -267,6 +320,10 @@ function ActiveVisitRow({
       </Text>
     </Pressable>
   );
+}
+
+function isCompletedVisit(visit: SiteVisit) {
+  return visit.status === 'COMPLETED';
 }
 
 function HomeDrawer({
@@ -331,7 +388,7 @@ function HomeDrawer({
             </View>
 
             <View style={styles.drawerNav}>
-              <DrawerItem label="Active Sites" active onPress={onClose} />
+              <DrawerItem label="Visits" active onPress={onClose} />
               <DrawerItem
                 label="Dashboard"
                 onPress={() => {
