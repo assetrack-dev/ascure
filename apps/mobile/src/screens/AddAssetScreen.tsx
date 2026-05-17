@@ -27,6 +27,7 @@ import {
   uiTheme,
 } from '../ui';
 import { Asset, AssetStatus, AssetType, Substation } from '../types';
+import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 
 type Coordinate = {
   latitude: number;
@@ -149,8 +150,8 @@ export function AddAssetScreen({
   useEffect(() => {
     setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
     setSelectedAssetTypeId(assetToEdit?.assetTypeId ?? '');
-    setAssetCode(assetToEdit?.assetCode ?? '');
-    setAssetName(assetToEdit?.name ?? '');
+    setAssetCode(assetToEdit?.assetCode ? normalizeOperationalText(assetToEdit.assetCode) : '');
+    setAssetName(assetToEdit?.name ? normalizeOperationalText(assetToEdit.name) : '');
     setOperationalStatus(getInitialOperationalStatus(assetToEdit));
     setLatitude(
       assetToEdit?.latitude !== null && assetToEdit?.latitude !== undefined
@@ -371,8 +372,8 @@ export function AddAssetScreen({
   }
 
   async function handleSubmit() {
-    const normalizedAssetCode = assetCode.trim();
-    const normalizedAssetName = assetName.trim();
+    const normalizedAssetCode = normalizeOperationalPayloadText(assetCode);
+    const normalizedAssetName = normalizeOperationalPayloadText(assetName);
 
     if (!selectedAssetTypeId) {
       setError('Please select an asset type.');
@@ -436,7 +437,7 @@ export function AddAssetScreen({
         let savedAsset = await api.updateAsset(token, assetToEdit.id, {
           assetTypeId: selectedAssetTypeId,
           assetCode: normalizedAssetCode,
-          name: normalizedAssetName,
+          name: normalizedAssetName ?? '',
           latitude: latitudeValue,
           longitude: longitudeValue,
           metadata: assetMetadata,
@@ -456,7 +457,7 @@ export function AddAssetScreen({
         substationId: targetSubstationId,
         assetTypeId: selectedAssetTypeId,
         assetCode: normalizedAssetCode,
-        name: normalizedAssetName || undefined,
+        name: normalizedAssetName,
         latitude: parsedLatitude,
         longitude: parsedLongitude,
         metadata: assetMetadata,
@@ -640,16 +641,18 @@ export function AddAssetScreen({
             <TextField
               label={assetCodeLabel}
               value={assetCode}
-              onChangeText={setAssetCode}
+              onChangeText={(nextValue) => setAssetCode(normalizeOperationalText(nextValue))}
               placeholder={
                 isSAVRWorkflow ? 'Masukkan No Tiang Rondaan' : 'Enter the field asset code'
               }
+              autoCapitalize="characters"
             />
             <TextField
               label={assetNameLabel}
               value={assetName}
-              onChangeText={setAssetName}
+              onChangeText={(nextValue) => setAssetName(normalizeOperationalText(nextValue))}
               placeholder={isSAVRWorkflow ? 'Masukkan No Tiang Lama jika ada' : 'Enter a readable asset name'}
+              autoCapitalize="characters"
             />
           </Card>
 

@@ -340,6 +340,7 @@ export function TextField({
   keyboardType,
   editable = true,
   multiline = false,
+  autoCapitalize = 'none',
 }: {
   label: string;
   value: string;
@@ -349,6 +350,7 @@ export function TextField({
   keyboardType?: TextInputProps['keyboardType'];
   editable?: boolean;
   multiline?: boolean;
+  autoCapitalize?: TextInputProps['autoCapitalize'];
 }) {
   return (
     <View style={styles.fieldWrap}>
@@ -363,7 +365,7 @@ export function TextField({
         keyboardType={keyboardType}
         editable={editable}
         multiline={multiline}
-        autoCapitalize="none"
+        autoCapitalize={autoCapitalize}
       />
     </View>
   );

@@ -22,6 +22,7 @@ import {
   buildInspectionImagesDirectory,
 } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { TemplatesService } from '../templates/templates.service';
@@ -45,6 +46,22 @@ const ACTIVE_SITE_VISIT_STATUSES = [
   SiteVisitStatus.OPEN,
   SiteVisitStatus.IN_PROGRESS,
 ] as const;
+
+const OPERATIONAL_TEXT_KEYWORDS = [
+  'nama pencawang',
+  'functional location',
+  'kod pencawang',
+  'mainhead',
+  'no tiang rondaan',
+  'no tiang lama',
+  'asset code',
+  'asset name',
+  'remark',
+  'remarks',
+  'catatan',
+  'note',
+  'notes',
+];
 
 @Injectable()
 export class InspectionsService {
@@ -257,7 +274,7 @@ export class InspectionsService {
       const checklistItemId =
         item.checklistItemId ?? checklistItemIdByLabel.get(this.normalizeLabelKey(label)) ?? null;
       const templateItem = checklistItemId ? templateItemById.get(checklistItemId) : null;
-      const remark = this.normalizeOptionalString(item.remark);
+      const remark = this.normalizeOperationalString(item.remark);
       const isDefect = item.result === 'FAIL' && templateItem?.isDefectTrigger !== false;
       const severity =
         templateItem && templateItem.isDefectTrigger !== false
@@ -769,9 +786,39 @@ export class InspectionsService {
     return trimmedValue ? trimmedValue : null;
   }
 
+  private normalizeOperationalString(value?: string | null) {
+    const normalizedValue = this.normalizeOptionalString(value);
+
+    return normalizedValue ? normalizeOperationalText(normalizedValue) : null;
+  }
+
+  private normalizeTemplateTextValue(
+    templateItem: {
+      key: string;
+      label: string;
+    },
+    value: string,
+  ) {
+    const trimmedValue = value.trim();
+
+    if (!this.isOperationalTemplateTextItem(templateItem)) {
+      return trimmedValue;
+    }
+
+    return this.normalizeOperationalString(trimmedValue);
+  }
+
+  private isOperationalTemplateTextItem(templateItem: { key: string; label: string }) {
+    const searchText = `${templateItem.key} ${templateItem.label}`.toLowerCase();
+
+    return OPERATIONAL_TEXT_KEYWORDS.some((keyword) => searchText.includes(keyword));
+  }
+
   private buildResultValueData(
     templateItem: {
       id: string;
+      key: string;
+      label: string;
       inputType: InspectionItemInputType;
       optionsJson: Prisma.JsonValue | null;
     },
@@ -801,7 +848,10 @@ export class InspectionsService {
 
         return {
           ...baseValueData,
-          valueText: input.valueText === null ? null : input.valueText.trim(),
+          valueText:
+            input.valueText === null
+              ? null
+              : this.normalizeTemplateTextValue(templateItem, input.valueText),
           valueJson: Prisma.DbNull,
         };
 

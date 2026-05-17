@@ -25,7 +25,7 @@ import {
   SyncQueueSnapshot,
 } from '../syncQueue';
 import { Asset, SiteVisit, SiteVisitSummary } from '../types';
-import { formatDateTime } from '../utils';
+import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 
 type Coordinate = {
   latitude: number;
@@ -129,7 +129,7 @@ export function VisitDetailScreen({
 
     const payload = {
       completedAt: new Date().toISOString(),
-      completionNotes: completionNotes.trim() || undefined,
+      completionNotes: normalizeOperationalPayloadText(completionNotes),
     };
 
     if (isOffline) {
@@ -399,6 +399,7 @@ export function VisitDetailScreen({
               placeholder="Add final notes for this visit"
               editable={!isVisitTerminal(visit.status) && !isCompletionQueued && !isCompleting}
               multiline
+              autoCapitalize="characters"
             />
             <AppButton
               label={

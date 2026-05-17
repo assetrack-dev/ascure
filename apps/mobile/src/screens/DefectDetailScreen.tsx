@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { DefectDetail, DefectStatus, InspectionImage } from '../types';
-import { formatDateTime } from '../utils';
+import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { Screen } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -77,7 +77,7 @@ export function DefectDetailScreen({
         token,
         defectId,
         status,
-        actionRemark.trim() ? actionRemark.trim() : null,
+        normalizeOperationalPayloadText(actionRemark) ?? null,
       );
       await loadDefectDetail(false);
     } catch (updateError) {
@@ -230,6 +230,7 @@ export function DefectDetailScreen({
                 placeholder="Add action taken or follow-up note"
                 placeholderTextColor="#7b8aa3"
                 multiline
+                autoCapitalize="characters"
                 textAlignVertical="top"
                 style={{
                   minHeight: 110,

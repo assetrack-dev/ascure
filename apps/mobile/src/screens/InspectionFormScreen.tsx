@@ -16,7 +16,9 @@ import {
   createInitialDraftValues,
   formatDateTime,
   hasAnyInspectionDraftValue,
+  isOperationalTemplateTextItem,
   normalizeInspectionInputType,
+  normalizeOperationalText,
   normalizeSelectOptions,
   validateInspectionDraft,
   validateInspectionDraftForSave,
@@ -889,6 +891,7 @@ function ChecklistItemCard({
   onChange: (value: DraftValues[string]) => void;
 }) {
   const inputType = normalizeInspectionInputType(item.inputType);
+  const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
 
   return (
     <View style={styles.itemCard}>
@@ -903,10 +906,13 @@ function ChecklistItemCard({
         <TextField
           label="Response"
           value={typeof value === 'string' ? value : ''}
-          onChangeText={onChange}
+          onChangeText={(nextValue) =>
+            onChange(shouldUppercaseText ? normalizeOperationalText(nextValue) : nextValue)
+          }
           placeholder="Enter response"
           editable={!disabled}
           multiline
+          autoCapitalize={shouldUppercaseText ? 'characters' : 'none'}
         />
       ) : null}
       {inputType === 'NUMBER' ? (

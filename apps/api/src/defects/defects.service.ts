@@ -11,6 +11,7 @@ import {
   DefectTimelineEventType,
   UserRole,
 } from '@prisma/client';
+import { normalizeOperationalText } from '../common/operational-text';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -134,7 +135,7 @@ export class DefectsService {
     const actionRemark =
       dto.actionRemark === undefined
         ? undefined
-        : this.normalizeOptionalString(dto.actionRemark);
+        : this.normalizeOperationalString(dto.actionRemark);
     const now = new Date();
     const data: {
       status: DefectStatus;
@@ -335,7 +336,7 @@ export class DefectsService {
     this.assertCanMutate(user);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
-    const comment = this.normalizeOptionalString(dto.comment);
+    const comment = this.normalizeOperationalString(dto.comment);
 
     if (!comment) {
       throw new BadRequestException('Comment is required.');
@@ -973,5 +974,11 @@ export class DefectsService {
     const trimmedValue = value.trim();
 
     return trimmedValue ? trimmedValue : null;
+  }
+
+  private normalizeOperationalString(value?: string | null) {
+    const normalizedValue = this.normalizeOptionalString(value);
+
+    return normalizedValue ? normalizeOperationalText(normalizedValue) : null;
   }
 }

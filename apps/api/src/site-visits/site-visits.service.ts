@@ -22,6 +22,7 @@ import {
   isSiteVisitOverdue,
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
+import { normalizeOperationalText } from '../common/operational-text';
 import {
   buildSiteVisitImagePath,
   buildSiteVisitImagesDirectory,
@@ -308,19 +309,26 @@ export class SiteVisitsService {
           status: this.normalizeCreateStatus(dto.status),
           cycleNumber: dto.cycleNumber,
           visitType: dto.visitType,
-          mainhead: this.normalizeOptionalString(dto.mainhead),
+          mainhead: this.normalizeOperationalString(dto.mainhead),
           pencawangCode: dto.substationId
-            ? this.normalizeOptionalString(dto.pencawangCode) ?? substation.code
+            ? this.normalizePencawangCode(dto.pencawangCode) ??
+              this.normalizePencawangCode(substation.code) ??
+              substation.code
             : substation.code,
-          pencawangName: this.normalizeOptionalString(dto.pencawangName) ?? substation.name,
+          pencawangName:
+            this.normalizeOperationalString(dto.pencawangName) ??
+            this.normalizeOperationalString(substation.name) ??
+            substation.name,
           functionalLocation:
-            this.normalizeOptionalString(dto.functionalLocation) ?? substation.location,
+            this.normalizeOperationalString(dto.functionalLocation) ??
+            this.normalizeOperationalString(substation.location) ??
+            substation.location,
           checkInLatitude: dto.checkInLatitude,
           checkInLongitude: dto.checkInLongitude,
           checkInAccuracyMeters: dto.checkInAccuracyMeters,
           checkInCapturedAt: dto.checkInCapturedAt ? new Date(dto.checkInCapturedAt) : undefined,
           validationStatus: SiteVisitValidationStatus.PENDING,
-          notes: this.normalizeOptionalString(dto.notes),
+          notes: this.normalizeOperationalString(dto.notes),
           users: {
             create: Array.from(visitUserIds).map((userId) => ({
               userId,
@@ -503,7 +511,7 @@ export class SiteVisitsService {
     }
 
     const source = this.normalizeOptionalString(dto.source);
-    const notes = this.normalizeOptionalString(dto.notes);
+    const notes = this.normalizeOperationalString(dto.notes);
 
     const link = await this.prisma.siteVisitAsset.upsert({
       where: {
@@ -554,7 +562,7 @@ export class SiteVisitsService {
         completionNotes:
           dto.completionNotes === undefined
             ? undefined
-            : this.normalizeOptionalString(dto.completionNotes),
+            : this.normalizeOperationalString(dto.completionNotes),
         ...this.buildSnapshotBackfill(siteVisit),
       },
     });
@@ -580,7 +588,7 @@ export class SiteVisitsService {
         cancelReason:
           dto.cancelReason === undefined
             ? undefined
-            : this.normalizeOptionalString(dto.cancelReason),
+            : this.normalizeOperationalString(dto.cancelReason),
       },
     });
 
@@ -613,8 +621,8 @@ export class SiteVisitsService {
     this.validateManualPencawangCreate(dto);
 
     const pencawangCode = this.normalizePencawangCode(dto.pencawangCode);
-    const pencawangName = this.normalizeOptionalString(dto.pencawangName);
-    const functionalLocation = this.normalizeOptionalString(dto.functionalLocation);
+    const pencawangName = this.normalizeOperationalString(dto.pencawangName);
+    const functionalLocation = this.normalizeOperationalString(dto.functionalLocation);
 
     if (!pencawangCode || !pencawangName || !functionalLocation) {
       throw new BadRequestException('New Pencawang details are required.');
@@ -1195,9 +1203,20 @@ export class SiteVisitsService {
     siteVisit: Awaited<ReturnType<SiteVisitsService['findAccessibleSiteVisit']>>,
   ): Prisma.SiteVisitUpdateInput {
     return {
-      pencawangCode: siteVisit.pencawangCode ?? siteVisit.substation.code,
-      pencawangName: siteVisit.pencawangName ?? siteVisit.substation.name,
-      functionalLocation: siteVisit.functionalLocation ?? siteVisit.substation.location,
+      pencawangCode:
+        this.normalizePencawangCode(siteVisit.pencawangCode ?? siteVisit.substation.code) ??
+        siteVisit.pencawangCode ??
+        siteVisit.substation.code,
+      pencawangName:
+        this.normalizeOperationalString(siteVisit.pencawangName ?? siteVisit.substation.name) ??
+        siteVisit.pencawangName ??
+        siteVisit.substation.name,
+      functionalLocation:
+        this.normalizeOperationalString(
+          siteVisit.functionalLocation ?? siteVisit.substation.location,
+        ) ??
+        siteVisit.functionalLocation ??
+        siteVisit.substation.location,
     };
   }
 
@@ -1664,7 +1683,13 @@ export class SiteVisitsService {
   }
 
   private normalizePencawangCode(value?: string | null) {
-    return this.normalizeOptionalString(value)?.toUpperCase() ?? null;
+    return this.normalizeOperationalString(value);
+  }
+
+  private normalizeOperationalString(value?: string | null) {
+    const normalizedValue = this.normalizeOptionalString(value);
+
+    return normalizedValue ? normalizeOperationalText(normalizedValue) : null;
   }
 
   private accessScope(user: RequestUser): Prisma.SiteVisitWhereInput {

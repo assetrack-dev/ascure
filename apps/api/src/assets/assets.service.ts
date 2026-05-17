@@ -13,6 +13,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -24,6 +25,12 @@ export class AssetsService {
 
   async create(user: RequestUser, dto: CreateAssetDto) {
     this.assertCanMutate(user);
+
+    const assetCode = this.normalizeOperationalString(dto.assetCode);
+
+    if (!assetCode) {
+      throw new BadRequestException('Asset code is required.');
+    }
 
     const substation = await this.prisma.substation.findFirst({
       where: {
@@ -87,8 +94,8 @@ export class AssetsService {
             tenantId: user.tenantId,
             substationId: dto.substationId,
             assetTypeId: dto.assetTypeId,
-            assetCode: dto.assetCode,
-            name: this.normalizeOptionalString(dto.name),
+            assetCode,
+            name: this.normalizeOperationalString(dto.name),
             latitude: dto.latitude,
             longitude: dto.longitude,
             metadata:
@@ -399,11 +406,17 @@ export class AssetsService {
     }
 
     if (dto.assetCode !== undefined) {
-      data.assetCode = dto.assetCode;
+      const assetCode = this.normalizeOperationalString(dto.assetCode);
+
+      if (!assetCode) {
+        throw new BadRequestException('Asset code is required.');
+      }
+
+      data.assetCode = assetCode;
     }
 
     if (dto.name !== undefined) {
-      data.name = this.normalizeOptionalString(dto.name);
+      data.name = this.normalizeOperationalString(dto.name);
     }
 
     if (dto.latitude !== undefined) {
@@ -546,5 +559,11 @@ export class AssetsService {
     const trimmedValue = value.trim();
 
     return trimmedValue ? trimmedValue : null;
+  }
+
+  private normalizeOperationalString(value?: string) {
+    const normalizedValue = this.normalizeOptionalString(value);
+
+    return normalizedValue ? normalizeOperationalText(normalizedValue) : null;
   }
 }

@@ -18,6 +18,7 @@ import {
   uiTheme,
 } from '../ui';
 import { SessionUser, SiteVisit, SiteVisitType, Substation, Team } from '../types';
+import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 
 type CapturedSitePhoto = {
   id: string;
@@ -192,9 +193,9 @@ export function CheckInScreen({
       return;
     }
 
-    setPencawangName(selectedSubstation.name);
-    setPencawangCode(selectedSubstation.code);
-    setFunctionalLocation(selectedSubstation.location ?? selectedSubstation.code);
+    setPencawangName(normalizeOperationalText(selectedSubstation.name));
+    setPencawangCode(normalizeOperationalText(selectedSubstation.code));
+    setFunctionalLocation(normalizeOperationalText(selectedSubstation.location ?? selectedSubstation.code));
   }, [selectedSubstation]);
 
   function handleSelectPencawangMode(nextMode: PencawangMode) {
@@ -219,9 +220,9 @@ export function CheckInScreen({
 
   function applyExistingSubstation(substation: Substation) {
     setSelectedSubstationId(substation.id);
-    setPencawangName(substation.name);
-    setPencawangCode(substation.code);
-    setFunctionalLocation(substation.location ?? substation.code);
+    setPencawangName(normalizeOperationalText(substation.name));
+    setPencawangCode(normalizeOperationalText(substation.code));
+    setFunctionalLocation(normalizeOperationalText(substation.location ?? substation.code));
     setMainhead('');
   }
 
@@ -373,10 +374,11 @@ export function CheckInScreen({
   }
 
   function buildCreateVisitPayload(): CreateSiteVisitInput | null {
-    const normalizedPencawangName = pencawangName.trim();
-    const normalizedPencawangCode = pencawangCode.trim();
-    const normalizedFunctionalLocation = functionalLocation.trim();
-    const normalizedMainhead = mainhead.trim();
+    const normalizedPencawangName = normalizeOperationalPayloadText(pencawangName);
+    const normalizedPencawangCode = normalizeOperationalPayloadText(pencawangCode);
+    const normalizedFunctionalLocation = normalizeOperationalPayloadText(functionalLocation);
+    const normalizedMainhead = normalizeOperationalPayloadText(mainhead);
+    const normalizedNotes = normalizeOperationalPayloadText(notes);
     const parsedLatitude = parseCoordinate(checkInLatitude, -90, 90);
     const parsedAccuracy = parseNonNegativeNumber(checkInAccuracyMeters);
 
@@ -443,15 +445,15 @@ export function CheckInScreen({
       teamId: selectedTeamId,
       substationId: pencawangMode === 'EXISTING' ? selectedSubstationId : undefined,
       visitType,
-      pencawangName: normalizedPencawangName || undefined,
-      pencawangCode: normalizedPencawangCode || undefined,
-      functionalLocation: normalizedFunctionalLocation || undefined,
-      mainhead: normalizedMainhead || undefined,
+      pencawangName: normalizedPencawangName,
+      pencawangCode: normalizedPencawangCode,
+      functionalLocation: normalizedFunctionalLocation,
+      mainhead: normalizedMainhead,
       checkInLatitude: parsedLatitude,
       checkInLongitude: parsedLongitude,
       checkInAccuracyMeters: parsedAccuracy,
       checkInCapturedAt: checkInCapturedAt ?? undefined,
-      notes: notes.trim() || undefined,
+      notes: normalizedNotes,
     };
   }
 
@@ -623,26 +625,30 @@ export function CheckInScreen({
             <TextField
               label={pencawangMode === 'NEW' ? 'Nama Pencawang *' : 'Nama Pencawang'}
               value={pencawangName}
-              onChangeText={setPencawangName}
+              onChangeText={(nextValue) => setPencawangName(normalizeOperationalText(nextValue))}
               placeholder="Nama pencawang di lokasi"
+              autoCapitalize="characters"
             />
             <TextField
               label={pencawangMode === 'NEW' ? 'Functional Location *' : 'Functional Location'}
               value={functionalLocation}
-              onChangeText={setFunctionalLocation}
+              onChangeText={(nextValue) => setFunctionalLocation(normalizeOperationalText(nextValue))}
               placeholder="Functional location / alamat operasi"
+              autoCapitalize="characters"
             />
             <TextField
               label={pencawangMode === 'NEW' ? 'Kod Pencawang *' : 'Kod Pencawang'}
               value={pencawangCode}
-              onChangeText={setPencawangCode}
+              onChangeText={(nextValue) => setPencawangCode(normalizeOperationalText(nextValue))}
               placeholder="Kod pencawang"
+              autoCapitalize="characters"
             />
             <TextField
               label={pencawangMode === 'NEW' ? 'MAINHEAD *' : 'MAINHEAD'}
               value={mainhead}
-              onChangeText={setMainhead}
+              onChangeText={(nextValue) => setMainhead(normalizeOperationalText(nextValue))}
               placeholder="Masukkan MAINHEAD jika ada"
+              autoCapitalize="characters"
             />
           </Card>
 
@@ -748,6 +754,7 @@ export function CheckInScreen({
               onChangeText={setNotes}
               placeholder="Add arrival notes or job context"
               multiline
+              autoCapitalize="characters"
             />
           </Card>
         </>

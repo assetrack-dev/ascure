@@ -34,6 +34,47 @@ export function formatRole(role: string) {
     .join(' ');
 }
 
+const OPERATIONAL_TEXT_KEYWORDS = [
+  'nama pencawang',
+  'functional location',
+  'kod pencawang',
+  'mainhead',
+  'no tiang rondaan',
+  'no tiang lama',
+  'asset code',
+  'asset name',
+  'remark',
+  'remarks',
+  'catatan',
+  'note',
+  'notes',
+];
+const PRESERVED_OPERATIONAL_TEXT_PART_PATTERN =
+  /((?:https?:\/\/|www\.)\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi;
+const PRESERVED_OPERATIONAL_TEXT_TOKEN_PATTERN =
+  /^(?:(?:https?:\/\/|www\.)\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})$/i;
+
+export function normalizeOperationalText(value: string) {
+  return value
+    .split(PRESERVED_OPERATIONAL_TEXT_PART_PATTERN)
+    .map((part) =>
+      PRESERVED_OPERATIONAL_TEXT_TOKEN_PATTERN.test(part) ? part : part.toUpperCase(),
+    )
+    .join('');
+}
+
+export function normalizeOperationalPayloadText(value: string) {
+  const normalizedValue = normalizeOperationalText(value).trim();
+
+  return normalizedValue || undefined;
+}
+
+export function isOperationalTemplateTextItem(item: InspectionTemplateItem) {
+  const searchText = `${item.key} ${item.label}`.toLowerCase();
+
+  return OPERATIONAL_TEXT_KEYWORDS.some((keyword) => searchText.includes(keyword));
+}
+
 export function formatInspectionStatus(status: 'DRAFT' | 'SUBMITTED') {
   return status === 'SUBMITTED' ? 'Completed' : 'Draft';
 }
@@ -197,7 +238,7 @@ export function buildChecklistItemsPayload(
         continue;
       }
 
-      const remark = draftValue.remark.trim();
+      const remark = normalizeOperationalText(draftValue.remark).trim();
 
       items.push({
         checklistItemId: item.id,
@@ -336,7 +377,13 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
       const rawValue = getDraftValue(item.id, draftValues);
 
       if (inputType === 'TEXT') {
-        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+        const normalized =
+          typeof rawValue === 'string'
+            ? (isOperationalTemplateTextItem(item)
+                ? normalizeOperationalText(rawValue)
+                : rawValue
+              ).trim()
+            : '';
 
         supportedResults.push({
           templateItemId: item.id,
@@ -456,7 +503,10 @@ export function getInspectionDraftDisplayValue(
     return null;
   }
 
-  const normalized = rawValue.trim();
+  const normalized = (isOperationalTemplateTextItem(item)
+    ? normalizeOperationalText(rawValue)
+    : rawValue
+  ).trim();
 
   return normalized || null;
 }
