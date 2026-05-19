@@ -8,6 +8,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { extname, resolve } from 'path';
 import {
+  DefectLifecycleStatus,
   DefectSeverity,
   DefectStatus,
   InspectionCompletionStatus,
@@ -231,6 +232,8 @@ export class InspectionsService {
       throw new BadRequestException('Submitted inspections cannot be modified.');
     }
 
+    await this.assertInspectionDefectEvidenceEditable(inspection.id);
+
     const hasStructuredItems = dto.items !== undefined;
     const hasLegacyResults = dto.results !== undefined;
 
@@ -247,6 +250,37 @@ export class InspectionsService {
     }
 
     return this.getForm(user, inspectionId);
+  }
+
+  private async assertInspectionDefectEvidenceEditable(inspectionId: string) {
+    const governedDefect = await this.prisma.defect.findFirst({
+      where: {
+        lifecycleStatus: {
+          in: [
+            DefectLifecycleStatus.UNDER_REVIEW,
+            DefectLifecycleStatus.VERIFIED,
+            DefectLifecycleStatus.REJECTED,
+            DefectLifecycleStatus.ASSIGNED,
+            DefectLifecycleStatus.IN_PROGRESS,
+            DefectLifecycleStatus.COMPLETED,
+            DefectLifecycleStatus.VERIFICATION_PENDING,
+            DefectLifecycleStatus.CLOSED,
+          ],
+        },
+        inspectionItemResult: {
+          inspectionId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (governedDefect) {
+      throw new BadRequestException(
+        'Defect evidence already entered governance review and cannot be overwritten.',
+      );
+    }
   }
 
   private async saveStructuredItemResults(
@@ -1093,6 +1127,7 @@ export class InspectionsService {
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
         severity: item.severity ?? DefectSeverity.MEDIUM,
+        lifecycleStatus: DefectLifecycleStatus.DETECTED,
         createdAt: now,
         updatedAt: now,
       }));

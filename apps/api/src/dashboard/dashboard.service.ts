@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  DefectLifecycleStatus,
   DefectSeverity,
   DefectStatus,
   Prisma,
@@ -583,6 +584,7 @@ export class DashboardService {
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
         severity: item.severity ?? DefectSeverity.MEDIUM,
+        lifecycleStatus: DefectLifecycleStatus.DETECTED,
         createdAt: now,
         updatedAt: now,
       })),

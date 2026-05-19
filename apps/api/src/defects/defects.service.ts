@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
+  DefectLifecycleStatus,
+  DefectResolutionOutcome,
   DefectSeverity,
   DefectStatus,
   DefectTimelineEventType,
@@ -15,10 +17,13 @@ import { normalizeOperationalText } from '../common/operational-text';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
+import { UpdateDefectVerificationDto } from './dto/update-defect-verification.dto';
+import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
 
 const ACTIVE_SLA_STATUSES = new Set<DefectStatus>([
   DefectStatus.OPEN,
@@ -27,6 +32,26 @@ const ACTIVE_SLA_STATUSES = new Set<DefectStatus>([
 ]);
 
 type DefectSlaState = 'OVERDUE' | 'ON_TRACK' | 'NO_DUE_DATE' | 'STOPPED';
+
+const GOVERNED_LIFECYCLE_TRANSITIONS: Record<
+  DefectLifecycleStatus,
+  DefectLifecycleStatus[]
+> = {
+  [DefectLifecycleStatus.DETECTED]: [DefectLifecycleStatus.UNDER_REVIEW],
+  [DefectLifecycleStatus.UNDER_REVIEW]: [
+    DefectLifecycleStatus.VERIFIED,
+    DefectLifecycleStatus.REJECTED,
+  ],
+  [DefectLifecycleStatus.VERIFIED]: [DefectLifecycleStatus.ASSIGNED],
+  [DefectLifecycleStatus.REJECTED]: [],
+  [DefectLifecycleStatus.ASSIGNED]: [DefectLifecycleStatus.IN_PROGRESS],
+  [DefectLifecycleStatus.IN_PROGRESS]: [DefectLifecycleStatus.COMPLETED],
+  [DefectLifecycleStatus.COMPLETED]: [
+    DefectLifecycleStatus.VERIFICATION_PENDING,
+  ],
+  [DefectLifecycleStatus.VERIFICATION_PENDING]: [DefectLifecycleStatus.CLOSED],
+  [DefectLifecycleStatus.CLOSED]: [],
+};
 
 @Injectable()
 export class DefectsService {
@@ -62,6 +87,22 @@ export class DefectsService {
             id: true,
             code: true,
             name: true,
+          },
+        },
+        verifiedByUser: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+          },
+        },
+        closureVerifiedByUser: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
           },
         },
         inspectionItemResult: {
@@ -141,6 +182,7 @@ export class DefectsService {
       status: DefectStatus;
       closedAt: Date | null;
       resolvedAt: Date | null;
+      lifecycleStatus?: DefectLifecycleStatus;
       actionRemark?: string | null;
     } = {
       status: dto.status,
@@ -156,6 +198,15 @@ export class DefectsService {
 
     if (actionRemark !== undefined) {
       data.actionRemark = actionRemark;
+    }
+
+    const statusDrivenLifecycleStatus = this.getLifecycleStatusForLegacyStatus(
+      defect.lifecycleStatus,
+      dto.status,
+    );
+
+    if (statusDrivenLifecycleStatus) {
+      data.lifecycleStatus = statusDrivenLifecycleStatus;
     }
 
     const shouldCreateTimelineEntry =
@@ -254,6 +305,11 @@ export class DefectsService {
       nextAssignedUserId ? nextAssignedUser : null,
       nextAssignedTeamId ? nextAssignedTeam : null,
     );
+    const assignmentLifecycleStatus = this.getLifecycleStatusForAssignment(
+      defect.lifecycleStatus,
+      nextAssignedUserId,
+      nextAssignedTeamId,
+    );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.defect.update({
@@ -263,6 +319,9 @@ export class DefectsService {
         data: {
           ...(hasAssignedUserId ? { assignedUserId: nextAssignedUserId } : {}),
           ...(hasAssignedTeamId ? { assignedTeamId: nextAssignedTeamId } : {}),
+          ...(assignmentLifecycleStatus
+            ? { lifecycleStatus: assignmentLifecycleStatus }
+            : {}),
         },
       });
 
@@ -323,6 +382,231 @@ export class DefectsService {
           defectId: defect.id,
           type: DefectTimelineEventType.DUE_DATE_CHANGED,
           comment: `Due date changed from ${previousDueDate} to ${nextDueDateLabel}.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async verifyDefect(
+    user: RequestUser,
+    defectId: string,
+    dto: UpdateDefectVerificationDto,
+  ) {
+    this.assertCanMutate(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const now = new Date();
+    const hasRemarks = Object.prototype.hasOwnProperty.call(
+      dto,
+      'verificationRemarks',
+    );
+    const verificationRemarks = hasRemarks
+      ? this.normalizeOperationalString(dto.verificationRemarks)
+      : defect.verificationRemarks;
+
+    this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
+      DefectLifecycleStatus.UNDER_REVIEW,
+      DefectLifecycleStatus.VERIFIED,
+    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          lifecycleStatus: DefectLifecycleStatus.VERIFIED,
+          verifiedByUserId: user.id,
+          verifiedAt: now,
+          ...(hasRemarks ? { verificationRemarks } : {}),
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          comment: this.buildGovernanceComment(
+            'QA/QC verified defect',
+            verificationRemarks,
+          ),
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async rejectDefect(
+    user: RequestUser,
+    defectId: string,
+    dto: UpdateDefectVerificationDto,
+  ) {
+    this.assertCanMutate(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const now = new Date();
+    const hasRemarks = Object.prototype.hasOwnProperty.call(
+      dto,
+      'verificationRemarks',
+    );
+    const verificationRemarks = hasRemarks
+      ? this.normalizeOperationalString(dto.verificationRemarks)
+      : defect.verificationRemarks;
+
+    this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
+      DefectLifecycleStatus.UNDER_REVIEW,
+      DefectLifecycleStatus.REJECTED,
+    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          lifecycleStatus: DefectLifecycleStatus.REJECTED,
+          verifiedByUserId: user.id,
+          verifiedAt: now,
+          ...(hasRemarks ? { verificationRemarks } : {}),
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          comment: this.buildGovernanceComment(
+            'QA/QC rejected defect',
+            verificationRemarks,
+          ),
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async completeMaintenance(
+    user: RequestUser,
+    defectId: string,
+    dto: CompleteDefectMaintenanceDto,
+  ) {
+    this.assertCanMutate(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const now = new Date();
+    const hasCompletionRemarks = Object.prototype.hasOwnProperty.call(
+      dto,
+      'completionRemarks',
+    );
+    const completionRemarks = hasCompletionRemarks
+      ? this.normalizeOperationalString(dto.completionRemarks)
+      : defect.actionRemark;
+    const resolutionOutcome =
+      dto.resolutionOutcome ?? DefectResolutionOutcome.REPAIRED;
+    const currentLifecycleStatus = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
+    const completionLifecyclePath =
+      this.getMaintenanceCompletionLifecyclePath(currentLifecycleStatus);
+
+    this.assertLifecyclePath(currentLifecycleStatus, completionLifecyclePath);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          lifecycleStatus: DefectLifecycleStatus.COMPLETED,
+          resolutionOutcome,
+          status: DefectStatus.RESOLVED,
+          resolvedAt: defect.resolvedAt ?? now,
+          ...(hasCompletionRemarks ? { actionRemark: completionRemarks } : {}),
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          fromStatus: defect.status === DefectStatus.RESOLVED ? null : defect.status,
+          toStatus:
+            defect.status === DefectStatus.RESOLVED ? null : DefectStatus.RESOLVED,
+          comment: this.buildMaintenanceCompletionComment(
+            resolutionOutcome,
+            completionRemarks,
+            currentLifecycleStatus,
+            completionLifecyclePath,
+          ),
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  async verifyClosure(
+    user: RequestUser,
+    defectId: string,
+    dto: VerifyDefectClosureDto,
+  ) {
+    this.assertCanMutate(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const now = new Date();
+    const hasRemarks = Object.prototype.hasOwnProperty.call(dto, 'closureRemarks');
+    const closureRemarks = hasRemarks
+      ? this.normalizeOperationalString(dto.closureRemarks)
+      : defect.closureRemarks;
+
+    this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
+      DefectLifecycleStatus.VERIFICATION_PENDING,
+      DefectLifecycleStatus.CLOSED,
+    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: {
+          id: defect.id,
+        },
+        data: {
+          lifecycleStatus: DefectLifecycleStatus.CLOSED,
+          status: DefectStatus.CLOSED,
+          resolvedAt: defect.resolvedAt ?? now,
+          closedAt: defect.closedAt ?? now,
+          closureVerifiedByUserId: user.id,
+          closureVerifiedAt: now,
+          ...(hasRemarks ? { closureRemarks } : {}),
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          fromStatus: defect.status === DefectStatus.CLOSED ? null : defect.status,
+          toStatus:
+            defect.status === DefectStatus.CLOSED ? null : DefectStatus.CLOSED,
+          comment: this.buildGovernanceComment(
+            'Closure verified by Mainhead/TNB',
+            closureRemarks,
+          ),
           createdByUserId: user.id,
           createdAt: now,
         },
@@ -395,6 +679,7 @@ export class DefectsService {
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
         severity: item.severity ?? DefectSeverity.MEDIUM,
+        lifecycleStatus: DefectLifecycleStatus.DETECTED,
         createdAt: now,
         updatedAt: now,
       })),
@@ -437,6 +722,7 @@ export class DefectsService {
         inspectionItemResultId: itemResult.id,
         status: DefectStatus.OPEN,
         severity: itemResult.severity ?? DefectSeverity.MEDIUM,
+        lifecycleStatus: DefectLifecycleStatus.DETECTED,
       },
       update: {},
     });
@@ -497,6 +783,22 @@ export class DefectsService {
           id: true,
           code: true,
           name: true,
+        },
+      },
+      verifiedByUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+      closureVerifiedByUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
         },
       },
       timelineEntries: {
@@ -622,12 +924,20 @@ export class DefectsService {
     id: string;
     assignedUserId: string | null;
     assignedTeamId: string | null;
+    verifiedByUserId: string | null;
+    closureVerifiedByUserId: string | null;
     status: DefectStatus;
     severity: DefectSeverity;
+    lifecycleStatus: DefectLifecycleStatus | null;
+    resolutionOutcome: DefectResolutionOutcome | null;
     actionRemark: string | null;
     dueDate: Date | null;
     resolvedAt: Date | null;
     closedAt: Date | null;
+    verifiedAt: Date | null;
+    verificationRemarks: string | null;
+    closureVerifiedAt: Date | null;
+    closureRemarks: string | null;
     assignedUser: {
       id: string;
       email: string;
@@ -638,6 +948,18 @@ export class DefectsService {
       id: string;
       code: string;
       name: string;
+    } | null;
+    verifiedByUser: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+    } | null;
+    closureVerifiedByUser: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
     } | null;
     inspectionItemResult: {
       id: string;
@@ -673,8 +995,12 @@ export class DefectsService {
       inspectionItemResultId: item.id,
       assignedUserId: defect.assignedUserId,
       assignedTeamId: defect.assignedTeamId,
+      verifiedByUserId: defect.verifiedByUserId,
+      closureVerifiedByUserId: defect.closureVerifiedByUserId,
       assignedUser: defect.assignedUser,
       assignedTeam: defect.assignedTeam,
+      verifiedByUser: defect.verifiedByUser,
+      closureVerifiedByUser: defect.closureVerifiedByUser,
       assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
       inspectionId: item.inspectionId,
       assetId: inspection.assetId,
@@ -695,10 +1021,16 @@ export class DefectsService {
       remark: item.remark,
       status: defect.status,
       severity: defect.severity,
+      lifecycleStatus: defect.lifecycleStatus,
+      resolutionOutcome: defect.resolutionOutcome,
       actionRemark: defect.actionRemark,
       dueDate: defect.dueDate?.toISOString() ?? null,
       resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      verifiedAt: defect.verifiedAt?.toISOString() ?? null,
+      verificationRemarks: defect.verificationRemarks,
+      closureVerifiedAt: defect.closureVerifiedAt?.toISOString() ?? null,
+      closureRemarks: defect.closureRemarks,
       isOverdue: slaState === 'OVERDUE',
       slaState,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
@@ -721,15 +1053,25 @@ export class DefectsService {
       checklistItemId: item.checklistItemId,
       status: defect.status,
       severity: defect.severity,
+      lifecycleStatus: defect.lifecycleStatus,
+      resolutionOutcome: defect.resolutionOutcome,
       assignedUserId: defect.assignedUserId,
       assignedTeamId: defect.assignedTeamId,
+      verifiedByUserId: defect.verifiedByUserId,
+      closureVerifiedByUserId: defect.closureVerifiedByUserId,
       assignedUser: defect.assignedUser,
       assignedTeam: defect.assignedTeam,
+      verifiedByUser: defect.verifiedByUser,
+      closureVerifiedByUser: defect.closureVerifiedByUser,
       assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
       actionRemark: defect.actionRemark,
       dueDate: defect.dueDate?.toISOString() ?? null,
       resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      verifiedAt: defect.verifiedAt?.toISOString() ?? null,
+      verificationRemarks: defect.verificationRemarks,
+      closureVerifiedAt: defect.closureVerifiedAt?.toISOString() ?? null,
+      closureRemarks: defect.closureRemarks,
       isOverdue: slaState === 'OVERDUE',
       slaState,
       label: item.label,
@@ -838,6 +1180,157 @@ export class DefectsService {
 
       return leftDate - rightDate;
     });
+  }
+
+  private getEffectiveLifecycleStatus(
+    lifecycleStatus: DefectLifecycleStatus | null,
+  ) {
+    return lifecycleStatus ?? DefectLifecycleStatus.DETECTED;
+  }
+
+  private assertLifecyclePath(
+    currentStatus: DefectLifecycleStatus,
+    path: DefectLifecycleStatus[],
+  ) {
+    if (path.length === 0 || currentStatus === path[path.length - 1]) {
+      return;
+    }
+
+    let cursor = currentStatus;
+
+    for (const nextStatus of path) {
+      if (cursor === nextStatus) {
+        continue;
+      }
+
+      const allowedNextStatuses = GOVERNED_LIFECYCLE_TRANSITIONS[cursor];
+
+      if (!allowedNextStatuses.includes(nextStatus)) {
+        throw new BadRequestException(
+          `Defect lifecycle cannot move from ${this.formatEnumLabel(cursor)} to ${this.formatEnumLabel(nextStatus)}.`,
+        );
+      }
+
+      cursor = nextStatus;
+    }
+  }
+
+  private getLifecycleStatusForAssignment(
+    lifecycleStatus: DefectLifecycleStatus | null,
+    assignedUserId: string | null,
+    assignedTeamId: string | null,
+  ) {
+    if (!assignedUserId && !assignedTeamId) {
+      return null;
+    }
+
+    const currentStatus = this.getEffectiveLifecycleStatus(lifecycleStatus);
+
+    if (currentStatus !== DefectLifecycleStatus.VERIFIED) {
+      return null;
+    }
+
+    this.assertLifecyclePath(currentStatus, [DefectLifecycleStatus.ASSIGNED]);
+
+    return DefectLifecycleStatus.ASSIGNED;
+  }
+
+  private getLifecycleStatusForLegacyStatus(
+    lifecycleStatus: DefectLifecycleStatus | null,
+    defectStatus: DefectStatus,
+  ) {
+    const currentStatus = this.getEffectiveLifecycleStatus(lifecycleStatus);
+    const targetStatus =
+      defectStatus === DefectStatus.IN_PROGRESS
+        ? DefectLifecycleStatus.IN_PROGRESS
+        : defectStatus === DefectStatus.RESOLVED
+          ? DefectLifecycleStatus.COMPLETED
+          : defectStatus === DefectStatus.CLOSED
+            ? DefectLifecycleStatus.CLOSED
+            : null;
+
+    if (!targetStatus || currentStatus === targetStatus) {
+      return null;
+    }
+
+    const path =
+      targetStatus === DefectLifecycleStatus.CLOSED &&
+      currentStatus === DefectLifecycleStatus.COMPLETED
+        ? [DefectLifecycleStatus.VERIFICATION_PENDING, DefectLifecycleStatus.CLOSED]
+        : [targetStatus];
+
+    try {
+      this.assertLifecyclePath(currentStatus, path);
+      return targetStatus;
+    } catch {
+      return null;
+    }
+  }
+
+  private getMaintenanceCompletionLifecyclePath(
+    currentStatus: DefectLifecycleStatus,
+  ) {
+    if (currentStatus === DefectLifecycleStatus.COMPLETED) {
+      return [];
+    }
+
+    if (currentStatus === DefectLifecycleStatus.IN_PROGRESS) {
+      return [DefectLifecycleStatus.COMPLETED];
+    }
+
+    if (currentStatus === DefectLifecycleStatus.ASSIGNED) {
+      return [
+        DefectLifecycleStatus.IN_PROGRESS,
+        DefectLifecycleStatus.COMPLETED,
+      ];
+    }
+
+    if (currentStatus === DefectLifecycleStatus.VERIFIED) {
+      return [
+        DefectLifecycleStatus.ASSIGNED,
+        DefectLifecycleStatus.IN_PROGRESS,
+        DefectLifecycleStatus.COMPLETED,
+      ];
+    }
+
+    return [DefectLifecycleStatus.COMPLETED];
+  }
+
+  private buildGovernanceComment(title: string, remarks: string | null) {
+    return remarks ? `${title}. ${remarks}` : `${title}.`;
+  }
+
+  private buildMaintenanceCompletionComment(
+    resolutionOutcome: DefectResolutionOutcome,
+    completionRemarks: string | null,
+    fromLifecycleStatus: DefectLifecycleStatus,
+    lifecyclePath: DefectLifecycleStatus[],
+  ) {
+    const parts = [
+      `Maintenance completed with outcome ${this.formatEnumLabel(resolutionOutcome)}.`,
+    ];
+
+    if (lifecyclePath.length > 0) {
+      const lifecycleLabels = [fromLifecycleStatus, ...lifecyclePath].map((status) =>
+        this.formatEnumLabel(status),
+      );
+
+      parts.push(`Lifecycle advanced ${lifecycleLabels.join(' -> ')}.`);
+    }
+
+    if (completionRemarks) {
+      parts.push(completionRemarks);
+    }
+
+    return parts.join(' ');
+  }
+
+  private formatEnumLabel(value: string) {
+    return value
+      .toLowerCase()
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
   }
 
   private async findAssignableUser(tenantId: string, userId: string) {

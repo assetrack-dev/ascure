@@ -21,6 +21,8 @@ import { fetchDefects } from "@/lib/defects";
 import type { AuthSession } from "@/types/auth";
 import type {
   DefectListItem,
+  DefectLifecycleStatus,
+  DefectResolutionOutcome,
   DefectSeverity,
   DefectStatus,
   DefectWorkflowStatus,
@@ -31,6 +33,7 @@ type SortKey =
   | "defectType"
   | "severity"
   | "status"
+  | "lifecycleStatus"
   | "assignedTo"
   | "date"
   | "dueDate"
@@ -70,6 +73,18 @@ const STATUS_RANK: Record<DefectStatus, number> = {
   CLOSED: 4,
   UNKNOWN: 5,
 };
+const LIFECYCLE_RANK: Record<DefectLifecycleStatus, number> = {
+  DETECTED: 0,
+  UNDER_REVIEW: 1,
+  VERIFIED: 2,
+  ASSIGNED: 3,
+  IN_PROGRESS: 4,
+  COMPLETED: 5,
+  VERIFICATION_PENDING: 6,
+  CLOSED: 7,
+  REJECTED: 8,
+  UNKNOWN: 9,
+};
 const filterControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const searchControlClassName =
@@ -98,6 +113,18 @@ function formatStatus(status: DefectStatus) {
   }
 
   return status
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatEnumLabel(value: string | null | undefined) {
+  if (!value || value === "UNKNOWN") {
+    return "Not recorded";
+  }
+
+  return value
     .toLowerCase()
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -185,6 +212,10 @@ function getSortValue(defect: DefectListItem, sortKey: SortKey) {
     return STATUS_RANK[defect.status];
   }
 
+  if (sortKey === "lifecycleStatus") {
+    return defect.lifecycleStatus ? LIFECYCLE_RANK[defect.lifecycleStatus] : 99;
+  }
+
   if (sortKey === "date") {
     const parsedDate = defect.date ? new Date(defect.date).getTime() : 0;
     return Number.isFinite(parsedDate) ? parsedDate : 0;
@@ -253,6 +284,52 @@ function StatusBadge({ status }: { status: DefectStatus }) {
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
       {formatStatus(status)}
+    </span>
+  );
+}
+
+function LifecycleBadge({ status }: { status: DefectLifecycleStatus | null | undefined }) {
+  const className =
+    status === "VERIFIED"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : status === "REJECTED"
+        ? "border-red-200 bg-red-50 text-red-700"
+        : status === "CLOSED"
+          ? "border-green-200 bg-green-50 text-green-700"
+          : status === "COMPLETED" || status === "VERIFICATION_PENDING"
+            ? "border-teal-200 bg-teal-50 text-teal-700"
+            : status === "ASSIGNED" || status === "IN_PROGRESS"
+              ? "border-blue-200 bg-blue-50 text-blue-700"
+              : status === "UNDER_REVIEW"
+                ? "border-amber-200 bg-amber-50 text-amber-700"
+                : status === "DETECTED"
+                  ? "border-slate-200 bg-slate-50 text-slate-700"
+                  : "border-slate-200 bg-slate-50 text-slate-500";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {formatEnumLabel(status)}
+    </span>
+  );
+}
+
+function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | undefined }) {
+  if (!outcome || outcome === "UNKNOWN") {
+    return null;
+  }
+
+  const className =
+    outcome === "REPAIRED"
+      ? "border-green-200 bg-green-50 text-green-700"
+      : outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED"
+        ? "border-orange-200 bg-orange-50 text-orange-700"
+        : outcome === "PARTIAL" || outcome === "DEFERRED"
+          ? "border-amber-200 bg-amber-50 text-amber-700"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {formatEnumLabel(outcome)}
     </span>
   );
 }
@@ -415,6 +492,8 @@ function DefectsContent() {
           defect.defectType,
           formatSeverity(defect.severity),
           formatStatus(defect.status),
+          formatEnumLabel(defect.lifecycleStatus),
+          formatEnumLabel(defect.resolutionOutcome),
           formatDate(defect.date),
           formatDueDate(defect.dueDate),
           formatAssignee(defect),
@@ -695,6 +774,15 @@ function DefectsContent() {
                         </th>
                         <th className="whitespace-nowrap px-5 py-3.5">
                           <SortButton
+                            label="Governance"
+                            sortKey="lifecycleStatus"
+                            activeSortKey={sortKey}
+                            direction={sortDirection}
+                            onSort={handleSort}
+                          />
+                        </th>
+                        <th className="whitespace-nowrap px-5 py-3.5">
+                          <SortButton
                             label="Assignee"
                             sortKey="assignedTo"
                             activeSortKey={sortKey}
@@ -762,6 +850,12 @@ function DefectsContent() {
                           </td>
                           <td className="whitespace-nowrap px-5 py-4">
                             <StatusBadge status={defect.status} />
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4">
+                            <div className="flex flex-col items-start gap-2">
+                              <LifecycleBadge status={defect.lifecycleStatus} />
+                              <OutcomeBadge outcome={defect.resolutionOutcome} />
+                            </div>
                           </td>
                           <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                             {formatAssignee(defect)}

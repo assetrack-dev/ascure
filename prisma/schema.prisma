@@ -80,6 +80,27 @@ enum DefectSeverity {
   CRITICAL
 }
 
+enum DefectLifecycleStatus {
+  DETECTED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  VERIFICATION_PENDING
+  CLOSED
+}
+
+enum DefectResolutionOutcome {
+  REPAIRED
+  EXTERNAL_CONSTRAINT
+  PARTIAL
+  DEFERRED
+  MONITOR_ONLY
+  ESCALATED
+}
+
 enum DefectTimelineEventType {
   CREATED
   STATUS_CHANGED
@@ -260,6 +281,8 @@ model User {
   createdImages           Image[]                  @relation("ImageCreatedBy")
   defectTimelineEntries   DefectTimelineEntry[]    @relation("DefectTimelineCreatedBy")
   assignedDefects         Defect[]                 @relation("DefectAssignedUser")
+  verifiedDefects         Defect[]                 @relation("DefectVerifiedByUser")
+  closureVerifiedDefects  Defect[]                 @relation("DefectClosureVerifiedByUser")
   organizationMemberships OrganizationMembership[]
   projectMemberships      ProjectMembership[]
   siteVisitParticipants   SiteVisitParticipant[]
@@ -762,25 +785,39 @@ model InspectionItemResult {
 }
 
 model Defect {
-  id                     String                @id @default(uuid()) @db.Uuid
-  inspectionItemResultId String                @unique @db.Uuid
-  assignedUserId         String?               @db.Uuid
-  assignedTeamId         String?               @db.Uuid
-  status                 DefectStatus          @default(OPEN)
-  severity               DefectSeverity        @default(MEDIUM)
-  actionRemark           String?
-  dueDate                DateTime?
-  resolvedAt             DateTime?
-  closedAt               DateTime?
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
-  inspectionItemResult   InspectionItemResult  @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
-  assignedUser           User?                 @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  assignedTeam           Team?                 @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
-  timelineEntries        DefectTimelineEntry[]
+  id                      String                   @id @default(uuid()) @db.Uuid
+  inspectionItemResultId  String                   @unique @db.Uuid
+  assignedUserId          String?                  @db.Uuid
+  assignedTeamId          String?                  @db.Uuid
+  verifiedByUserId        String?                  @db.Uuid
+  closureVerifiedByUserId String?                  @db.Uuid
+  status                  DefectStatus             @default(OPEN)
+  severity                DefectSeverity           @default(MEDIUM)
+  lifecycleStatus         DefectLifecycleStatus?
+  resolutionOutcome       DefectResolutionOutcome?
+  actionRemark            String?
+  dueDate                 DateTime?
+  resolvedAt              DateTime?
+  closedAt                DateTime?
+  verifiedAt              DateTime?
+  verificationRemarks     String?
+  closureVerifiedAt       DateTime?
+  closureRemarks          String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  inspectionItemResult    InspectionItemResult     @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  assignedUser            User?                    @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeam            Team?                    @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  verifiedByUser          User?                    @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  closureVerifiedByUser   User?                    @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
+  timelineEntries         DefectTimelineEntry[]
 
   @@index([assignedUserId])
   @@index([assignedTeamId])
+  @@index([verifiedByUserId])
+  @@index([closureVerifiedByUserId])
+  @@index([lifecycleStatus])
+  @@index([resolutionOutcome])
   @@index([dueDate])
   @@index([status, dueDate])
 }

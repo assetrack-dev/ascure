@@ -4,7 +4,9 @@ import type {
   DefectAssignedTeam,
   DefectDetail,
   DefectEvidenceImage,
+  DefectLifecycleStatus,
   DefectListItem,
+  DefectResolutionOutcome,
   DefectSeverity,
   DefectSlaState,
   DefectStatus,
@@ -168,6 +170,47 @@ function normalizeStatus(value: string | null): DefectStatus {
   return "UNKNOWN";
 }
 
+function normalizeLifecycleStatus(value: string | null): DefectLifecycleStatus {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "DETECTED" ||
+    normalizedValue === "UNDER_REVIEW" ||
+    normalizedValue === "VERIFIED" ||
+    normalizedValue === "REJECTED" ||
+    normalizedValue === "ASSIGNED" ||
+    normalizedValue === "IN_PROGRESS" ||
+    normalizedValue === "COMPLETED" ||
+    normalizedValue === "VERIFICATION_PENDING" ||
+    normalizedValue === "CLOSED"
+  ) {
+    return normalizedValue;
+  }
+
+  return "UNKNOWN";
+}
+
+function normalizeResolutionOutcome(value: string | null): DefectResolutionOutcome | null {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (!normalizedValue) {
+    return null;
+  }
+
+  if (
+    normalizedValue === "REPAIRED" ||
+    normalizedValue === "EXTERNAL_CONSTRAINT" ||
+    normalizedValue === "PARTIAL" ||
+    normalizedValue === "DEFERRED" ||
+    normalizedValue === "MONITOR_ONLY" ||
+    normalizedValue === "ESCALATED"
+  ) {
+    return normalizedValue;
+  }
+
+  return "UNKNOWN";
+}
+
 function normalizeSlaState(value: string | null): DefectSlaState {
   const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
 
@@ -293,8 +336,11 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   const inspectionItemResultId = firstString(record, ["inspectionItemResultId", "itemResultId"]);
   const assignedUser = normalizeActor(record.assignedUser);
   const assignedTeam = normalizeTeam(record.assignedTeam);
+  const verifiedByUser = normalizeActor(record.verifiedByUser);
+  const closureVerifiedByUser = normalizeActor(record.closureVerifiedByUser);
   const dueDate = firstString(record, ["dueDate"]);
   const status = normalizeStatus(firstString(record, ["status"]));
+  const lifecycleStatus = normalizeLifecycleStatus(firstString(record, ["lifecycleStatus"]));
   const normalizedSlaState = normalizeSlaState(firstString(record, ["slaState"]));
   const slaState =
     normalizedSlaState === "UNKNOWN" ? computeSlaState(status, dueDate) : normalizedSlaState;
@@ -314,6 +360,10 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
     assignedTeamId: firstString(record, ["assignedTeamId", "assigneeTeamId"]),
     assignedUser,
     assignedTeam,
+    verifiedByUserId: firstString(record, ["verifiedByUserId"]),
+    closureVerifiedByUserId: firstString(record, ["closureVerifiedByUserId"]),
+    verifiedByUser,
+    closureVerifiedByUser,
     assignedTo:
       firstString(record, ["assignedTo", "assignee"]) ??
       formatAssignmentDisplay(assignedUser, assignedTeam),
@@ -329,6 +379,8 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
       firstString(record, ["severity", "defectSeverity", "priority"]),
     ),
     status,
+    lifecycleStatus: lifecycleStatus === "UNKNOWN" ? "DETECTED" : lifecycleStatus,
+    resolutionOutcome: normalizeResolutionOutcome(firstString(record, ["resolutionOutcome"])),
     date,
     location: readLocation(record),
     remark: firstString(record, ["remark", "checklistRemark", "description"]),
@@ -336,6 +388,10 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
     dueDate,
     resolvedAt: firstString(record, ["resolvedAt"]),
     closedAt: firstString(record, ["closedAt"]),
+    verifiedAt: firstString(record, ["verifiedAt"]),
+    verificationRemarks: firstString(record, ["verificationRemarks"]),
+    closureVerifiedAt: firstString(record, ["closureVerifiedAt"]),
+    closureRemarks: firstString(record, ["closureRemarks"]),
     isOverdue: readBoolean(record, "isOverdue") ?? slaState === "OVERDUE",
     slaState,
     submittedAt: firstString(record, ["submittedAt"]),
@@ -682,6 +738,95 @@ export async function updateDefectDueDate(
       token,
       body: JSON.stringify({ dueDate }),
     }),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function verifyDefect(
+  token: string,
+  defectId: string,
+  verificationRemarks?: string | null,
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/verify`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ verificationRemarks }),
+    }),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function rejectDefect(
+  token: string,
+  defectId: string,
+  verificationRemarks?: string | null,
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/reject`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ verificationRemarks }),
+    }),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function completeDefectMaintenance(
+  token: string,
+  defectId: string,
+  payload: {
+    resolutionOutcome?: Exclude<DefectResolutionOutcome, "UNKNOWN">;
+    completionRemarks?: string | null;
+  },
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(
+      `/defects/${encodeURIComponent(defectId)}/maintenance-completion`,
+      {
+        method: "PATCH",
+        token,
+        body: JSON.stringify(payload),
+      },
+    ),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
+export async function verifyDefectClosure(
+  token: string,
+  defectId: string,
+  closureRemarks?: string | null,
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(
+      `/defects/${encodeURIComponent(defectId)}/closure-verification`,
+      {
+        method: "PATCH",
+        token,
+        body: JSON.stringify({ closureRemarks }),
+      },
+    ),
   );
 
   if (!defect) {

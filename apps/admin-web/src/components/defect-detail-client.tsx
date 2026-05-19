@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   AlertTriangle,
+  Ban,
   CalendarDays,
   Camera,
   CheckCircle2,
   Clock3,
+  FileCheck2,
   MessageSquare,
   RefreshCw,
   ShieldCheck,
   UserRound,
+  Wrench,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -20,17 +23,24 @@ import { API_ORIGIN, ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   addDefectComment,
+  completeDefectMaintenance,
   fetchDefectDetail,
+  rejectDefect,
   updateDefectAssignment,
   updateDefectDueDate,
   updateDefectStatus,
+  verifyDefect,
+  verifyDefectClosure,
 } from "@/lib/defects";
 import { fetchTeams, fetchUsers } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import {
+  DEFECT_RESOLUTION_OUTCOMES,
   DEFECT_WORKFLOW_STATUSES,
   type DefectDetail,
   type DefectEvidenceImage,
+  type DefectLifecycleStatus,
+  type DefectResolutionOutcome,
   type DefectSeverity,
   type DefectStatus,
   type DefectTimelineEntry,
@@ -45,6 +55,13 @@ const statusOptions: Array<{ label: string; value: DefectWorkflowStatus }> = [
   { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
+const resolutionOutcomeOptions: Array<{
+  label: string;
+  value: Exclude<DefectResolutionOutcome, "UNKNOWN">;
+}> = DEFECT_RESOLUTION_OUTCOMES.map((outcome) => ({
+  label: formatEnumLabel(outcome),
+  value: outcome,
+}));
 
 const fieldClassName =
   "rounded-lg border border-slate-200 bg-white p-4 shadow-[var(--shadow-soft)]";
@@ -61,6 +78,28 @@ function formatStatus(status: DefectStatus | null) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatEnumLabel(value: string | null | undefined) {
+  if (!value || value === "UNKNOWN") {
+    return "Not recorded";
+  }
+
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getDisplayLifecycleStatus(
+  status: DefectLifecycleStatus | null | undefined,
+): Exclude<DefectLifecycleStatus, "UNKNOWN"> {
+  return !status || status === "UNKNOWN" ? "DETECTED" : status;
+}
+
+function formatLifecycleStatus(status: DefectLifecycleStatus | null | undefined) {
+  return formatEnumLabel(getDisplayLifecycleStatus(status));
 }
 
 function formatSeverity(severity: DefectSeverity | null) {
@@ -187,6 +226,51 @@ function StatusBadge({ status }: { status: DefectStatus }) {
   );
 }
 
+function LifecycleBadge({ status }: { status: DefectLifecycleStatus | null | undefined }) {
+  const displayStatus = getDisplayLifecycleStatus(status);
+  const className =
+    displayStatus === "VERIFIED"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : displayStatus === "REJECTED"
+        ? "border-red-200 bg-red-50 text-red-700"
+        : displayStatus === "CLOSED"
+          ? "border-green-200 bg-green-50 text-green-700"
+          : displayStatus === "COMPLETED" || displayStatus === "VERIFICATION_PENDING"
+            ? "border-teal-200 bg-teal-50 text-teal-700"
+            : displayStatus === "ASSIGNED" || displayStatus === "IN_PROGRESS"
+              ? "border-blue-200 bg-blue-50 text-blue-700"
+              : displayStatus === "UNDER_REVIEW"
+                ? "border-amber-200 bg-amber-50 text-amber-700"
+                : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {formatLifecycleStatus(displayStatus)}
+    </span>
+  );
+}
+
+function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | undefined }) {
+  if (!outcome || outcome === "UNKNOWN") {
+    return null;
+  }
+
+  const className =
+    outcome === "REPAIRED"
+      ? "border-green-200 bg-green-50 text-green-700"
+      : outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED"
+        ? "border-orange-200 bg-orange-50 text-orange-700"
+        : outcome === "PARTIAL" || outcome === "DEFERRED"
+          ? "border-amber-200 bg-amber-50 text-amber-700"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {formatEnumLabel(outcome)}
+    </span>
+  );
+}
+
 function SlaBadge({ defect }: { defect: DefectDetail }) {
   const className = defect.isOverdue
     ? "border-red-200 bg-red-50 text-red-700"
@@ -211,6 +295,17 @@ function DetailField({ label, value }: { label: string; value: string }) {
         {label}
       </dt>
       <dd className="mt-2 text-sm font-semibold text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+function CompactMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[11px] font-semibold uppercase text-[var(--muted)]">
+        {label}
+      </dt>
+      <dd className="mt-1 truncate text-xs font-semibold text-slate-900">{value}</dd>
     </div>
   );
 }
@@ -303,7 +398,12 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const [selectedAssignedUserId, setSelectedAssignedUserId] = useState("");
   const [selectedAssignedTeamId, setSelectedAssignedTeamId] = useState("");
   const [selectedDueDate, setSelectedDueDate] = useState("");
+  const [selectedResolutionOutcome, setSelectedResolutionOutcome] =
+    useState<Exclude<DefectResolutionOutcome, "UNKNOWN">>("REPAIRED");
   const [actionRemark, setActionRemark] = useState("");
+  const [verificationRemarks, setVerificationRemarks] = useState("");
+  const [completionRemarks, setCompletionRemarks] = useState("");
+  const [closureRemarks, setClosureRemarks] = useState("");
   const [comment, setComment] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -311,6 +411,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
   const [isSavingDueDate, setIsSavingDueDate] = useState(false);
+  const [isSavingGovernance, setIsSavingGovernance] = useState(false);
   const [isAddingComment, setIsAddingComment] = useState(false);
 
   const handleLogout = useCallback(() => {
@@ -325,6 +426,14 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     setSelectedAssignedUserId(nextDefect.assignedUserId ?? "");
     setSelectedAssignedTeamId(nextDefect.assignedTeamId ?? "");
     setSelectedDueDate(toDateInputValue(nextDefect.dueDate));
+    setSelectedResolutionOutcome(
+      nextDefect.resolutionOutcome && nextDefect.resolutionOutcome !== "UNKNOWN"
+        ? nextDefect.resolutionOutcome
+        : "REPAIRED",
+    );
+    setVerificationRemarks(nextDefect.verificationRemarks ?? "");
+    setCompletionRemarks(nextDefect.actionRemark ?? "");
+    setClosureRemarks(nextDefect.closureRemarks ?? "");
   }, []);
 
   const loadDefect = useCallback(
@@ -400,6 +509,9 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     session?.token && defect && !isReadOnly && !isSavingAssignment,
   );
   const canSaveDueDate = Boolean(session?.token && defect && !isReadOnly && !isSavingDueDate);
+  const canSaveGovernance = Boolean(
+    session?.token && defect && !isReadOnly && !isSavingGovernance,
+  );
   const canAddComment = Boolean(
     session?.token &&
       defect &&
@@ -514,6 +626,70 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     }
   }
 
+  async function runGovernanceAction(
+    action: (token: string, defectId: string) => Promise<DefectDetail>,
+    successMessage: string,
+  ) {
+    if (!session?.token || !defect || isReadOnly) {
+      return;
+    }
+
+    setIsSavingGovernance(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const nextDefect = await action(session.token, defect.id);
+      applyDefect(nextDefect);
+      setNotice(successMessage);
+    } catch (governanceError) {
+      if (governanceError instanceof ApiError && governanceError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(
+        governanceError instanceof Error
+          ? governanceError.message
+          : "Unable to update defect governance.",
+      );
+    } finally {
+      setIsSavingGovernance(false);
+    }
+  }
+
+  function handleVerifyDefect() {
+    void runGovernanceAction(
+      (token, id) => verifyDefect(token, id, verificationRemarks.trim() || null),
+      "Defect verified.",
+    );
+  }
+
+  function handleRejectDefect() {
+    void runGovernanceAction(
+      (token, id) => rejectDefect(token, id, verificationRemarks.trim() || null),
+      "Defect rejected.",
+    );
+  }
+
+  function handleMaintenanceCompletion() {
+    void runGovernanceAction(
+      (token, id) =>
+        completeDefectMaintenance(token, id, {
+          resolutionOutcome: selectedResolutionOutcome,
+          completionRemarks: completionRemarks.trim() || null,
+        }),
+      "Maintenance completion recorded.",
+    );
+  }
+
+  function handleClosureVerification() {
+    void runGovernanceAction(
+      (token, id) => verifyDefectClosure(token, id, closureRemarks.trim() || null),
+      "Closure verified.",
+    );
+  }
+
   async function handleAddComment() {
     if (!session?.token || !defect || isReadOnly || !comment.trim()) {
       return;
@@ -567,6 +743,8 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                 </span>
                 {defect ? <SeverityBadge severity={defect.severity} /> : null}
                 {defect ? <StatusBadge status={defect.status} /> : null}
+                {defect ? <LifecycleBadge status={defect.lifecycleStatus} /> : null}
+                {defect ? <OutcomeBadge outcome={defect.resolutionOutcome} /> : null}
                 {defect ? <SlaBadge defect={defect} /> : null}
               </div>
             </div>
@@ -619,10 +797,88 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                         {formatNullable(defect.checklistRemark ?? defect.remark)}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <SeverityBadge severity={defect.severity} />
-                      <StatusBadge status={defect.status} />
-                      <SlaBadge defect={defect} />
+                    <div className="w-full rounded-lg border border-teal-100 bg-teal-50/40 p-4 lg:max-w-md">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            Defect Governance
+                          </h3>
+                          <p className="mt-1 text-xs text-[var(--muted)]">
+                            QA/QC and closure gatekeeping
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                          <LifecycleBadge status={defect.lifecycleStatus} />
+                          <OutcomeBadge outcome={defect.resolutionOutcome} />
+                        </div>
+                      </div>
+
+                      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <CompactMeta
+                          label="QA/QC By"
+                          value={formatNullable(
+                            defect.verifiedByUser?.name ?? defect.verifiedByUser?.email,
+                          )}
+                        />
+                        <CompactMeta
+                          label="QA/QC At"
+                          value={formatDateTime(defect.verifiedAt)}
+                        />
+                        <CompactMeta
+                          label="Closure By"
+                          value={formatNullable(
+                            defect.closureVerifiedByUser?.name ??
+                              defect.closureVerifiedByUser?.email,
+                          )}
+                        />
+                        <CompactMeta
+                          label="Closure At"
+                          value={formatDateTime(defect.closureVerifiedAt)}
+                        />
+                      </dl>
+
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={handleVerifyDefect}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          {isSavingGovernance ? (
+                            <RefreshCw size={14} className="animate-spin" />
+                          ) : (
+                            <ShieldCheck size={14} />
+                          )}
+                          Verify Defect
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRejectDefect}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-700 shadow-[var(--shadow-soft)] transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          <Ban size={14} />
+                          Reject Defect
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleMaintenanceCompletion}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          <Wrench size={14} />
+                          Mark Completed
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClosureVerification}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          <FileCheck2 size={14} />
+                          Verify Closure
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -641,9 +897,49 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       value={formatNullable(defect.submittedBy?.name ?? defect.submittedBy?.email)}
                     />
                     <DetailField label="Assigned To" value={formatAssignee(defect)} />
+                    <DetailField
+                      label="Lifecycle"
+                      value={formatLifecycleStatus(defect.lifecycleStatus)}
+                    />
+                    <DetailField
+                      label="Resolution Outcome"
+                      value={formatEnumLabel(defect.resolutionOutcome)}
+                    />
+                    <DetailField
+                      label="QA/QC Verified By"
+                      value={formatNullable(
+                        defect.verifiedByUser?.name ?? defect.verifiedByUser?.email,
+                      )}
+                    />
+                    <DetailField
+                      label="QA/QC Verified At"
+                      value={formatDateTime(defect.verifiedAt)}
+                    />
+                    <DetailField
+                      label="Closure Verified By"
+                      value={formatNullable(
+                        defect.closureVerifiedByUser?.name ??
+                          defect.closureVerifiedByUser?.email,
+                      )}
+                    />
+                    <DetailField
+                      label="Closure Verified At"
+                      value={formatDateTime(defect.closureVerifiedAt)}
+                    />
                     <DetailField label="Due Date" value={formatDate(defect.dueDate)} />
                     <DetailField label="SLA State" value={formatSlaState(defect.slaState)} />
                     <DetailField label="Latest Update" value={formatDateTime(defect.updatedAt)} />
+                  </dl>
+
+                  <dl className="mt-5 grid gap-4 md:grid-cols-2">
+                    <DetailField
+                      label="QA/QC Remarks"
+                      value={formatNullable(defect.verificationRemarks)}
+                    />
+                    <DetailField
+                      label="Closure Remarks"
+                      value={formatNullable(defect.closureRemarks)}
+                    />
                   </dl>
                 </section>
 
@@ -768,6 +1064,127 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                   </div>
 
                   <aside className="space-y-6">
+                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                      <h2 className="text-base font-semibold text-[var(--foreground)]">
+                        Defect Governance
+                      </h2>
+                      <div className="mt-4 space-y-4">
+                        <div className="flex flex-wrap gap-2">
+                          <LifecycleBadge status={defect.lifecycleStatus} />
+                          <OutcomeBadge outcome={defect.resolutionOutcome} />
+                        </div>
+
+                        <label className="block">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            QA/QC Remarks
+                          </span>
+                          <textarea
+                            value={verificationRemarks}
+                            onChange={(event) => setVerificationRemarks(event.target.value)}
+                            disabled={isReadOnly || isSavingGovernance}
+                            rows={3}
+                            className={`mt-2 resize-none ${controlClassName}`}
+                          />
+                        </label>
+
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={handleVerifyDefect}
+                            disabled={!canSaveGovernance}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          >
+                            {isSavingGovernance ? (
+                              <RefreshCw size={16} className="animate-spin" />
+                            ) : (
+                              <ShieldCheck size={16} />
+                            )}
+                            Verify Defect
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRejectDefect}
+                            disabled={!canSaveGovernance}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 shadow-[var(--shadow-soft)] transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                          >
+                            <Ban size={16} />
+                            Reject Defect
+                          </button>
+                        </div>
+
+                        <label className="block border-t border-slate-100 pt-4">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            Resolution Outcome
+                          </span>
+                          <select
+                            value={selectedResolutionOutcome}
+                            onChange={(event) =>
+                              setSelectedResolutionOutcome(
+                                event.target.value as Exclude<
+                                  DefectResolutionOutcome,
+                                  "UNKNOWN"
+                                >,
+                              )
+                            }
+                            disabled={isReadOnly || isSavingGovernance}
+                            className={`mt-2 ${controlClassName}`}
+                          >
+                            {resolutionOutcomeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            Completion Remarks
+                          </span>
+                          <textarea
+                            value={completionRemarks}
+                            onChange={(event) => setCompletionRemarks(event.target.value)}
+                            disabled={isReadOnly || isSavingGovernance}
+                            rows={3}
+                            className={`mt-2 resize-none ${controlClassName}`}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={handleMaintenanceCompletion}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          <Wrench size={16} />
+                          Mark Completed
+                        </button>
+
+                        <label className="block border-t border-slate-100 pt-4">
+                          <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                            Closure Remarks
+                          </span>
+                          <textarea
+                            value={closureRemarks}
+                            onChange={(event) => setClosureRemarks(event.target.value)}
+                            disabled={isReadOnly || isSavingGovernance}
+                            rows={3}
+                            className={`mt-2 resize-none ${controlClassName}`}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={handleClosureVerification}
+                          disabled={!canSaveGovernance}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          <FileCheck2 size={16} />
+                          Verify Closure
+                        </button>
+                      </div>
+                    </section>
+
                     <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                       <h2 className="text-base font-semibold text-[var(--foreground)]">
                         Assignment & SLA

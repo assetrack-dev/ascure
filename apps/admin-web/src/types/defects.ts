@@ -6,12 +6,39 @@ export const DEFECT_WORKFLOW_STATUSES = [
   "RESOLVED",
   "CLOSED",
 ] as const;
+export const DEFECT_LIFECYCLE_STATUSES = [
+  "DETECTED",
+  "UNDER_REVIEW",
+  "VERIFIED",
+  "REJECTED",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "VERIFICATION_PENDING",
+  "CLOSED",
+] as const;
+export const DEFECT_RESOLUTION_OUTCOMES = [
+  "REPAIRED",
+  "EXTERNAL_CONSTRAINT",
+  "PARTIAL",
+  "DEFERRED",
+  "MONITOR_ONLY",
+  "ESCALATED",
+] as const;
 
 export type DefectSeverity = (typeof DEFECT_SEVERITIES)[number];
 
 export type DefectWorkflowStatus = (typeof DEFECT_WORKFLOW_STATUSES)[number];
 
 export type DefectStatus = DefectWorkflowStatus | "UNKNOWN";
+
+export type DefectLifecycleStatus =
+  | (typeof DEFECT_LIFECYCLE_STATUSES)[number]
+  | "UNKNOWN";
+
+export type DefectResolutionOutcome =
+  | (typeof DEFECT_RESOLUTION_OUTCOMES)[number]
+  | "UNKNOWN";
 
 export type DefectSlaState =
   | "OVERDUE"
@@ -71,6 +98,10 @@ export interface DefectListItem {
   assignedTeamId?: string | null;
   assignedUser?: DefectActor | null;
   assignedTeam?: DefectAssignedTeam | null;
+  verifiedByUserId?: string | null;
+  closureVerifiedByUserId?: string | null;
+  verifiedByUser?: DefectActor | null;
+  closureVerifiedByUser?: DefectActor | null;
   assignedTo?: string | null;
   inspectionId?: string;
   assetId?: string;
@@ -79,6 +110,8 @@ export interface DefectListItem {
   defectType: string;
   severity: DefectSeverity | null;
   status: DefectStatus;
+  lifecycleStatus?: DefectLifecycleStatus | null;
+  resolutionOutcome?: DefectResolutionOutcome | null;
   date: string | null;
   location: string | null;
   remark?: string | null;
@@ -86,6 +119,10 @@ export interface DefectListItem {
   dueDate?: string | null;
   resolvedAt?: string | null;
   closedAt?: string | null;
+  verifiedAt?: string | null;
+  verificationRemarks?: string | null;
+  closureVerifiedAt?: string | null;
+  closureRemarks?: string | null;
   isOverdue?: boolean;
   slaState?: DefectSlaState;
   submittedAt?: string | null;
