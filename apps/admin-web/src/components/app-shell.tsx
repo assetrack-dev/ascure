@@ -4,10 +4,13 @@ import {
   Archive,
   BarChart3,
   Bug,
+  Building2,
   ClipboardList,
+  FolderKanban,
   LayoutDashboard,
   LogOut,
   MapPinned,
+  PackageCheck,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -38,6 +41,21 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/site-visits",
       label: "Site Visits",
       icon: MapPinned,
+    },
+    {
+      href: "/organizations",
+      label: "Organizations",
+      icon: Building2,
+    },
+    {
+      href: "/projects",
+      label: "Projects",
+      icon: FolderKanban,
+    },
+    {
+      href: "/work-packages",
+      label: "Work Packages",
+      icon: PackageCheck,
     },
     {
       href: "/defects",

@@ -3,7 +3,11 @@ import {
   PrismaClient,
   InspectionItemInputType,
   InspectionTemplateStatus,
+  OrganizationMembershipRole,
+  OrganizationType,
+  ProjectStatus,
   UserRole,
+  WorkPackageStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
@@ -61,6 +65,115 @@ async function main() {
     },
   });
 
+  const ascureOrganization = await prisma.organization.upsert({
+    where: { code: 'ASCURE' },
+    update: {
+      name: 'ASCURE',
+      type: OrganizationType.ASCURE,
+      isActive: true,
+    },
+    create: {
+      code: 'ASCURE',
+      name: 'ASCURE',
+      type: OrganizationType.ASCURE,
+      isActive: true,
+    },
+  });
+
+  const tnbOrganization = await prisma.organization.upsert({
+    where: { code: 'TNB' },
+    update: {
+      name: 'Tenaga Nasional Berhad',
+      type: OrganizationType.TNB,
+      isActive: true,
+    },
+    create: {
+      code: 'TNB',
+      name: 'Tenaga Nasional Berhad',
+      type: OrganizationType.TNB,
+      isActive: true,
+    },
+  });
+
+  const existingBranch = await prisma.branch.findFirst({
+    where: {
+      organizationId: ascureOrganization.id,
+      code: 'ASCURE-OPS',
+    },
+    select: { id: true },
+  });
+
+  const branch = existingBranch
+    ? await prisma.branch.update({
+        where: { id: existingBranch.id },
+        data: {
+          name: 'ASCURE Operations',
+          region: 'Central',
+          isActive: true,
+        },
+      })
+    : await prisma.branch.create({
+        data: {
+          organizationId: ascureOrganization.id,
+          code: 'ASCURE-OPS',
+          name: 'ASCURE Operations',
+          region: 'Central',
+          isActive: true,
+        },
+      });
+
+  const project = await prisma.project.upsert({
+    where: { code: 'SAVR-PHASE-1' },
+    update: {
+      branchId: branch.id,
+      clientOrganizationId: tnbOrganization.id,
+      name: 'SAVR Phase 1 Operations',
+      description: 'Default enterprise operations project for SAVR inspection rollout.',
+      status: ProjectStatus.ACTIVE,
+    },
+    create: {
+      branchId: branch.id,
+      clientOrganizationId: tnbOrganization.id,
+      code: 'SAVR-PHASE-1',
+      name: 'SAVR Phase 1 Operations',
+      description: 'Default enterprise operations project for SAVR inspection rollout.',
+      status: ProjectStatus.ACTIVE,
+    },
+  });
+
+  const existingWorkPackage = await prisma.workPackage.findFirst({
+    where: {
+      projectId: project.id,
+      code: 'SAVR-WP-001',
+    },
+    select: { id: true },
+  });
+
+  if (existingWorkPackage) {
+    await prisma.workPackage.update({
+      where: { id: existingWorkPackage.id },
+      data: {
+        name: 'SAVR Default Work Package',
+        area: 'Default',
+        mainhead: 'SAVR',
+        description: 'Default work package for SAVR field inspection operations.',
+        status: WorkPackageStatus.ACTIVE,
+      },
+    });
+  } else {
+    await prisma.workPackage.create({
+      data: {
+        projectId: project.id,
+        code: 'SAVR-WP-001',
+        name: 'SAVR Default Work Package',
+        area: 'Default',
+        mainhead: 'SAVR',
+        description: 'Default work package for SAVR field inspection operations.',
+        status: WorkPackageStatus.ACTIVE,
+      },
+    });
+  }
+
   const adminUser = await prisma.user.upsert({
     where: { email: 'admin@ascure.local' },
     update: {
@@ -78,6 +191,24 @@ async function main() {
       name: 'ASCURE Admin',
       passwordHash: adminPasswordHash,
       role: UserRole.ADMIN,
+      isActive: true,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: {
+      userId_organizationId: {
+        userId: adminUser.id,
+        organizationId: ascureOrganization.id,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      userId: adminUser.id,
+      organizationId: ascureOrganization.id,
+      role: OrganizationMembershipRole.OWNER,
       isActive: true,
     },
   });

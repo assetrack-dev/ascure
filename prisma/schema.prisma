@@ -96,6 +96,68 @@ enum AssetStatus {
   DUPLICATE
 }
 
+enum OrganizationType {
+  ASCURE
+  TNB
+  SUBCONTRACTOR
+  CONSULTANT
+  CLIENT
+  OTHER
+}
+
+enum OrganizationMembershipRole {
+  OWNER
+  ADMIN
+  MANAGER
+  SUPERVISOR
+  TECHNICIAN
+  VIEWER
+  CLIENT_VIEWER
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum ProjectMembershipRole {
+  PROJECT_MANAGER
+  PROJECT_SUPERVISOR
+  FIELD_LEAD
+  FIELD_TECHNICIAN
+  QA_VALIDATOR
+  CLIENT_REVIEWER
+  VIEWER
+}
+
+enum WorkPackageStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum WorkPackageAssignmentRole {
+  PRIMARY_CONTRACTOR
+  SUPPORT_CONTRACTOR
+  QA_REVIEWER
+  CLIENT_OBSERVER
+}
+
+enum SiteVisitParticipantRole {
+  LEAD
+  MEMBER
+  SUPERVISOR
+  QA_VALIDATOR
+  OBSERVER
+}
+
 model Tenant {
   id                  String               @id @default(uuid()) @db.Uuid
   name                String
@@ -149,28 +211,31 @@ model Team {
 }
 
 model User {
-  id                    String                @id @default(uuid()) @db.Uuid
-  tenantId              String                @db.Uuid
-  departmentId          String?               @db.Uuid
-  email                 String                @unique
-  name                  String
-  passwordHash          String
-  role                  UserRole
-  isActive              Boolean               @default(true)
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  tenant                Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department            Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  teamMemberships       TeamMember[]
-  siteVisitUsers        SiteVisitUser[]
-  createdVisits         SiteVisit[]           @relation("SiteVisitCreatedBy")
-  validatedVisits       SiteVisit[]           @relation("SiteVisitValidatedBy")
-  createdAssets         Asset[]               @relation("AssetCreatedBy")
-  siteVisitAssetsAdded  SiteVisitAsset[]      @relation("SiteVisitAssetAddedBy")
-  createdInspects       Inspection[]          @relation("InspectionCreatedBy")
-  createdImages         Image[]               @relation("ImageCreatedBy")
-  defectTimelineEntries DefectTimelineEntry[] @relation("DefectTimelineCreatedBy")
-  assignedDefects       Defect[]              @relation("DefectAssignedUser")
+  id                      String                   @id @default(uuid()) @db.Uuid
+  tenantId                String                   @db.Uuid
+  departmentId            String?                  @db.Uuid
+  email                   String                   @unique
+  name                    String
+  passwordHash            String
+  role                    UserRole
+  isActive                Boolean                  @default(true)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department              Department?              @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  teamMemberships         TeamMember[]
+  siteVisitUsers          SiteVisitUser[]
+  createdVisits           SiteVisit[]              @relation("SiteVisitCreatedBy")
+  validatedVisits         SiteVisit[]              @relation("SiteVisitValidatedBy")
+  createdAssets           Asset[]                  @relation("AssetCreatedBy")
+  siteVisitAssetsAdded    SiteVisitAsset[]         @relation("SiteVisitAssetAddedBy")
+  createdInspects         Inspection[]             @relation("InspectionCreatedBy")
+  createdImages           Image[]                  @relation("ImageCreatedBy")
+  defectTimelineEntries   DefectTimelineEntry[]    @relation("DefectTimelineCreatedBy")
+  assignedDefects         Defect[]                 @relation("DefectAssignedUser")
+  organizationMemberships OrganizationMembership[]
+  projectMemberships      ProjectMembership[]
+  siteVisitParticipants   SiteVisitParticipant[]
 
   @@index([tenantId])
 }
@@ -188,6 +253,130 @@ model TeamMember {
 
   @@unique([teamId, userId])
   @@index([userId])
+}
+
+model Organization {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  name                   String
+  code                   String?                  @unique
+  type                   OrganizationType
+  parentOrganizationId   String?                  @db.Uuid
+  isActive               Boolean                  @default(true)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  parentOrganization     Organization?            @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations     Organization[]           @relation("OrganizationHierarchy")
+  memberships            OrganizationMembership[]
+  branches               Branch[]
+  clientProjects         Project[]                @relation("ProjectClientOrganization")
+  workPackageAssignments WorkPackageAssignment[]
+  siteVisits             SiteVisit[]
+
+  @@index([type])
+  @@index([parentOrganizationId])
+}
+
+model OrganizationMembership {
+  id             String                     @id @default(uuid()) @db.Uuid
+  userId         String                     @db.Uuid
+  organizationId String                     @db.Uuid
+  role           OrganizationMembershipRole
+  isActive       Boolean                    @default(true)
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model Branch {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  code           String?
+  region         String?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projects       Project[]
+  siteVisits     SiteVisit[]
+
+  @@index([organizationId])
+}
+
+model Project {
+  id                   String              @id @default(uuid()) @db.Uuid
+  branchId             String              @db.Uuid
+  clientOrganizationId String?             @db.Uuid
+  name                 String
+  code                 String?             @unique
+  description          String?
+  status               ProjectStatus       @default(DRAFT)
+  startDate            DateTime?
+  endDate              DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  branch               Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  clientOrganization   Organization?       @relation("ProjectClientOrganization", fields: [clientOrganizationId], references: [id], onDelete: SetNull)
+  memberships          ProjectMembership[]
+  workPackages         WorkPackage[]
+  siteVisits           SiteVisit[]
+
+  @@index([branchId])
+  @@index([status])
+}
+
+model ProjectMembership {
+  id        String                @id @default(uuid()) @db.Uuid
+  projectId String                @db.Uuid
+  userId    String                @db.Uuid
+  role      ProjectMembershipRole
+  isActive  Boolean               @default(true)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  project   Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model WorkPackage {
+  id          String                  @id @default(uuid()) @db.Uuid
+  projectId   String                  @db.Uuid
+  name        String
+  code        String?
+  area        String?
+  mainhead    String?
+  description String?
+  status      WorkPackageStatus       @default(DRAFT)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  project     Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignments WorkPackageAssignment[]
+  siteVisits  SiteVisit[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model WorkPackageAssignment {
+  id             String                    @id @default(uuid()) @db.Uuid
+  workPackageId  String                    @db.Uuid
+  organizationId String                    @db.Uuid
+  role           WorkPackageAssignmentRole
+  isActive       Boolean                   @default(true)
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  workPackage    WorkPackage               @relation(fields: [workPackageId], references: [id], onDelete: Cascade)
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([workPackageId, organizationId])
 }
 
 model Substation {
@@ -262,6 +451,10 @@ model SiteVisit {
   substationId          String                     @db.Uuid
   createdByUserId       String                     @db.Uuid
   validatedByUserId     String?                    @db.Uuid
+  organizationId        String?                    @db.Uuid
+  branchId              String?                    @db.Uuid
+  projectId             String?                    @db.Uuid
+  workPackageId         String?                    @db.Uuid
   status                SiteVisitStatus            @default(ACTIVE)
   cycleNumber           Int?
   visitType             SiteVisitType?
@@ -292,7 +485,12 @@ model SiteVisit {
   substation            Substation                 @relation(fields: [substationId], references: [id], onDelete: Restrict)
   createdBy             User                       @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   validatedBy           User?                      @relation("SiteVisitValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
+  organization          Organization?              @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  branch                Branch?                    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  project               Project?                   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workPackage           WorkPackage?               @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
   users                 SiteVisitUser[]
+  participants          SiteVisitParticipant[]
   createdAssets         Asset[]
   visitAssets           SiteVisitAsset[]
   inspections           Inspection[]
@@ -302,6 +500,10 @@ model SiteVisit {
   @@index([teamId, status])
   @@index([substationId])
   @@index([validatedByUserId])
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([projectId])
+  @@index([workPackageId])
   @@index([cycleNumber])
   @@index([visitType])
   @@index([validationStatus])
@@ -319,6 +521,21 @@ model SiteVisitUser {
   updatedAt   DateTime  @updatedAt
   siteVisit   SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([siteVisitId, userId])
+  @@index([userId])
+}
+
+model SiteVisitParticipant {
+  id          String                   @id @default(uuid()) @db.Uuid
+  siteVisitId String                   @db.Uuid
+  userId      String                   @db.Uuid
+  role        SiteVisitParticipantRole
+  joinedAt    DateTime                 @default(now())
+  leftAt      DateTime?
+  isActive    Boolean                  @default(true)
+  siteVisit   SiteVisit                @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([siteVisitId, userId])
   @@index([userId])

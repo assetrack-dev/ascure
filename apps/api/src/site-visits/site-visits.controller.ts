@@ -98,6 +98,6 @@ export class SiteVisitsController {
 
   @Get(':id')
   getById(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
-    return this.siteVisitsService.getById(user, params.id);
+    return this.siteVisitsService.getReadById(user, params.id);
   }
 }

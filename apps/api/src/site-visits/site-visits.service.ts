@@ -95,6 +95,76 @@ const SITE_VISIT_BASE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
   },
 });
 
+const SITE_VISIT_ENTERPRISE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
+  organization: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      type: true,
+      isActive: true,
+    },
+  },
+  branch: {
+    select: {
+      id: true,
+      organizationId: true,
+      name: true,
+      code: true,
+      region: true,
+      isActive: true,
+    },
+  },
+  project: {
+    select: {
+      id: true,
+      branchId: true,
+      clientOrganizationId: true,
+      name: true,
+      code: true,
+      status: true,
+    },
+  },
+  workPackage: {
+    select: {
+      id: true,
+      projectId: true,
+      name: true,
+      code: true,
+      area: true,
+      mainhead: true,
+      status: true,
+    },
+  },
+  participants: {
+    select: {
+      id: true,
+      siteVisitId: true,
+      userId: true,
+      role: true,
+      joinedAt: true,
+      leftAt: true,
+      isActive: true,
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+    },
+    orderBy: {
+      joinedAt: 'asc',
+    },
+  },
+});
+
+const SITE_VISIT_READ_BASE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
+  ...SITE_VISIT_BASE_INCLUDE,
+  ...SITE_VISIT_ENTERPRISE_INCLUDE,
+});
+
 const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>()({
   addedBy: {
     select: {
@@ -207,6 +277,11 @@ const SITE_VISIT_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
       createdAt: 'desc',
     },
   },
+});
+
+const SITE_VISIT_READ_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
+  ...SITE_VISIT_DETAIL_INCLUDE,
+  ...SITE_VISIT_ENTERPRISE_INCLUDE,
 });
 
 type SiteVisitBase = Prisma.SiteVisitGetPayload<{
@@ -352,7 +427,7 @@ export class SiteVisitsService {
   async list(user: RequestUser, query: ListSiteVisitsQueryDto) {
     const siteVisits = await this.prisma.siteVisit.findMany({
       where: this.buildListWhere(user, query),
-      include: SITE_VISIT_BASE_INCLUDE,
+      include: SITE_VISIT_READ_BASE_INCLUDE,
       orderBy: {
         startedAt: 'desc',
       },
@@ -373,6 +448,36 @@ export class SiteVisitsService {
         now,
         overdueThresholdHours,
       ),
+    );
+  }
+
+  async getReadById(user: RequestUser, id: string) {
+    const siteVisit = await this.prisma.siteVisit.findFirst({
+      where: {
+        id,
+        tenantId: user.tenantId,
+        ...this.accessScope(user),
+      },
+      include: SITE_VISIT_READ_DETAIL_INCLUDE,
+    });
+
+    if (!siteVisit) {
+      throw new NotFoundException('Site visit not found.');
+    }
+
+    const [rollup, lastActivityByVisitId] = await Promise.all([
+      this.getRollup(siteVisit.id),
+      this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
+    ]);
+    const now = new Date();
+    const overdueThresholdHours = this.getOverdueThresholdHours();
+
+    return this.serializeSiteVisitDetail(
+      siteVisit,
+      rollup,
+      lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
+      now,
+      overdueThresholdHours,
     );
   }
 
