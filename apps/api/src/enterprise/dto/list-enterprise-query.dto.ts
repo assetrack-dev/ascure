@@ -62,6 +62,17 @@ export class ListBranchesQueryDto {
   isActive?: boolean;
 }
 
+export class ListMainheadsQueryDto {
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @Transform(optionalBoolean)
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export class ListProjectsQueryDto {
   @IsOptional()
   @IsUUID()

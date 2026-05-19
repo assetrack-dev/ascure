@@ -82,6 +82,15 @@ function displayTeam(visit: SiteVisitDetail) {
   return visit.team?.name?.trim() || visit.team?.code?.trim() || "Unassigned";
 }
 
+function displayMainhead(visit: SiteVisitDetail) {
+  return (
+    visit.mainheadRecord?.name?.trim() ||
+    visit.mainheadRecord?.code?.trim() ||
+    visit.mainhead ||
+    "Not recorded"
+  );
+}
+
 function HealthBadge({ status }: { status: OperationalHealthStatus }) {
   const className =
     status === "CRITICAL"
@@ -499,7 +508,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         Operational Metadata
                       </div>
                       <dl className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        <DetailField label="MAINHEAD" value={formatNullable(visit.mainhead)} />
+                        <DetailField label="MAINHEAD" value={displayMainhead(visit)} />
                         <DetailField label="Pencawang Code" value={formatNullable(visit.pencawangCode)} />
                         <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
                         <DetailField label="Functional Location" value={formatNullable(visit.functionalLocation)} />

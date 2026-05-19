@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Building2,
   FolderKanban,
+  Network,
   PackageCheck,
   RefreshCw,
   ShieldCheck,
@@ -34,6 +35,11 @@ const PAGE_CONFIG: Record<
     label: "Organizations",
     basePath: "/organizations",
     icon: Building2,
+  },
+  mainheads: {
+    label: "MAINHEAD",
+    basePath: "/mainheads",
+    icon: Network,
   },
   projects: {
     label: "Projects",

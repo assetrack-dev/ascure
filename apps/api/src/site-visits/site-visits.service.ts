@@ -115,25 +115,55 @@ const SITE_VISIT_ENTERPRISE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>(
       isActive: true,
     },
   },
+  mainheadRecord: {
+    select: {
+      id: true,
+      branchId: true,
+      name: true,
+      code: true,
+      description: true,
+      isActive: true,
+    },
+  },
   project: {
     select: {
       id: true,
       branchId: true,
+      mainheadId: true,
       clientOrganizationId: true,
       name: true,
       code: true,
       status: true,
+      mainhead: {
+        select: {
+          id: true,
+          branchId: true,
+          name: true,
+          code: true,
+          isActive: true,
+        },
+      },
     },
   },
   workPackage: {
     select: {
       id: true,
       projectId: true,
+      mainheadId: true,
       name: true,
       code: true,
       area: true,
       mainhead: true,
       status: true,
+      mainheadRecord: {
+        select: {
+          id: true,
+          branchId: true,
+          name: true,
+          code: true,
+          isActive: true,
+        },
+      },
     },
   },
   participants: {

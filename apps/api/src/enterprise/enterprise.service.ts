@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ListBranchesQueryDto,
+  ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
@@ -38,7 +39,37 @@ const BRANCH_INCLUDE = Prisma.validator<Prisma.BranchInclude>()({
   },
   _count: {
     select: {
+      mainheads: true,
       projects: true,
+    },
+  },
+});
+
+const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
+  branch: {
+    select: {
+      id: true,
+      organizationId: true,
+      name: true,
+      code: true,
+      region: true,
+      isActive: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          type: true,
+          isActive: true,
+        },
+      },
+    },
+  },
+  _count: {
+    select: {
+      projects: true,
+      workPackages: true,
+      siteVisits: true,
     },
   },
 });
@@ -60,6 +91,16 @@ const PROJECT_INCLUDE = Prisma.validator<Prisma.ProjectInclude>()({
       },
     },
   },
+  mainhead: {
+    select: {
+      id: true,
+      branchId: true,
+      name: true,
+      code: true,
+      description: true,
+      isActive: true,
+    },
+  },
   clientOrganization: {
     select: {
       id: true,
@@ -78,12 +119,31 @@ const PROJECT_INCLUDE = Prisma.validator<Prisma.ProjectInclude>()({
 });
 
 const WORK_PACKAGE_INCLUDE = Prisma.validator<Prisma.WorkPackageInclude>()({
+  mainheadRecord: {
+    select: {
+      id: true,
+      branchId: true,
+      name: true,
+      code: true,
+      description: true,
+      isActive: true,
+    },
+  },
   project: {
     select: {
       id: true,
       name: true,
       code: true,
       status: true,
+      mainhead: {
+        select: {
+          id: true,
+          branchId: true,
+          name: true,
+          code: true,
+          isActive: true,
+        },
+      },
       branch: {
         select: {
           id: true,
@@ -175,6 +235,41 @@ export class EnterpriseService {
     return branch;
   }
 
+  listMainheads(query: ListMainheadsQueryDto) {
+    return this.prisma.mainhead.findMany({
+      where: this.mainheadWhere(query),
+      include: MAINHEAD_INCLUDE,
+      orderBy: [
+        {
+          isActive: 'desc',
+        },
+        {
+          branch: {
+            name: 'asc',
+          },
+        },
+        {
+          name: 'asc',
+        },
+      ],
+    });
+  }
+
+  async getMainhead(id: string) {
+    const mainhead = await this.prisma.mainhead.findUnique({
+      where: {
+        id,
+      },
+      include: MAINHEAD_INCLUDE,
+    });
+
+    if (!mainhead) {
+      throw new NotFoundException('MAINHEAD not found.');
+    }
+
+    return mainhead;
+  }
+
   listProjects(query: ListProjectsQueryDto) {
     return this.prisma.project.findMany({
       where: this.projectWhere(query),
@@ -250,6 +345,15 @@ export class EnterpriseService {
   private branchWhere(query: ListBranchesQueryDto): Prisma.BranchWhereInput {
     return {
       ...(query.organizationId ? { organizationId: query.organizationId } : {}),
+      ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+    };
+  }
+
+  private mainheadWhere(
+    query: ListMainheadsQueryDto,
+  ): Prisma.MainheadWhereInput {
+    return {
+      ...(query.branchId ? { branchId: query.branchId } : {}),
       ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     };
   }

@@ -44,6 +44,14 @@ export interface SiteVisitSubstation {
   location?: string | null;
 }
 
+export interface SiteVisitMainhead {
+  id?: string;
+  branchId?: string | null;
+  code?: string | null;
+  name?: string | null;
+  isActive?: boolean | null;
+}
+
 export interface SiteVisitSummary {
   totalAssets: number;
   inspectedAssets: number;
@@ -62,6 +70,7 @@ export interface SiteVisitListItem extends SiteVisitSummary {
   visitType: SiteVisitType;
   cycleNumber: number | null;
   mainhead: string | null;
+  mainheadRecord: SiteVisitMainhead | null;
   pencawangCode: string | null;
   pencawangName: string | null;
   functionalLocation: string | null;

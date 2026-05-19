@@ -122,10 +122,38 @@ async function main() {
         },
       });
 
+  const existingMainhead = await prisma.mainhead.findFirst({
+    where: {
+      branchId: branch.id,
+      code: 'SAVR',
+    },
+    select: { id: true },
+  });
+
+  const mainhead = existingMainhead
+    ? await prisma.mainhead.update({
+        where: { id: existingMainhead.id },
+        data: {
+          name: 'SAVR MAINHEAD',
+          description: 'Default MAINHEAD for SAVR field inspection operations.',
+          isActive: true,
+        },
+      })
+    : await prisma.mainhead.create({
+        data: {
+          branchId: branch.id,
+          code: 'SAVR',
+          name: 'SAVR MAINHEAD',
+          description: 'Default MAINHEAD for SAVR field inspection operations.',
+          isActive: true,
+        },
+      });
+
   const project = await prisma.project.upsert({
     where: { code: 'SAVR-PHASE-1' },
     update: {
       branchId: branch.id,
+      mainheadId: mainhead.id,
       clientOrganizationId: tnbOrganization.id,
       name: 'SAVR Phase 1 Operations',
       description: 'Default enterprise operations project for SAVR inspection rollout.',
@@ -133,6 +161,7 @@ async function main() {
     },
     create: {
       branchId: branch.id,
+      mainheadId: mainhead.id,
       clientOrganizationId: tnbOrganization.id,
       code: 'SAVR-PHASE-1',
       name: 'SAVR Phase 1 Operations',
@@ -154,6 +183,7 @@ async function main() {
       where: { id: existingWorkPackage.id },
       data: {
         name: 'SAVR Default Work Package',
+        mainheadId: mainhead.id,
         area: 'Default',
         mainhead: 'SAVR',
         description: 'Default work package for SAVR field inspection operations.',
@@ -164,6 +194,7 @@ async function main() {
     await prisma.workPackage.create({
       data: {
         projectId: project.id,
+        mainheadId: mainhead.id,
         code: 'SAVR-WP-001',
         name: 'SAVR Default Work Package',
         area: 'Default',
@@ -180,7 +211,6 @@ async function main() {
       tenantId: tenant.id,
       departmentId: department.id,
       name: 'ASCURE Admin',
-      passwordHash: adminPasswordHash,
       role: UserRole.ADMIN,
       isActive: true,
     },
@@ -219,7 +249,6 @@ async function main() {
       tenantId: tenant.id,
       departmentId: department.id,
       name: 'Field Technician',
-      passwordHash: technicianPasswordHash,
       role: UserRole.TECHNICIAN,
       isActive: true,
     },
@@ -240,7 +269,6 @@ async function main() {
       tenantId: tenant.id,
       departmentId: department.id,
       name: 'Operations Manager',
-      passwordHash: managerPasswordHash,
       role: UserRole.MANAGER,
       isActive: true,
     },
@@ -261,7 +289,6 @@ async function main() {
       tenantId: tenant.id,
       departmentId: department.id,
       name: 'Field Supervisor',
-      passwordHash: supervisorPasswordHash,
       role: UserRole.SUPERVISOR,
       isActive: true,
     },

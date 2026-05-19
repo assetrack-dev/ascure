@@ -6,6 +6,7 @@ import type {
   SiteVisitImage,
   SiteVisitInspection,
   SiteVisitListItem,
+  SiteVisitMainhead,
   SiteVisitStatus,
   SiteVisitTeam,
   SiteVisitType,
@@ -258,6 +259,26 @@ function normalizeSubstation(rawSubstation: unknown) {
   };
 }
 
+function normalizeMainheadReference(rawMainhead: unknown): SiteVisitMainhead | null {
+  const record = asRecord(rawMainhead);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: firstString(record, ["id"]) ?? undefined,
+    branchId: firstString(record, ["branchId"]),
+    code: firstString(record, ["code"]),
+    name: firstString(record, ["name"]),
+    isActive: readBoolean(record, "isActive"),
+  };
+}
+
+function displayMainheadReference(mainhead: SiteVisitMainhead | null) {
+  return mainhead?.name?.trim() || mainhead?.code?.trim() || null;
+}
+
 function normalizeTeamMembers(record: ApiRecord | null) {
   return readArray(record, ["teamMembers", "users"])
     .map(normalizeUser)
@@ -276,6 +297,13 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
   const substation = normalizeSubstation(record.substation);
   const status = normalizeStatus(firstString(record, ["status"]));
   const startedAt = firstString(record, ["startedAt", "createdAt"]);
+  const mainheadRecord =
+    normalizeMainheadReference(record.mainheadRecord) ??
+    normalizeMainheadReference(nestedRecord(record, "workPackage")?.mainheadRecord) ??
+    normalizeMainheadReference(nestedRecord(record, "project")?.mainhead);
+  const mainhead =
+    firstString(record, ["mainhead", "mainHead"]) ??
+    displayMainheadReference(mainheadRecord);
 
   return {
     id,
@@ -288,7 +316,8 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
     overdueThresholdHours: numberOrZero(readNumber(record, "overdueThresholdHours") ?? 24),
     visitType: normalizeVisitType(firstString(record, ["visitType"])),
     cycleNumber: readNumber(record, "cycleNumber"),
-    mainhead: firstString(record, ["mainhead", "mainHead"]),
+    mainhead,
+    mainheadRecord,
     pencawangCode:
       firstString(record, ["pencawangCode"]) ?? substation?.code ?? null,
     pencawangName:

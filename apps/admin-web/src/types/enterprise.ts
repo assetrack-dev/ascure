@@ -1,4 +1,8 @@
-export type EnterpriseEntityKind = "organizations" | "projects" | "work-packages";
+export type EnterpriseEntityKind =
+  | "organizations"
+  | "mainheads"
+  | "projects"
+  | "work-packages";
 
 export type EnterpriseTone = "neutral" | "success" | "warning" | "danger" | "info";
 

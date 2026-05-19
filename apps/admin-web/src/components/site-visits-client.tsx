@@ -186,6 +186,15 @@ function displayPencawang(visit: SiteVisitListItem) {
   );
 }
 
+function displayMainhead(visit: SiteVisitListItem) {
+  return (
+    visit.mainheadRecord?.name?.trim() ||
+    visit.mainheadRecord?.code?.trim() ||
+    visit.mainhead ||
+    "MAINHEAD not recorded"
+  );
+}
+
 function parseTimestamp(date: string | null | undefined) {
   const timestamp = date ? new Date(date).getTime() : Number.NaN;
 
@@ -300,7 +309,7 @@ function getSortValue(visit: SiteVisitListItem, sortKey: SortKey) {
   }
 
   if (sortKey === "mainhead") {
-    return normalizeSearchText(visit.mainhead);
+    return normalizeSearchText(displayMainhead(visit));
   }
 
   return normalizeSearchText(displayTeam(visit));
@@ -680,7 +689,7 @@ function SiteVisitsContent() {
         !normalizedSearch ||
         [
           displayPencawang(visit),
-          visit.mainhead,
+          displayMainhead(visit),
           visit.functionalLocation,
           displayTeam(visit),
           formatEnum(visit.status),
@@ -692,7 +701,7 @@ function SiteVisitsContent() {
         ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
       const matchesMainhead =
         !normalizedMainhead ||
-        normalizeSearchText(visit.mainhead).includes(normalizedMainhead);
+        normalizeSearchText(displayMainhead(visit)).includes(normalizedMainhead);
       const matchesPencawang =
         !normalizedPencawang ||
         normalizeSearchText(displayPencawang(visit)).includes(normalizedPencawang);
@@ -1199,7 +1208,7 @@ function SiteVisitsContent() {
                                   {displayPencawang(visit)}
                                 </div>
                                 <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
-                                  <span>{visit.mainhead ?? "MAINHEAD not recorded"}</span>
+                                  <span>{displayMainhead(visit)}</span>
                                   <span>
                                     {formatEnum(visit.visitType)} / Cycle{" "}
                                     {visit.cycleNumber ?? "N/A"}

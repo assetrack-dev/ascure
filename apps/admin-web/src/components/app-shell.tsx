@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPinned,
+  Network,
   PackageCheck,
   ShieldCheck,
   Users,
@@ -46,6 +47,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/organizations",
       label: "Organizations",
       icon: Building2,
+    },
+    {
+      href: "/mainheads",
+      label: "Mainheads",
+      icon: Network,
     },
     {
       href: "/projects",

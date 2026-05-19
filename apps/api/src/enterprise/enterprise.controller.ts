@@ -3,6 +3,7 @@ import { IsUUID } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   ListBranchesQueryDto,
+  ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
@@ -37,6 +38,16 @@ export class EnterpriseController {
   @Get('branches/:id')
   getBranch(@Param() params: EnterpriseIdParamDto) {
     return this.enterpriseService.getBranch(params.id);
+  }
+
+  @Get('mainheads')
+  listMainheads(@Query() query: ListMainheadsQueryDto) {
+    return this.enterpriseService.listMainheads(query);
+  }
+
+  @Get('mainheads/:id')
+  getMainhead(@Param() params: EnterpriseIdParamDto) {
+    return this.enterpriseService.getMainhead(params.id);
   }
 
   @Get('projects')

@@ -12,6 +12,7 @@ type ApiRecord = Record<string, unknown>;
 
 const API_PATH_BY_KIND: Record<EnterpriseEntityKind, string> = {
   organizations: "/enterprise/organizations",
+  mainheads: "/enterprise/mainheads",
   projects: "/enterprise/projects",
   "work-packages": "/enterprise/work-packages",
 };
@@ -269,6 +270,55 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
   });
 }
 
+function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
+  const record = asRecord(rawMainhead);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, "id");
+  const name = readString(record, "name");
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const activeState = stateChip(readBoolean(record, "isActive"));
+  const branch = nestedRecord(record, "branch");
+  const branchOrganization = nestedRecord(branch, "organization");
+  const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
+  const metrics: EnterpriseMetric[] = [
+    { label: "Projects", value: count(record, "projects") },
+    { label: "Work Packages", value: count(record, "workPackages") },
+    { label: "Site Visits", value: count(record, "siteVisits") },
+  ];
+  const fields: EnterpriseField[] = [
+    { label: "Code", value: readString(record, "code") },
+    { label: "Status", value: activeState.label },
+    { label: "Branch", value: branchLabel || null },
+    { label: "Region", value: readString(branch, "region") },
+  ];
+
+  return withSearchText({
+    id,
+    kind: "mainheads",
+    name,
+    code: readString(record, "code"),
+    primaryChip: activeState.label,
+    primaryTone: activeState.tone,
+    secondaryChip: branch ? compactLabel(branch) : null,
+    secondaryTone: "info",
+    relationLabel: branchLabel || "Branch not recorded",
+    filterGroup: branch ? compactLabel(branch) : null,
+    metrics,
+    fields,
+    description: readString(record, "description"),
+    createdAt: readString(record, "createdAt"),
+    updatedAt: readString(record, "updatedAt"),
+  });
+}
+
 function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
   const record = asRecord(rawProject);
 
@@ -286,8 +336,10 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
   const status = readString(record, "status");
   const branch = nestedRecord(record, "branch");
   const branchOrganization = nestedRecord(branch, "organization");
+  const mainhead = nestedRecord(record, "mainhead");
   const clientOrganization = nestedRecord(record, "clientOrganization");
   const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
+  const mainheadLabel = mainhead ? compactLabel(mainhead) : null;
   const clientLabel = clientOrganization ? compactLabel(clientOrganization) : null;
   const metrics: EnterpriseMetric[] = [
     { label: "Work Packages", value: count(record, "workPackages") },
@@ -296,6 +348,7 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: formatEnum(status) },
+    { label: "MAINHEAD", value: mainheadLabel },
     { label: "Branch", value: branchLabel || null },
     { label: "Client", value: clientLabel },
     { label: "Start Date", value: readString(record, "startDate") },
@@ -341,7 +394,9 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
   const branchOrganization = nestedRecord(branch, "organization");
   const projectLabel = compactLabel(project);
   const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
-  const mainhead = readString(record, "mainhead");
+  const mainheadRecord =
+    nestedRecord(record, "mainheadRecord") ?? nestedRecord(project, "mainhead");
+  const mainhead = mainheadRecord ? compactLabel(mainheadRecord) : readString(record, "mainhead");
   const metrics: EnterpriseMetric[] = [
     { label: "Assignments", value: count(record, "assignments") },
     { label: "Site Visits", value: count(record, "siteVisits") },
@@ -380,6 +435,10 @@ function normalizeEnterpriseEntity(
 ): EnterpriseDetail | null {
   if (kind === "organizations") {
     return normalizeOrganization(rawEntity);
+  }
+
+  if (kind === "mainheads") {
+    return normalizeMainhead(rawEntity);
   }
 
   if (kind === "projects") {
