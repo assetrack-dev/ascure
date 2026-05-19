@@ -107,6 +107,12 @@ function nestedRecord(record: ApiRecord | null, key: string) {
   return asRecord(record?.[key]);
 }
 
+function readArray(record: ApiRecord | null, key: string) {
+  const value = record?.[key];
+
+  return Array.isArray(value) ? value : [];
+}
+
 function extractArray(payload: unknown) {
   if (Array.isArray(payload)) {
     return payload;
@@ -209,6 +215,7 @@ function withSearchText<T extends Omit<EnterpriseListRow, "searchText">>(
     row.secondaryChip,
     row.relationLabel,
     row.filterGroup,
+    ...row.extraFilterGroups,
     ...row.fields.flatMap((field) => [field.label, field.value]),
     ...row.metrics.flatMap((metric) => [metric.label, String(metric.value)]),
   ];
@@ -220,6 +227,23 @@ function withSearchText<T extends Omit<EnterpriseListRow, "searchText">>(
       .join(" ")
       .toLowerCase(),
   };
+}
+
+function capabilityLabels(record: ApiRecord | null) {
+  return readArray(record, "capabilities")
+    .map((capability) => asRecord(capability))
+    .filter((capability): capability is ApiRecord => Boolean(capability))
+    .map((capability) => {
+      const label = formatEnum(readString(capability, "capability"));
+      const isActive = readBoolean(capability, "isActive");
+
+      return {
+        label,
+        filterLabel: label,
+        displayLabel: isActive === false ? `${label} (Inactive)` : label,
+      };
+    })
+    .filter((capability) => capability.label !== "Not recorded");
 }
 
 function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | null {
@@ -240,14 +264,21 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
   const activeState = stateChip(readBoolean(record, "isActive"));
   const parentOrganization = nestedRecord(record, "parentOrganization");
   const parentLabel = compactLabel(parentOrganization);
+  const capabilities = capabilityLabels(record);
+  const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
+  const capabilityFilters = Array.from(
+    new Set(capabilities.map((capability) => capability.filterLabel)),
+  );
   const metrics: EnterpriseMetric[] = [
     { label: "Branches", value: count(record, "branches") },
+    { label: "Capabilities", value: count(record, "capabilities") },
     { label: "Memberships", value: count(record, "memberships") },
   ];
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
     { label: "Type", value: formatEnum(type) },
     { label: "Status", value: activeState.label },
+    { label: "Capabilities", value: capabilityDisplay || null },
     { label: "Parent Organization", value: parentOrganization ? parentLabel : null },
   ];
 
@@ -260,8 +291,13 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
     primaryTone: organizationTone(type),
     secondaryChip: activeState.label,
     secondaryTone: activeState.tone,
-    relationLabel: parentOrganization ? `Parent: ${parentLabel}` : "Top-level organization",
+    relationLabel: capabilityDisplay
+      ? `Capabilities: ${capabilityDisplay}`
+      : parentOrganization
+        ? `Parent: ${parentLabel}`
+        : "Top-level organization",
     filterGroup: activeState.label,
+    extraFilterGroups: capabilityFilters,
     metrics,
     fields,
     description: null,
@@ -311,6 +347,7 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     secondaryTone: "info",
     relationLabel: branchLabel || "Branch not recorded",
     filterGroup: branch ? compactLabel(branch) : null,
+    extraFilterGroups: [],
     metrics,
     fields,
     description: readString(record, "description"),
@@ -334,6 +371,7 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
   }
 
   const status = readString(record, "status");
+  const operationalDomain = readString(record, "operationalDomain");
   const branch = nestedRecord(record, "branch");
   const branchOrganization = nestedRecord(branch, "organization");
   const mainhead = nestedRecord(record, "mainhead");
@@ -348,6 +386,7 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: formatEnum(status) },
+    { label: "Operational Domain", value: operationalDomain ? formatEnum(operationalDomain) : null },
     { label: "MAINHEAD", value: mainheadLabel },
     { label: "Branch", value: branchLabel || null },
     { label: "Client", value: clientLabel },
@@ -362,10 +401,11 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     code: readString(record, "code"),
     primaryChip: formatEnum(status),
     primaryTone: statusTone(status),
-    secondaryChip: clientLabel,
+    secondaryChip: operationalDomain ? formatEnum(operationalDomain) : clientLabel,
     secondaryTone: "info",
     relationLabel: branchLabel || "Branch not recorded",
     filterGroup: branch ? compactLabel(branch) : null,
+    extraFilterGroups: operationalDomain ? [formatEnum(operationalDomain)] : [],
     metrics,
     fields,
     description: readString(record, "description"),
@@ -389,6 +429,7 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
   }
 
   const status = readString(record, "status");
+  const operationalDomain = readString(record, "operationalDomain");
   const project = nestedRecord(record, "project");
   const branch = nestedRecord(project, "branch");
   const branchOrganization = nestedRecord(branch, "organization");
@@ -404,6 +445,7 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: formatEnum(status) },
+    { label: "Operational Domain", value: operationalDomain ? formatEnum(operationalDomain) : null },
     { label: "MAINHEAD", value: mainhead },
     { label: "Area", value: readString(record, "area") },
     { label: "Project", value: projectLabel },
@@ -417,10 +459,11 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
     code: readString(record, "code"),
     primaryChip: formatEnum(status),
     primaryTone: statusTone(status),
-    secondaryChip: mainhead,
+    secondaryChip: operationalDomain ? formatEnum(operationalDomain) : mainhead,
     secondaryTone: "info",
     relationLabel: projectLabel,
     filterGroup: mainhead,
+    extraFilterGroups: operationalDomain ? [formatEnum(operationalDomain)] : [],
     metrics,
     fields,
     description: readString(record, "description"),

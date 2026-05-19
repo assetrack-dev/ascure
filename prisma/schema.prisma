@@ -105,6 +105,33 @@ enum OrganizationType {
   OTHER
 }
 
+enum OperationalDomain {
+  SURVEY
+  INSPECTION
+  MAINTENANCE
+  REPAIR
+  AUDIT
+  CIVIL
+  DISTRIBUTION
+  THIRTY_THREE_KV
+  EMERGENCY
+  OTHER
+}
+
+enum OrganizationCapabilityType {
+  SURVEY
+  INSPECTION
+  MAINTENANCE
+  REPAIR
+  CIVIL
+  DISTRIBUTION
+  THIRTY_THREE_KV
+  EMERGENCY_RESPONSE
+  QA_VALIDATION
+  REPORTING
+  OTHER
+}
+
 enum OrganizationMembershipRole {
   OWNER
   ADMIN
@@ -267,6 +294,7 @@ model Organization {
   parentOrganization     Organization?            @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
   childOrganizations     Organization[]           @relation("OrganizationHierarchy")
   memberships            OrganizationMembership[]
+  capabilities           OrganizationCapability[]
   branches               Branch[]
   clientProjects         Project[]                @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
@@ -274,6 +302,21 @@ model Organization {
 
   @@index([type])
   @@index([parentOrganizationId])
+}
+
+model OrganizationCapability {
+  id             String                     @id @default(uuid()) @db.Uuid
+  organizationId String                     @db.Uuid
+  capability     OrganizationCapabilityType
+  isActive       Boolean                    @default(true)
+  notes          String?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  organization   Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, capability])
+  @@index([organizationId])
+  @@index([capability])
 }
 
 model OrganizationMembership {
@@ -336,6 +379,7 @@ model Project {
   code                 String?             @unique
   description          String?
   status               ProjectStatus       @default(DRAFT)
+  operationalDomain    OperationalDomain?
   startDate            DateTime?
   endDate              DateTime?
   createdAt            DateTime            @default(now())
@@ -349,6 +393,7 @@ model Project {
 
   @@index([branchId])
   @@index([mainheadId])
+  @@index([operationalDomain])
   @@index([status])
 }
 
@@ -369,24 +414,26 @@ model ProjectMembership {
 }
 
 model WorkPackage {
-  id             String                  @id @default(uuid()) @db.Uuid
-  projectId      String                  @db.Uuid
-  mainheadId     String?                 @db.Uuid
-  name           String
-  code           String?
-  area           String?
-  mainhead       String?
-  description    String?
-  status         WorkPackageStatus       @default(DRAFT)
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-  project        Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  mainheadRecord Mainhead?               @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
-  assignments    WorkPackageAssignment[]
-  siteVisits     SiteVisit[]
+  id                String                  @id @default(uuid()) @db.Uuid
+  projectId         String                  @db.Uuid
+  mainheadId        String?                 @db.Uuid
+  name              String
+  code              String?
+  area              String?
+  mainhead          String?
+  description       String?
+  status            WorkPackageStatus       @default(DRAFT)
+  operationalDomain OperationalDomain?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  project           Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mainheadRecord    Mainhead?               @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  assignments       WorkPackageAssignment[]
+  siteVisits        SiteVisit[]
 
   @@index([projectId])
   @@index([mainheadId])
+  @@index([operationalDomain])
   @@index([status])
 }
 
@@ -484,6 +531,7 @@ model SiteVisit {
   status                SiteVisitStatus            @default(ACTIVE)
   cycleNumber           Int?
   visitType             SiteVisitType?
+  operationalDomain     OperationalDomain?
   mainhead              String?
   pencawangCode         String?
   pencawangName         String?
@@ -534,6 +582,7 @@ model SiteVisit {
   @@index([workPackageId])
   @@index([cycleNumber])
   @@index([visitType])
+  @@index([operationalDomain])
   @@index([validationStatus])
   @@index([feederId])
   @@index([feederRouteId])

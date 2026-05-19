@@ -27,6 +27,7 @@ export interface EnterpriseListRow {
   secondaryTone: EnterpriseTone;
   relationLabel: string;
   filterGroup: string | null;
+  extraFilterGroups: string[];
   metrics: EnterpriseMetric[];
   fields: EnterpriseField[];
   createdAt: string | null;

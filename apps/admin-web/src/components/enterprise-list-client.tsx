@@ -37,6 +37,7 @@ const PAGE_CONFIG: Record<
     searchPlaceholder: string;
     primaryFilterLabel: string;
     groupFilterLabel: string;
+    extraFilterLabel?: string;
     emptyLabel: string;
     icon: typeof Building2;
   }
@@ -48,6 +49,7 @@ const PAGE_CONFIG: Record<
     searchPlaceholder: "Search organizations",
     primaryFilterLabel: "All types",
     groupFilterLabel: "All states",
+    extraFilterLabel: "All capabilities",
     emptyLabel: "No organizations found",
     icon: Building2,
   },
@@ -68,6 +70,7 @@ const PAGE_CONFIG: Record<
     searchPlaceholder: "Search projects",
     primaryFilterLabel: "All statuses",
     groupFilterLabel: "All branches",
+    extraFilterLabel: "All domains",
     emptyLabel: "No projects found",
     icon: FolderKanban,
   },
@@ -78,6 +81,7 @@ const PAGE_CONFIG: Record<
     searchPlaceholder: "Search work packages",
     primaryFilterLabel: "All statuses",
     groupFilterLabel: "All MAINHEAD",
+    extraFilterLabel: "All domains",
     emptyLabel: "No work packages found",
     icon: PackageCheck,
   },
@@ -140,9 +144,20 @@ function formatDate(date: string | null) {
   }).format(parsedDate);
 }
 
-function uniqueOptions(rows: EnterpriseListRow[], selector: (row: EnterpriseListRow) => string | null) {
+function uniqueOptions(
+  rows: EnterpriseListRow[],
+  selector: (row: EnterpriseListRow) => string | string[] | null,
+) {
   return Array.from(
-    new Set(rows.map(selector).filter((value): value is string => Boolean(value))),
+    new Set(
+      rows
+        .flatMap((row) => {
+          const value = selector(row);
+
+          return Array.isArray(value) ? value : [value];
+        })
+        .filter((value): value is string => Boolean(value)),
+    ),
   ).sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" }));
 }
 
@@ -170,6 +185,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   const [search, setSearch] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState<FilterValue>("ALL");
   const [groupFilter, setGroupFilter] = useState<FilterValue>("ALL");
+  const [extraFilter, setExtraFilter] = useState<FilterValue>("ALL");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -219,6 +235,10 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
     () => uniqueOptions(rows, (row) => row.filterGroup),
     [rows],
   );
+  const extraOptions = useMemo(
+    () => uniqueOptions(rows, (row) => row.extraFilterGroups),
+    [rows],
+  );
 
   const filteredRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -230,20 +250,27 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
         primaryFilter === "ALL" || row.primaryChip === primaryFilter;
       const matchesGroup =
         groupFilter === "ALL" || row.filterGroup === groupFilter;
+      const matchesExtra =
+        extraFilter === "ALL" || row.extraFilterGroups.includes(extraFilter);
 
-      return matchesSearch && matchesPrimary && matchesGroup;
+      return matchesSearch && matchesPrimary && matchesGroup && matchesExtra;
     });
-  }, [groupFilter, primaryFilter, rows, search]);
+  }, [extraFilter, groupFilter, primaryFilter, rows, search]);
 
   function resetFilters() {
     setSearch("");
     setPrimaryFilter("ALL");
     setGroupFilter("ALL");
+    setExtraFilter("ALL");
   }
 
   function openDetail(rowId: string) {
     router.push(`${config.basePath}/${encodeURIComponent(rowId)}`);
   }
+
+  const filterGridClassName = config.extraFilterLabel
+    ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(150px,auto))_auto]"
+    : "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(2,minmax(150px,auto))_auto]";
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -289,7 +316,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
             ) : (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(2,minmax(150px,auto))_auto]">
+                  <div className={filterGridClassName}>
                     <label className="relative block">
                       <span className="sr-only">{config.searchPlaceholder}</span>
                       <Search
@@ -336,6 +363,24 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                         ))}
                       </select>
                     </label>
+
+                    {config.extraFilterLabel ? (
+                      <label className="block">
+                        <span className="sr-only">{config.extraFilterLabel}</span>
+                        <select
+                          value={extraFilter}
+                          onChange={(event) => setExtraFilter(event.target.value)}
+                          className={inputClassName}
+                        >
+                          <option value="ALL">{config.extraFilterLabel}</option>
+                          {extraOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
 
                     <button type="button" onClick={resetFilters} className={secondaryButtonClassName}>
                       <X size={16} />

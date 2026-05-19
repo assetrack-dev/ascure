@@ -3,6 +3,7 @@ import {
   PrismaClient,
   InspectionItemInputType,
   InspectionTemplateStatus,
+  OrganizationCapabilityType,
   OrganizationMembershipRole,
   OrganizationType,
   ProjectStatus,
@@ -12,6 +13,35 @@ import {
 import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+async function ensureOrganizationCapability(
+  organizationId: string,
+  capability: OrganizationCapabilityType,
+) {
+  const existingCapability = await prisma.organizationCapability.findUnique({
+    where: {
+      organizationId_capability: {
+        organizationId,
+        capability,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingCapability) {
+    return;
+  }
+
+  await prisma.organizationCapability.create({
+    data: {
+      organizationId,
+      capability,
+      isActive: true,
+    },
+  });
+}
 
 async function main() {
   const passwordSaltRounds = 10;
@@ -94,6 +124,22 @@ async function main() {
       isActive: true,
     },
   });
+
+  for (const capability of [
+    OrganizationCapabilityType.SURVEY,
+    OrganizationCapabilityType.INSPECTION,
+    OrganizationCapabilityType.QA_VALIDATION,
+    OrganizationCapabilityType.REPORTING,
+  ]) {
+    await ensureOrganizationCapability(ascureOrganization.id, capability);
+  }
+
+  for (const capability of [
+    OrganizationCapabilityType.QA_VALIDATION,
+    OrganizationCapabilityType.REPORTING,
+  ]) {
+    await ensureOrganizationCapability(tnbOrganization.id, capability);
+  }
 
   const existingBranch = await prisma.branch.findFirst({
     where: {

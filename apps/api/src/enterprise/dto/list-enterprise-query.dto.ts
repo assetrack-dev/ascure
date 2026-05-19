@@ -1,4 +1,6 @@
 import {
+  OperationalDomain,
+  OrganizationCapabilityType,
   OrganizationType,
   ProjectStatus,
   WorkPackageStatus,
@@ -45,6 +47,10 @@ export class ListOrganizationsQueryDto {
   @IsEnum(OrganizationType)
   type?: OrganizationType;
 
+  @IsOptional()
+  @IsEnum(OrganizationCapabilityType)
+  capability?: OrganizationCapabilityType;
+
   @Transform(optionalBoolean)
   @IsOptional()
   @IsBoolean()
@@ -79,6 +85,10 @@ export class ListProjectsQueryDto {
   branchId?: string;
 
   @IsOptional()
+  @IsEnum(OperationalDomain)
+  operationalDomain?: OperationalDomain;
+
+  @IsOptional()
   @IsEnum(ProjectStatus)
   status?: ProjectStatus;
 }
@@ -91,6 +101,10 @@ export class ListWorkPackagesQueryDto {
   @IsOptional()
   @IsEnum(WorkPackageStatus)
   status?: WorkPackageStatus;
+
+  @IsOptional()
+  @IsEnum(OperationalDomain)
+  operationalDomain?: OperationalDomain;
 
   @Transform(trimString)
   @IsOptional()

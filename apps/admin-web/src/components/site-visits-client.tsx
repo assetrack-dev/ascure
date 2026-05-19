@@ -24,6 +24,7 @@ import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchSiteVisits } from "@/lib/site-visits";
 import type { AuthSession } from "@/types/auth";
 import type {
+  OperationalDomain,
   OperationalHealthStatus,
   SiteVisitListItem,
   SiteVisitStatus,
@@ -46,6 +47,7 @@ type StatusFilter = "ALL" | SiteVisitStatus;
 type HealthFilter = "ALL" | OperationalHealthStatus;
 type ValidationFilter = "ALL" | SiteVisitValidationStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
+type OperationalDomainFilter = "ALL" | OperationalDomain;
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const AUTO_REFRESH_MS = 60000;
@@ -76,6 +78,20 @@ const VISIT_TYPE_OPTIONS: Array<{ label: string; value: VisitTypeFilter }> = [
   { label: "Reinspection", value: "REINSPECTION" },
   { label: "Special", value: "SPECIAL" },
   { label: "Audit", value: "AUDIT" },
+  { label: "Unspecified", value: "UNSPECIFIED" },
+];
+const OPERATIONAL_DOMAIN_OPTIONS: Array<{ label: string; value: OperationalDomainFilter }> = [
+  { label: "All domains", value: "ALL" },
+  { label: "Survey", value: "SURVEY" },
+  { label: "Inspection", value: "INSPECTION" },
+  { label: "Maintenance", value: "MAINTENANCE" },
+  { label: "Repair", value: "REPAIR" },
+  { label: "Audit", value: "AUDIT" },
+  { label: "Civil", value: "CIVIL" },
+  { label: "Distribution", value: "DISTRIBUTION" },
+  { label: "33 KV", value: "THIRTY_THREE_KV" },
+  { label: "Emergency", value: "EMERGENCY" },
+  { label: "Other", value: "OTHER" },
   { label: "Unspecified", value: "UNSPECIFIED" },
 ];
 const STATUS_RANK: Record<SiteVisitStatus, number> = {
@@ -593,6 +609,8 @@ function SiteVisitsContent() {
   const [healthFilter, setHealthFilter] = useState<HealthFilter>("ALL");
   const [validationFilter, setValidationFilter] = useState<ValidationFilter>("ALL");
   const [visitTypeFilter, setVisitTypeFilter] = useState<VisitTypeFilter>("ALL");
+  const [operationalDomainFilter, setOperationalDomainFilter] =
+    useState<OperationalDomainFilter>("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("lastActivity");
@@ -670,6 +688,7 @@ function SiteVisitsContent() {
     healthFilter,
     validationFilter,
     visitTypeFilter,
+    operationalDomainFilter,
     startDate,
     endDate,
     pageSize,
@@ -695,6 +714,7 @@ function SiteVisitsContent() {
           formatEnum(visit.status),
           formatEnum(visit.validationStatus),
           formatEnum(visit.visitType),
+          formatEnum(visit.operationalDomain),
           visit.createdBy?.name,
           visit.createdBy?.email,
           visit.teamMembers.map((member) => `${member.name ?? ""} ${member.email ?? ""}`).join(" "),
@@ -720,6 +740,9 @@ function SiteVisitsContent() {
         validationFilter === "ALL" || visit.validationStatus === validationFilter;
       const matchesVisitType =
         visitTypeFilter === "ALL" || visit.visitType === visitTypeFilter;
+      const matchesOperationalDomain =
+        operationalDomainFilter === "ALL" ||
+        visit.operationalDomain === operationalDomainFilter;
       const matchesStartDate = !startDate || (visitDate && visitDate >= startDate);
       const matchesEndDate = !endDate || (visitDate && visitDate <= endDate);
 
@@ -733,6 +756,7 @@ function SiteVisitsContent() {
         matchesHealth &&
         matchesValidation &&
         matchesVisitType &&
+        matchesOperationalDomain &&
         matchesStartDate &&
         matchesEndDate
       );
@@ -742,6 +766,7 @@ function SiteVisitsContent() {
     healthFilter,
     mainheadFilter,
     memberFilter,
+    operationalDomainFilter,
     pencawangFilter,
     search,
     startDate,
@@ -823,6 +848,7 @@ function SiteVisitsContent() {
     setHealthFilter("ALL");
     setValidationFilter("ALL");
     setVisitTypeFilter("ALL");
+    setOperationalDomainFilter("ALL");
     setStartDate("");
     setEndDate("");
   }
@@ -928,7 +954,7 @@ function SiteVisitsContent() {
                   <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] 2xl:col-span-3">
                   <div className="border-b border-slate-200 p-5">
                     <div className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1.6fr)_repeat(4,minmax(150px,1fr))]">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1.6fr)_repeat(5,minmax(150px,1fr))]">
                         <label className="block">
                           <span className={filterLabelClassName}>Search</span>
                           <span className="relative block">
@@ -1007,6 +1033,25 @@ function SiteVisitsContent() {
                             className={filterControlClassName}
                           >
                             {VISIT_TYPE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className={filterLabelClassName}>Domain</span>
+                          <select
+                            value={operationalDomainFilter}
+                            onChange={(event) =>
+                              setOperationalDomainFilter(
+                                event.target.value as OperationalDomainFilter,
+                              )
+                            }
+                            className={filterControlClassName}
+                          >
+                            {OPERATIONAL_DOMAIN_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -1213,6 +1258,9 @@ function SiteVisitsContent() {
                                     {formatEnum(visit.visitType)} / Cycle{" "}
                                     {visit.cycleNumber ?? "N/A"}
                                   </span>
+                                  {visit.operationalDomain !== "UNSPECIFIED" ? (
+                                    <span>{formatEnum(visit.operationalDomain)}</span>
+                                  ) : null}
                                 </div>
                               </div>
                             </td>

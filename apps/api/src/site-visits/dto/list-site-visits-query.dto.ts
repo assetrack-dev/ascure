@@ -1,4 +1,8 @@
-import { SiteVisitType, SiteVisitValidationStatus } from '@prisma/client';
+import {
+  OperationalDomain,
+  SiteVisitType,
+  SiteVisitValidationStatus,
+} from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
@@ -39,6 +43,10 @@ export class ListSiteVisitsQueryDto {
   @IsOptional()
   @IsIn(Object.values(SiteVisitType))
   visitType?: SiteVisitType;
+
+  @IsOptional()
+  @IsIn(Object.values(OperationalDomain))
+  operationalDomain?: OperationalDomain;
 
   @IsOptional()
   @IsIn(Object.values(SiteVisitValidationStatus))

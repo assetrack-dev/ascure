@@ -22,6 +22,19 @@ export type SiteVisitType =
   | "AUDIT"
   | "UNSPECIFIED";
 
+export type OperationalDomain =
+  | "SURVEY"
+  | "INSPECTION"
+  | "MAINTENANCE"
+  | "REPAIR"
+  | "AUDIT"
+  | "CIVIL"
+  | "DISTRIBUTION"
+  | "THIRTY_THREE_KV"
+  | "EMERGENCY"
+  | "OTHER"
+  | "UNSPECIFIED";
+
 export interface SiteVisitTeam {
   id?: string;
   code?: string | null;
@@ -68,6 +81,7 @@ export interface SiteVisitListItem extends SiteVisitSummary {
   isOverdue: boolean;
   overdueThresholdHours: number;
   visitType: SiteVisitType;
+  operationalDomain: OperationalDomain;
   cycleNumber: number | null;
   mainhead: string | null;
   mainheadRecord: SiteVisitMainhead | null;

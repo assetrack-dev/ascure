@@ -19,9 +19,25 @@ const ORGANIZATION_INCLUDE = Prisma.validator<Prisma.OrganizationInclude>()({
       isActive: true,
     },
   },
+  capabilities: {
+    select: {
+      id: true,
+      capability: true,
+      isActive: true,
+      notes: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: [
+      {
+        capability: 'asc',
+      },
+    ],
+  },
   _count: {
     select: {
       branches: true,
+      capabilities: true,
       memberships: true,
     },
   },
@@ -135,6 +151,7 @@ const WORK_PACKAGE_INCLUDE = Prisma.validator<Prisma.WorkPackageInclude>()({
       name: true,
       code: true,
       status: true,
+      operationalDomain: true,
       mainhead: {
         select: {
           id: true,
@@ -338,6 +355,15 @@ export class EnterpriseService {
   ): Prisma.OrganizationWhereInput {
     return {
       ...(query.type ? { type: query.type } : {}),
+      ...(query.capability
+        ? {
+            capabilities: {
+              some: {
+                capability: query.capability,
+              },
+            },
+          }
+        : {}),
       ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     };
   }
@@ -361,6 +387,9 @@ export class EnterpriseService {
   private projectWhere(query: ListProjectsQueryDto): Prisma.ProjectWhereInput {
     return {
       ...(query.branchId ? { branchId: query.branchId } : {}),
+      ...(query.operationalDomain
+        ? { operationalDomain: query.operationalDomain }
+        : {}),
       ...(query.status ? { status: query.status } : {}),
     };
   }
@@ -373,6 +402,9 @@ export class EnterpriseService {
     return {
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.operationalDomain
+        ? { operationalDomain: query.operationalDomain }
+        : {}),
       ...(mainhead
         ? {
             mainhead: {

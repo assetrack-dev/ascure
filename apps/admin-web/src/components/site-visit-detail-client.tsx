@@ -513,6 +513,14 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
                         <DetailField label="Functional Location" value={formatNullable(visit.functionalLocation)} />
                         <DetailField label="Visit Type" value={formatEnum(visit.visitType)} />
+                        <DetailField
+                          label="Operational Domain"
+                          value={
+                            visit.operationalDomain === "UNSPECIFIED"
+                              ? "Not recorded"
+                              : formatEnum(visit.operationalDomain)
+                          }
+                        />
                         <DetailField label="Cycle" value={visit.cycleNumber === null ? "Not recorded" : String(visit.cycleNumber)} />
                         <DetailField label="Team" value={displayTeam(visit)} />
                         <DetailField label="Created By" value={formatNullable(visit.createdBy?.name ?? visit.createdBy?.email)} />

@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import type {
+  OperationalDomain,
   OperationalHealthStatus,
   SiteVisitAssetLink,
   SiteVisitDetail,
@@ -205,6 +206,27 @@ function normalizeVisitType(value: string | null): SiteVisitType {
   return "UNSPECIFIED";
 }
 
+function normalizeOperationalDomain(value: string | null): OperationalDomain {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "SURVEY" ||
+    normalizedValue === "INSPECTION" ||
+    normalizedValue === "MAINTENANCE" ||
+    normalizedValue === "REPAIR" ||
+    normalizedValue === "AUDIT" ||
+    normalizedValue === "CIVIL" ||
+    normalizedValue === "DISTRIBUTION" ||
+    normalizedValue === "THIRTY_THREE_KV" ||
+    normalizedValue === "EMERGENCY" ||
+    normalizedValue === "OTHER"
+  ) {
+    return normalizedValue;
+  }
+
+  return "UNSPECIFIED";
+}
+
 function normalizeUser(rawUser: unknown): SiteVisitUser | null {
   const record = asRecord(rawUser);
 
@@ -315,6 +337,9 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
     isOverdue: readBoolean(record, "isOverdue") ?? false,
     overdueThresholdHours: numberOrZero(readNumber(record, "overdueThresholdHours") ?? 24),
     visitType: normalizeVisitType(firstString(record, ["visitType"])),
+    operationalDomain: normalizeOperationalDomain(
+      firstString(record, ["operationalDomain"]),
+    ),
     cycleNumber: readNumber(record, "cycleNumber"),
     mainhead,
     mainheadRecord,

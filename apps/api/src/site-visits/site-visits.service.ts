@@ -134,6 +134,7 @@ const SITE_VISIT_ENTERPRISE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>(
       name: true,
       code: true,
       status: true,
+      operationalDomain: true,
       mainhead: {
         select: {
           id: true,
@@ -155,6 +156,7 @@ const SITE_VISIT_ENTERPRISE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>(
       area: true,
       mainhead: true,
       status: true,
+      operationalDomain: true,
       mainheadRecord: {
         select: {
           id: true,
@@ -1543,6 +1545,7 @@ export class SiteVisitsService {
       this.statusFilter(query.status),
       this.validationStatusFilter(query.validationStatus),
       this.visitTypeFilter(query.visitType),
+      this.operationalDomainFilter(query.operationalDomain),
       this.teamFilter(query.teamId),
       this.userFilter(query.userId),
       this.mainheadFilter(query.mainhead),
@@ -1586,6 +1589,12 @@ export class SiteVisitsService {
     visitType: ListSiteVisitsQueryDto['visitType'],
   ): Prisma.SiteVisitWhereInput {
     return visitType ? { visitType } : {};
+  }
+
+  private operationalDomainFilter(
+    operationalDomain: ListSiteVisitsQueryDto['operationalDomain'],
+  ): Prisma.SiteVisitWhereInput {
+    return operationalDomain ? { operationalDomain } : {};
   }
 
   private teamFilter(teamId: ListSiteVisitsQueryDto['teamId']): Prisma.SiteVisitWhereInput {
