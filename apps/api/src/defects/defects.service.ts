@@ -7,10 +7,11 @@ import {
 import { randomUUID } from 'crypto';
 import {
   DefectLifecycleStatus,
-  DefectResolutionOutcome,
   DefectSeverity,
   DefectStatus,
   DefectTimelineEventType,
+  Prisma,
+  ResolutionOutcome as DefectResolutionOutcome,
   UserRole,
 } from '@prisma/client';
 import { normalizeOperationalText } from '../common/operational-text';
@@ -19,6 +20,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
+import { ListDefectOperationsBoardQueryDto } from './dto/list-defect-operations-board-query.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
@@ -51,6 +53,326 @@ const GOVERNED_LIFECYCLE_TRANSITIONS: Record<
   ],
   [DefectLifecycleStatus.VERIFICATION_PENDING]: [DefectLifecycleStatus.CLOSED],
   [DefectLifecycleStatus.CLOSED]: [],
+};
+
+const DEFECT_ACTOR_SELECT = {
+  id: true,
+  email: true,
+  name: true,
+  role: true,
+} as const;
+
+const DEFECT_TEAM_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+} as const;
+
+const DEFECT_MAINHEAD_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+} as const;
+
+const OPERATIONS_BOARD_INCLUDE = {
+  assignedUser: {
+    select: DEFECT_ACTOR_SELECT,
+  },
+  assignedTeam: {
+    select: DEFECT_TEAM_SELECT,
+  },
+  assignedToUser: {
+    select: DEFECT_ACTOR_SELECT,
+  },
+  assignedToTeam: {
+    select: DEFECT_TEAM_SELECT,
+  },
+  verifiedByUser: {
+    select: DEFECT_ACTOR_SELECT,
+  },
+  maintainedByUser: {
+    select: DEFECT_ACTOR_SELECT,
+  },
+  closureVerifiedByUser: {
+    select: DEFECT_ACTOR_SELECT,
+  },
+  inspectionItemResult: {
+    select: {
+      id: true,
+      inspectionId: true,
+      label: true,
+      remark: true,
+      createdAt: true,
+      inspection: {
+        select: {
+          id: true,
+          siteVisitId: true,
+          assetId: true,
+          inspectionCycle: true,
+          submittedAt: true,
+          createdAt: true,
+          siteVisit: {
+            select: {
+              id: true,
+              status: true,
+              mainheadId: true,
+              mainhead: true,
+              startedAt: true,
+              endedAt: true,
+              mainheadRecord: {
+                select: DEFECT_MAINHEAD_SELECT,
+              },
+              project: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  mainheadId: true,
+                  mainhead: {
+                    select: DEFECT_MAINHEAD_SELECT,
+                  },
+                },
+              },
+              workPackage: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  mainheadId: true,
+                  mainhead: true,
+                  mainheadRecord: {
+                    select: DEFECT_MAINHEAD_SELECT,
+                  },
+                },
+              },
+              team: {
+                select: DEFECT_TEAM_SELECT,
+              },
+              substation: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  location: true,
+                },
+              },
+            },
+          },
+          asset: {
+            select: {
+              id: true,
+              assetCode: true,
+              name: true,
+              assetType: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                },
+              },
+              substation: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  location: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.DefectInclude;
+
+type OperationsBoardDefect = Prisma.DefectGetPayload<{
+  include: typeof OPERATIONS_BOARD_INCLUDE;
+}>;
+
+type OperationsBoardActor = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  role: string;
+} | null;
+
+type OperationsBoardTeam = {
+  id: string;
+  code: string;
+  name: string;
+} | null;
+
+type OperationsBoardMainhead = {
+  id: string | null;
+  code: string | null;
+  name: string | null;
+  label: string;
+};
+
+type OperationsBoardItem = {
+  id: string;
+  inspectionItemResultId: string;
+  title: string;
+  summary: string | null;
+  status: DefectLifecycleStatus;
+  lifecycleStatus: DefectLifecycleStatus;
+  workflowStatus: DefectStatus;
+  severity: DefectSeverity;
+  resolutionOutcome: DefectResolutionOutcome | null;
+  mainhead: OperationsBoardMainhead;
+  mainheadLabel: string;
+  project: {
+    id: string;
+    code: string | null;
+    name: string;
+  } | null;
+  workPackage: {
+    id: string;
+    code: string | null;
+    name: string;
+  } | null;
+  siteVisit: {
+    id: string;
+    status: string;
+    startedAt: string;
+    endedAt: string | null;
+    team: NonNullable<OperationsBoardTeam>;
+    substation: {
+      id: string;
+      code: string;
+      name: string;
+      location: string | null;
+    };
+  };
+  asset: {
+    id: string;
+    code: string;
+    name: string | null;
+    assetType: {
+      id: string;
+      code: string;
+      name: string;
+    };
+  };
+  assetCode: string;
+  assetName: string | null;
+  assignedToUserId: string | null;
+  assignedToTeamId: string | null;
+  assignedToUser: OperationsBoardActor;
+  assignedToTeam: OperationsBoardTeam;
+  assignedTo: string;
+  verifiedByUser: OperationsBoardActor;
+  maintainedByUser: OperationsBoardActor;
+  closureVerifiedByUser: OperationsBoardActor;
+  detectedAt: string;
+  createdAt: string;
+  verifiedAt: string | null;
+  assignedAt: string | null;
+  maintainedAt: string | null;
+  closureVerifiedAt: string | null;
+  dueDate: string | null;
+  slaState: DefectSlaState;
+  isOverdue: boolean;
+};
+
+type OperationsBoardQueue = {
+  key: OperationsBoardQueueKey;
+  title: string;
+  description: string;
+  statuses: DefectLifecycleStatus[];
+  count: number;
+  items: OperationsBoardItem[];
+};
+
+type OperationsBoardQueueKey =
+  | 'awaitingQaQc'
+  | 'maintenanceReady'
+  | 'inMaintenance'
+  | 'awaitingClosureVerification'
+  | 'closedResolved'
+  | 'exceptions';
+
+const OPERATIONS_BOARD_QUEUES: Array<{
+  key: OperationsBoardQueueKey;
+  title: string;
+  description: string;
+  statuses: DefectLifecycleStatus[];
+}> = [
+  {
+    key: 'awaitingQaQc',
+    title: 'Awaiting QA/QC',
+    description: 'Detected defects waiting for QA/QC review.',
+    statuses: [
+      DefectLifecycleStatus.DETECTED,
+      DefectLifecycleStatus.UNDER_REVIEW,
+    ],
+  },
+  {
+    key: 'maintenanceReady',
+    title: 'Maintenance Ready',
+    description: 'Verified defects ready for maintenance planning.',
+    statuses: [DefectLifecycleStatus.VERIFIED],
+  },
+  {
+    key: 'inMaintenance',
+    title: 'In Maintenance',
+    description: 'Assigned defects currently owned by maintenance.',
+    statuses: [
+      DefectLifecycleStatus.ASSIGNED,
+      DefectLifecycleStatus.IN_PROGRESS,
+    ],
+  },
+  {
+    key: 'awaitingClosureVerification',
+    title: 'Awaiting Closure Verification',
+    description: 'Completed maintenance waiting for closure checks.',
+    statuses: [
+      DefectLifecycleStatus.COMPLETED,
+      DefectLifecycleStatus.VERIFICATION_PENDING,
+    ],
+  },
+  {
+    key: 'closedResolved',
+    title: 'Closed / Resolved',
+    description: 'Closed defects retained for operational traceability.',
+    statuses: [DefectLifecycleStatus.CLOSED],
+  },
+  {
+    key: 'exceptions',
+    title: 'Exceptions',
+    description:
+      'Rejected, external constraint, deferred, temporary fix, monitoring required, false positive, or duplicate outcomes.',
+    statuses: [DefectLifecycleStatus.REJECTED],
+  },
+];
+
+const EXCEPTION_RESOLUTION_OUTCOMES = new Set<DefectResolutionOutcome>([
+  DefectResolutionOutcome.EXTERNAL_CONSTRAINT,
+  DefectResolutionOutcome.DEFERRED,
+  DefectResolutionOutcome.TEMPORARY_FIX,
+  DefectResolutionOutcome.MONITORING_REQUIRED,
+  DefectResolutionOutcome.FALSE_POSITIVE,
+  DefectResolutionOutcome.DUPLICATE,
+]);
+
+const MAINTENANCE_COMPLETION_RESOLUTION_OUTCOMES = new Set<DefectResolutionOutcome>([
+  DefectResolutionOutcome.RESOLVED,
+  DefectResolutionOutcome.TEMPORARY_FIX,
+  DefectResolutionOutcome.MONITORING_REQUIRED,
+  DefectResolutionOutcome.EXTERNAL_CONSTRAINT,
+  DefectResolutionOutcome.DEFERRED,
+]);
+
+const LEGACY_MAINTENANCE_RESOLUTION_OUTCOME_MAP: Partial<
+  Record<DefectResolutionOutcome, DefectResolutionOutcome>
+> = {
+  [DefectResolutionOutcome.REPAIRED]: DefectResolutionOutcome.RESOLVED,
+  [DefectResolutionOutcome.PARTIAL]: DefectResolutionOutcome.TEMPORARY_FIX,
+  [DefectResolutionOutcome.MONITOR_ONLY]:
+    DefectResolutionOutcome.MONITORING_REQUIRED,
+  [DefectResolutionOutcome.ESCALATED]:
+    DefectResolutionOutcome.EXTERNAL_CONSTRAINT,
 };
 
 @Injectable()
@@ -89,7 +411,30 @@ export class DefectsService {
             name: true,
           },
         },
+        assignedToUser: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+          },
+        },
+        assignedToTeam: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
         verifiedByUser: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+          },
+        },
+        maintainedByUser: {
           select: {
             id: true,
             email: true,
@@ -163,6 +508,88 @@ export class DefectsService {
       .map((defect) => this.serializeDefectListItem(defect));
   }
 
+  async getOperationsBoard(
+    user: RequestUser,
+    query: ListDefectOperationsBoardQueryDto,
+  ) {
+    await this.ensureDefectsForAccessibleItems(user);
+
+    const defects = await this.prisma.defect.findMany({
+      where: this.buildOperationsBoardWhere(user, query),
+      orderBy: [
+        {
+          dueDate: 'asc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
+      include: OPERATIONS_BOARD_INCLUDE,
+    });
+    const items = defects
+      .map((defect) => this.serializeOperationsBoardItem(defect))
+      .sort((left, right) => this.compareOperationsBoardItems(left, right));
+    const queues = this.createOperationsBoardQueues();
+    const mainheadQueueMap = new Map<
+      string,
+      {
+        mainhead: OperationsBoardMainhead;
+        queues: Map<OperationsBoardQueueKey, OperationsBoardQueue>;
+      }
+    >();
+
+    for (const item of items) {
+      const queueKey = this.getOperationsBoardQueueKey(item);
+      queues.get(queueKey)?.items.push(item);
+
+      const mainheadKey =
+        item.mainhead.id ?? item.mainhead.code ?? item.mainhead.label;
+
+      if (!mainheadQueueMap.has(mainheadKey)) {
+        mainheadQueueMap.set(mainheadKey, {
+          mainhead: item.mainhead,
+          queues: this.createOperationsBoardQueues(),
+        });
+      }
+
+      mainheadQueueMap.get(mainheadKey)?.queues.get(queueKey)?.items.push(item);
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      filters: {
+        mainhead: query.mainhead ?? null,
+        projectId: query.projectId ?? null,
+        workPackageId: query.workPackageId ?? null,
+        siteVisitId: query.siteVisitId ?? null,
+        severity: query.severity ?? null,
+        status: query.status ?? null,
+        resolutionOutcome: query.resolutionOutcome ?? null,
+        assignedToUserId: query.assignedToUserId ?? null,
+        overdueOnly: query.overdueOnly ?? false,
+        q: query.q ?? null,
+      },
+      totalCount: items.length,
+      queues: this.serializeOperationsBoardQueues(queues),
+      mainheads: Array.from(mainheadQueueMap.values())
+        .map((group) => {
+          const serializedQueues = this.serializeOperationsBoardQueues(group.queues);
+
+          return {
+            mainhead: group.mainhead,
+            count: serializedQueues.reduce((total, queue) => total + queue.count, 0),
+            queues: serializedQueues,
+          };
+        })
+        .sort((left, right) =>
+          left.mainhead.label.localeCompare(right.mainhead.label, 'en', {
+            numeric: true,
+            sensitivity: 'base',
+          }),
+        ),
+    };
+  }
+
   async getDetail(user: RequestUser, defectId: string) {
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
 
@@ -183,7 +610,11 @@ export class DefectsService {
       closedAt: Date | null;
       resolvedAt: Date | null;
       lifecycleStatus?: DefectLifecycleStatus;
+      resolutionOutcome?: DefectResolutionOutcome;
       actionRemark?: string | null;
+      maintainedByUserId?: string;
+      maintainedAt?: Date;
+      maintenanceNotes?: string | null;
     } = {
       status: dto.status,
       closedAt:
@@ -200,6 +631,27 @@ export class DefectsService {
       data.actionRemark = actionRemark;
     }
 
+    const statusResolutionOutcome =
+      dto.status === DefectStatus.RESOLVED || dto.status === DefectStatus.CLOSED
+        ? defect.resolutionOutcome ?? DefectResolutionOutcome.RESOLVED
+        : null;
+
+    if (
+      statusResolutionOutcome &&
+      defect.resolutionOutcome !== statusResolutionOutcome
+    ) {
+      data.resolutionOutcome = statusResolutionOutcome;
+    }
+
+    if (dto.status === DefectStatus.RESOLVED && defect.status !== dto.status) {
+      data.maintainedByUserId = user.id;
+      data.maintainedAt = now;
+
+      if (actionRemark !== undefined) {
+        data.maintenanceNotes = actionRemark;
+      }
+    }
+
     const statusDrivenLifecycleStatus = this.getLifecycleStatusForLegacyStatus(
       defect.lifecycleStatus,
       dto.status,
@@ -209,8 +661,28 @@ export class DefectsService {
       data.lifecycleStatus = statusDrivenLifecycleStatus;
     }
 
+    const previousLifecycleStatus = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
+    const nextLifecycleStatus =
+      statusDrivenLifecycleStatus ?? previousLifecycleStatus;
+    const resolutionOutcomeChanged =
+      Boolean(statusResolutionOutcome) &&
+      defect.resolutionOutcome !== statusResolutionOutcome;
     const shouldCreateTimelineEntry =
-      defect.status !== dto.status || Boolean(actionRemark);
+      defect.status !== dto.status ||
+      Boolean(actionRemark) ||
+      resolutionOutcomeChanged;
+    const timelineEventType =
+      dto.status === DefectStatus.IN_PROGRESS && defect.status !== dto.status
+        ? DefectTimelineEventType.MAINTENANCE_STARTED
+        : dto.status === DefectStatus.RESOLVED && defect.status !== dto.status
+          ? DefectTimelineEventType.MAINTENANCE_COMPLETED
+          : resolutionOutcomeChanged && defect.status === dto.status
+            ? DefectTimelineEventType.RESOLUTION_OUTCOME_UPDATED
+          : defect.status === dto.status
+            ? DefectTimelineEventType.COMMENT
+            : DefectTimelineEventType.STATUS_CHANGED;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.defect.update({
@@ -228,12 +700,15 @@ export class DefectsService {
         data: {
           id: randomUUID(),
           defectId: defect.id,
-          type:
-            defect.status === dto.status
-              ? DefectTimelineEventType.COMMENT
-              : DefectTimelineEventType.STATUS_CHANGED,
+          type: timelineEventType,
           fromStatus: defect.status === dto.status ? null : defect.status,
           toStatus: defect.status === dto.status ? null : dto.status,
+          fromLifecycleStatus: previousLifecycleStatus,
+          toLifecycleStatus: nextLifecycleStatus,
+          fromResolutionOutcome: resolutionOutcomeChanged
+            ? defect.resolutionOutcome
+            : null,
+          toResolutionOutcome: statusResolutionOutcome,
           comment: actionRemark ?? null,
           createdByUserId: user.id,
           createdAt: now,
@@ -252,14 +727,24 @@ export class DefectsService {
     this.assertCanMutate(user);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
-    const hasAssignedUserId = Object.prototype.hasOwnProperty.call(
+    const hasLegacyAssignedUserId = Object.prototype.hasOwnProperty.call(
       dto,
       'assignedUserId',
     );
-    const hasAssignedTeamId = Object.prototype.hasOwnProperty.call(
+    const hasLegacyAssignedTeamId = Object.prototype.hasOwnProperty.call(
       dto,
       'assignedTeamId',
     );
+    const hasAssignedToUserId = Object.prototype.hasOwnProperty.call(
+      dto,
+      'assignedToUserId',
+    );
+    const hasAssignedToTeamId = Object.prototype.hasOwnProperty.call(
+      dto,
+      'assignedToTeamId',
+    );
+    const hasAssignedUserId = hasLegacyAssignedUserId || hasAssignedToUserId;
+    const hasAssignedTeamId = hasLegacyAssignedTeamId || hasAssignedToTeamId;
 
     if (!hasAssignedUserId && !hasAssignedTeamId) {
       throw new BadRequestException(
@@ -267,12 +752,16 @@ export class DefectsService {
       );
     }
 
+    const effectiveAssignedUserId =
+      defect.assignedToUserId ?? defect.assignedUserId;
+    const effectiveAssignedTeamId =
+      defect.assignedToTeamId ?? defect.assignedTeamId;
     const nextAssignedUserId = hasAssignedUserId
-      ? dto.assignedUserId ?? null
-      : defect.assignedUserId;
+      ? (hasAssignedToUserId ? dto.assignedToUserId : dto.assignedUserId) ?? null
+      : effectiveAssignedUserId;
     const nextAssignedTeamId = hasAssignedTeamId
-      ? dto.assignedTeamId ?? null
-      : defect.assignedTeamId;
+      ? (hasAssignedToTeamId ? dto.assignedToTeamId : dto.assignedTeamId) ?? null
+      : effectiveAssignedTeamId;
 
     const [updatedAssignedUser, updatedAssignedTeam] = await Promise.all([
       hasAssignedUserId && nextAssignedUserId
@@ -284,13 +773,20 @@ export class DefectsService {
     ]);
     const nextAssignedUser = hasAssignedUserId
       ? updatedAssignedUser
-      : defect.assignedUser;
+      : defect.assignedToUser ?? defect.assignedUser;
     const nextAssignedTeam = hasAssignedTeamId
       ? updatedAssignedTeam
-      : defect.assignedTeam;
+      : defect.assignedToTeam ?? defect.assignedTeam;
+    const currentLifecycleStatus = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
 
-    const userChanged = defect.assignedUserId !== nextAssignedUserId;
-    const teamChanged = defect.assignedTeamId !== nextAssignedTeamId;
+    const userChanged =
+      defect.assignedUserId !== nextAssignedUserId ||
+      defect.assignedToUserId !== nextAssignedUserId;
+    const teamChanged =
+      defect.assignedTeamId !== nextAssignedTeamId ||
+      defect.assignedToTeamId !== nextAssignedTeamId;
 
     if (!userChanged && !teamChanged) {
       return this.getDetail(user, defect.id);
@@ -298,8 +794,8 @@ export class DefectsService {
 
     const now = new Date();
     const previousAssignee = this.formatAssignmentLabel(
-      defect.assignedUser,
-      defect.assignedTeam,
+      defect.assignedToUser ?? defect.assignedUser,
+      defect.assignedToTeam ?? defect.assignedTeam,
     );
     const nextAssignee = this.formatAssignmentLabel(
       nextAssignedUserId ? nextAssignedUser : null,
@@ -310,6 +806,23 @@ export class DefectsService {
       nextAssignedUserId,
       nextAssignedTeamId,
     );
+    const isAssigning = Boolean(nextAssignedUserId || nextAssignedTeamId);
+    const assignableLifecycleStatuses: DefectLifecycleStatus[] = [
+      DefectLifecycleStatus.VERIFIED,
+      DefectLifecycleStatus.ASSIGNED,
+      DefectLifecycleStatus.IN_PROGRESS,
+      DefectLifecycleStatus.COMPLETED,
+      DefectLifecycleStatus.VERIFICATION_PENDING,
+    ];
+
+    if (
+      isAssigning &&
+      !assignableLifecycleStatuses.includes(currentLifecycleStatus)
+    ) {
+      throw new BadRequestException(
+        'Defect must be verified before assignment.',
+      );
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.defect.update({
@@ -317,8 +830,22 @@ export class DefectsService {
           id: defect.id,
         },
         data: {
-          ...(hasAssignedUserId ? { assignedUserId: nextAssignedUserId } : {}),
-          ...(hasAssignedTeamId ? { assignedTeamId: nextAssignedTeamId } : {}),
+          ...(hasAssignedUserId
+            ? {
+                assignedUserId: nextAssignedUserId,
+                assignedToUserId: nextAssignedUserId,
+              }
+            : {}),
+          ...(hasAssignedTeamId
+            ? {
+                assignedTeamId: nextAssignedTeamId,
+                assignedToTeamId: nextAssignedTeamId,
+              }
+            : {}),
+          assignedAt:
+            nextAssignedUserId || nextAssignedTeamId
+              ? now
+              : null,
           ...(assignmentLifecycleStatus
             ? { lifecycleStatus: assignmentLifecycleStatus }
             : {}),
@@ -329,7 +856,11 @@ export class DefectsService {
         data: {
           id: randomUUID(),
           defectId: defect.id,
-          type: DefectTimelineEventType.ASSIGNMENT_CHANGED,
+          type: DefectTimelineEventType.DEFECT_ASSIGNED,
+          fromLifecycleStatus: this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
+          toLifecycleStatus:
+            assignmentLifecycleStatus ??
+            this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
           comment: `Assignment changed from ${previousAssignee} to ${nextAssignee}.`,
           createdByUserId: user.id,
           createdAt: now,
@@ -400,13 +931,20 @@ export class DefectsService {
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
-    const hasRemarks = Object.prototype.hasOwnProperty.call(
+    const hasLegacyRemarks = Object.prototype.hasOwnProperty.call(
       dto,
       'verificationRemarks',
     );
-    const verificationRemarks = hasRemarks
-      ? this.normalizeOperationalString(dto.verificationRemarks)
-      : defect.verificationRemarks;
+    const hasVerificationNotes = Object.prototype.hasOwnProperty.call(
+      dto,
+      'verificationNotes',
+    );
+    const hasRemarks = hasLegacyRemarks || hasVerificationNotes;
+    const verificationNotes = hasRemarks
+      ? this.normalizeOperationalString(
+          hasVerificationNotes ? dto.verificationNotes : dto.verificationRemarks,
+        )
+      : defect.verificationNotes ?? defect.verificationRemarks;
 
     this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
       DefectLifecycleStatus.UNDER_REVIEW,
@@ -422,7 +960,12 @@ export class DefectsService {
           lifecycleStatus: DefectLifecycleStatus.VERIFIED,
           verifiedByUserId: user.id,
           verifiedAt: now,
-          ...(hasRemarks ? { verificationRemarks } : {}),
+          ...(hasRemarks
+            ? {
+                verificationNotes,
+                verificationRemarks: verificationNotes,
+              }
+            : {}),
         },
       });
 
@@ -430,10 +973,12 @@ export class DefectsService {
         data: {
           id: randomUUID(),
           defectId: defect.id,
-          type: DefectTimelineEventType.COMMENT,
+          type: DefectTimelineEventType.DEFECT_VERIFIED,
+          fromLifecycleStatus: this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
+          toLifecycleStatus: DefectLifecycleStatus.VERIFIED,
           comment: this.buildGovernanceComment(
             'QA/QC verified defect',
-            verificationRemarks,
+            verificationNotes,
           ),
           createdByUserId: user.id,
           createdAt: now,
@@ -453,13 +998,20 @@ export class DefectsService {
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
-    const hasRemarks = Object.prototype.hasOwnProperty.call(
+    const hasLegacyRemarks = Object.prototype.hasOwnProperty.call(
       dto,
       'verificationRemarks',
     );
-    const verificationRemarks = hasRemarks
-      ? this.normalizeOperationalString(dto.verificationRemarks)
-      : defect.verificationRemarks;
+    const hasVerificationNotes = Object.prototype.hasOwnProperty.call(
+      dto,
+      'verificationNotes',
+    );
+    const hasRemarks = hasLegacyRemarks || hasVerificationNotes;
+    const verificationNotes = hasRemarks
+      ? this.normalizeOperationalString(
+          hasVerificationNotes ? dto.verificationNotes : dto.verificationRemarks,
+        )
+      : defect.verificationNotes ?? defect.verificationRemarks;
 
     this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
       DefectLifecycleStatus.UNDER_REVIEW,
@@ -475,7 +1027,12 @@ export class DefectsService {
           lifecycleStatus: DefectLifecycleStatus.REJECTED,
           verifiedByUserId: user.id,
           verifiedAt: now,
-          ...(hasRemarks ? { verificationRemarks } : {}),
+          ...(hasRemarks
+            ? {
+                verificationNotes,
+                verificationRemarks: verificationNotes,
+              }
+            : {}),
         },
       });
 
@@ -484,9 +1041,11 @@ export class DefectsService {
           id: randomUUID(),
           defectId: defect.id,
           type: DefectTimelineEventType.COMMENT,
+          fromLifecycleStatus: this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
+          toLifecycleStatus: DefectLifecycleStatus.REJECTED,
           comment: this.buildGovernanceComment(
             'QA/QC rejected defect',
-            verificationRemarks,
+            verificationNotes,
           ),
           createdByUserId: user.id,
           createdAt: now,
@@ -506,20 +1065,42 @@ export class DefectsService {
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
-    const hasCompletionRemarks = Object.prototype.hasOwnProperty.call(
+    const hasLegacyCompletionRemarks = Object.prototype.hasOwnProperty.call(
       dto,
       'completionRemarks',
     );
-    const completionRemarks = hasCompletionRemarks
-      ? this.normalizeOperationalString(dto.completionRemarks)
-      : defect.actionRemark;
-    const resolutionOutcome =
-      dto.resolutionOutcome ?? DefectResolutionOutcome.REPAIRED;
+    const hasMaintenanceNotes = Object.prototype.hasOwnProperty.call(
+      dto,
+      'maintenanceNotes',
+    );
+    const hasLegacyRemarks = Object.prototype.hasOwnProperty.call(dto, 'remarks');
+    const hasCompletionRemarks =
+      hasLegacyCompletionRemarks || hasMaintenanceNotes || hasLegacyRemarks;
+    const maintenanceNotes = hasCompletionRemarks
+      ? this.normalizeOperationalString(
+          hasMaintenanceNotes
+            ? dto.maintenanceNotes
+            : hasLegacyCompletionRemarks
+              ? dto.completionRemarks
+              : dto.remarks,
+        )
+      : defect.maintenanceNotes ?? defect.actionRemark;
+    const resolutionOutcome = this.resolveMaintenanceResolutionOutcome(
+      dto.resolutionOutcome ??
+        dto.outcome ??
+        defect.resolutionOutcome ??
+        DefectResolutionOutcome.RESOLVED,
+    );
+    const resolutionOutcomeChanged =
+      defect.resolutionOutcome !== resolutionOutcome;
     const currentLifecycleStatus = this.getEffectiveLifecycleStatus(
       defect.lifecycleStatus,
     );
     const completionLifecyclePath =
       this.getMaintenanceCompletionLifecyclePath(currentLifecycleStatus);
+    const startsMaintenance = completionLifecyclePath.includes(
+      DefectLifecycleStatus.IN_PROGRESS,
+    );
 
     this.assertLifecyclePath(currentLifecycleStatus, completionLifecyclePath);
 
@@ -533,21 +1114,58 @@ export class DefectsService {
           resolutionOutcome,
           status: DefectStatus.RESOLVED,
           resolvedAt: defect.resolvedAt ?? now,
-          ...(hasCompletionRemarks ? { actionRemark: completionRemarks } : {}),
+          maintainedByUserId: user.id,
+          maintainedAt: now,
+          ...(hasCompletionRemarks
+            ? {
+                actionRemark: maintenanceNotes,
+                maintenanceNotes,
+              }
+            : {}),
         },
       });
+
+      if (startsMaintenance) {
+        await tx.defectTimelineEntry.create({
+          data: {
+            id: randomUUID(),
+            defectId: defect.id,
+            type: DefectTimelineEventType.MAINTENANCE_STARTED,
+            fromLifecycleStatus: currentLifecycleStatus,
+            toLifecycleStatus: DefectLifecycleStatus.IN_PROGRESS,
+            comment: 'Maintenance started.',
+            createdByUserId: user.id,
+            createdAt: now,
+          },
+        });
+      }
+
+      const completionEventType =
+        completionLifecyclePath.length === 0 &&
+        resolutionOutcomeChanged &&
+        defect.status === DefectStatus.RESOLVED
+          ? DefectTimelineEventType.RESOLUTION_OUTCOME_UPDATED
+          : DefectTimelineEventType.MAINTENANCE_COMPLETED;
 
       await tx.defectTimelineEntry.create({
         data: {
           id: randomUUID(),
           defectId: defect.id,
-          type: DefectTimelineEventType.COMMENT,
+          type: completionEventType,
           fromStatus: defect.status === DefectStatus.RESOLVED ? null : defect.status,
           toStatus:
             defect.status === DefectStatus.RESOLVED ? null : DefectStatus.RESOLVED,
+          fromLifecycleStatus: startsMaintenance
+            ? DefectLifecycleStatus.IN_PROGRESS
+            : currentLifecycleStatus,
+          toLifecycleStatus: DefectLifecycleStatus.COMPLETED,
+          fromResolutionOutcome: resolutionOutcomeChanged
+            ? defect.resolutionOutcome
+            : null,
+          toResolutionOutcome: resolutionOutcome,
           comment: this.buildMaintenanceCompletionComment(
             resolutionOutcome,
-            completionRemarks,
+            maintenanceNotes,
             currentLifecycleStatus,
             completionLifecyclePath,
           ),
@@ -569,10 +1187,26 @@ export class DefectsService {
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
-    const hasRemarks = Object.prototype.hasOwnProperty.call(dto, 'closureRemarks');
-    const closureRemarks = hasRemarks
-      ? this.normalizeOperationalString(dto.closureRemarks)
-      : defect.closureRemarks;
+    const hasLegacyRemarks = Object.prototype.hasOwnProperty.call(
+      dto,
+      'closureRemarks',
+    );
+    const hasClosureVerificationNotes = Object.prototype.hasOwnProperty.call(
+      dto,
+      'closureVerificationNotes',
+    );
+    const hasRemarks = hasLegacyRemarks || hasClosureVerificationNotes;
+    const closureVerificationNotes = hasRemarks
+      ? this.normalizeOperationalString(
+          hasClosureVerificationNotes
+            ? dto.closureVerificationNotes
+            : dto.closureRemarks,
+        )
+      : defect.closureVerificationNotes ?? defect.closureRemarks;
+    const finalResolutionOutcome =
+      defect.resolutionOutcome ?? DefectResolutionOutcome.RESOLVED;
+    const resolutionOutcomeChanged =
+      defect.resolutionOutcome !== finalResolutionOutcome;
 
     this.assertLifecyclePath(this.getEffectiveLifecycleStatus(defect.lifecycleStatus), [
       DefectLifecycleStatus.VERIFICATION_PENDING,
@@ -587,11 +1221,17 @@ export class DefectsService {
         data: {
           lifecycleStatus: DefectLifecycleStatus.CLOSED,
           status: DefectStatus.CLOSED,
+          resolutionOutcome: finalResolutionOutcome,
           resolvedAt: defect.resolvedAt ?? now,
           closedAt: defect.closedAt ?? now,
           closureVerifiedByUserId: user.id,
           closureVerifiedAt: now,
-          ...(hasRemarks ? { closureRemarks } : {}),
+          ...(hasRemarks
+            ? {
+                closureVerificationNotes,
+                closureRemarks: closureVerificationNotes,
+              }
+            : {}),
         },
       });
 
@@ -599,13 +1239,19 @@ export class DefectsService {
         data: {
           id: randomUUID(),
           defectId: defect.id,
-          type: DefectTimelineEventType.COMMENT,
+          type: DefectTimelineEventType.CLOSURE_VERIFIED,
           fromStatus: defect.status === DefectStatus.CLOSED ? null : defect.status,
           toStatus:
             defect.status === DefectStatus.CLOSED ? null : DefectStatus.CLOSED,
-          comment: this.buildGovernanceComment(
-            'Closure verified by Mainhead/TNB',
-            closureRemarks,
+          fromLifecycleStatus: this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
+          toLifecycleStatus: DefectLifecycleStatus.CLOSED,
+          fromResolutionOutcome: resolutionOutcomeChanged
+            ? defect.resolutionOutcome
+            : null,
+          toResolutionOutcome: finalResolutionOutcome,
+          comment: this.buildClosureVerificationComment(
+            finalResolutionOutcome,
+            closureVerificationNotes,
           ),
           createdByUserId: user.id,
           createdAt: now,
@@ -785,7 +1431,30 @@ export class DefectsService {
           name: true,
         },
       },
+      assignedToUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+      assignedToTeam: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
       verifiedByUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+      maintainedByUser: {
         select: {
           id: true,
           email: true,
@@ -810,6 +1479,10 @@ export class DefectsService {
           type: true,
           fromStatus: true,
           toStatus: true,
+          fromLifecycleStatus: true,
+          toLifecycleStatus: true,
+          fromResolutionOutcome: true,
+          toResolutionOutcome: true,
           comment: true,
           createdAt: true,
           createdBy: {
@@ -920,11 +1593,703 @@ export class DefectsService {
     };
   }
 
+  private buildOperationsBoardWhere(
+    user: RequestUser,
+    query: ListDefectOperationsBoardQueryDto,
+  ): Prisma.DefectWhereInput {
+    const filters: Prisma.DefectWhereInput[] = [
+      {
+        inspectionItemResult: {
+          isDefect: true,
+          inspection: {
+            tenantId: user.tenantId,
+            ...this.inspectionAccessScope(user),
+          },
+        },
+      },
+      this.operationsBoardMainheadFilter(query.mainhead),
+      this.operationsBoardProjectFilter(query.projectId),
+      this.operationsBoardWorkPackageFilter(query.workPackageId),
+      this.operationsBoardSiteVisitFilter(query.siteVisitId),
+      this.operationsBoardSeverityFilter(query.severity),
+      this.operationsBoardStatusFilter(query.status),
+      this.operationsBoardResolutionOutcomeFilter(query.resolutionOutcome),
+      this.operationsBoardAssignedToUserFilter(query.assignedToUserId),
+      this.operationsBoardOverdueFilter(query.overdueOnly),
+      this.operationsBoardSearchFilter(query.q),
+    ].filter((filter) => Object.keys(filter).length > 0);
+
+    return {
+      AND: filters,
+    };
+  }
+
+  private operationsBoardProjectFilter(
+    projectId?: string,
+  ): Prisma.DefectWhereInput {
+    if (!projectId) {
+      return {};
+    }
+
+    return {
+      inspectionItemResult: {
+        inspection: {
+          siteVisit: {
+            projectId,
+          },
+        },
+      },
+    };
+  }
+
+  private operationsBoardWorkPackageFilter(
+    workPackageId?: string,
+  ): Prisma.DefectWhereInput {
+    if (!workPackageId) {
+      return {};
+    }
+
+    return {
+      inspectionItemResult: {
+        inspection: {
+          siteVisit: {
+            workPackageId,
+          },
+        },
+      },
+    };
+  }
+
+  private operationsBoardSiteVisitFilter(
+    siteVisitId?: string,
+  ): Prisma.DefectWhereInput {
+    if (!siteVisitId) {
+      return {};
+    }
+
+    return {
+      inspectionItemResult: {
+        inspection: {
+          siteVisitId,
+        },
+      },
+    };
+  }
+
+  private operationsBoardSeverityFilter(
+    severity?: DefectSeverity,
+  ): Prisma.DefectWhereInput {
+    return severity ? { severity } : {};
+  }
+
+  private operationsBoardStatusFilter(
+    status?: DefectLifecycleStatus,
+  ): Prisma.DefectWhereInput {
+    if (!status) {
+      return {};
+    }
+
+    if (status === DefectLifecycleStatus.DETECTED) {
+      return {
+        OR: [
+          {
+            lifecycleStatus: DefectLifecycleStatus.DETECTED,
+          },
+          {
+            lifecycleStatus: null,
+          },
+        ],
+      };
+    }
+
+    return {
+      lifecycleStatus: status,
+    };
+  }
+
+  private operationsBoardResolutionOutcomeFilter(
+    resolutionOutcome?: DefectResolutionOutcome,
+  ): Prisma.DefectWhereInput {
+    return resolutionOutcome ? { resolutionOutcome } : {};
+  }
+
+  private operationsBoardAssignedToUserFilter(
+    assignedToUserId?: string,
+  ): Prisma.DefectWhereInput {
+    if (!assignedToUserId) {
+      return {};
+    }
+
+    return {
+      OR: [
+        {
+          assignedToUserId,
+        },
+        {
+          assignedUserId: assignedToUserId,
+        },
+      ],
+    };
+  }
+
+  private operationsBoardOverdueFilter(
+    overdueOnly?: boolean,
+  ): Prisma.DefectWhereInput {
+    if (!overdueOnly) {
+      return {};
+    }
+
+    return {
+      status: {
+        in: [...ACTIVE_SLA_STATUSES],
+      },
+      dueDate: {
+        lt: new Date(),
+      },
+    };
+  }
+
+  private operationsBoardMainheadFilter(
+    mainhead?: string,
+  ): Prisma.DefectWhereInput {
+    const normalizedMainhead = mainhead?.trim();
+
+    if (!normalizedMainhead) {
+      return {};
+    }
+
+    const mainheadTextFilter = this.insensitiveContains(normalizedMainhead);
+    const mainheadIdentityFilter = this.isUuid(normalizedMainhead)
+      ? [
+          {
+            mainheadId: normalizedMainhead,
+          },
+          {
+            mainheadRecord: {
+              is: {
+                id: normalizedMainhead,
+              },
+            },
+          },
+          {
+            project: {
+              is: {
+                mainheadId: normalizedMainhead,
+              },
+            },
+          },
+          {
+            workPackage: {
+              is: {
+                mainheadId: normalizedMainhead,
+              },
+            },
+          },
+        ]
+      : [];
+
+    return {
+      inspectionItemResult: {
+        inspection: {
+          siteVisit: {
+            OR: [
+              ...mainheadIdentityFilter,
+              {
+                mainhead: mainheadTextFilter,
+              },
+              {
+                mainheadRecord: {
+                  is: {
+                    OR: [
+                      {
+                        code: mainheadTextFilter,
+                      },
+                      {
+                        name: mainheadTextFilter,
+                      },
+                    ],
+                  },
+                },
+              },
+              {
+                project: {
+                  is: {
+                    mainhead: {
+                      is: {
+                        OR: [
+                          {
+                            code: mainheadTextFilter,
+                          },
+                          {
+                            name: mainheadTextFilter,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                workPackage: {
+                  is: {
+                    OR: [
+                      {
+                        mainhead: mainheadTextFilter,
+                      },
+                      {
+                        mainheadRecord: {
+                          is: {
+                            OR: [
+                              {
+                                code: mainheadTextFilter,
+                              },
+                              {
+                                name: mainheadTextFilter,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  private operationsBoardSearchFilter(search?: string): Prisma.DefectWhereInput {
+    const normalizedSearch = search?.trim();
+
+    if (!normalizedSearch) {
+      return {};
+    }
+
+    const textFilter = this.insensitiveContains(normalizedSearch);
+    const relationActorFilter = {
+      is: {
+        OR: [
+          {
+            name: textFilter,
+          },
+          {
+            email: textFilter,
+          },
+        ],
+      },
+    };
+    const relationTeamFilter = {
+      is: {
+        OR: [
+          {
+            name: textFilter,
+          },
+          {
+            code: textFilter,
+          },
+        ],
+      },
+    };
+    const searchFilters: Prisma.DefectWhereInput[] = [
+      {
+        inspectionItemResult: {
+          label: textFilter,
+        },
+      },
+      {
+        inspectionItemResult: {
+          remark: textFilter,
+        },
+      },
+      {
+        actionRemark: textFilter,
+      },
+      {
+        verificationNotes: textFilter,
+      },
+      {
+        maintenanceNotes: textFilter,
+      },
+      {
+        closureVerificationNotes: textFilter,
+      },
+      {
+        assignedToUser: relationActorFilter,
+      },
+      {
+        assignedUser: relationActorFilter,
+      },
+      {
+        assignedToTeam: relationTeamFilter,
+      },
+      {
+        assignedTeam: relationTeamFilter,
+      },
+      {
+        inspectionItemResult: {
+          inspection: {
+            asset: {
+              OR: [
+                {
+                  assetCode: textFilter,
+                },
+                {
+                  name: textFilter,
+                },
+                {
+                  assetType: {
+                    OR: [
+                      {
+                        code: textFilter,
+                      },
+                      {
+                        name: textFilter,
+                      },
+                    ],
+                  },
+                },
+                {
+                  substation: {
+                    OR: [
+                      {
+                        code: textFilter,
+                      },
+                      {
+                        name: textFilter,
+                      },
+                      {
+                        location: textFilter,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        inspectionItemResult: {
+          inspection: {
+            siteVisit: {
+              OR: [
+                {
+                  mainhead: textFilter,
+                },
+                {
+                  substation: {
+                    OR: [
+                      {
+                        code: textFilter,
+                      },
+                      {
+                        name: textFilter,
+                      },
+                      {
+                        location: textFilter,
+                      },
+                    ],
+                  },
+                },
+                {
+                  mainheadRecord: {
+                    is: {
+                      OR: [
+                        {
+                          code: textFilter,
+                        },
+                        {
+                          name: textFilter,
+                        },
+                      ],
+                    },
+                  },
+                },
+                {
+                  project: {
+                    is: {
+                      OR: [
+                        {
+                          code: textFilter,
+                        },
+                        {
+                          name: textFilter,
+                        },
+                        {
+                          mainhead: {
+                            is: {
+                              OR: [
+                                {
+                                  code: textFilter,
+                                },
+                                {
+                                  name: textFilter,
+                                },
+                              ],
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+                {
+                  workPackage: {
+                    is: {
+                      OR: [
+                        {
+                          code: textFilter,
+                        },
+                        {
+                          name: textFilter,
+                        },
+                        {
+                          mainhead: textFilter,
+                        },
+                        {
+                          mainheadRecord: {
+                            is: {
+                              OR: [
+                                {
+                                  code: textFilter,
+                                },
+                                {
+                                  name: textFilter,
+                                },
+                              ],
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    ];
+
+    if (this.isUuid(normalizedSearch)) {
+      searchFilters.push(
+        {
+          id: normalizedSearch,
+        },
+        {
+          inspectionItemResultId: normalizedSearch,
+        },
+      );
+    }
+
+    return {
+      OR: searchFilters,
+    };
+  }
+
+  private serializeOperationsBoardItem(
+    defect: OperationsBoardDefect,
+  ): OperationsBoardItem {
+    const item = defect.inspectionItemResult;
+    const inspection = item.inspection;
+    const siteVisit = inspection.siteVisit;
+    const asset = inspection.asset;
+    const lifecycleStatus = this.getEffectiveLifecycleStatus(defect.lifecycleStatus);
+    const slaState = this.calculateSlaState(defect.status, defect.dueDate);
+    const assignedUser = defect.assignedToUser ?? defect.assignedUser;
+    const assignedTeam = defect.assignedToTeam ?? defect.assignedTeam;
+    const assignedUserId = defect.assignedToUserId ?? defect.assignedUserId;
+    const assignedTeamId = defect.assignedToTeamId ?? defect.assignedTeamId;
+    const mainhead = this.deriveOperationsMainhead(defect);
+
+    return {
+      id: defect.id,
+      inspectionItemResultId: item.id,
+      title: item.label,
+      summary: item.remark,
+      status: lifecycleStatus,
+      lifecycleStatus,
+      workflowStatus: defect.status,
+      severity: defect.severity,
+      resolutionOutcome: defect.resolutionOutcome,
+      mainhead,
+      mainheadLabel: mainhead.label,
+      project: siteVisit.project
+        ? {
+            id: siteVisit.project.id,
+            code: siteVisit.project.code,
+            name: siteVisit.project.name,
+          }
+        : null,
+      workPackage: siteVisit.workPackage
+        ? {
+            id: siteVisit.workPackage.id,
+            code: siteVisit.workPackage.code,
+            name: siteVisit.workPackage.name,
+          }
+        : null,
+      siteVisit: {
+        id: siteVisit.id,
+        status: siteVisit.status,
+        startedAt: siteVisit.startedAt.toISOString(),
+        endedAt: siteVisit.endedAt?.toISOString() ?? null,
+        team: siteVisit.team,
+        substation: siteVisit.substation,
+      },
+      asset: {
+        id: asset.id,
+        code: asset.assetCode,
+        name: asset.name,
+        assetType: asset.assetType,
+      },
+      assetCode: asset.assetCode,
+      assetName: asset.name,
+      assignedToUserId: assignedUserId,
+      assignedToTeamId: assignedTeamId,
+      assignedToUser: assignedUser,
+      assignedToTeam: assignedTeam,
+      assignedTo: this.formatAssignmentLabel(assignedUser, assignedTeam),
+      verifiedByUser: defect.verifiedByUser,
+      maintainedByUser: defect.maintainedByUser,
+      closureVerifiedByUser: defect.closureVerifiedByUser,
+      detectedAt: item.createdAt.toISOString(),
+      createdAt: defect.createdAt.toISOString(),
+      verifiedAt: defect.verifiedAt?.toISOString() ?? null,
+      assignedAt: defect.assignedAt?.toISOString() ?? null,
+      maintainedAt: defect.maintainedAt?.toISOString() ?? null,
+      closureVerifiedAt: defect.closureVerifiedAt?.toISOString() ?? null,
+      dueDate: defect.dueDate?.toISOString() ?? null,
+      slaState,
+      isOverdue: slaState === 'OVERDUE',
+    };
+  }
+
+  private deriveOperationsMainhead(
+    defect: OperationsBoardDefect,
+  ): OperationsBoardMainhead {
+    const siteVisit = defect.inspectionItemResult.inspection.siteVisit;
+    const record =
+      siteVisit.mainheadRecord ??
+      siteVisit.workPackage?.mainheadRecord ??
+      siteVisit.project?.mainhead ??
+      null;
+    const fallbackLabel =
+      siteVisit.mainhead?.trim() || siteVisit.workPackage?.mainhead?.trim() || null;
+    const label =
+      record?.name?.trim() ||
+      record?.code?.trim() ||
+      fallbackLabel ||
+      'Unassigned MAINHEAD';
+
+    return {
+      id:
+        record?.id ??
+        siteVisit.mainheadId ??
+        siteVisit.workPackage?.mainheadId ??
+        siteVisit.project?.mainheadId ??
+        null,
+      code: record?.code ?? null,
+      name: record?.name ?? fallbackLabel,
+      label,
+    };
+  }
+
+  private createOperationsBoardQueues() {
+    return new Map<OperationsBoardQueueKey, OperationsBoardQueue>(
+      OPERATIONS_BOARD_QUEUES.map((queue) => [
+        queue.key,
+        {
+          ...queue,
+          count: 0,
+          items: [],
+        },
+      ]),
+    );
+  }
+
+  private serializeOperationsBoardQueues(
+    queueMap: Map<OperationsBoardQueueKey, OperationsBoardQueue>,
+  ) {
+    return OPERATIONS_BOARD_QUEUES.map((queueDefinition) => {
+      const queue = queueMap.get(queueDefinition.key);
+      const items = queue?.items ?? [];
+
+      return {
+        ...queueDefinition,
+        count: items.length,
+        items,
+      };
+    });
+  }
+
+  private getOperationsBoardQueueKey(
+    item: OperationsBoardItem,
+  ): OperationsBoardQueueKey {
+    if (
+      item.status === DefectLifecycleStatus.REJECTED ||
+      (item.resolutionOutcome &&
+        EXCEPTION_RESOLUTION_OUTCOMES.has(item.resolutionOutcome))
+    ) {
+      return 'exceptions';
+    }
+
+    for (const queue of OPERATIONS_BOARD_QUEUES) {
+      if (queue.key !== 'exceptions' && queue.statuses.includes(item.status)) {
+        return queue.key;
+      }
+    }
+
+    return 'awaitingQaQc';
+  }
+
+  private compareOperationsBoardItems(
+    left: OperationsBoardItem,
+    right: OperationsBoardItem,
+  ) {
+    const severityRank: Record<DefectSeverity, number> = {
+      [DefectSeverity.CRITICAL]: 0,
+      [DefectSeverity.HIGH]: 1,
+      [DefectSeverity.MEDIUM]: 2,
+      [DefectSeverity.LOW]: 3,
+    };
+    const leftOverdueRank = left.isOverdue ? 0 : 1;
+    const rightOverdueRank = right.isOverdue ? 0 : 1;
+
+    if (leftOverdueRank !== rightOverdueRank) {
+      return leftOverdueRank - rightOverdueRank;
+    }
+
+    if (severityRank[left.severity] !== severityRank[right.severity]) {
+      return severityRank[left.severity] - severityRank[right.severity];
+    }
+
+    const leftDueTime = left.dueDate
+      ? new Date(left.dueDate).getTime()
+      : Number.POSITIVE_INFINITY;
+    const rightDueTime = right.dueDate
+      ? new Date(right.dueDate).getTime()
+      : Number.POSITIVE_INFINITY;
+
+    if (leftDueTime !== rightDueTime) {
+      return leftDueTime - rightDueTime;
+    }
+
+    return (
+      new Date(right.detectedAt).getTime() - new Date(left.detectedAt).getTime()
+    );
+  }
+
   private serializeDefectListItem(defect: {
     id: string;
     assignedUserId: string | null;
     assignedTeamId: string | null;
+    assignedToUserId: string | null;
+    assignedToTeamId: string | null;
     verifiedByUserId: string | null;
+    maintainedByUserId: string | null;
     closureVerifiedByUserId: string | null;
     status: DefectStatus;
     severity: DefectSeverity;
@@ -934,10 +2299,15 @@ export class DefectsService {
     dueDate: Date | null;
     resolvedAt: Date | null;
     closedAt: Date | null;
+    assignedAt: Date | null;
     verifiedAt: Date | null;
+    maintainedAt: Date | null;
     verificationRemarks: string | null;
+    verificationNotes: string | null;
+    maintenanceNotes: string | null;
     closureVerifiedAt: Date | null;
     closureRemarks: string | null;
+    closureVerificationNotes: string | null;
     assignedUser: {
       id: string;
       email: string;
@@ -949,7 +2319,24 @@ export class DefectsService {
       code: string;
       name: string;
     } | null;
+    assignedToUser: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+    } | null;
+    assignedToTeam: {
+      id: string;
+      code: string;
+      name: string;
+    } | null;
     verifiedByUser: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+    } | null;
+    maintainedByUser: {
       id: string;
       email: string;
       name: string;
@@ -989,19 +2376,33 @@ export class DefectsService {
     const item = defect.inspectionItemResult;
     const inspection = item.inspection;
     const slaState = this.calculateSlaState(defect.status, defect.dueDate);
+    const assignedUser = defect.assignedToUser ?? defect.assignedUser;
+    const assignedTeam = defect.assignedToTeam ?? defect.assignedTeam;
+    const assignedUserId = defect.assignedToUserId ?? defect.assignedUserId;
+    const assignedTeamId = defect.assignedToTeamId ?? defect.assignedTeamId;
+    const verificationNotes =
+      defect.verificationNotes ?? defect.verificationRemarks;
+    const closureVerificationNotes =
+      defect.closureVerificationNotes ?? defect.closureRemarks;
 
     return {
       id: defect.id,
       inspectionItemResultId: item.id,
-      assignedUserId: defect.assignedUserId,
-      assignedTeamId: defect.assignedTeamId,
+      assignedUserId,
+      assignedTeamId,
+      assignedToUserId: assignedUserId,
+      assignedToTeamId: assignedTeamId,
       verifiedByUserId: defect.verifiedByUserId,
+      maintainedByUserId: defect.maintainedByUserId,
       closureVerifiedByUserId: defect.closureVerifiedByUserId,
-      assignedUser: defect.assignedUser,
-      assignedTeam: defect.assignedTeam,
+      assignedUser,
+      assignedTeam,
+      assignedToUser: assignedUser,
+      assignedToTeam: assignedTeam,
       verifiedByUser: defect.verifiedByUser,
+      maintainedByUser: defect.maintainedByUser,
       closureVerifiedByUser: defect.closureVerifiedByUser,
-      assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
+      assignedTo: this.formatAssignmentLabel(assignedUser, assignedTeam),
       inspectionId: item.inspectionId,
       assetId: inspection.assetId,
       assetCode: inspection.asset.assetCode,
@@ -1027,10 +2428,15 @@ export class DefectsService {
       dueDate: defect.dueDate?.toISOString() ?? null,
       resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      assignedAt: defect.assignedAt?.toISOString() ?? null,
       verifiedAt: defect.verifiedAt?.toISOString() ?? null,
-      verificationRemarks: defect.verificationRemarks,
+      maintainedAt: defect.maintainedAt?.toISOString() ?? null,
+      verificationNotes,
+      verificationRemarks: verificationNotes,
+      maintenanceNotes: defect.maintenanceNotes,
       closureVerifiedAt: defect.closureVerifiedAt?.toISOString() ?? null,
-      closureRemarks: defect.closureRemarks,
+      closureVerificationNotes,
+      closureRemarks: closureVerificationNotes,
       isOverdue: slaState === 'OVERDUE',
       slaState,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
@@ -1046,6 +2452,14 @@ export class DefectsService {
     const item = defect.inspectionItemResult;
     const inspection = item.inspection;
     const slaState = this.calculateSlaState(defect.status, defect.dueDate);
+    const assignedUser = defect.assignedToUser ?? defect.assignedUser;
+    const assignedTeam = defect.assignedToTeam ?? defect.assignedTeam;
+    const assignedUserId = defect.assignedToUserId ?? defect.assignedUserId;
+    const assignedTeamId = defect.assignedToTeamId ?? defect.assignedTeamId;
+    const verificationNotes =
+      defect.verificationNotes ?? defect.verificationRemarks;
+    const closureVerificationNotes =
+      defect.closureVerificationNotes ?? defect.closureRemarks;
 
     return {
       id: defect.id,
@@ -1055,23 +2469,34 @@ export class DefectsService {
       severity: defect.severity,
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,
-      assignedUserId: defect.assignedUserId,
-      assignedTeamId: defect.assignedTeamId,
+      assignedUserId,
+      assignedTeamId,
+      assignedToUserId: assignedUserId,
+      assignedToTeamId: assignedTeamId,
       verifiedByUserId: defect.verifiedByUserId,
+      maintainedByUserId: defect.maintainedByUserId,
       closureVerifiedByUserId: defect.closureVerifiedByUserId,
-      assignedUser: defect.assignedUser,
-      assignedTeam: defect.assignedTeam,
+      assignedUser,
+      assignedTeam,
+      assignedToUser: assignedUser,
+      assignedToTeam: assignedTeam,
       verifiedByUser: defect.verifiedByUser,
+      maintainedByUser: defect.maintainedByUser,
       closureVerifiedByUser: defect.closureVerifiedByUser,
-      assignedTo: this.formatAssignmentLabel(defect.assignedUser, defect.assignedTeam),
+      assignedTo: this.formatAssignmentLabel(assignedUser, assignedTeam),
       actionRemark: defect.actionRemark,
       dueDate: defect.dueDate?.toISOString() ?? null,
       resolvedAt: defect.resolvedAt?.toISOString() ?? null,
       closedAt: defect.closedAt?.toISOString() ?? null,
+      assignedAt: defect.assignedAt?.toISOString() ?? null,
       verifiedAt: defect.verifiedAt?.toISOString() ?? null,
-      verificationRemarks: defect.verificationRemarks,
+      maintainedAt: defect.maintainedAt?.toISOString() ?? null,
+      verificationNotes,
+      verificationRemarks: verificationNotes,
+      maintenanceNotes: defect.maintenanceNotes,
       closureVerifiedAt: defect.closureVerifiedAt?.toISOString() ?? null,
-      closureRemarks: defect.closureRemarks,
+      closureVerificationNotes,
+      closureRemarks: closureVerificationNotes,
       isOverdue: slaState === 'OVERDUE',
       slaState,
       label: item.label,
@@ -1157,6 +2582,10 @@ export class DefectsService {
       type: entry.type,
       fromStatus: entry.fromStatus,
       toStatus: entry.toStatus,
+      fromLifecycleStatus: entry.fromLifecycleStatus,
+      toLifecycleStatus: entry.toLifecycleStatus,
+      fromResolutionOutcome: entry.fromResolutionOutcome,
+      toResolutionOutcome: entry.toResolutionOutcome,
       comment: entry.comment,
       createdAt: entry.createdAt.toISOString(),
       createdBy: entry.createdBy,
@@ -1168,6 +2597,10 @@ export class DefectsService {
         type: DefectTimelineEventType.CREATED,
         fromStatus: null,
         toStatus: defect.status,
+        fromLifecycleStatus: null,
+        toLifecycleStatus: this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
+        fromResolutionOutcome: null,
+        toResolutionOutcome: defect.resolutionOutcome,
         comment: 'Defect opened from failed inspection item.',
         createdAt: defect.createdAt.toISOString(),
         createdBy: null,
@@ -1285,19 +2718,27 @@ export class DefectsService {
       ];
     }
 
-    if (currentStatus === DefectLifecycleStatus.VERIFIED) {
-      return [
-        DefectLifecycleStatus.ASSIGNED,
-        DefectLifecycleStatus.IN_PROGRESS,
-        DefectLifecycleStatus.COMPLETED,
-      ];
-    }
-
     return [DefectLifecycleStatus.COMPLETED];
   }
 
   private buildGovernanceComment(title: string, remarks: string | null) {
     return remarks ? `${title}. ${remarks}` : `${title}.`;
+  }
+
+  private resolveMaintenanceResolutionOutcome(
+    requestedOutcome: DefectResolutionOutcome,
+  ) {
+    const resolutionOutcome =
+      LEGACY_MAINTENANCE_RESOLUTION_OUTCOME_MAP[requestedOutcome] ??
+      requestedOutcome;
+
+    if (!MAINTENANCE_COMPLETION_RESOLUTION_OUTCOMES.has(resolutionOutcome)) {
+      throw new BadRequestException(
+        `Maintenance completion outcome ${this.formatEnumLabel(requestedOutcome)} is not allowed.`,
+      );
+    }
+
+    return resolutionOutcome;
   }
 
   private buildMaintenanceCompletionComment(
@@ -1323,6 +2764,16 @@ export class DefectsService {
     }
 
     return parts.join(' ');
+  }
+
+  private buildClosureVerificationComment(
+    resolutionOutcome: DefectResolutionOutcome,
+    closureVerificationNotes: string | null,
+  ) {
+    return this.buildGovernanceComment(
+      `Closure verified by Mainhead/TNB. Final resolution outcome ${this.formatEnumLabel(resolutionOutcome)}`,
+      closureVerificationNotes,
+    );
   }
 
   private formatEnumLabel(value: string) {
@@ -1374,6 +2825,19 @@ export class DefectsService {
     }
 
     return assignedTeam;
+  }
+
+  private insensitiveContains(value: string): Prisma.StringFilter {
+    return {
+      contains: value,
+      mode: Prisma.QueryMode.insensitive,
+    };
+  }
+
+  private isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    );
   }
 
   private parseDueDate(value: string | null | undefined) {

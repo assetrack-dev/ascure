@@ -92,13 +92,20 @@ enum DefectLifecycleStatus {
   CLOSED
 }
 
-enum DefectResolutionOutcome {
+enum ResolutionOutcome {
   REPAIRED
   EXTERNAL_CONSTRAINT
   PARTIAL
   DEFERRED
   MONITOR_ONLY
   ESCALATED
+  RESOLVED
+  TEMPORARY_FIX
+  MONITORING_REQUIRED
+  DUPLICATE
+  FALSE_POSITIVE
+
+  @@map("DefectResolutionOutcome")
 }
 
 enum DefectTimelineEventType {
@@ -107,6 +114,12 @@ enum DefectTimelineEventType {
   ASSIGNMENT_CHANGED
   DUE_DATE_CHANGED
   COMMENT
+  DEFECT_VERIFIED
+  DEFECT_ASSIGNED
+  MAINTENANCE_STARTED
+  MAINTENANCE_COMPLETED
+  RESOLUTION_OUTCOME_UPDATED
+  CLOSURE_VERIFIED
 }
 
 enum AssetStatus {
@@ -240,19 +253,20 @@ model Department {
 }
 
 model Team {
-  id              String       @id @default(uuid()) @db.Uuid
-  tenantId        String       @db.Uuid
-  departmentId    String?      @db.Uuid
-  name            String
-  code            String
-  isActive        Boolean      @default(true)
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department      Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  members         TeamMember[]
-  siteVisits      SiteVisit[]
-  assignedDefects Defect[]     @relation("DefectAssignedTeam")
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String       @db.Uuid
+  departmentId      String?      @db.Uuid
+  name              String
+  code              String
+  isActive          Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department        Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  members           TeamMember[]
+  siteVisits        SiteVisit[]
+  assignedDefects   Defect[]     @relation("DefectAssignedTeam")
+  assignedToDefects Defect[]     @relation("DefectAssignedToTeam")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -281,7 +295,9 @@ model User {
   createdImages           Image[]                  @relation("ImageCreatedBy")
   defectTimelineEntries   DefectTimelineEntry[]    @relation("DefectTimelineCreatedBy")
   assignedDefects         Defect[]                 @relation("DefectAssignedUser")
+  assignedToDefects       Defect[]                 @relation("DefectAssignedToUser")
   verifiedDefects         Defect[]                 @relation("DefectVerifiedByUser")
+  maintainedDefects       Defect[]                 @relation("DefectMaintainedByUser")
   closureVerifiedDefects  Defect[]                 @relation("DefectClosureVerifiedByUser")
   organizationMemberships OrganizationMembership[]
   projectMemberships      ProjectMembership[]
@@ -785,54 +801,74 @@ model InspectionItemResult {
 }
 
 model Defect {
-  id                      String                   @id @default(uuid()) @db.Uuid
-  inspectionItemResultId  String                   @unique @db.Uuid
-  assignedUserId          String?                  @db.Uuid
-  assignedTeamId          String?                  @db.Uuid
-  verifiedByUserId        String?                  @db.Uuid
-  closureVerifiedByUserId String?                  @db.Uuid
-  status                  DefectStatus             @default(OPEN)
-  severity                DefectSeverity           @default(MEDIUM)
-  lifecycleStatus         DefectLifecycleStatus?
-  resolutionOutcome       DefectResolutionOutcome?
-  actionRemark            String?
-  dueDate                 DateTime?
-  resolvedAt              DateTime?
-  closedAt                DateTime?
-  verifiedAt              DateTime?
-  verificationRemarks     String?
-  closureVerifiedAt       DateTime?
-  closureRemarks          String?
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  inspectionItemResult    InspectionItemResult     @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
-  assignedUser            User?                    @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  assignedTeam            Team?                    @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
-  verifiedByUser          User?                    @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
-  closureVerifiedByUser   User?                    @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
-  timelineEntries         DefectTimelineEntry[]
+  id                       String                 @id @default(uuid()) @db.Uuid
+  inspectionItemResultId   String                 @unique @db.Uuid
+  assignedUserId           String?                @db.Uuid
+  assignedTeamId           String?                @db.Uuid
+  assignedToUserId         String?                @db.Uuid
+  assignedToTeamId         String?                @db.Uuid
+  verifiedByUserId         String?                @db.Uuid
+  maintainedByUserId       String?                @db.Uuid
+  closureVerifiedByUserId  String?                @db.Uuid
+  status                   DefectStatus           @default(OPEN)
+  severity                 DefectSeverity         @default(MEDIUM)
+  lifecycleStatus          DefectLifecycleStatus?
+  resolutionOutcome        ResolutionOutcome?
+  actionRemark             String?
+  dueDate                  DateTime?
+  resolvedAt               DateTime?
+  closedAt                 DateTime?
+  assignedAt               DateTime?
+  verifiedAt               DateTime?
+  maintainedAt             DateTime?
+  verificationRemarks      String?
+  verificationNotes        String?
+  maintenanceNotes         String?
+  closureVerifiedAt        DateTime?
+  closureRemarks           String?
+  closureVerificationNotes String?
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+  inspectionItemResult     InspectionItemResult   @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  assignedUser             User?                  @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeam             Team?                  @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  assignedToUser           User?                  @relation("DefectAssignedToUser", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToTeam           Team?                  @relation("DefectAssignedToTeam", fields: [assignedToTeamId], references: [id], onDelete: SetNull)
+  verifiedByUser           User?                  @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  maintainedByUser         User?                  @relation("DefectMaintainedByUser", fields: [maintainedByUserId], references: [id], onDelete: SetNull)
+  closureVerifiedByUser    User?                  @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
+  timelineEntries          DefectTimelineEntry[]
 
   @@index([assignedUserId])
   @@index([assignedTeamId])
+  @@index([assignedToUserId])
+  @@index([assignedToTeamId])
   @@index([verifiedByUserId])
+  @@index([maintainedByUserId])
   @@index([closureVerifiedByUserId])
   @@index([lifecycleStatus])
   @@index([resolutionOutcome])
+  @@index([assignedAt])
+  @@index([maintainedAt])
   @@index([dueDate])
   @@index([status, dueDate])
 }
 
 model DefectTimelineEntry {
-  id              String                  @id @default(uuid()) @db.Uuid
-  defectId        String                  @db.Uuid
-  type            DefectTimelineEventType
-  fromStatus      DefectStatus?
-  toStatus        DefectStatus?
-  comment         String?
-  createdByUserId String?                 @db.Uuid
-  createdAt       DateTime                @default(now())
-  defect          Defect                  @relation(fields: [defectId], references: [id], onDelete: Cascade)
-  createdBy       User?                   @relation("DefectTimelineCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  id                    String                  @id @default(uuid()) @db.Uuid
+  defectId              String                  @db.Uuid
+  type                  DefectTimelineEventType
+  fromStatus            DefectStatus?
+  toStatus              DefectStatus?
+  fromLifecycleStatus   DefectLifecycleStatus?
+  toLifecycleStatus     DefectLifecycleStatus?
+  fromResolutionOutcome ResolutionOutcome?
+  toResolutionOutcome   ResolutionOutcome?
+  comment               String?
+  createdByUserId       String?                 @db.Uuid
+  createdAt             DateTime                @default(now())
+  defect                Defect                  @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  createdBy             User?                   @relation("DefectTimelineCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([defectId, createdAt])
   @@index([createdByUserId])

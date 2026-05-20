@@ -18,12 +18,23 @@ export const DEFECT_LIFECYCLE_STATUSES = [
   "CLOSED",
 ] as const;
 export const DEFECT_RESOLUTION_OUTCOMES = [
-  "REPAIRED",
+  "RESOLVED",
+  "TEMPORARY_FIX",
+  "MONITORING_REQUIRED",
   "EXTERNAL_CONSTRAINT",
-  "PARTIAL",
+  "DUPLICATE",
+  "FALSE_POSITIVE",
   "DEFERRED",
+] as const;
+export const DEFECT_LEGACY_RESOLUTION_OUTCOMES = [
+  "REPAIRED",
+  "PARTIAL",
   "MONITOR_ONLY",
   "ESCALATED",
+] as const;
+export const ALL_DEFECT_RESOLUTION_OUTCOMES = [
+  ...DEFECT_RESOLUTION_OUTCOMES,
+  ...DEFECT_LEGACY_RESOLUTION_OUTCOMES,
 ] as const;
 
 export type DefectSeverity = (typeof DEFECT_SEVERITIES)[number];
@@ -37,7 +48,7 @@ export type DefectLifecycleStatus =
   | "UNKNOWN";
 
 export type DefectResolutionOutcome =
-  | (typeof DEFECT_RESOLUTION_OUTCOMES)[number]
+  | (typeof ALL_DEFECT_RESOLUTION_OUTCOMES)[number]
   | "UNKNOWN";
 
 export type DefectSlaState =
@@ -52,7 +63,13 @@ export type DefectTimelineEventType =
   | "STATUS_CHANGED"
   | "ASSIGNMENT_CHANGED"
   | "DUE_DATE_CHANGED"
-  | "COMMENT";
+  | "COMMENT"
+  | "DEFECT_VERIFIED"
+  | "DEFECT_ASSIGNED"
+  | "MAINTENANCE_STARTED"
+  | "MAINTENANCE_COMPLETED"
+  | "RESOLUTION_OUTCOME_UPDATED"
+  | "CLOSURE_VERIFIED";
 
 export interface DefectActor {
   id: string;
@@ -72,6 +89,10 @@ export interface DefectTimelineEntry {
   type: DefectTimelineEventType;
   fromStatus: DefectStatus | null;
   toStatus: DefectStatus | null;
+  fromLifecycleStatus?: DefectLifecycleStatus | null;
+  toLifecycleStatus?: DefectLifecycleStatus | null;
+  fromResolutionOutcome?: DefectResolutionOutcome | null;
+  toResolutionOutcome?: DefectResolutionOutcome | null;
   comment: string | null;
   createdAt: string;
   createdBy: DefectActor | null;
@@ -96,11 +117,17 @@ export interface DefectListItem {
   inspectionItemResultId?: string;
   assignedUserId?: string | null;
   assignedTeamId?: string | null;
+  assignedToUserId?: string | null;
+  assignedToTeamId?: string | null;
   assignedUser?: DefectActor | null;
   assignedTeam?: DefectAssignedTeam | null;
+  assignedToUser?: DefectActor | null;
+  assignedToTeam?: DefectAssignedTeam | null;
   verifiedByUserId?: string | null;
+  maintainedByUserId?: string | null;
   closureVerifiedByUserId?: string | null;
   verifiedByUser?: DefectActor | null;
+  maintainedByUser?: DefectActor | null;
   closureVerifiedByUser?: DefectActor | null;
   assignedTo?: string | null;
   inspectionId?: string;
@@ -119,9 +146,14 @@ export interface DefectListItem {
   dueDate?: string | null;
   resolvedAt?: string | null;
   closedAt?: string | null;
+  assignedAt?: string | null;
   verifiedAt?: string | null;
+  maintainedAt?: string | null;
+  verificationNotes?: string | null;
   verificationRemarks?: string | null;
+  maintenanceNotes?: string | null;
   closureVerifiedAt?: string | null;
+  closureVerificationNotes?: string | null;
   closureRemarks?: string | null;
   isOverdue?: boolean;
   slaState?: DefectSlaState;
@@ -194,4 +226,123 @@ export interface DefectDetail extends DefectListItem {
   } | null;
   images: DefectEvidenceImage[];
   timeline: DefectTimelineEntry[];
+}
+
+export type DefectOperationsBoardQueueKey =
+  | "awaitingQaQc"
+  | "maintenanceReady"
+  | "inMaintenance"
+  | "awaitingClosureVerification"
+  | "closedResolved"
+  | "exceptions";
+
+export interface DefectOperationsBoardMainhead {
+  id: string | null;
+  code: string | null;
+  name: string | null;
+  label: string;
+}
+
+export interface DefectOperationsBoardContextRef {
+  id: string;
+  code?: string | null;
+  name?: string | null;
+}
+
+export interface DefectOperationsBoardSiteVisit {
+  id: string;
+  status?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  team?: DefectAssignedTeam | null;
+  substation?: {
+    id?: string | null;
+    code?: string | null;
+    name?: string | null;
+    location?: string | null;
+  } | null;
+}
+
+export interface DefectOperationsBoardAsset {
+  id: string;
+  code: string;
+  name?: string | null;
+  assetType?: {
+    id?: string | null;
+    code?: string | null;
+    name?: string | null;
+  } | null;
+}
+
+export interface DefectOperationsBoardItem {
+  id: string;
+  inspectionItemResultId?: string;
+  title: string;
+  summary: string | null;
+  status: DefectLifecycleStatus;
+  lifecycleStatus: DefectLifecycleStatus;
+  workflowStatus?: DefectStatus;
+  severity: DefectSeverity | null;
+  resolutionOutcome: DefectResolutionOutcome | null;
+  mainhead: DefectOperationsBoardMainhead;
+  mainheadLabel: string;
+  project: DefectOperationsBoardContextRef | null;
+  workPackage: DefectOperationsBoardContextRef | null;
+  siteVisit: DefectOperationsBoardSiteVisit | null;
+  asset: DefectOperationsBoardAsset | null;
+  assetCode: string;
+  assetName: string | null;
+  assignedToUserId?: string | null;
+  assignedToTeamId?: string | null;
+  assignedToUser?: DefectActor | null;
+  assignedToTeam?: DefectAssignedTeam | null;
+  assignedTo: string | null;
+  verifiedByUser?: DefectActor | null;
+  maintainedByUser?: DefectActor | null;
+  closureVerifiedByUser?: DefectActor | null;
+  detectedAt: string | null;
+  createdAt: string | null;
+  verifiedAt?: string | null;
+  assignedAt?: string | null;
+  maintainedAt?: string | null;
+  closureVerifiedAt?: string | null;
+  dueDate?: string | null;
+  slaState?: DefectSlaState;
+  isOverdue?: boolean;
+}
+
+export interface DefectOperationsBoardQueue {
+  key: DefectOperationsBoardQueueKey;
+  title: string;
+  description?: string;
+  statuses: DefectLifecycleStatus[];
+  count: number;
+  items: DefectOperationsBoardItem[];
+}
+
+export interface DefectOperationsBoardMainheadGroup {
+  mainhead: DefectOperationsBoardMainhead;
+  count: number;
+  queues: DefectOperationsBoardQueue[];
+}
+
+export interface DefectOperationsBoardFilters {
+  mainhead?: string;
+  projectId?: string;
+  workPackageId?: string;
+  siteVisitId?: string;
+  severity?: DefectSeverity;
+  status?: Exclude<DefectLifecycleStatus, "UNKNOWN">;
+  resolutionOutcome?: Exclude<DefectResolutionOutcome, "UNKNOWN">;
+  assignedToUserId?: string;
+  overdueOnly?: boolean;
+  q?: string;
+}
+
+export interface DefectOperationsBoardResponse {
+  generatedAt: string | null;
+  filters: DefectOperationsBoardFilters;
+  totalCount: number;
+  queues: DefectOperationsBoardQueue[];
+  mainheads: DefectOperationsBoardMainheadGroup[];
 }

@@ -4,4 +4,8 @@ export class VerifyDefectClosureDto {
   @IsOptional()
   @IsString()
   closureRemarks?: string | null;
+
+  @IsOptional()
+  @IsString()
+  closureVerificationNotes?: string | null;
 }

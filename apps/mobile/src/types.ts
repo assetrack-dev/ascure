@@ -352,6 +352,28 @@ export type AssetInspectionHistoryItem = {
 export type DefectStatus = 'OPEN' | 'IN_PROGRESS' | 'MONITORING' | 'RESOLVED' | 'CLOSED';
 
 export type DefectSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type DefectLifecycleStatus =
+  | 'DETECTED'
+  | 'UNDER_REVIEW'
+  | 'VERIFIED'
+  | 'REJECTED'
+  | 'ASSIGNED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'VERIFICATION_PENDING'
+  | 'CLOSED';
+export type DefectResolutionOutcome =
+  | 'RESOLVED'
+  | 'TEMPORARY_FIX'
+  | 'MONITORING_REQUIRED'
+  | 'EXTERNAL_CONSTRAINT'
+  | 'DUPLICATE'
+  | 'FALSE_POSITIVE'
+  | 'DEFERRED'
+  | 'REPAIRED'
+  | 'PARTIAL'
+  | 'MONITOR_ONLY'
+  | 'ESCALATED';
 
 export type DashboardRecentDefect = {
   id: string;
@@ -394,12 +416,27 @@ export type DefectListItem = {
   assetCode?: string;
   assetType?: string;
   cycleNumber?: number;
+  assignedUserId?: string | null;
+  assignedTeamId?: string | null;
+  assignedToUserId?: string | null;
+  assignedToTeamId?: string | null;
+  assignedAt?: string | null;
   label: string;
   result: 'FAIL';
   remark?: string | null;
   status: DefectStatus;
+  lifecycleStatus?: DefectLifecycleStatus | null;
   severity?: DefectSeverity | null;
+  resolutionOutcome?: DefectResolutionOutcome | null;
   actionRemark?: string | null;
+  verificationNotes?: string | null;
+  verificationRemarks?: string | null;
+  maintenanceNotes?: string | null;
+  closureVerificationNotes?: string | null;
+  closureRemarks?: string | null;
+  verifiedAt?: string | null;
+  maintainedAt?: string | null;
+  closureVerifiedAt?: string | null;
   closedAt?: string | null;
   submittedAt?: string | null;
   createdAt: string;
@@ -409,8 +446,23 @@ export type DefectDetail = {
   id: string;
   inspectionItemResultId: string;
   status: DefectStatus;
+  lifecycleStatus?: DefectLifecycleStatus | null;
   severity?: DefectSeverity | null;
+  assignedUserId?: string | null;
+  assignedTeamId?: string | null;
+  assignedToUserId?: string | null;
+  assignedToTeamId?: string | null;
+  assignedAt?: string | null;
+  resolutionOutcome?: DefectResolutionOutcome | null;
   actionRemark: string | null;
+  verificationNotes?: string | null;
+  verificationRemarks?: string | null;
+  maintenanceNotes?: string | null;
+  closureVerificationNotes?: string | null;
+  closureRemarks?: string | null;
+  verifiedAt?: string | null;
+  maintainedAt?: string | null;
+  closureVerifiedAt?: string | null;
   closedAt: string | null;
   label: string;
   checklistRemark: string | null;

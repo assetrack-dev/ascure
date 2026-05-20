@@ -35,7 +35,6 @@ import {
 import { fetchTeams, fetchUsers } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import {
-  DEFECT_RESOLUTION_OUTCOMES,
   DEFECT_WORKFLOW_STATUSES,
   type DefectDetail,
   type DefectEvidenceImage,
@@ -55,13 +54,28 @@ const statusOptions: Array<{ label: string; value: DefectWorkflowStatus }> = [
   { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
+const MAINTENANCE_RESOLUTION_OUTCOMES = [
+  "RESOLVED",
+  "TEMPORARY_FIX",
+  "MONITORING_REQUIRED",
+  "EXTERNAL_CONSTRAINT",
+  "DEFERRED",
+] as const satisfies ReadonlyArray<Exclude<DefectResolutionOutcome, "UNKNOWN">>;
 const resolutionOutcomeOptions: Array<{
   label: string;
   value: Exclude<DefectResolutionOutcome, "UNKNOWN">;
-}> = DEFECT_RESOLUTION_OUTCOMES.map((outcome) => ({
+}> = MAINTENANCE_RESOLUTION_OUTCOMES.map((outcome) => ({
   label: formatEnumLabel(outcome),
   value: outcome,
 }));
+const exceptionResolutionOutcomes = new Set<DefectResolutionOutcome>([
+  "EXTERNAL_CONSTRAINT",
+  "DEFERRED",
+  "TEMPORARY_FIX",
+  "MONITORING_REQUIRED",
+  "FALSE_POSITIVE",
+  "DUPLICATE",
+]);
 
 const fieldClassName =
   "rounded-lg border border-slate-200 bg-white p-4 shadow-[var(--shadow-soft)]";
@@ -182,8 +196,71 @@ function formatNullable(value: string | null | undefined) {
   return value?.trim() || "Not recorded";
 }
 
+function isExceptionResolutionOutcome(
+  outcome: DefectResolutionOutcome | null | undefined,
+) {
+  return Boolean(outcome && exceptionResolutionOutcomes.has(outcome));
+}
+
+function isGovernanceException(defect: DefectDetail) {
+  return (
+    getDisplayLifecycleStatus(defect.lifecycleStatus) === "REJECTED" ||
+    isExceptionResolutionOutcome(defect.resolutionOutcome)
+  );
+}
+
+function getExceptionNotes(defect: DefectDetail) {
+  if (getDisplayLifecycleStatus(defect.lifecycleStatus) === "REJECTED") {
+    return defect.verificationNotes ?? defect.verificationRemarks ?? defect.actionRemark;
+  }
+
+  if (!isExceptionResolutionOutcome(defect.resolutionOutcome)) {
+    return null;
+  }
+
+  if (
+    defect.resolutionOutcome === "FALSE_POSITIVE" ||
+    defect.resolutionOutcome === "DUPLICATE"
+  ) {
+    return defect.verificationNotes ?? defect.verificationRemarks ?? defect.actionRemark;
+  }
+
+  return (
+    defect.maintenanceNotes ??
+    defect.closureVerificationNotes ??
+    defect.closureRemarks ??
+    defect.actionRemark
+  );
+}
+
+function getResolutionGovernanceHelper(defect: DefectDetail) {
+  const lifecycleStatus = getDisplayLifecycleStatus(defect.lifecycleStatus);
+
+  if (lifecycleStatus === "REJECTED") {
+    return "Rejected QA/QC decisions are retained with notes, actor, and timestamp for audit.";
+  }
+
+  if (defect.resolutionOutcome === "EXTERNAL_CONSTRAINT") {
+    return "External constraints are tracked as operational exceptions, not deleted or failed defects.";
+  }
+
+  if (isExceptionResolutionOutcome(defect.resolutionOutcome)) {
+    return "Outcome exceptions remain visible while the lifecycle status stays globally standardized.";
+  }
+
+  return "Resolution outcome is recorded separately from lifecycle status for closure traceability.";
+}
+
 function isWorkflowStatus(status: DefectStatus): status is DefectWorkflowStatus {
   return DEFECT_WORKFLOW_STATUSES.includes(status as DefectWorkflowStatus);
+}
+
+function isMaintenanceResolutionOutcome(
+  outcome: DefectResolutionOutcome | null | undefined,
+): outcome is (typeof MAINTENANCE_RESOLUTION_OUTCOMES)[number] {
+  return MAINTENANCE_RESOLUTION_OUTCOMES.includes(
+    outcome as (typeof MAINTENANCE_RESOLUTION_OUTCOMES)[number],
+  );
 }
 
 function SeverityBadge({ severity }: { severity: DefectSeverity | null }) {
@@ -256,13 +333,19 @@ function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | u
   }
 
   const className =
-    outcome === "REPAIRED"
+    outcome === "RESOLVED" || outcome === "REPAIRED"
       ? "border-green-200 bg-green-50 text-green-700"
       : outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED"
         ? "border-orange-200 bg-orange-50 text-orange-700"
-        : outcome === "PARTIAL" || outcome === "DEFERRED"
+        : outcome === "TEMPORARY_FIX" ||
+            outcome === "MONITORING_REQUIRED" ||
+            outcome === "PARTIAL" ||
+            outcome === "DEFERRED" ||
+            outcome === "MONITOR_ONLY"
           ? "border-amber-200 bg-amber-50 text-amber-700"
-          : "border-slate-200 bg-slate-50 text-slate-700";
+          : outcome === "DUPLICATE" || outcome === "FALSE_POSITIVE"
+            ? "border-slate-200 bg-slate-50 text-slate-700"
+            : "border-slate-200 bg-slate-50 text-slate-700";
 
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
@@ -295,6 +378,17 @@ function DetailField({ label, value }: { label: string; value: string }) {
         {label}
       </dt>
       <dd className="mt-2 text-sm font-semibold text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+function GovernanceNoteField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-t border-slate-100 pt-3">
+      <dt className="text-[11px] font-semibold uppercase text-[var(--muted)]">
+        {label}
+      </dt>
+      <dd className="mt-1 text-sm leading-6 text-slate-800">{value}</dd>
     </div>
   );
 }
@@ -337,11 +431,23 @@ function getImageSourceUrl(image: DefectEvidenceImage) {
 }
 
 function TimelineIcon({ entry }: { entry: DefectTimelineEntry }) {
+  if (entry.type === "DEFECT_VERIFIED" || entry.type === "CLOSURE_VERIFIED") {
+    return <ShieldCheck size={16} />;
+  }
+
+  if (entry.type === "MAINTENANCE_STARTED" || entry.type === "MAINTENANCE_COMPLETED") {
+    return <Wrench size={16} />;
+  }
+
+  if (entry.type === "RESOLUTION_OUTCOME_UPDATED") {
+    return <FileCheck2 size={16} />;
+  }
+
   if (entry.type === "STATUS_CHANGED") {
     return <CheckCircle2 size={16} />;
   }
 
-  if (entry.type === "ASSIGNMENT_CHANGED") {
+  if (entry.type === "ASSIGNMENT_CHANGED" || entry.type === "DEFECT_ASSIGNED") {
     return <UserRound size={16} />;
   }
 
@@ -357,6 +463,30 @@ function TimelineIcon({ entry }: { entry: DefectTimelineEntry }) {
 }
 
 function timelineTitle(entry: DefectTimelineEntry) {
+  if (entry.type === "DEFECT_VERIFIED") {
+    return "Defect verified";
+  }
+
+  if (entry.type === "DEFECT_ASSIGNED") {
+    return "Defect assigned";
+  }
+
+  if (entry.type === "MAINTENANCE_STARTED") {
+    return "Maintenance started";
+  }
+
+  if (entry.type === "MAINTENANCE_COMPLETED") {
+    return "Maintenance completed";
+  }
+
+  if (entry.type === "RESOLUTION_OUTCOME_UPDATED") {
+    return "Resolution outcome updated";
+  }
+
+  if (entry.type === "CLOSURE_VERIFIED") {
+    return "Closure verified";
+  }
+
   if (entry.type === "STATUS_CHANGED") {
     return "Status changed";
   }
@@ -377,15 +507,50 @@ function timelineTitle(entry: DefectTimelineEntry) {
 }
 
 function timelineDetail(entry: DefectTimelineEntry) {
-  if (entry.type === "STATUS_CHANGED") {
-    return `${formatStatus(entry.fromStatus)} to ${formatStatus(entry.toStatus)}`;
+  const details: string[] = [];
+
+  if (
+    entry.fromLifecycleStatus &&
+    entry.toLifecycleStatus &&
+    entry.fromLifecycleStatus !== "UNKNOWN" &&
+    entry.toLifecycleStatus !== "UNKNOWN" &&
+    entry.fromLifecycleStatus !== entry.toLifecycleStatus
+  ) {
+    details.push(
+      `Lifecycle ${formatLifecycleStatus(entry.fromLifecycleStatus)} to ${formatLifecycleStatus(
+        entry.toLifecycleStatus,
+      )}`,
+    );
+  }
+
+  if (
+    entry.fromResolutionOutcome &&
+    entry.toResolutionOutcome &&
+    entry.fromResolutionOutcome !== "UNKNOWN" &&
+    entry.toResolutionOutcome !== "UNKNOWN" &&
+    entry.fromResolutionOutcome !== entry.toResolutionOutcome
+  ) {
+    details.push(
+      `Outcome ${formatEnumLabel(entry.fromResolutionOutcome)} to ${formatEnumLabel(
+        entry.toResolutionOutcome,
+      )}`,
+    );
+  } else if (
+    entry.toResolutionOutcome &&
+    entry.toResolutionOutcome !== "UNKNOWN"
+  ) {
+    details.push(`Outcome ${formatEnumLabel(entry.toResolutionOutcome)}`);
+  }
+
+  if (entry.type === "STATUS_CHANGED" && entry.fromStatus && entry.toStatus) {
+    details.push(`Workflow ${formatStatus(entry.fromStatus)} to ${formatStatus(entry.toStatus)}`);
   }
 
   if (entry.type === "CREATED" && entry.toStatus) {
-    return `Initial status ${formatStatus(entry.toStatus)}`;
+    details.push(`Initial status ${formatStatus(entry.toStatus)}`);
   }
 
-  return null;
+  return details.length > 0 ? details.join(" | ") : null;
 }
 
 function DefectDetailContent({ defectId }: { defectId: string }) {
@@ -399,7 +564,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const [selectedAssignedTeamId, setSelectedAssignedTeamId] = useState("");
   const [selectedDueDate, setSelectedDueDate] = useState("");
   const [selectedResolutionOutcome, setSelectedResolutionOutcome] =
-    useState<Exclude<DefectResolutionOutcome, "UNKNOWN">>("REPAIRED");
+    useState<Exclude<DefectResolutionOutcome, "UNKNOWN">>("RESOLVED");
   const [actionRemark, setActionRemark] = useState("");
   const [verificationRemarks, setVerificationRemarks] = useState("");
   const [completionRemarks, setCompletionRemarks] = useState("");
@@ -423,17 +588,25 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     setDefect(nextDefect);
     setActionRemark(nextDefect.actionRemark ?? "");
     setSelectedStatus(isWorkflowStatus(nextDefect.status) ? nextDefect.status : "OPEN");
-    setSelectedAssignedUserId(nextDefect.assignedUserId ?? "");
-    setSelectedAssignedTeamId(nextDefect.assignedTeamId ?? "");
+    setSelectedAssignedUserId(
+      nextDefect.assignedToUserId ?? nextDefect.assignedUserId ?? "",
+    );
+    setSelectedAssignedTeamId(
+      nextDefect.assignedToTeamId ?? nextDefect.assignedTeamId ?? "",
+    );
     setSelectedDueDate(toDateInputValue(nextDefect.dueDate));
     setSelectedResolutionOutcome(
-      nextDefect.resolutionOutcome && nextDefect.resolutionOutcome !== "UNKNOWN"
+      isMaintenanceResolutionOutcome(nextDefect.resolutionOutcome)
         ? nextDefect.resolutionOutcome
-        : "REPAIRED",
+        : "RESOLVED",
     );
-    setVerificationRemarks(nextDefect.verificationRemarks ?? "");
-    setCompletionRemarks(nextDefect.actionRemark ?? "");
-    setClosureRemarks(nextDefect.closureRemarks ?? "");
+    setVerificationRemarks(
+      nextDefect.verificationNotes ?? nextDefect.verificationRemarks ?? "",
+    );
+    setCompletionRemarks(nextDefect.maintenanceNotes ?? nextDefect.actionRemark ?? "");
+    setClosureRemarks(
+      nextDefect.closureVerificationNotes ?? nextDefect.closureRemarks ?? "",
+    );
   }, []);
 
   const loadDefect = useCallback(
@@ -530,6 +703,17 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
         .filter((entry) => Boolean(entry.sourceUrl)) ?? [],
     [defect],
   );
+  const resolutionGovernance = useMemo(
+    () =>
+      defect
+        ? {
+            isException: isGovernanceException(defect),
+            exceptionNotes: getExceptionNotes(defect),
+            helperText: getResolutionGovernanceHelper(defect),
+          }
+        : null,
+    [defect],
+  );
 
   async function handleStatusUpdate() {
     if (!session?.token || !defect || isReadOnly) {
@@ -574,6 +758,8 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       const nextDefect = await updateDefectAssignment(session.token, defect.id, {
         assignedUserId: selectedAssignedUserId || null,
         assignedTeamId: selectedAssignedTeamId || null,
+        assignedToUserId: selectedAssignedUserId || null,
+        assignedToTeamId: selectedAssignedTeamId || null,
       });
 
       applyDefect(nextDefect);
@@ -677,7 +863,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       (token, id) =>
         completeDefectMaintenance(token, id, {
           resolutionOutcome: selectedResolutionOutcome,
-          completionRemarks: completionRemarks.trim() || null,
+          maintenanceNotes: completionRemarks.trim() || null,
         }),
       "Maintenance completion recorded.",
     );
@@ -801,10 +987,10 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <h3 className="text-sm font-semibold text-slate-900">
-                            Defect Governance
+                            Operational Ownership
                           </h3>
                           <p className="mt-1 text-xs text-[var(--muted)]">
-                            QA/QC and closure gatekeeping
+                            Current accountable people and timestamps
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -815,14 +1001,32 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
                       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
                         <CompactMeta
-                          label="QA/QC By"
+                          label="Assigned"
+                          value={formatAssignee(defect)}
+                        />
+                        <CompactMeta
+                          label="Assigned At"
+                          value={formatDateTime(defect.assignedAt)}
+                        />
+                        <CompactMeta
+                          label="QA/QC"
                           value={formatNullable(
                             defect.verifiedByUser?.name ?? defect.verifiedByUser?.email,
                           )}
                         />
                         <CompactMeta
-                          label="QA/QC At"
+                          label="Verified At"
                           value={formatDateTime(defect.verifiedAt)}
+                        />
+                        <CompactMeta
+                          label="Maintained"
+                          value={formatNullable(
+                            defect.maintainedByUser?.name ?? defect.maintainedByUser?.email,
+                          )}
+                        />
+                        <CompactMeta
+                          label="Maintained At"
+                          value={formatDateTime(defect.maintainedAt)}
                         />
                         <CompactMeta
                           label="Closure By"
@@ -897,6 +1101,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       value={formatNullable(defect.submittedBy?.name ?? defect.submittedBy?.email)}
                     />
                     <DetailField label="Assigned To" value={formatAssignee(defect)} />
+                    <DetailField label="Assigned At" value={formatDateTime(defect.assignedAt)} />
                     <DetailField
                       label="Lifecycle"
                       value={formatLifecycleStatus(defect.lifecycleStatus)}
@@ -916,6 +1121,16 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       value={formatDateTime(defect.verifiedAt)}
                     />
                     <DetailField
+                      label="Maintained By"
+                      value={formatNullable(
+                        defect.maintainedByUser?.name ?? defect.maintainedByUser?.email,
+                      )}
+                    />
+                    <DetailField
+                      label="Maintained At"
+                      value={formatDateTime(defect.maintainedAt)}
+                    />
+                    <DetailField
                       label="Closure Verified By"
                       value={formatNullable(
                         defect.closureVerifiedByUser?.name ??
@@ -931,15 +1146,80 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                     <DetailField label="Latest Update" value={formatDateTime(defect.updatedAt)} />
                   </dl>
 
-                  <dl className="mt-5 grid gap-4 md:grid-cols-2">
-                    <DetailField
-                      label="QA/QC Remarks"
-                      value={formatNullable(defect.verificationRemarks)}
+                  <div className="mt-5">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Operational Evidence
+                    </h3>
+                    <dl className="mt-3 grid gap-4 md:grid-cols-3">
+                      <DetailField
+                        label="Verification Notes"
+                        value={formatNullable(
+                          defect.verificationNotes ?? defect.verificationRemarks,
+                        )}
+                      />
+                      <DetailField
+                        label="Maintenance Notes"
+                        value={formatNullable(defect.maintenanceNotes)}
+                      />
+                      <DetailField
+                        label="Closure Notes"
+                        value={formatNullable(
+                          defect.closureVerificationNotes ?? defect.closureRemarks,
+                        )}
+                      />
+                    </dl>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-[var(--foreground)]">
+                        Resolution Governance
+                      </h2>
+                      <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">
+                        {resolutionGovernance?.helperText}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <LifecycleBadge status={defect.lifecycleStatus} />
+                      {defect.resolutionOutcome ? (
+                        <OutcomeBadge outcome={defect.resolutionOutcome} />
+                      ) : (
+                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                          Outcome Not Recorded
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <dl className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <GovernanceNoteField
+                      label="Lifecycle Status"
+                      value={formatLifecycleStatus(defect.lifecycleStatus)}
                     />
-                    <DetailField
-                      label="Closure Remarks"
-                      value={formatNullable(defect.closureRemarks)}
+                    <GovernanceNoteField
+                      label="Resolution Outcome"
+                      value={formatEnumLabel(defect.resolutionOutcome)}
                     />
+                    <GovernanceNoteField
+                      label="Maintenance Notes"
+                      value={formatNullable(defect.maintenanceNotes)}
+                    />
+                    <GovernanceNoteField
+                      label="Closure Verification Notes"
+                      value={formatNullable(
+                        defect.closureVerificationNotes ?? defect.closureRemarks,
+                      )}
+                    />
+                    {resolutionGovernance?.isException ? (
+                      <div className="md:col-span-2 xl:col-span-4">
+                        <GovernanceNoteField
+                          label="Exception Notes"
+                          value={formatNullable(resolutionGovernance.exceptionNotes)}
+                        />
+                      </div>
+                    ) : null}
                   </dl>
                 </section>
 
@@ -1066,7 +1346,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                   <aside className="space-y-6">
                     <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                       <h2 className="text-base font-semibold text-[var(--foreground)]">
-                        Defect Governance
+                        Operational Actions
                       </h2>
                       <div className="mt-4 space-y-4">
                         <div className="flex flex-wrap gap-2">
@@ -1076,7 +1356,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
                         <label className="block">
                           <span className="text-xs font-semibold uppercase text-[var(--muted)]">
-                            QA/QC Remarks
+                            Verification Notes
                           </span>
                           <textarea
                             value={verificationRemarks}
@@ -1139,7 +1419,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
                         <label className="block">
                           <span className="text-xs font-semibold uppercase text-[var(--muted)]">
-                            Completion Remarks
+                            Maintenance Notes
                           </span>
                           <textarea
                             value={completionRemarks}
@@ -1162,7 +1442,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
                         <label className="block border-t border-slate-100 pt-4">
                           <span className="text-xs font-semibold uppercase text-[var(--muted)]">
-                            Closure Remarks
+                            Closure Verification Notes
                           </span>
                           <textarea
                             value={closureRemarks}

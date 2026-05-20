@@ -191,6 +191,88 @@ export function DefectDetailScreen({
                 borderColor: '#dce5f1',
               }}
             >
+              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+                Operational Ownership
+              </Text>
+              <InfoRow label="Lifecycle Status" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
+              <InfoRow label="Resolution Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
+              <InfoRow label="Assigned" value={formatDateTime(defect.assignedAt)} />
+              <InfoRow label="QA/QC Verified" value={formatDateTime(defect.verifiedAt)} />
+              <InfoRow label="Maintained" value={formatDateTime(defect.maintainedAt)} />
+              <InfoRow label="Closure Verified" value={formatDateTime(defect.closureVerifiedAt)} />
+            </View>
+
+            <View
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 16,
+                padding: 16,
+                gap: 12,
+                borderWidth: 1,
+                borderColor: '#dce5f1',
+              }}
+            >
+              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+                Resolution Governance
+              </Text>
+              <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
+                {getGovernanceHelper(defect)}
+              </Text>
+              <InfoRow label="Lifecycle Status" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
+              <InfoRow label="Resolution Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
+              <NoteBlock
+                label="Maintenance Notes"
+                value={defect.maintenanceNotes}
+              />
+              <NoteBlock
+                label="Closure Verification Notes"
+                value={defect.closureVerificationNotes ?? defect.closureRemarks}
+              />
+              {isGovernanceException(defect) ? (
+                <NoteBlock
+                  label="Exception Notes"
+                  value={getExceptionNotes(defect)}
+                />
+              ) : null}
+            </View>
+
+            <View
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 16,
+                padding: 16,
+                gap: 12,
+                borderWidth: 1,
+                borderColor: '#dce5f1',
+              }}
+            >
+              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+                Operational Evidence
+              </Text>
+              <NoteBlock
+                label="Verification Notes"
+                value={defect.verificationNotes ?? defect.verificationRemarks}
+              />
+              <NoteBlock
+                label="Maintenance Notes"
+                value={defect.maintenanceNotes}
+              />
+              <NoteBlock
+                label="Closure Notes"
+                value={defect.closureVerificationNotes ?? defect.closureRemarks}
+              />
+            </View>
+
+            <View
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 16,
+                padding: 16,
+                gap: 12,
+                borderWidth: 1,
+                borderColor: '#dce5f1',
+              }}
+            >
               <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>Defect</Text>
               <Text style={{ fontSize: 16, lineHeight: 23, fontWeight: '700', color: '#10233d' }}>
                 {defect.label}
@@ -361,6 +443,25 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function NoteBlock({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>
+        {label}
+      </Text>
+      <Text
+        style={{
+          fontSize: 15,
+          lineHeight: 22,
+          color: value?.trim() ? '#10233d' : '#607086',
+        }}
+      >
+        {value?.trim() || 'Not recorded.'}
+      </Text>
+    </View>
+  );
+}
+
 function StatusBadge({ status }: { status: DefectStatus }) {
   const style = getStatusStyle(status);
 
@@ -452,6 +553,61 @@ function formatStatus(value: string) {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function formatEnumLabel(value?: string | null) {
+  return value ? formatStatus(value) : 'Not recorded';
+}
+
+function getDisplayLifecycleStatus(status?: string | null) {
+  return status || 'DETECTED';
+}
+
+function isExceptionOutcome(outcome?: string | null) {
+  return (
+    outcome === 'EXTERNAL_CONSTRAINT' ||
+    outcome === 'DEFERRED' ||
+    outcome === 'TEMPORARY_FIX' ||
+    outcome === 'MONITORING_REQUIRED' ||
+    outcome === 'FALSE_POSITIVE' ||
+    outcome === 'DUPLICATE'
+  );
+}
+
+function isGovernanceException(defect: DefectDetail) {
+  return getDisplayLifecycleStatus(defect.lifecycleStatus) === 'REJECTED' || isExceptionOutcome(defect.resolutionOutcome);
+}
+
+function getExceptionNotes(defect: DefectDetail) {
+  if (getDisplayLifecycleStatus(defect.lifecycleStatus) === 'REJECTED') {
+    return defect.verificationNotes ?? defect.verificationRemarks ?? defect.actionRemark;
+  }
+
+  if (!isExceptionOutcome(defect.resolutionOutcome)) {
+    return null;
+  }
+
+  if (defect.resolutionOutcome === 'FALSE_POSITIVE' || defect.resolutionOutcome === 'DUPLICATE') {
+    return defect.verificationNotes ?? defect.verificationRemarks ?? defect.actionRemark;
+  }
+
+  return defect.maintenanceNotes ?? defect.closureVerificationNotes ?? defect.closureRemarks ?? defect.actionRemark;
+}
+
+function getGovernanceHelper(defect: DefectDetail) {
+  if (getDisplayLifecycleStatus(defect.lifecycleStatus) === 'REJECTED') {
+    return 'Rejected QA/QC decisions stay visible with notes and timestamps.';
+  }
+
+  if (defect.resolutionOutcome === 'EXTERNAL_CONSTRAINT') {
+    return 'External constraints are operational exceptions, not deleted defects.';
+  }
+
+  if (isExceptionOutcome(defect.resolutionOutcome)) {
+    return 'Outcome exceptions stay separate from the lifecycle status.';
+  }
+
+  return 'Resolution outcome is tracked separately from lifecycle status.';
 }
 
 function getImageSourceUri(image: InspectionImage) {

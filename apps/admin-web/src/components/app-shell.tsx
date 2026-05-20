@@ -34,6 +34,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: LayoutDashboard,
     },
     {
+      href: "/operations-board",
+      label: "Operations Board",
+      icon: ClipboardList,
+    },
+    {
       href: "/assets",
       label: "Assets",
       icon: Archive,

@@ -319,11 +319,15 @@ function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | u
   }
 
   const className =
-    outcome === "REPAIRED"
+    outcome === "RESOLVED" || outcome === "REPAIRED"
       ? "border-green-200 bg-green-50 text-green-700"
       : outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED"
         ? "border-orange-200 bg-orange-50 text-orange-700"
-        : outcome === "PARTIAL" || outcome === "DEFERRED"
+        : outcome === "TEMPORARY_FIX" ||
+            outcome === "MONITORING_REQUIRED" ||
+            outcome === "PARTIAL" ||
+            outcome === "DEFERRED" ||
+            outcome === "MONITOR_ONLY"
           ? "border-amber-200 bg-amber-50 text-amber-700"
           : "border-slate-200 bg-slate-50 text-slate-700";
 

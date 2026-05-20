@@ -21,4 +21,14 @@ export class UpdateDefectAssignmentDto {
   @IsOptional()
   @IsUUID()
   assignedTeamId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  assignedToUserId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  assignedToTeamId?: string | null;
 }

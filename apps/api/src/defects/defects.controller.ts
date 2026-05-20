@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
+import { ListDefectOperationsBoardQueryDto } from './dto/list-defect-operations-board-query.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
@@ -25,6 +26,14 @@ export class DefectsController {
   @Get()
   list(@CurrentUser() user: RequestUser) {
     return this.defectsService.list(user);
+  }
+
+  @Get('operations-board')
+  getOperationsBoard(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ListDefectOperationsBoardQueryDto,
+  ) {
+    return this.defectsService.getOperationsBoard(user, query);
   }
 
   @Get(':id')

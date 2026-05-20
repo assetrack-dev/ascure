@@ -6,6 +6,14 @@ import type {
   DefectEvidenceImage,
   DefectLifecycleStatus,
   DefectListItem,
+  DefectOperationsBoardAsset,
+  DefectOperationsBoardFilters,
+  DefectOperationsBoardItem,
+  DefectOperationsBoardMainhead,
+  DefectOperationsBoardQueue,
+  DefectOperationsBoardQueueKey,
+  DefectOperationsBoardResponse,
+  DefectOperationsBoardSiteVisit,
   DefectResolutionOutcome,
   DefectSeverity,
   DefectSlaState,
@@ -16,6 +24,15 @@ import type {
 } from "@/types/defects";
 
 type ApiRecord = Record<string, unknown>;
+
+const OPERATIONS_BOARD_QUEUE_KEYS = [
+  "awaitingQaQc",
+  "maintenanceReady",
+  "inMaintenance",
+  "awaitingClosureVerification",
+  "closedResolved",
+  "exceptions",
+] as const;
 
 function asRecord(value: unknown): ApiRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -198,6 +215,11 @@ function normalizeResolutionOutcome(value: string | null): DefectResolutionOutco
   }
 
   if (
+    normalizedValue === "RESOLVED" ||
+    normalizedValue === "TEMPORARY_FIX" ||
+    normalizedValue === "MONITORING_REQUIRED" ||
+    normalizedValue === "DUPLICATE" ||
+    normalizedValue === "FALSE_POSITIVE" ||
     normalizedValue === "REPAIRED" ||
     normalizedValue === "EXTERNAL_CONSTRAINT" ||
     normalizedValue === "PARTIAL" ||
@@ -267,7 +289,13 @@ function normalizeTimelineEventType(value: string | null): DefectTimelineEventTy
     normalizedValue === "STATUS_CHANGED" ||
     normalizedValue === "ASSIGNMENT_CHANGED" ||
     normalizedValue === "DUE_DATE_CHANGED" ||
-    normalizedValue === "COMMENT"
+    normalizedValue === "COMMENT" ||
+    normalizedValue === "DEFECT_VERIFIED" ||
+    normalizedValue === "DEFECT_ASSIGNED" ||
+    normalizedValue === "MAINTENANCE_STARTED" ||
+    normalizedValue === "MAINTENANCE_COMPLETED" ||
+    normalizedValue === "RESOLUTION_OUTCOME_UPDATED" ||
+    normalizedValue === "CLOSURE_VERIFIED"
   ) {
     return normalizedValue;
   }
@@ -334,10 +362,31 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   const asset = nestedRecord(record, "asset");
   const date = readDate(record);
   const inspectionItemResultId = firstString(record, ["inspectionItemResultId", "itemResultId"]);
-  const assignedUser = normalizeActor(record.assignedUser);
-  const assignedTeam = normalizeTeam(record.assignedTeam);
+  const assignedUser =
+    normalizeActor(record.assignedToUser) ?? normalizeActor(record.assignedUser);
+  const assignedTeam =
+    normalizeTeam(record.assignedToTeam) ?? normalizeTeam(record.assignedTeam);
   const verifiedByUser = normalizeActor(record.verifiedByUser);
+  const maintainedByUser = normalizeActor(record.maintainedByUser);
   const closureVerifiedByUser = normalizeActor(record.closureVerifiedByUser);
+  const assignedUserId = firstString(record, [
+    "assignedToUserId",
+    "assignedUserId",
+    "assigneeUserId",
+  ]);
+  const assignedTeamId = firstString(record, [
+    "assignedToTeamId",
+    "assignedTeamId",
+    "assigneeTeamId",
+  ]);
+  const verificationNotes = firstString(record, [
+    "verificationNotes",
+    "verificationRemarks",
+  ]);
+  const closureVerificationNotes = firstString(record, [
+    "closureVerificationNotes",
+    "closureRemarks",
+  ]);
   const dueDate = firstString(record, ["dueDate"]);
   const status = normalizeStatus(firstString(record, ["status"]));
   const lifecycleStatus = normalizeLifecycleStatus(firstString(record, ["lifecycleStatus"]));
@@ -356,13 +405,19 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   return {
     id,
     inspectionItemResultId: inspectionItemResultId ?? undefined,
-    assignedUserId: firstString(record, ["assignedUserId", "assigneeUserId"]),
-    assignedTeamId: firstString(record, ["assignedTeamId", "assigneeTeamId"]),
+    assignedUserId,
+    assignedTeamId,
+    assignedToUserId: assignedUserId,
+    assignedToTeamId: assignedTeamId,
     assignedUser,
     assignedTeam,
+    assignedToUser: assignedUser,
+    assignedToTeam: assignedTeam,
     verifiedByUserId: firstString(record, ["verifiedByUserId"]),
+    maintainedByUserId: firstString(record, ["maintainedByUserId"]),
     closureVerifiedByUserId: firstString(record, ["closureVerifiedByUserId"]),
     verifiedByUser,
+    maintainedByUser,
     closureVerifiedByUser,
     assignedTo:
       firstString(record, ["assignedTo", "assignee"]) ??
@@ -388,10 +443,15 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
     dueDate,
     resolvedAt: firstString(record, ["resolvedAt"]),
     closedAt: firstString(record, ["closedAt"]),
+    assignedAt: firstString(record, ["assignedAt"]),
     verifiedAt: firstString(record, ["verifiedAt"]),
-    verificationRemarks: firstString(record, ["verificationRemarks"]),
+    maintainedAt: firstString(record, ["maintainedAt"]),
+    verificationNotes,
+    verificationRemarks: verificationNotes,
+    maintenanceNotes: firstString(record, ["maintenanceNotes"]),
     closureVerifiedAt: firstString(record, ["closureVerifiedAt"]),
-    closureRemarks: firstString(record, ["closureRemarks"]),
+    closureVerificationNotes,
+    closureRemarks: closureVerificationNotes,
     isOverdue: readBoolean(record, "isOverdue") ?? slaState === "OVERDUE",
     slaState,
     submittedAt: firstString(record, ["submittedAt"]),
@@ -499,6 +559,18 @@ function normalizeTimelineEntry(
     type: normalizeTimelineEventType(firstString(record, ["type", "eventType"])),
     fromStatus: normalizeNullableStatus(firstString(record, ["fromStatus"])),
     toStatus: normalizeNullableStatus(firstString(record, ["toStatus", "status"])),
+    fromLifecycleStatus: normalizeLifecycleStatus(
+      firstString(record, ["fromLifecycleStatus"]),
+    ),
+    toLifecycleStatus: normalizeLifecycleStatus(
+      firstString(record, ["toLifecycleStatus", "lifecycleStatus"]),
+    ),
+    fromResolutionOutcome: normalizeResolutionOutcome(
+      firstString(record, ["fromResolutionOutcome"]),
+    ),
+    toResolutionOutcome: normalizeResolutionOutcome(
+      firstString(record, ["toResolutionOutcome", "resolutionOutcome"]),
+    ),
     comment: firstString(record, ["comment", "remark", "message"]),
     createdAt,
     createdBy: normalizeActor(record.createdBy),
@@ -524,6 +596,10 @@ function normalizeTimeline(record: ApiRecord, fallbackDefect: DefectListItem) {
       type: "CREATED" as const,
       fromStatus: null,
       toStatus: fallbackDefect.status,
+      fromLifecycleStatus: null,
+      toLifecycleStatus: fallbackDefect.lifecycleStatus ?? "DETECTED",
+      fromResolutionOutcome: null,
+      toResolutionOutcome: fallbackDefect.resolutionOutcome ?? null,
       comment: fallbackDefect.remark ?? "Defect opened from failed inspection item.",
       createdAt: fallbackDefect.createdAt ?? fallbackDefect.date ?? new Date().toISOString(),
       createdBy: null,
@@ -644,12 +720,289 @@ function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
   };
 }
 
+function normalizeBoardQueueKey(value: string | null): DefectOperationsBoardQueueKey {
+  if (OPERATIONS_BOARD_QUEUE_KEYS.includes(value as DefectOperationsBoardQueueKey)) {
+    return value as DefectOperationsBoardQueueKey;
+  }
+
+  return "awaitingQaQc";
+}
+
+function normalizeBoardMainhead(rawMainhead: unknown): DefectOperationsBoardMainhead {
+  const record = asRecord(rawMainhead);
+  const code = firstString(record, ["code"]);
+  const name = firstString(record, ["name"]);
+  const label = firstString(record, ["label"]) ?? name ?? code ?? "Unassigned MAINHEAD";
+
+  return {
+    id: firstString(record, ["id"]),
+    code,
+    name,
+    label,
+  };
+}
+
+function normalizeBoardContextRef(rawContext: unknown) {
+  const record = asRecord(rawContext);
+  const id = firstString(record, ["id"]);
+
+  if (!record || !id) {
+    return null;
+  }
+
+  return {
+    id,
+    code: firstString(record, ["code"]),
+    name: firstString(record, ["name"]),
+  };
+}
+
+function normalizeBoardSiteVisit(rawSiteVisit: unknown): DefectOperationsBoardSiteVisit | null {
+  const record = asRecord(rawSiteVisit);
+  const id = firstString(record, ["id"]);
+
+  if (!record || !id) {
+    return null;
+  }
+
+  const team = normalizeTeam(record.team);
+  const substation = nestedRecord(record, "substation");
+
+  return {
+    id,
+    status: firstString(record, ["status"]),
+    startedAt: firstString(record, ["startedAt"]),
+    endedAt: firstString(record, ["endedAt"]),
+    team,
+    substation: substation
+      ? {
+          id: firstString(substation, ["id"]),
+          code: firstString(substation, ["code"]),
+          name: firstString(substation, ["name"]),
+          location: firstString(substation, ["location"]),
+        }
+      : null,
+  };
+}
+
+function normalizeBoardAsset(rawAsset: unknown): DefectOperationsBoardAsset | null {
+  const record = asRecord(rawAsset);
+  const id = firstString(record, ["id"]);
+  const code = firstString(record, ["code", "assetCode"]);
+
+  if (!record || !id || !code) {
+    return null;
+  }
+
+  const assetType = nestedRecord(record, "assetType");
+
+  return {
+    id,
+    code,
+    name: firstString(record, ["name"]),
+    assetType: assetType
+      ? {
+          id: firstString(assetType, ["id"]),
+          code: firstString(assetType, ["code"]),
+          name: firstString(assetType, ["name"]),
+        }
+      : null,
+  };
+}
+
+function normalizeBoardItem(rawItem: unknown, index: number): DefectOperationsBoardItem | null {
+  const record = asRecord(rawItem);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = firstString(record, ["id", "defectId"]) ?? `operation-defect-${index}`;
+  const title =
+    firstString(record, ["title", "summary", "defectType", "label"]) ?? "Unspecified defect";
+  const status = normalizeLifecycleStatus(firstString(record, ["status", "lifecycleStatus"]));
+  const lifecycleStatus = status === "UNKNOWN" ? "DETECTED" : status;
+  const mainhead = normalizeBoardMainhead(record.mainhead);
+  const asset = normalizeBoardAsset(record.asset);
+  const dueDate = firstString(record, ["dueDate"]);
+  const workflowStatus = normalizeStatus(firstString(record, ["workflowStatus"]));
+  const normalizedSlaState = normalizeSlaState(firstString(record, ["slaState"]));
+  const slaState =
+    normalizedSlaState === "UNKNOWN"
+      ? computeSlaState(workflowStatus, dueDate)
+      : normalizedSlaState;
+
+  return {
+    id,
+    inspectionItemResultId: firstString(record, ["inspectionItemResultId"]) ?? undefined,
+    title,
+    summary: firstString(record, ["summary", "remark"]),
+    status: lifecycleStatus,
+    lifecycleStatus,
+    workflowStatus,
+    severity: normalizeSeverity(firstString(record, ["severity"])),
+    resolutionOutcome: normalizeResolutionOutcome(firstString(record, ["resolutionOutcome"])),
+    mainhead,
+    mainheadLabel: firstString(record, ["mainheadLabel"]) ?? mainhead.label,
+    project: normalizeBoardContextRef(record.project),
+    workPackage: normalizeBoardContextRef(record.workPackage),
+    siteVisit: normalizeBoardSiteVisit(record.siteVisit),
+    asset,
+    assetCode: firstString(record, ["assetCode"]) ?? asset?.code ?? "Unassigned",
+    assetName: firstString(record, ["assetName"]) ?? asset?.name ?? null,
+    assignedToUserId: firstString(record, ["assignedToUserId", "assignedUserId"]),
+    assignedToTeamId: firstString(record, ["assignedToTeamId", "assignedTeamId"]),
+    assignedToUser: normalizeActor(record.assignedToUser),
+    assignedToTeam: normalizeTeam(record.assignedToTeam),
+    assignedTo: firstString(record, ["assignedTo"]),
+    verifiedByUser: normalizeActor(record.verifiedByUser),
+    maintainedByUser: normalizeActor(record.maintainedByUser),
+    closureVerifiedByUser: normalizeActor(record.closureVerifiedByUser),
+    detectedAt: firstString(record, ["detectedAt"]),
+    createdAt: firstString(record, ["createdAt"]),
+    verifiedAt: firstString(record, ["verifiedAt"]),
+    assignedAt: firstString(record, ["assignedAt"]),
+    maintainedAt: firstString(record, ["maintainedAt"]),
+    closureVerifiedAt: firstString(record, ["closureVerifiedAt"]),
+    dueDate,
+    slaState,
+    isOverdue: readBoolean(record, "isOverdue") ?? slaState === "OVERDUE",
+  };
+}
+
+function normalizeBoardQueue(rawQueue: unknown): DefectOperationsBoardQueue | null {
+  const record = asRecord(rawQueue);
+
+  if (!record) {
+    return null;
+  }
+
+  const key = normalizeBoardQueueKey(firstString(record, ["key"]));
+  const items = readArray(record, "items")
+    .map(normalizeBoardItem)
+    .filter((item): item is DefectOperationsBoardItem => Boolean(item));
+  const statuses = readArray(record, "statuses")
+    .map((status) => normalizeLifecycleStatus(typeof status === "string" ? status : null))
+    .filter((status): status is Exclude<DefectLifecycleStatus, "UNKNOWN"> => status !== "UNKNOWN");
+
+  return {
+    key,
+    title: firstString(record, ["title"]) ?? key,
+    description: firstString(record, ["description"]) ?? undefined,
+    statuses,
+    count: readNumber(record, "count") ?? items.length,
+    items,
+  };
+}
+
+function normalizeBoardFilters(rawFilters: unknown): DefectOperationsBoardFilters {
+  const record = asRecord(rawFilters);
+  const severity = normalizeSeverity(firstString(record, ["severity"]));
+  const status = normalizeLifecycleStatus(firstString(record, ["status"]));
+  const resolutionOutcome = normalizeResolutionOutcome(firstString(record, ["resolutionOutcome"]));
+
+  return {
+    mainhead: firstString(record, ["mainhead"]) ?? undefined,
+    projectId: firstString(record, ["projectId"]) ?? undefined,
+    workPackageId: firstString(record, ["workPackageId"]) ?? undefined,
+    siteVisitId: firstString(record, ["siteVisitId"]) ?? undefined,
+    severity: severity ?? undefined,
+    status: status === "UNKNOWN" ? undefined : status,
+    resolutionOutcome:
+      !resolutionOutcome || resolutionOutcome === "UNKNOWN" ? undefined : resolutionOutcome,
+    assignedToUserId: firstString(record, ["assignedToUserId"]) ?? undefined,
+    overdueOnly: readBoolean(record, "overdueOnly") ?? undefined,
+    q: firstString(record, ["q"]) ?? undefined,
+  };
+}
+
+function normalizeOperationsBoard(payload: unknown): DefectOperationsBoardResponse {
+  const record = asRecord(payload);
+  const queues = readArray(record, "queues")
+    .map(normalizeBoardQueue)
+    .filter((queue): queue is DefectOperationsBoardQueue => Boolean(queue));
+  const mainheads = readArray(record, "mainheads")
+    .map((rawGroup) => {
+      const group = asRecord(rawGroup);
+      const groupQueues = readArray(group, "queues")
+        .map(normalizeBoardQueue)
+        .filter((queue): queue is DefectOperationsBoardQueue => Boolean(queue));
+
+      if (!group) {
+        return null;
+      }
+
+      return {
+        mainhead: normalizeBoardMainhead(group.mainhead),
+        count:
+          readNumber(group, "count") ??
+          groupQueues.reduce((total, queue) => total + queue.count, 0),
+        queues: groupQueues,
+      };
+    })
+    .filter((group): group is DefectOperationsBoardResponse["mainheads"][number] =>
+      Boolean(group),
+    );
+
+  return {
+    generatedAt: firstString(record, ["generatedAt"]),
+    filters: normalizeBoardFilters(record?.filters),
+    totalCount:
+      readNumber(record, "totalCount") ??
+      queues.reduce((total, queue) => total + queue.items.length, 0),
+    queues,
+    mainheads,
+  };
+}
+
+function appendBoardFilter(params: URLSearchParams, key: string, value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    if (value) {
+      params.set(key, "true");
+    }
+
+    return;
+  }
+
+  params.set(key, String(value));
+}
+
 export async function fetchDefects(token: string): Promise<DefectListItem[]> {
   const payload = await apiRequest<unknown>("/defects", { token });
 
   return extractDefectArray(payload)
     .map(normalizeDefect)
     .filter((defect): defect is DefectListItem => Boolean(defect));
+}
+
+export async function fetchDefectOperationsBoard(
+  token: string,
+  filters: DefectOperationsBoardFilters = {},
+): Promise<DefectOperationsBoardResponse> {
+  const params = new URLSearchParams();
+
+  appendBoardFilter(params, "mainhead", filters.mainhead);
+  appendBoardFilter(params, "projectId", filters.projectId);
+  appendBoardFilter(params, "workPackageId", filters.workPackageId);
+  appendBoardFilter(params, "siteVisitId", filters.siteVisitId);
+  appendBoardFilter(params, "severity", filters.severity);
+  appendBoardFilter(params, "status", filters.status);
+  appendBoardFilter(params, "resolutionOutcome", filters.resolutionOutcome);
+  appendBoardFilter(params, "assignedToUserId", filters.assignedToUserId);
+  appendBoardFilter(params, "overdueOnly", filters.overdueOnly);
+  appendBoardFilter(params, "q", filters.q);
+
+  const queryString = params.toString();
+  const payload = await apiRequest<unknown>(
+    `/defects/operations-board${queryString ? `?${queryString}` : ""}`,
+    { token },
+  );
+
+  return normalizeOperationsBoard(payload);
 }
 
 export async function fetchDefectDetail(
@@ -697,19 +1050,35 @@ export async function updateDefectAssignment(
   payload: {
     assignedUserId?: string | null;
     assignedTeamId?: string | null;
+    assignedToUserId?: string | null;
+    assignedToTeamId?: string | null;
   },
 ): Promise<DefectDetail> {
   const body: {
     assignedUserId?: string | null;
     assignedTeamId?: string | null;
+    assignedToUserId?: string | null;
+    assignedToTeamId?: string | null;
   } = {};
 
   if ("assignedUserId" in payload) {
     body.assignedUserId = payload.assignedUserId;
+    body.assignedToUserId = payload.assignedUserId;
+  }
+
+  if ("assignedToUserId" in payload) {
+    body.assignedToUserId = payload.assignedToUserId;
+    body.assignedUserId = payload.assignedToUserId;
   }
 
   if ("assignedTeamId" in payload) {
     body.assignedTeamId = payload.assignedTeamId;
+    body.assignedToTeamId = payload.assignedTeamId;
+  }
+
+  if ("assignedToTeamId" in payload) {
+    body.assignedToTeamId = payload.assignedToTeamId;
+    body.assignedTeamId = payload.assignedToTeamId;
   }
 
   const defect = normalizeDefectDetail(
@@ -750,13 +1119,16 @@ export async function updateDefectDueDate(
 export async function verifyDefect(
   token: string,
   defectId: string,
-  verificationRemarks?: string | null,
+  verificationNotes?: string | null,
 ): Promise<DefectDetail> {
   const defect = normalizeDefectDetail(
     await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/verify`, {
       method: "PATCH",
       token,
-      body: JSON.stringify({ verificationRemarks }),
+      body: JSON.stringify({
+        verificationNotes,
+        verificationRemarks: verificationNotes,
+      }),
     }),
   );
 
@@ -770,13 +1142,16 @@ export async function verifyDefect(
 export async function rejectDefect(
   token: string,
   defectId: string,
-  verificationRemarks?: string | null,
+  verificationNotes?: string | null,
 ): Promise<DefectDetail> {
   const defect = normalizeDefectDetail(
     await apiRequest<unknown>(`/defects/${encodeURIComponent(defectId)}/reject`, {
       method: "PATCH",
       token,
-      body: JSON.stringify({ verificationRemarks }),
+      body: JSON.stringify({
+        verificationNotes,
+        verificationRemarks: verificationNotes,
+      }),
     }),
   );
 
@@ -793,15 +1168,21 @@ export async function completeDefectMaintenance(
   payload: {
     resolutionOutcome?: Exclude<DefectResolutionOutcome, "UNKNOWN">;
     completionRemarks?: string | null;
+    maintenanceNotes?: string | null;
   },
 ): Promise<DefectDetail> {
+  const maintenanceNotes = payload.maintenanceNotes ?? payload.completionRemarks;
   const defect = normalizeDefectDetail(
     await apiRequest<unknown>(
       `/defects/${encodeURIComponent(defectId)}/maintenance-completion`,
       {
         method: "PATCH",
         token,
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          maintenanceNotes,
+          completionRemarks: maintenanceNotes,
+        }),
       },
     ),
   );
@@ -816,7 +1197,7 @@ export async function completeDefectMaintenance(
 export async function verifyDefectClosure(
   token: string,
   defectId: string,
-  closureRemarks?: string | null,
+  closureVerificationNotes?: string | null,
 ): Promise<DefectDetail> {
   const defect = normalizeDefectDetail(
     await apiRequest<unknown>(
@@ -824,7 +1205,10 @@ export async function verifyDefectClosure(
       {
         method: "PATCH",
         token,
-        body: JSON.stringify({ closureRemarks }),
+        body: JSON.stringify({
+          closureVerificationNotes,
+          closureRemarks: closureVerificationNotes,
+        }),
       },
     ),
   );
