@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
@@ -8,6 +17,19 @@ import {
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
 } from './dto/list-enterprise-query.dto';
+import {
+  CreateMainheadDto,
+  CreateOrganizationDto,
+  CreateProjectDto,
+  CreateWorkPackageDto,
+  UpdateEnterpriseActiveDto,
+  UpdateMainheadDto,
+  UpdateOrganizationDto,
+  UpdateProjectDto,
+  UpdateProjectLifecycleStatusDto,
+  UpdateWorkPackageDto,
+  UpdateWorkPackageLifecycleStatusDto,
+} from './dto/manage-enterprise.dto';
 import { EnterpriseService } from './enterprise.service';
 
 class EnterpriseIdParamDto {
@@ -20,9 +42,35 @@ class EnterpriseIdParamDto {
 export class EnterpriseController {
   constructor(private readonly enterpriseService: EnterpriseService) {}
 
+  @Get('options')
+  getOptions() {
+    return this.enterpriseService.getOptions();
+  }
+
+  @Post('organizations')
+  createOrganization(@Body() dto: CreateOrganizationDto) {
+    return this.enterpriseService.createOrganization(dto);
+  }
+
   @Get('organizations')
   listOrganizations(@Query() query: ListOrganizationsQueryDto) {
     return this.enterpriseService.listOrganizations(query);
+  }
+
+  @Patch('organizations/:id')
+  updateOrganization(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateOrganizationDto,
+  ) {
+    return this.enterpriseService.updateOrganization(params.id, dto);
+  }
+
+  @Patch('organizations/:id/status')
+  updateOrganizationActive(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.enterpriseService.updateOrganizationActive(params.id, dto);
   }
 
   @Get('organizations/:id')
@@ -40,9 +88,30 @@ export class EnterpriseController {
     return this.enterpriseService.getBranch(params.id);
   }
 
+  @Post('mainheads')
+  createMainhead(@Body() dto: CreateMainheadDto) {
+    return this.enterpriseService.createMainhead(dto);
+  }
+
   @Get('mainheads')
   listMainheads(@Query() query: ListMainheadsQueryDto) {
     return this.enterpriseService.listMainheads(query);
+  }
+
+  @Patch('mainheads/:id')
+  updateMainhead(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateMainheadDto,
+  ) {
+    return this.enterpriseService.updateMainhead(params.id, dto);
+  }
+
+  @Patch('mainheads/:id/status')
+  updateMainheadActive(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.enterpriseService.updateMainheadActive(params.id, dto);
   }
 
   @Get('mainheads/:id')
@@ -50,9 +119,30 @@ export class EnterpriseController {
     return this.enterpriseService.getMainhead(params.id);
   }
 
+  @Post('projects')
+  createProject(@Body() dto: CreateProjectDto) {
+    return this.enterpriseService.createProject(dto);
+  }
+
   @Get('projects')
   listProjects(@Query() query: ListProjectsQueryDto) {
     return this.enterpriseService.listProjects(query);
+  }
+
+  @Patch('projects/:id')
+  updateProject(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateProjectDto,
+  ) {
+    return this.enterpriseService.updateProject(params.id, dto);
+  }
+
+  @Patch('projects/:id/status')
+  updateProjectStatus(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateProjectLifecycleStatusDto,
+  ) {
+    return this.enterpriseService.updateProjectStatus(params.id, dto);
   }
 
   @Get('projects/:id')
@@ -60,9 +150,30 @@ export class EnterpriseController {
     return this.enterpriseService.getProject(params.id);
   }
 
+  @Post('work-packages')
+  createWorkPackage(@Body() dto: CreateWorkPackageDto) {
+    return this.enterpriseService.createWorkPackage(dto);
+  }
+
   @Get('work-packages')
   listWorkPackages(@Query() query: ListWorkPackagesQueryDto) {
     return this.enterpriseService.listWorkPackages(query);
+  }
+
+  @Patch('work-packages/:id')
+  updateWorkPackage(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateWorkPackageDto,
+  ) {
+    return this.enterpriseService.updateWorkPackage(params.id, dto);
+  }
+
+  @Patch('work-packages/:id/status')
+  updateWorkPackageStatus(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateWorkPackageLifecycleStatusDto,
+  ) {
+    return this.enterpriseService.updateWorkPackageStatus(params.id, dto);
   }
 
   @Get('work-packages/:id')

@@ -1,7 +1,8 @@
-import { SiteVisitType } from '@prisma/client';
+import { OperationalDomain, SiteVisitType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsDateString,
+  IsEnum,
   IsIn,
   IsInt,
   IsLatitude,
@@ -26,6 +27,26 @@ export class CreateSiteVisitDto {
   substationId?: string;
 
   @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  workPackageId?: string;
+
+  @IsOptional()
   @IsIn(['ACTIVE', 'OPEN', 'IN_PROGRESS'])
   status?: 'ACTIVE' | 'OPEN' | 'IN_PROGRESS';
 
@@ -37,6 +58,10 @@ export class CreateSiteVisitDto {
   @IsOptional()
   @IsIn(Object.values(SiteVisitType))
   visitType?: SiteVisitType;
+
+  @IsOptional()
+  @IsEnum(OperationalDomain)
+  operationalDomain?: OperationalDomain;
 
   @Transform(trimString)
   @IsOptional()

@@ -299,6 +299,7 @@ model User {
   verifiedDefects         Defect[]                 @relation("DefectVerifiedByUser")
   maintainedDefects       Defect[]                 @relation("DefectMaintainedByUser")
   closureVerifiedDefects  Defect[]                 @relation("DefectClosureVerifiedByUser")
+  defectEvidenceImages    DefectEvidenceImage[]    @relation("DefectEvidenceCreatedBy")
   organizationMemberships OrganizationMembership[]
   projectMemberships      ProjectMembership[]
   siteVisitParticipants   SiteVisitParticipant[]
@@ -837,6 +838,7 @@ model Defect {
   verifiedByUser           User?                  @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
   maintainedByUser         User?                  @relation("DefectMaintainedByUser", fields: [maintainedByUserId], references: [id], onDelete: SetNull)
   closureVerifiedByUser    User?                  @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
+  evidenceImages           DefectEvidenceImage[]
   timelineEntries          DefectTimelineEntry[]
 
   @@index([assignedUserId])
@@ -852,6 +854,31 @@ model Defect {
   @@index([maintainedAt])
   @@index([dueDate])
   @@index([status, dueDate])
+}
+
+model DefectEvidenceImage {
+  id              String   @id @default(uuid()) @db.Uuid
+  defectId        String   @db.Uuid
+  createdByUserId String?  @db.Uuid
+  evidenceType    String   @default("MAINTENANCE_PROOF")
+  fileName        String
+  storageKey      String
+  contentType     String?
+  sizeBytes       Int?
+  url             String?
+  note            String?
+  latitude        Float?
+  longitude       Float?
+  timestamp       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  defect          Defect   @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("DefectEvidenceCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([defectId])
+  @@index([createdByUserId])
+  @@index([evidenceType])
+  @@index([createdAt])
 }
 
 model DefectTimelineEntry {

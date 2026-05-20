@@ -1,13 +1,18 @@
 "use client";
 
+import type { FormEvent, MouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Building2,
+  CheckCircle2,
   ChevronRight,
   FolderKanban,
   Network,
   PackageCheck,
+  Pencil,
+  Plus,
+  Power,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -18,15 +23,43 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
-import { fetchEnterpriseRows } from "@/lib/enterprise";
+import {
+  createEnterpriseEntity,
+  fetchEnterpriseOptions,
+  fetchEnterpriseRows,
+  updateEnterpriseEntity,
+  updateEnterpriseOperationalStatus,
+} from "@/lib/enterprise";
 import type { AuthSession } from "@/types/auth";
 import type {
   EnterpriseEntityKind,
   EnterpriseListRow,
+  EnterpriseOptions,
   EnterpriseTone,
 } from "@/types/enterprise";
 
 type FilterValue = "ALL" | string;
+type ModalMode = "create" | "edit";
+
+interface EnterpriseFormState {
+  name: string;
+  code: string;
+  type: string;
+  status: string;
+  isActive: boolean;
+  organizationId: string;
+  branchId: string;
+  branchName: string;
+  branchCode: string;
+  region: string;
+  mainheadId: string;
+  projectId: string;
+  operationalDomain: string;
+  startDate: string;
+  endDate: string;
+  area: string;
+  description: string;
+}
 
 const PAGE_CONFIG: Record<
   EnterpriseEntityKind,
@@ -93,6 +126,28 @@ const searchClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+const primaryButtonClassName =
+  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
+
+const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
+  name: "",
+  code: "",
+  type: "OTHER",
+  status: "ACTIVE",
+  isActive: true,
+  organizationId: "",
+  branchId: "",
+  branchName: "",
+  branchCode: "",
+  region: "",
+  mainheadId: "",
+  projectId: "",
+  operationalDomain: "",
+  startDate: "",
+  endDate: "",
+  area: "",
+  description: "",
+};
 
 function toneClassName(tone: EnterpriseTone) {
   if (tone === "success") {
@@ -144,6 +199,526 @@ function formatDate(date: string | null) {
   }).format(parsedDate);
 }
 
+function formatEnum(value: string | null | undefined) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function readRawString(row: EnterpriseListRow | null, key: string) {
+  const value = row?.raw[key];
+
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function readRawBoolean(row: EnterpriseListRow | null, key: string) {
+  const value = row?.raw[key];
+
+  return typeof value === "boolean" ? value : null;
+}
+
+function nestedRaw(row: EnterpriseListRow | null, key: string) {
+  const value = row?.raw[key];
+
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readNestedString(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function toDateInputValue(date: string | null | undefined) {
+  if (!date) {
+    return "";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
+}
+
+function optionLabel(option: { name: string; code?: string | null }) {
+  return option.code ? `${option.code} - ${option.name}` : option.name;
+}
+
+function createInitialForm(kind: EnterpriseEntityKind): EnterpriseFormState {
+  return {
+    ...DEFAULT_ENTERPRISE_FORM,
+    type: "OTHER",
+    status: kind === "projects" || kind === "work-packages" ? "ACTIVE" : "ACTIVE",
+  };
+}
+
+function createFormFromRow(
+  kind: EnterpriseEntityKind,
+  row: EnterpriseListRow,
+): EnterpriseFormState {
+  const branch = nestedRaw(row, "branch");
+  const branchOrganization = branch?.organization;
+
+  return {
+    ...createInitialForm(kind),
+    name: row.name,
+    code: row.code ?? "",
+    type: readRawString(row, "type") || "OTHER",
+    status: readRawString(row, "status") || (row.isActive === false ? "ARCHIVED" : "ACTIVE"),
+    isActive: readRawBoolean(row, "isActive") ?? row.isActive !== false,
+    organizationId:
+      readRawString(row, "clientOrganizationId") ||
+      readNestedString(
+        branchOrganization && typeof branchOrganization === "object"
+          ? (branchOrganization as Record<string, unknown>)
+          : null,
+        "id",
+      ),
+    branchId: readRawString(row, "branchId") || readNestedString(branch, "id"),
+    branchName: readNestedString(branch, "name"),
+    branchCode: readNestedString(branch, "code"),
+    region: readNestedString(branch, "region"),
+    mainheadId:
+      readRawString(row, "mainheadId") ||
+      readNestedString(nestedRaw(row, "mainheadRecord"), "id") ||
+      readNestedString(nestedRaw(row, "mainhead"), "id"),
+    projectId: readRawString(row, "projectId") || readNestedString(nestedRaw(row, "project"), "id"),
+    operationalDomain: readRawString(row, "operationalDomain"),
+    startDate: toDateInputValue(readRawString(row, "startDate")),
+    endDate: toDateInputValue(readRawString(row, "endDate")),
+    area: readRawString(row, "area"),
+    description: readRawString(row, "description"),
+  };
+}
+
+function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseFormState) {
+  const payload: Record<string, unknown> = {
+    name: form.name.trim(),
+    code: form.code.trim() || null,
+  };
+
+  if (kind === "organizations") {
+    payload.type = form.type || "OTHER";
+    payload.isActive = form.isActive;
+  }
+
+  if (kind === "mainheads") {
+    payload.description = form.description.trim() || null;
+    payload.isActive = form.isActive;
+    payload.branchId = form.branchId || undefined;
+    payload.organizationId = form.organizationId || undefined;
+    payload.branchName = form.branchName.trim() || undefined;
+    payload.branchCode = form.branchCode.trim() || undefined;
+    payload.region = form.region.trim() || undefined;
+  }
+
+  if (kind === "projects") {
+    payload.description = form.description.trim() || null;
+    payload.status = form.status || "ACTIVE";
+    payload.mainheadId = form.mainheadId || null;
+    payload.organizationId = form.organizationId || null;
+    payload.operationalDomain = form.operationalDomain || null;
+    payload.startDate = form.startDate || null;
+    payload.endDate = form.endDate || null;
+  }
+
+  if (kind === "work-packages") {
+    payload.projectId = form.projectId;
+    payload.mainheadId = form.mainheadId || null;
+    payload.area = form.area.trim() || null;
+    payload.description = form.description.trim() || null;
+    payload.status = form.status || "ACTIVE";
+    payload.operationalDomain = form.operationalDomain || null;
+  }
+
+  return payload;
+}
+
+function EnterpriseFormModal({
+  kind,
+  mode,
+  values,
+  options,
+  error,
+  isSaving,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  kind: EnterpriseEntityKind;
+  mode: ModalMode;
+  values: EnterpriseFormState;
+  options: EnterpriseOptions | null;
+  error: string;
+  isSaving: boolean;
+  onChange: <K extends keyof EnterpriseFormState>(
+    field: K,
+    value: EnterpriseFormState[K],
+  ) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const config = PAGE_CONFIG[kind];
+  const isCreateMode = mode === "create";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+              {isCreateMode ? "New Record" : "Edit Record"}
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">
+              {isCreateMode ? `Create ${config.title}` : `Update ${config.title}`}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+            aria-label="Close enterprise modal"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
+          {error ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Name</span>
+              <input
+                type="text"
+                value={values.name}
+                onChange={(event) => onChange("name", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+                required
+                maxLength={255}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Code</span>
+              <input
+                type="text"
+                value={values.code}
+                onChange={(event) => onChange("code", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+                maxLength={64}
+              />
+            </label>
+          </div>
+
+          {kind === "organizations" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Type</span>
+                <select
+                  value={values.type}
+                  onChange={(event) => onChange("type", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  {(options?.organizationTypes.length
+                    ? options.organizationTypes
+                    : ["ASCURE", "TNB", "SUBCONTRACTOR", "CONSULTANT", "CLIENT", "OTHER"]
+                  ).map((type) => (
+                    <option key={type} value={type}>
+                      {formatEnum(type)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="mt-7 inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={values.isActive}
+                  onChange={(event) => onChange("isActive", event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                Active
+              </label>
+            </div>
+          ) : null}
+
+          {kind === "mainheads" ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Organization</span>
+                  <select
+                    value={values.organizationId}
+                    onChange={(event) => onChange("organizationId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Select organization</option>
+                    {options?.organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Existing Branch</span>
+                  <select
+                    value={values.branchId}
+                    onChange={(event) => onChange("branchId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Create/use branch below</option>
+                    {options?.branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {optionLabel(branch)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Branch</span>
+                  <input
+                    type="text"
+                    value={values.branchName}
+                    onChange={(event) => onChange("branchName", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    maxLength={255}
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Branch Code</span>
+                  <input
+                    type="text"
+                    value={values.branchCode}
+                    onChange={(event) => onChange("branchCode", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    maxLength={64}
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Region/State</span>
+                  <input
+                    type="text"
+                    value={values.region}
+                    onChange={(event) => onChange("region", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    maxLength={255}
+                  />
+                </label>
+              </div>
+              <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={values.isActive}
+                  onChange={(event) => onChange("isActive", event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                Active
+              </label>
+            </>
+          ) : null}
+
+          {kind === "projects" ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+                  <select
+                    value={values.mainheadId}
+                    onChange={(event) => onChange("mainheadId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">No MAINHEAD</option>
+                    {options?.mainheads.map((mainhead) => (
+                      <option key={mainhead.id} value={mainhead.id}>
+                        {optionLabel(mainhead)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Organization</span>
+                  <select
+                    value={values.organizationId}
+                    onChange={(event) => onChange("organizationId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">No client organization</option>
+                    {options?.organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Domain</span>
+                  <select
+                    value={values.operationalDomain}
+                    onChange={(event) => onChange("operationalDomain", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Not recorded</option>
+                    {options?.operationalDomains.map((domain) => (
+                      <option key={domain} value={domain}>
+                        {formatEnum(domain)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Start Date</span>
+                  <input
+                    type="date"
+                    value={values.startDate}
+                    onChange={(event) => onChange("startDate", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">End Date</span>
+                  <input
+                    type="date"
+                    value={values.endDate}
+                    onChange={(event) => onChange("endDate", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  />
+                </label>
+              </div>
+            </>
+          ) : null}
+
+          {kind === "work-packages" ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Project</span>
+                  <select
+                    value={values.projectId}
+                    onChange={(event) => onChange("projectId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    required
+                  >
+                    <option value="">Select project</option>
+                    {options?.projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {optionLabel(project)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+                  <select
+                    value={values.mainheadId}
+                    onChange={(event) => onChange("mainheadId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Use project MAINHEAD</option>
+                    {options?.mainheads.map((mainhead) => (
+                      <option key={mainhead.id} value={mainhead.id}>
+                        {optionLabel(mainhead)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Domain</span>
+                  <select
+                    value={values.operationalDomain}
+                    onChange={(event) => onChange("operationalDomain", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Use project domain</option>
+                    {options?.operationalDomains.map((domain) => (
+                      <option key={domain} value={domain}>
+                        {formatEnum(domain)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Area</span>
+                  <input
+                    type="text"
+                    value={values.area}
+                    onChange={(event) => onChange("area", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    maxLength={255}
+                  />
+                </label>
+              </div>
+            </>
+          ) : null}
+
+          {(kind === "projects" || kind === "work-packages") ? (
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Status</span>
+              <select
+                value={values.status}
+                onChange={(event) => onChange("status", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+              >
+                {(kind === "projects"
+                  ? options?.projectStatuses
+                  : options?.workPackageStatuses
+                )?.map((status) => (
+                  <option key={status} value={status}>
+                    {formatEnum(status)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {kind !== "organizations" ? (
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Description</span>
+              <textarea
+                value={values.description}
+                onChange={(event) => onChange("description", event.target.value)}
+                rows={3}
+                className={`${inputClassName} mt-1.5 h-auto resize-none py-2`}
+                maxLength={1000}
+              />
+            </label>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
+              Cancel
+            </button>
+            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+              <CheckCircle2 size={16} />
+              {isSaving ? "Saving" : isCreateMode ? "Create" : "Save Changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function uniqueOptions(
   rows: EnterpriseListRow[],
   selector: (row: EnterpriseListRow) => string | string[] | null,
@@ -180,12 +755,19 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   const Icon = config.icon;
   const [session, setSession] = useState<AuthSession | null>(null);
   const [rows, setRows] = useState<EnterpriseListRow[]>([]);
+  const [options, setOptions] = useState<EnterpriseOptions | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [statusRowId, setStatusRowId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState<FilterValue>("ALL");
   const [groupFilter, setGroupFilter] = useState<FilterValue>("ALL");
   const [extraFilter, setExtraFilter] = useState<FilterValue>("ALL");
+  const [modalMode, setModalMode] = useState<ModalMode | null>(null);
+  const [selectedRow, setSelectedRow] = useState<EnterpriseListRow | null>(null);
+  const [form, setForm] = useState<EnterpriseFormState>(() => createInitialForm(kind));
+  const [modalError, setModalError] = useState("");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -198,8 +780,12 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
       setError("");
 
       try {
-        const nextRows = await fetchEnterpriseRows(token, kind);
+        const [nextRows, nextOptions] = await Promise.all([
+          fetchEnterpriseRows(token, kind),
+          fetchEnterpriseOptions(token),
+        ]);
         setRows(nextRows);
+        setOptions(nextOptions);
       } catch (listError) {
         if (listError instanceof ApiError && listError.status === 401) {
           handleLogout();
@@ -268,9 +854,131 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
     router.push(`${config.basePath}/${encodeURIComponent(rowId)}`);
   }
 
+  function updateForm<K extends keyof EnterpriseFormState>(
+    field: K,
+    value: EnterpriseFormState[K],
+  ) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  function openCreateModal() {
+    setSelectedRow(null);
+    setForm(createInitialForm(kind));
+    setModalError("");
+    setModalMode("create");
+  }
+
+  function openEditModal(row: EnterpriseListRow, event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    setSelectedRow(row);
+    setForm(createFormFromRow(kind, row));
+    setModalError("");
+    setModalMode("edit");
+  }
+
+  function closeModal() {
+    if (isSaving) {
+      return;
+    }
+
+    setModalMode(null);
+    setSelectedRow(null);
+    setModalError("");
+  }
+
+  function upsertRow(row: EnterpriseListRow) {
+    setRows((currentRows) => {
+      const existingIndex = currentRows.findIndex((currentRow) => currentRow.id === row.id);
+
+      if (existingIndex === -1) {
+        return [...currentRows, row];
+      }
+
+      return currentRows.map((currentRow) => (currentRow.id === row.id ? row : currentRow));
+    });
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!session?.token || !modalMode) {
+      return;
+    }
+
+    setIsSaving(true);
+    setModalError("");
+
+    try {
+      const payload = buildEnterprisePayload(kind, form);
+      const savedRow =
+        modalMode === "create"
+          ? await createEnterpriseEntity(session.token, kind, payload)
+          : selectedRow
+            ? await updateEnterpriseEntity(session.token, kind, selectedRow.id, payload)
+            : null;
+
+      if (savedRow) {
+        upsertRow(savedRow);
+      }
+
+      closeModal();
+      const nextOptions = await fetchEnterpriseOptions(session.token);
+      setOptions(nextOptions);
+    } catch (submitError) {
+      if (submitError instanceof ApiError && submitError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setModalError(
+        submitError instanceof Error ? submitError.message : "Unable to save record.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleStatusToggle(
+    row: EnterpriseListRow,
+    event: MouseEvent<HTMLButtonElement>,
+  ) {
+    event.stopPropagation();
+
+    if (!session?.token || statusRowId) {
+      return;
+    }
+
+    setStatusRowId(row.id);
+    setError("");
+
+    try {
+      const updatedRow = await updateEnterpriseOperationalStatus(
+        session.token,
+        kind,
+        row.id,
+        row.isActive === false,
+      );
+      upsertRow(updatedRow);
+      setOptions(await fetchEnterpriseOptions(session.token));
+    } catch (statusError) {
+      if (statusError instanceof ApiError && statusError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(statusError instanceof Error ? statusError.message : "Unable to update status.");
+    } finally {
+      setStatusRowId(null);
+    }
+  }
+
   const filterGridClassName = config.extraFilterLabel
     ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(150px,auto))_auto]"
     : "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(2,minmax(150px,auto))_auto]";
+  const isAdmin = session?.user?.role === "ADMIN";
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -287,7 +995,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   <ShieldCheck size={14} />
-                  Read-only
+                  {isAdmin ? "Admin access" : "Read-only"}
                 </span>
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   {rows.length} total
@@ -295,15 +1003,26 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadRows(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className={secondaryButtonClassName}
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => (session?.token ? loadRows(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+                className={secondaryButtonClassName}
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={openCreateModal}
+                disabled={!isAdmin}
+                className={primaryButtonClassName}
+              >
+                <Plus size={16} />
+                Create
+              </button>
+            </div>
           </div>
 
           <div className="mt-6">
@@ -396,8 +1115,8 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                         <th className="w-[34%] px-5 py-3.5 font-semibold">Name</th>
                         <th className="w-[18%] px-5 py-3.5 font-semibold">Status</th>
                         <th className="w-[24%] px-5 py-3.5 font-semibold">Scope</th>
-                        <th className="w-[16%] px-5 py-3.5 font-semibold">Counts</th>
-                        <th className="w-[8%] px-5 py-3.5 text-right font-semibold">Open</th>
+                        <th className="w-[14%] px-5 py-3.5 font-semibold">Counts</th>
+                        <th className="w-[14%] px-5 py-3.5 text-right font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -453,8 +1172,28 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                               ))}
                             </div>
                           </td>
-                          <td className="px-5 py-4 text-right text-slate-500">
-                            <ChevronRight size={17} className="ml-auto" />
+                          <td className="px-5 py-4">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(event) => openEditModal(row, event)}
+                                disabled={!isAdmin}
+                                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                <Pencil size={14} />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => handleStatusToggle(row, event)}
+                                disabled={!isAdmin || statusRowId === row.id}
+                                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                <Power size={14} />
+                                {row.isActive === false ? "Activate" : "Deactivate"}
+                              </button>
+                              <ChevronRight size={17} className="self-center text-slate-400" />
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -469,6 +1208,16 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                       <p className="mt-4 text-sm font-semibold text-slate-900">
                         {config.emptyLabel}
                       </p>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={openCreateModal}
+                          className={`${primaryButtonClassName} mt-4`}
+                        >
+                          <Plus size={16} />
+                          Create first record
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -481,6 +1230,20 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
           </div>
         </div>
       </main>
+
+      {modalMode ? (
+        <EnterpriseFormModal
+          kind={kind}
+          mode={modalMode}
+          values={form}
+          options={options}
+          error={modalError}
+          isSaving={isSaving}
+          onChange={updateForm}
+          onClose={closeModal}
+          onSubmit={handleSubmit}
+        />
+      ) : null}
     </AppShell>
   );
 }

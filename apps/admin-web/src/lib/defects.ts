@@ -523,16 +523,23 @@ function normalizeImage(rawImage: unknown, index: number): DefectEvidenceImage |
 
   return {
     id,
+    defectId: firstString(record, ["defectId"]) ?? undefined,
     inspectionId: firstString(record, ["inspectionId"]) ?? undefined,
+    evidenceType: firstString(record, ["evidenceType"]),
     url: firstString(record, ["url", "uri"]),
     path: firstString(record, ["path", "storageKey"]),
+    storageKey: firstString(record, ["storageKey", "path"]),
     filename: firstString(record, ["filename", "fileName"]),
+    fileName: firstString(record, ["fileName", "filename"]),
     mimeType: firstString(record, ["mimeType", "contentType"]),
+    contentType: firstString(record, ["contentType", "mimeType"]),
     sizeBytes: readNumber(record, "sizeBytes"),
+    note: firstString(record, ["note"]),
     latitude: readNumber(record, "latitude"),
     longitude: readNumber(record, "longitude"),
     timestamp: firstString(record, ["timestamp"]),
     createdAt: firstString(record, ["createdAt"]) ?? undefined,
+    updatedAt: firstString(record, ["updatedAt"]) ?? undefined,
   };
 }
 
@@ -627,6 +634,12 @@ function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
   const images = readArray(record, "images")
     .map(normalizeImage)
     .filter((image): image is DefectEvidenceImage => Boolean(image));
+  const evidenceImages = readArray(record, "evidenceImages")
+    .map(normalizeImage)
+    .filter((image): image is DefectEvidenceImage => Boolean(image));
+  const maintenanceProofImages = readArray(record, "maintenanceProofImages")
+    .map(normalizeImage)
+    .filter((image): image is DefectEvidenceImage => Boolean(image));
 
   return {
     ...baseDefect,
@@ -716,6 +729,8 @@ function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
         }
       : null,
     images,
+    evidenceImages,
+    maintenanceProofImages,
     timeline: normalizeTimeline(record, baseDefect),
   };
 }

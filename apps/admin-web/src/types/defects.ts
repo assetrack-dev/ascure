@@ -100,16 +100,23 @@ export interface DefectTimelineEntry {
 
 export interface DefectEvidenceImage {
   id: string;
+  defectId?: string;
   inspectionId?: string;
+  evidenceType?: string | null;
   url?: string | null;
   path?: string | null;
+  storageKey?: string | null;
   filename?: string | null;
+  fileName?: string | null;
   mimeType?: string | null;
+  contentType?: string | null;
   sizeBytes?: number | null;
+  note?: string | null;
   latitude?: number | null;
   longitude?: number | null;
   timestamp?: string | null;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DefectListItem {
@@ -225,6 +232,8 @@ export interface DefectDetail extends DefectListItem {
     location?: string | null;
   } | null;
   images: DefectEvidenceImage[];
+  evidenceImages?: DefectEvidenceImage[];
+  maintenanceProofImages?: DefectEvidenceImage[];
   timeline: DefectTimelineEntry[];
 }
 

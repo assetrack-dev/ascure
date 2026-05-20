@@ -390,6 +390,7 @@ export class SiteVisitsService {
     }
 
     const substation = await this.resolveCreateSubstation(user, dto);
+    const operationalLinks = await this.resolveCreateOperationalLinks(dto);
 
     const activeTeamMembers = await this.prisma.teamMember.findMany({
       where: {
@@ -413,10 +414,18 @@ export class SiteVisitsService {
           teamId: dto.teamId,
           substationId: substation.id,
           createdByUserId: user.id,
+          organizationId: operationalLinks.organizationId,
+          branchId: operationalLinks.branchId,
+          mainheadId: operationalLinks.mainheadId,
+          projectId: operationalLinks.projectId,
+          workPackageId: operationalLinks.workPackageId,
           status: this.normalizeCreateStatus(dto.status),
           cycleNumber: dto.cycleNumber,
           visitType: dto.visitType,
-          mainhead: this.normalizeOperationalString(dto.mainhead),
+          operationalDomain: operationalLinks.operationalDomain,
+          mainhead:
+            this.normalizeOperationalString(dto.mainhead) ??
+            operationalLinks.mainheadLabel,
           pencawangCode: dto.substationId
             ? this.normalizePencawangCode(dto.pencawangCode) ??
               this.normalizePencawangCode(substation.code) ??
@@ -442,7 +451,7 @@ export class SiteVisitsService {
             })),
           },
         },
-        include: SITE_VISIT_BASE_INCLUDE,
+        include: SITE_VISIT_READ_BASE_INCLUDE,
       });
     } catch (error) {
       if (
@@ -819,6 +828,177 @@ export class SiteVisitsService {
     }
   }
 
+  private async resolveCreateOperationalLinks(dto: CreateSiteVisitDto) {
+    const [organization, branch, mainhead, project, workPackage] =
+      await Promise.all([
+        dto.organizationId
+          ? this.prisma.organization.findUnique({
+              where: {
+                id: dto.organizationId,
+              },
+              select: {
+                id: true,
+              },
+            })
+          : null,
+        dto.branchId
+          ? this.prisma.branch.findUnique({
+              where: {
+                id: dto.branchId,
+              },
+              select: {
+                id: true,
+                organizationId: true,
+              },
+            })
+          : null,
+        dto.mainheadId
+          ? this.prisma.mainhead.findUnique({
+              where: {
+                id: dto.mainheadId,
+              },
+              select: {
+                id: true,
+                branchId: true,
+                name: true,
+                code: true,
+                branch: {
+                  select: {
+                    organizationId: true,
+                  },
+                },
+              },
+            })
+          : null,
+        dto.projectId
+          ? this.prisma.project.findUnique({
+              where: {
+                id: dto.projectId,
+              },
+              select: {
+                id: true,
+                branchId: true,
+                mainheadId: true,
+                clientOrganizationId: true,
+                operationalDomain: true,
+              },
+            })
+          : null,
+        dto.workPackageId
+          ? this.prisma.workPackage.findUnique({
+              where: {
+                id: dto.workPackageId,
+              },
+              select: {
+                id: true,
+                projectId: true,
+                mainheadId: true,
+                mainhead: true,
+                operationalDomain: true,
+                project: {
+                  select: {
+                    branchId: true,
+                    mainheadId: true,
+                    clientOrganizationId: true,
+                    operationalDomain: true,
+                  },
+                },
+                mainheadRecord: {
+                  select: {
+                    id: true,
+                    branchId: true,
+                    name: true,
+                    code: true,
+                    branch: {
+                      select: {
+                        organizationId: true,
+                      },
+                    },
+                  },
+                },
+              },
+            })
+          : null,
+      ]);
+
+    if (dto.organizationId && !organization) {
+      throw new NotFoundException('Organization not found.');
+    }
+
+    if (dto.branchId && !branch) {
+      throw new NotFoundException('Branch not found.');
+    }
+
+    if (dto.mainheadId && !mainhead) {
+      throw new NotFoundException('MAINHEAD not found.');
+    }
+
+    if (dto.projectId && !project) {
+      throw new NotFoundException('Project not found.');
+    }
+
+    if (dto.workPackageId && !workPackage) {
+      throw new NotFoundException('Work package not found.');
+    }
+
+    if (workPackage && project && workPackage.projectId !== project.id) {
+      throw new BadRequestException(
+        'Work package does not belong to the selected project.',
+      );
+    }
+
+    if (mainhead && project?.mainheadId && project.mainheadId !== mainhead.id) {
+      throw new BadRequestException(
+        'Project does not belong to the selected MAINHEAD.',
+      );
+    }
+
+    if (
+      mainhead &&
+      workPackage?.mainheadId &&
+      workPackage.mainheadId !== mainhead.id
+    ) {
+      throw new BadRequestException(
+        'Work package does not belong to the selected MAINHEAD.',
+      );
+    }
+
+    const resolvedMainhead =
+      mainhead ?? workPackage?.mainheadRecord ?? null;
+    const resolvedProject = project ?? workPackage?.project ?? null;
+    const branchId =
+      branch?.id ??
+      resolvedMainhead?.branchId ??
+      resolvedProject?.branchId ??
+      null;
+
+    return {
+      organizationId:
+        organization?.id ??
+        branch?.organizationId ??
+        resolvedMainhead?.branch.organizationId ??
+        resolvedProject?.clientOrganizationId ??
+        null,
+      branchId,
+      mainheadId:
+        resolvedMainhead?.id ??
+        resolvedProject?.mainheadId ??
+        null,
+      projectId: project?.id ?? workPackage?.projectId ?? null,
+      workPackageId: workPackage?.id ?? null,
+      operationalDomain:
+        dto.operationalDomain ??
+        workPackage?.operationalDomain ??
+        resolvedProject?.operationalDomain ??
+        null,
+      mainheadLabel:
+        resolvedMainhead?.name ??
+        resolvedMainhead?.code ??
+        this.normalizeOperationalString(workPackage?.mainhead) ??
+        null,
+    };
+  }
+
   private validateManualPencawangCreate(dto: CreateSiteVisitDto) {
     const missingFields: Array<{ key: string; label: string }> = [];
 
@@ -834,7 +1014,7 @@ export class SiteVisitsService {
       missingFields.push({ key: 'pencawangCode', label: 'Kod Pencawang' });
     }
 
-    if (!this.normalizeOptionalString(dto.mainhead)) {
+    if (!this.normalizeOptionalString(dto.mainhead) && !dto.mainheadId) {
       missingFields.push({ key: 'mainhead', label: 'MAINHEAD' });
     }
 

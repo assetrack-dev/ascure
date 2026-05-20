@@ -1,5 +1,6 @@
 "use client";
 
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -9,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
+  CheckCircle2,
   Clock3,
+  Plus,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -21,12 +24,17 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
-import { fetchSiteVisits } from "@/lib/site-visits";
+import { fetchEnterpriseOptions } from "@/lib/enterprise";
+import { fetchTeams } from "@/lib/users";
+import { createSiteVisit, fetchSiteVisits, fetchSubstations } from "@/lib/site-visits";
 import type { AuthSession } from "@/types/auth";
+import type { EnterpriseOptions } from "@/types/enterprise";
+import type { ManagedTeam } from "@/types/users";
 import type {
   OperationalDomain,
   OperationalHealthStatus,
   SiteVisitListItem,
+  SiteVisitSubstation,
   SiteVisitStatus,
   SiteVisitType,
   SiteVisitValidationStatus,
@@ -48,6 +56,36 @@ type HealthFilter = "ALL" | OperationalHealthStatus;
 type ValidationFilter = "ALL" | SiteVisitValidationStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
 type OperationalDomainFilter = "ALL" | OperationalDomain;
+
+interface SiteVisitCreateForm {
+  teamId: string;
+  substationId: string;
+  pencawangCode: string;
+  pencawangName: string;
+  functionalLocation: string;
+  mainhead: string;
+  mainheadId: string;
+  projectId: string;
+  workPackageId: string;
+  operationalDomain: string;
+  visitType: Exclude<SiteVisitType, "UNSPECIFIED">;
+  notes: string;
+}
+
+const DEFAULT_SITE_VISIT_CREATE_FORM: SiteVisitCreateForm = {
+  teamId: "",
+  substationId: "",
+  pencawangCode: "",
+  pencawangName: "",
+  functionalLocation: "",
+  mainhead: "",
+  mainheadId: "",
+  projectId: "",
+  workPackageId: "",
+  operationalDomain: "",
+  visitType: "DISCOVERY",
+  notes: "",
+};
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const AUTO_REFRESH_MS = 60000;
@@ -113,6 +151,8 @@ const searchControlClassName =
   "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
+const primaryButtonClassName =
+  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
 const paginationButtonClassName =
   "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const filterLabelClassName =
@@ -147,6 +187,17 @@ function formatEnum(value: string | null | undefined) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function optionLabel(option: { name?: string | null; code?: string | null }) {
+  const name = option.name?.trim();
+  const code = option.code?.trim();
+
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+
+  return name || code || "Unnamed";
 }
 
 function formatDateTime(date: string | null | undefined) {
@@ -592,13 +643,258 @@ function SortButton({
   );
 }
 
+function SiteVisitCreateModal({
+  values,
+  teams,
+  substations,
+  enterpriseOptions,
+  error,
+  isSaving,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  values: SiteVisitCreateForm;
+  teams: ManagedTeam[];
+  substations: SiteVisitSubstation[];
+  enterpriseOptions: EnterpriseOptions | null;
+  error: string;
+  isSaving: boolean;
+  onChange: <K extends keyof SiteVisitCreateForm>(
+    field: K,
+    value: SiteVisitCreateForm[K],
+  ) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+              Site Visit
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">
+              Create Site Visit
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+            aria-label="Close site visit modal"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
+          {error ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Team</span>
+              <select
+                value={values.teamId}
+                onChange={(event) => onChange("teamId", event.target.value)}
+                required
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">Select team</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {optionLabel(team)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Visit Type</span>
+              <select
+                value={values.visitType}
+                onChange={(event) =>
+                  onChange("visitType", event.target.value as SiteVisitCreateForm["visitType"])
+                }
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                {VISIT_TYPE_OPTIONS.filter((option) => option.value !== "UNSPECIFIED").map(
+                  (option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Existing Pencawang</span>
+              <select
+                value={values.substationId}
+                onChange={(event) => onChange("substationId", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">Create from fields below</option>
+                {substations.map((substation) => (
+                  <option key={substation.id} value={substation.id}>
+                    {optionLabel(substation)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Domain</span>
+              <select
+                value={values.operationalDomain}
+                onChange={(event) => onChange("operationalDomain", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">Not recorded</option>
+                {enterpriseOptions?.operationalDomains.map((domain) => (
+                  <option key={domain} value={domain}>
+                    {formatEnum(domain)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Kod Pencawang</span>
+              <input
+                type="text"
+                value={values.pencawangCode}
+                onChange={(event) => onChange("pencawangCode", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Nama Pencawang</span>
+              <input
+                type="text"
+                value={values.pencawangName}
+                onChange={(event) => onChange("pencawangName", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Functional Location</span>
+              <input
+                type="text"
+                value={values.functionalLocation}
+                onChange={(event) => onChange("functionalLocation", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+              <select
+                value={values.mainheadId}
+                onChange={(event) => onChange("mainheadId", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">Text MAINHEAD only</option>
+                {enterpriseOptions?.mainheads.map((mainhead) => (
+                  <option key={mainhead.id} value={mainhead.id}>
+                    {optionLabel(mainhead)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Project</span>
+              <select
+                value={values.projectId}
+                onChange={(event) => onChange("projectId", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">No project</option>
+                {enterpriseOptions?.projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {optionLabel(project)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Work Package</span>
+              <select
+                value={values.workPackageId}
+                onChange={(event) => onChange("workPackageId", event.target.value)}
+                className={`${filterControlClassName} mt-1.5`}
+              >
+                <option value="">No work package</option>
+                {enterpriseOptions?.workPackages.map((workPackage) => (
+                  <option key={workPackage.id} value={workPackage.id}>
+                    {optionLabel(workPackage)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-semibold text-slate-700">MAINHEAD Text</span>
+            <input
+              type="text"
+              value={values.mainhead}
+              onChange={(event) => onChange("mainhead", event.target.value)}
+              className={`${filterControlClassName} mt-1.5`}
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-semibold text-slate-700">Notes</span>
+            <textarea
+              value={values.notes}
+              onChange={(event) => onChange("notes", event.target.value)}
+              rows={3}
+              className={`${filterControlClassName} mt-1.5 h-auto resize-none py-2`}
+            />
+          </label>
+
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
+              Cancel
+            </button>
+            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+              <CheckCircle2 size={16} />
+              {isSaving ? "Saving" : "Create Site Visit"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function SiteVisitsContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [visits, setVisits] = useState<SiteVisitListItem[]>([]);
+  const [teams, setTeams] = useState<ManagedTeam[]>([]);
+  const [substations, setSubstations] = useState<SiteVisitSubstation[]>([]);
+  const [enterpriseOptions, setEnterpriseOptions] = useState<EnterpriseOptions | null>(null);
   const [error, setError] = useState("");
+  const [modalError, setModalError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSavingCreate, setIsSavingCreate] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createForm, setCreateForm] = useState<SiteVisitCreateForm>(
+    DEFAULT_SITE_VISIT_CREATE_FORM,
+  );
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
@@ -656,14 +952,50 @@ function SiteVisitsContent() {
     [handleLogout],
   );
 
+  const loadCreateOptions = useCallback(
+    async (token: string) => {
+      try {
+        const [nextTeams, nextSubstations, nextEnterpriseOptions] = await Promise.all([
+          fetchTeams(token),
+          fetchSubstations(token),
+          fetchEnterpriseOptions(token),
+        ]);
+
+        setTeams(nextTeams.filter((team) => team.isActive !== false));
+        setSubstations(nextSubstations);
+        setEnterpriseOptions(nextEnterpriseOptions);
+        setCreateForm((currentForm) => ({
+          ...currentForm,
+          teamId:
+            currentForm.teamId ||
+            nextTeams.find((team) => team.isActive !== false)?.id ||
+            "",
+        }));
+      } catch (optionsError) {
+        if (optionsError instanceof ApiError && optionsError.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        setError(
+          optionsError instanceof Error
+            ? optionsError.message
+            : "Unable to load site visit creation options.",
+        );
+      }
+    },
+    [handleLogout],
+  );
+
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
 
     if (storedSession?.token) {
       void loadVisits(storedSession.token);
+      void loadCreateOptions(storedSession.token);
     }
-  }, [loadVisits]);
+  }, [loadCreateOptions, loadVisits]);
 
   useEffect(() => {
     if (!autoRefresh || !session?.token) {
@@ -858,6 +1190,91 @@ function SiteVisitsContent() {
     router.push(`/site-visits/${encodeURIComponent(visitId)}`);
   }
 
+  function updateCreateForm<K extends keyof SiteVisitCreateForm>(
+    field: K,
+    value: SiteVisitCreateForm[K],
+  ) {
+    setCreateForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  function openCreateModal() {
+    setModalError("");
+    setIsCreateModalOpen(true);
+  }
+
+  function closeCreateModal() {
+    if (isSavingCreate) {
+      return;
+    }
+
+    setIsCreateModalOpen(false);
+    setModalError("");
+  }
+
+  async function handleCreateSiteVisit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!session?.token || isReadOnly) {
+      return;
+    }
+
+    const hasExistingSubstation = Boolean(createForm.substationId);
+    const payload: Record<string, unknown> = {
+      teamId: createForm.teamId,
+      visitType: createForm.visitType,
+      substationId: hasExistingSubstation ? createForm.substationId : undefined,
+      pencawangCode: createForm.pencawangCode.trim() || undefined,
+      pencawangName: createForm.pencawangName.trim() || undefined,
+      functionalLocation: createForm.functionalLocation.trim() || undefined,
+      mainhead: createForm.mainhead.trim() || undefined,
+      mainheadId: createForm.mainheadId || undefined,
+      projectId: createForm.projectId || undefined,
+      workPackageId: createForm.workPackageId || undefined,
+      operationalDomain: createForm.operationalDomain || undefined,
+      notes: createForm.notes.trim() || undefined,
+    };
+
+    if (!hasExistingSubstation) {
+      const missing = [
+        ["pencawangCode", "Kod Pencawang"],
+        ["pencawangName", "Nama Pencawang"],
+        ["functionalLocation", "Functional Location"],
+      ].filter(([key]) => !String(payload[key] ?? "").trim());
+
+      if (missing.length > 0) {
+        setModalError(`Missing: ${missing.map(([, label]) => label).join(", ")}`);
+        return;
+      }
+    }
+
+    setIsSavingCreate(true);
+    setModalError("");
+    setError("");
+
+    try {
+      const createdVisit = await createSiteVisit(session.token, payload);
+      setVisits((currentVisits) => [createdVisit, ...currentVisits]);
+      setCreateForm((currentForm) => ({
+        ...DEFAULT_SITE_VISIT_CREATE_FORM,
+        teamId: currentForm.teamId,
+      }));
+      closeCreateModal();
+      setLastRefreshedAt(new Date());
+    } catch (createError) {
+      if (createError instanceof ApiError && createError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setModalError(createError instanceof Error ? createError.message : "Unable to create visit.");
+    } finally {
+      setIsSavingCreate(false);
+    }
+  }
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -897,15 +1314,26 @@ function SiteVisitsContent() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadVisits(session.token, false) : undefined)}
-              disabled={(isLoading && visits.length === 0) || isRefreshing || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-              Refresh
-            </button>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => (session?.token ? loadVisits(session.token, false) : undefined)}
+                disabled={(isLoading && visits.length === 0) || isRefreshing || !session?.token}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={openCreateModal}
+                disabled={isReadOnly}
+                className={primaryButtonClassName}
+              >
+                <Plus size={16} />
+                Create Visit
+              </button>
+            </div>
           </div>
 
           <div className="mt-6">
@@ -1415,6 +1843,20 @@ function SiteVisitsContent() {
           </div>
         </div>
       </main>
+
+      {isCreateModalOpen ? (
+        <SiteVisitCreateModal
+          values={createForm}
+          teams={teams}
+          substations={substations}
+          enterpriseOptions={enterpriseOptions}
+          error={modalError}
+          isSaving={isSavingCreate}
+          onChange={updateCreateForm}
+          onClose={closeCreateModal}
+          onSubmit={handleCreateSiteVisit}
+        />
+      ) : null}
     </AppShell>
   );
 }

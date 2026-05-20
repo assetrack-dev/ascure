@@ -9,6 +9,9 @@ import {
   CreateAssetInput,
   DashboardData,
   DefectDetail,
+  DefectEvidenceImage,
+  DefectEvidenceImageUploadInput,
+  DefectResolutionOutcome,
   DefectListItem,
   DefectStatus,
   InspectionImage,
@@ -414,6 +417,33 @@ export const api = {
     });
   },
 
+  completeDefectMaintenance(
+    token: string,
+    defectId: string,
+    input: {
+      resolutionOutcome: DefectResolutionOutcome;
+      maintenanceNotes?: string | null;
+    },
+  ) {
+    return request<DefectDetail>(`/defects/${defectId}/maintenance-completion`, {
+      method: 'PATCH',
+      token,
+      body: {
+        resolutionOutcome: input.resolutionOutcome,
+        maintenanceNotes: input.maintenanceNotes ?? null,
+        completionRemarks: input.maintenanceNotes ?? null,
+      },
+    });
+  },
+
+  uploadDefectEvidenceImage(
+    token: string,
+    defectId: string,
+    photo: DefectEvidenceImageUploadInput,
+  ) {
+    return uploadDefectEvidenceImage(token, defectId, photo);
+  },
+
   createAsset(token: string, input: CreateAssetInput) {
     return request<Asset>('/assets', {
       method: 'POST',
@@ -602,8 +632,88 @@ async function uploadSiteVisitImage(
   }
 }
 
+async function uploadDefectEvidenceImage(
+  token: string,
+  defectId: string,
+  photo: DefectEvidenceImageUploadInput,
+) {
+  const url = `${API_BASE_URL}/defects/${defectId}/evidence-images`;
+  const uploadFilename = createUploadFilename(photo.timestamp ?? new Date().toISOString());
+  const uploadUri = await createUploadFileUri(photo.uri, uploadFilename);
+  const parameters = createDefectEvidenceUploadParameters(photo);
+
+  console.log('[UPLOAD REQUEST]', {
+    url,
+    method: 'POST',
+    fileUri: uploadUri,
+    fieldName: 'file',
+    parameters,
+  });
+
+  try {
+    const response = await FileSystem.uploadAsync(url, uploadUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'image/jpeg',
+      parameters,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = tryParsePayload(response.body);
+
+    console.log('[UPLOAD RESPONSE]', {
+      url,
+      method: 'POST',
+      status: response.status,
+      payload,
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiError(extractErrorMessage(payload, response.status), response.status, payload);
+    }
+
+    return payload as DefectEvidenceImage;
+  } catch (error) {
+    logNetworkError({ url, method: 'POST upload', error });
+
+    throw error;
+  } finally {
+    if (uploadUri !== photo.uri) {
+      void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(() => undefined);
+    }
+  }
+}
+
 function createUploadParameters(photo: InspectionImageUploadInput) {
   const parameters: Record<string, string> = {};
+
+  if (typeof photo.latitude === 'number' && Number.isFinite(photo.latitude)) {
+    parameters.latitude = String(photo.latitude);
+  }
+
+  if (typeof photo.longitude === 'number' && Number.isFinite(photo.longitude)) {
+    parameters.longitude = String(photo.longitude);
+  }
+
+  if (photo.timestamp) {
+    parameters.timestamp = photo.timestamp;
+  }
+
+  const type = photo.type?.trim();
+
+  if (type) {
+    parameters.type = type;
+  }
+
+  return parameters;
+}
+
+function createDefectEvidenceUploadParameters(photo: DefectEvidenceImageUploadInput) {
+  const parameters: Record<string, string> = {
+    evidenceType: 'MAINTENANCE_PROOF',
+  };
 
   if (Number.isFinite(photo.latitude)) {
     parameters.latitude = String(photo.latitude);
@@ -617,10 +727,8 @@ function createUploadParameters(photo: InspectionImageUploadInput) {
     parameters.timestamp = photo.timestamp;
   }
 
-  const type = photo.type?.trim();
-
-  if (type) {
-    parameters.type = type;
+  if (photo.note?.trim()) {
+    parameters.note = photo.note.trim();
   }
 
   return parameters;

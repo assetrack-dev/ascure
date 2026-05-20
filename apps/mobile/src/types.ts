@@ -336,6 +336,24 @@ export interface InspectionImage {
   createdAt?: string;
 }
 
+export interface DefectEvidenceImage extends InspectionImage {
+  defectId?: string;
+  evidenceType?: string | null;
+  storageKey?: string | null;
+  fileName?: string | null;
+  contentType?: string | null;
+  note?: string | null;
+  updatedAt?: string;
+}
+
+export interface DefectEvidenceImageUploadInput {
+  uri: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  timestamp: string;
+  note?: string | null;
+}
+
 export type AssetInspectionHistoryItem = {
   id: string;
   assetId: string;
@@ -452,6 +470,7 @@ export type DefectDetail = {
   assignedTeamId?: string | null;
   assignedToUserId?: string | null;
   assignedToTeamId?: string | null;
+  assignedTo?: string | null;
   assignedAt?: string | null;
   resolutionOutcome?: DefectResolutionOutcome | null;
   actionRemark: string | null;
@@ -475,6 +494,8 @@ export type DefectDetail = {
   createdAt: string;
   updatedAt: string;
   images: InspectionImage[];
+  evidenceImages?: DefectEvidenceImage[];
+  maintenanceProofImages?: DefectEvidenceImage[];
 };
 
 export interface InspectionItemResult {

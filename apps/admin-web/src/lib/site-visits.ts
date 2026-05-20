@@ -9,6 +9,7 @@ import type {
   SiteVisitListItem,
   SiteVisitMainhead,
   SiteVisitStatus,
+  SiteVisitSubstation,
   SiteVisitTeam,
   SiteVisitType,
   SiteVisitUser,
@@ -498,6 +499,32 @@ export async function fetchSiteVisits(token: string): Promise<SiteVisitListItem[
   return extractSiteVisitArray(payload)
     .map(normalizeSiteVisit)
     .filter((visit): visit is SiteVisitListItem => Boolean(visit));
+}
+
+export async function fetchSubstations(token: string): Promise<SiteVisitSubstation[]> {
+  const payload = await apiRequest<unknown>("/substations", { token });
+
+  return extractSiteVisitArray(payload).map(normalizeSubstation).filter(Boolean) as SiteVisitSubstation[];
+}
+
+export async function createSiteVisit(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<SiteVisitListItem> {
+  const visit = normalizeSiteVisit(
+    await apiRequest<unknown>("/site-visits", {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    }),
+    0,
+  );
+
+  if (!visit) {
+    throw new Error("Unable to read created site visit.");
+  }
+
+  return visit;
 }
 
 export async function fetchSiteVisitDetail(

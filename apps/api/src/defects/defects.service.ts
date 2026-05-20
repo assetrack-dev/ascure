@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { mkdir, writeFile } from 'fs/promises';
+import { extname, resolve } from 'path';
 import {
   DefectLifecycleStatus,
   DefectSeverity,
@@ -15,12 +17,18 @@ import {
   UserRole,
 } from '@prisma/client';
 import { normalizeOperationalText } from '../common/operational-text';
-import { buildInspectionImagePath } from '../common/uploads.constants';
+import {
+  buildDefectEvidenceImagePath,
+  buildDefectEvidenceImagesDirectory,
+  buildDefectEvidenceImageUrl,
+  buildInspectionImagePath,
+} from '../common/uploads.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
 import { ListDefectOperationsBoardQueryDto } from './dto/list-defect-operations-board-query.dto';
+import { UploadDefectEvidenceImageDto } from './dto/upload-defect-evidence-image.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
@@ -34,6 +42,13 @@ const ACTIVE_SLA_STATUSES = new Set<DefectStatus>([
 ]);
 
 type DefectSlaState = 'OVERDUE' | 'ON_TRACK' | 'NO_DUE_DATE' | 'STOPPED';
+
+type UploadedDefectEvidenceImageFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
 
 const GOVERNED_LIFECYCLE_TRANSITIONS: Record<
   DefectLifecycleStatus,
@@ -630,6 +645,73 @@ export class DefectsService {
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
 
     return this.serializeDefectDetail(defect);
+  }
+
+  async uploadEvidenceImage(
+    user: RequestUser,
+    defectId: string,
+    dto: UploadDefectEvidenceImageDto,
+    file: UploadedDefectEvidenceImageFile | undefined,
+  ) {
+    this.assertCanMutate(user);
+
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Image file is required.');
+    }
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const uploadDirectory = buildDefectEvidenceImagesDirectory(defect.id);
+
+    await mkdir(uploadDirectory, { recursive: true });
+
+    const fileExtension = this.getSafeFileExtension(file.originalname);
+    const fileName = `${Date.now()}-${randomUUID()}${fileExtension}`;
+    const storageKey = buildDefectEvidenceImagePath(defect.id, fileName);
+    const filePath = resolve(uploadDirectory, fileName);
+    const evidenceType =
+      this.normalizeOptionalString(dto.evidenceType)?.toUpperCase() ??
+      'MAINTENANCE_PROOF';
+    const timestamp = dto.timestamp
+      ? this.parseEvidenceTimestamp(dto.timestamp)
+      : null;
+    const note = this.normalizeOperationalString(dto.note);
+
+    await writeFile(filePath, file.buffer);
+
+    const image = await this.prisma.$transaction(async (tx) => {
+      const createdImage = await tx.defectEvidenceImage.create({
+        data: {
+          defectId: defect.id,
+          createdByUserId: user.id,
+          evidenceType,
+          fileName,
+          storageKey,
+          contentType: file.mimetype || null,
+          sizeBytes: file.size,
+          url: buildDefectEvidenceImageUrl(defect.id, fileName),
+          note,
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+          timestamp,
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          comment: note
+            ? `Maintenance proof image uploaded. ${note}`
+            : 'Maintenance proof image uploaded.',
+          createdByUserId: user.id,
+        },
+      });
+
+      return createdImage;
+    });
+
+    return this.serializeDefectEvidenceImage(image);
   }
 
   async updateStatus(user: RequestUser, defectId: string, dto: UpdateDefectStatusDto) {
@@ -1504,6 +1586,28 @@ export class DefectsService {
           email: true,
           name: true,
           role: true,
+        },
+      },
+      evidenceImages: {
+        orderBy: {
+          createdAt: 'asc' as const,
+        },
+        select: {
+          id: true,
+          defectId: true,
+          createdByUserId: true,
+          evidenceType: true,
+          fileName: true,
+          storageKey: true,
+          contentType: true,
+          sizeBytes: true,
+          url: true,
+          note: true,
+          latitude: true,
+          longitude: true,
+          timestamp: true,
+          createdAt: true,
+          updatedAt: true,
         },
       },
       timelineEntries: {
@@ -2635,6 +2739,12 @@ export class DefectsService {
         timestamp: image.timestamp?.toISOString() ?? null,
         createdAt: image.createdAt.toISOString(),
       })),
+      evidenceImages: defect.evidenceImages.map((image) =>
+        this.serializeDefectEvidenceImage(image),
+      ),
+      maintenanceProofImages: defect.evidenceImages
+        .filter((image) => image.evidenceType === 'MAINTENANCE_PROOF')
+        .map((image) => this.serializeDefectEvidenceImage(image)),
       timeline: this.serializeDefectTimeline(defect),
     };
   }
@@ -2961,6 +3071,65 @@ export class DefectsService {
 
   private formatDueDate(dueDate: Date | null) {
     return dueDate ? dueDate.toISOString().slice(0, 10) : 'No due date';
+  }
+
+  private serializeDefectEvidenceImage(image: {
+    id: string;
+    defectId: string;
+    createdByUserId: string | null;
+    evidenceType: string;
+    fileName: string;
+    storageKey: string;
+    contentType: string | null;
+    sizeBytes: number | null;
+    url: string | null;
+    note: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    timestamp: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: image.id,
+      defectId: image.defectId,
+      createdByUserId: image.createdByUserId,
+      evidenceType: image.evidenceType,
+      url: image.url,
+      path: image.storageKey,
+      storageKey: image.storageKey,
+      filename: image.fileName,
+      fileName: image.fileName,
+      mimeType: image.contentType,
+      contentType: image.contentType,
+      sizeBytes: image.sizeBytes,
+      note: image.note,
+      latitude: image.latitude,
+      longitude: image.longitude,
+      timestamp: image.timestamp?.toISOString() ?? null,
+      createdAt: image.createdAt.toISOString(),
+      updatedAt: image.updatedAt.toISOString(),
+    };
+  }
+
+  private parseEvidenceTimestamp(value: string) {
+    const timestamp = new Date(value);
+
+    if (Number.isNaN(timestamp.getTime())) {
+      throw new BadRequestException('Evidence timestamp must be a valid date.');
+    }
+
+    return timestamp;
+  }
+
+  private getSafeFileExtension(originalName: string | undefined) {
+    const extension = extname(originalName || '').toLowerCase();
+
+    if (/^\.[a-z0-9]{1,10}$/.test(extension)) {
+      return extension;
+    }
+
+    return '.jpg';
   }
 
   private inspectionAccessScope(user: RequestUser) {

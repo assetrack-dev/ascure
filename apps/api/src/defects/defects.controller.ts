@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -10,6 +22,7 @@ import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
 import { UpdateDefectVerificationDto } from './dto/update-defect-verification.dto';
+import { UploadDefectEvidenceImageDto } from './dto/upload-defect-evidence-image.dto';
 import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
 import { DefectsService } from './defects.service';
 
@@ -39,6 +52,25 @@ export class DefectsController {
   @Get(':id')
   getDetail(@CurrentUser() user: RequestUser, @Param() params: DefectIdParamDto) {
     return this.defectsService.getDetail(user, params.id);
+  }
+
+  @Post(':id/evidence-images')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadEvidenceImage(
+    @CurrentUser() user: RequestUser,
+    @Param() params: DefectIdParamDto,
+    @Body() dto: UploadDefectEvidenceImageDto,
+    @UploadedFile()
+    file:
+      | {
+          originalname: string;
+          mimetype: string;
+          size: number;
+          buffer: Buffer;
+        }
+      | undefined,
+  ) {
+    return this.defectsService.uploadEvidenceImage(user, params.id, dto, file);
   }
 
   @Patch(':id/status')

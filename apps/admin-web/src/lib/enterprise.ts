@@ -5,6 +5,8 @@ import type {
   EnterpriseField,
   EnterpriseListRow,
   EnterpriseMetric,
+  EnterpriseOptionRecord,
+  EnterpriseOptions,
   EnterpriseTone,
 } from "@/types/enterprise";
 
@@ -287,6 +289,8 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
     kind: "organizations",
     name,
     code: readString(record, "code"),
+    isActive: readBoolean(record, "isActive"),
+    status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
     primaryChip: formatEnum(type),
     primaryTone: organizationTone(type),
     secondaryChip: activeState.label,
@@ -303,6 +307,7 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
     description: null,
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
+    raw: record,
   });
 }
 
@@ -341,6 +346,8 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     kind: "mainheads",
     name,
     code: readString(record, "code"),
+    isActive: readBoolean(record, "isActive"),
+    status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
     primaryChip: activeState.label,
     primaryTone: activeState.tone,
     secondaryChip: branch ? compactLabel(branch) : null,
@@ -353,6 +360,7 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     description: readString(record, "description"),
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
+    raw: record,
   });
 }
 
@@ -399,6 +407,8 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     kind: "projects",
     name,
     code: readString(record, "code"),
+    isActive: status !== "ARCHIVED" && status !== "CANCELLED",
+    status,
     primaryChip: formatEnum(status),
     primaryTone: statusTone(status),
     secondaryChip: operationalDomain ? formatEnum(operationalDomain) : clientLabel,
@@ -411,6 +421,7 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     description: readString(record, "description"),
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
+    raw: record,
   });
 }
 
@@ -457,6 +468,8 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
     kind: "work-packages",
     name,
     code: readString(record, "code"),
+    isActive: status !== "ARCHIVED" && status !== "CANCELLED",
+    status,
     primaryChip: formatEnum(status),
     primaryTone: statusTone(status),
     secondaryChip: operationalDomain ? formatEnum(operationalDomain) : mainhead,
@@ -469,6 +482,7 @@ function normalizeWorkPackage(rawWorkPackage: unknown): EnterpriseDetail | null 
     description: readString(record, "description"),
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
+    raw: record,
   });
 }
 
@@ -526,6 +540,131 @@ export async function fetchEnterpriseDetail(
 
   if (!detail) {
     throw new Error("Unable to read enterprise detail.");
+  }
+
+  return detail;
+}
+
+function normalizeOption(rawOption: unknown): EnterpriseOptionRecord | null {
+  const record = asRecord(rawOption);
+  const id = readString(record, "id");
+  const name = readString(record, "name") ?? readString(record, "code");
+
+  if (!record || !id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    code: readString(record, "code"),
+    type: readString(record, "type"),
+    status: readString(record, "status"),
+    isActive: readBoolean(record, "isActive"),
+    organizationId: readString(record, "organizationId"),
+    branchId: readString(record, "branchId"),
+    mainheadId: readString(record, "mainheadId"),
+    projectId: readString(record, "projectId"),
+    clientOrganizationId: readString(record, "clientOrganizationId"),
+    operationalDomain: readString(record, "operationalDomain"),
+    region: readString(record, "region"),
+  };
+}
+
+function normalizeOptionArray(record: ApiRecord | null, key: string) {
+  return readArray(record, key)
+    .map(normalizeOption)
+    .filter((option): option is EnterpriseOptionRecord => Boolean(option));
+}
+
+function normalizeStringArray(record: ApiRecord | null, key: string) {
+  return readArray(record, key).filter((value): value is string => typeof value === "string");
+}
+
+export async function fetchEnterpriseOptions(token: string): Promise<EnterpriseOptions> {
+  const payload = await apiRequest<unknown>("/enterprise/options", { token });
+  const record = asRecord(payload);
+
+  return {
+    organizationTypes: normalizeStringArray(record, "organizationTypes"),
+    operationalDomains: normalizeStringArray(record, "operationalDomains"),
+    projectStatuses: normalizeStringArray(record, "projectStatuses"),
+    workPackageStatuses: normalizeStringArray(record, "workPackageStatuses"),
+    organizations: normalizeOptionArray(record, "organizations"),
+    branches: normalizeOptionArray(record, "branches"),
+    mainheads: normalizeOptionArray(record, "mainheads"),
+    projects: normalizeOptionArray(record, "projects"),
+    workPackages: normalizeOptionArray(record, "workPackages"),
+  };
+}
+
+export async function createEnterpriseEntity(
+  token: string,
+  kind: EnterpriseEntityKind,
+  payload: Record<string, unknown>,
+): Promise<EnterpriseDetail> {
+  const detail = normalizeEnterpriseEntity(
+    kind,
+    await apiRequest<unknown>(API_PATH_BY_KIND[kind], {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    }),
+  );
+
+  if (!detail) {
+    throw new Error("Unable to read created enterprise record.");
+  }
+
+  return detail;
+}
+
+export async function updateEnterpriseEntity(
+  token: string,
+  kind: EnterpriseEntityKind,
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<EnterpriseDetail> {
+  const detail = normalizeEnterpriseEntity(
+    kind,
+    await apiRequest<unknown>(`${API_PATH_BY_KIND[kind]}/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(payload),
+    }),
+  );
+
+  if (!detail) {
+    throw new Error("Unable to read updated enterprise record.");
+  }
+
+  return detail;
+}
+
+export async function updateEnterpriseOperationalStatus(
+  token: string,
+  kind: EnterpriseEntityKind,
+  id: string,
+  active: boolean,
+): Promise<EnterpriseDetail> {
+  const body =
+    kind === "organizations" || kind === "mainheads"
+      ? { isActive: active }
+      : { status: active ? "ACTIVE" : "ARCHIVED" };
+  const detail = normalizeEnterpriseEntity(
+    kind,
+    await apiRequest<unknown>(
+      `${API_PATH_BY_KIND[kind]}/${encodeURIComponent(id)}/status`,
+      {
+        method: "PATCH",
+        token,
+        body: JSON.stringify(body),
+      },
+    ),
+  );
+
+  if (!detail) {
+    throw new Error("Unable to read updated enterprise record.");
   }
 
   return detail;

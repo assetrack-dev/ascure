@@ -695,7 +695,9 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
   const evidenceImages = useMemo(
     () =>
-      defect?.images
+      (defect?.maintenanceProofImages?.length
+        ? defect.maintenanceProofImages
+        : defect?.evidenceImages ?? [])
         .map((image) => ({
           image,
           sourceUrl: getImageSourceUrl(image),
