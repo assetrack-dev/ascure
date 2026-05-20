@@ -810,6 +810,38 @@ function normalizeBoardAsset(rawAsset: unknown): DefectOperationsBoardAsset | nu
   };
 }
 
+function normalizeBoardLatestTimelineEvent(rawEntry: unknown): DefectTimelineEntry | null {
+  const record = asRecord(rawEntry);
+  const createdAt = firstString(record, ["createdAt", "date"]);
+
+  if (!record || !createdAt) {
+    return null;
+  }
+
+  const fromLifecycleStatus = firstString(record, ["fromLifecycleStatus"]);
+  const toLifecycleStatus = firstString(record, ["toLifecycleStatus", "lifecycleStatus"]);
+
+  return {
+    id: firstString(record, ["id"]) ?? `timeline-${createdAt}`,
+    type: normalizeTimelineEventType(firstString(record, ["type", "eventType"])),
+    fromStatus: normalizeNullableStatus(firstString(record, ["fromStatus"])),
+    toStatus: normalizeNullableStatus(firstString(record, ["toStatus", "status"])),
+    fromLifecycleStatus: fromLifecycleStatus
+      ? normalizeLifecycleStatus(fromLifecycleStatus)
+      : null,
+    toLifecycleStatus: toLifecycleStatus ? normalizeLifecycleStatus(toLifecycleStatus) : null,
+    fromResolutionOutcome: normalizeResolutionOutcome(
+      firstString(record, ["fromResolutionOutcome"]),
+    ),
+    toResolutionOutcome: normalizeResolutionOutcome(
+      firstString(record, ["toResolutionOutcome", "resolutionOutcome"]),
+    ),
+    comment: firstString(record, ["comment", "remark", "message"]),
+    createdAt,
+    createdBy: normalizeActor(record.createdBy),
+  };
+}
+
 function normalizeBoardItem(rawItem: unknown, index: number): DefectOperationsBoardItem | null {
   const record = asRecord(rawItem);
 
@@ -867,6 +899,7 @@ function normalizeBoardItem(rawItem: unknown, index: number): DefectOperationsBo
     dueDate,
     slaState,
     isOverdue: readBoolean(record, "isOverdue") ?? slaState === "OVERDUE",
+    latestTimelineEvent: normalizeBoardLatestTimelineEvent(record.latestTimelineEvent),
   };
 }
 

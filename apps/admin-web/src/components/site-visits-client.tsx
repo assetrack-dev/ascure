@@ -108,15 +108,16 @@ const HEALTH_RANK: Record<OperationalHealthStatus, number> = {
   HEALTHY: 2,
 };
 const filterControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
+  "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const searchControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
+  "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
 const paginationButtonClassName =
   "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const filterLabelClassName =
   "mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500";
+const filterFieldClassName = "block min-w-0";
 
 function SiteVisitsLoading() {
   return (
@@ -954,8 +955,8 @@ function SiteVisitsContent() {
                   <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] 2xl:col-span-3">
                   <div className="border-b border-slate-200 p-5">
                     <div className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1.6fr)_repeat(5,minmax(150px,1fr))]">
-                        <label className="block">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,1.6fr)_repeat(5,minmax(0,1fr))]">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Search</span>
                           <span className="relative block">
                             <Search
@@ -972,7 +973,7 @@ function SiteVisitsContent() {
                           </span>
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Status</span>
                           <select
                             value={statusFilter}
@@ -989,7 +990,7 @@ function SiteVisitsContent() {
                           </select>
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Health</span>
                           <select
                             value={healthFilter}
@@ -1006,7 +1007,7 @@ function SiteVisitsContent() {
                           </select>
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Validation</span>
                           <select
                             value={validationFilter}
@@ -1023,7 +1024,7 @@ function SiteVisitsContent() {
                           </select>
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Visit Type</span>
                           <select
                             value={visitTypeFilter}
@@ -1040,7 +1041,7 @@ function SiteVisitsContent() {
                           </select>
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Domain</span>
                           <select
                             value={operationalDomainFilter}
@@ -1060,11 +1061,11 @@ function SiteVisitsContent() {
                         </label>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.7fr)_minmax(120px,0.85fr)_minmax(150px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.8fr)_auto]">
-                        <div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,1.7fr)_repeat(5,minmax(0,1fr))]">
+                        <div className="min-w-0">
                           <span className={filterLabelClassName}>Team/User</span>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <label className="block">
+                          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                            <label className={filterFieldClassName}>
                               <span className="sr-only">Team</span>
                               <select
                                 value={teamFilter}
@@ -1079,7 +1080,7 @@ function SiteVisitsContent() {
                                 ))}
                               </select>
                             </label>
-                            <label className="block">
+                            <label className={filterFieldClassName}>
                               <span className="sr-only">Team member</span>
                               <input
                                 type="text"
@@ -1092,7 +1093,7 @@ function SiteVisitsContent() {
                           </div>
                         </div>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>MAINHEAD</span>
                           <input
                             type="text"
@@ -1103,7 +1104,7 @@ function SiteVisitsContent() {
                           />
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Pencawang</span>
                           <input
                             type="text"
@@ -1114,7 +1115,7 @@ function SiteVisitsContent() {
                           />
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Date From</span>
                           <input
                             type="date"
@@ -1124,7 +1125,7 @@ function SiteVisitsContent() {
                           />
                         </label>
 
-                        <label className="block">
+                        <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Date To</span>
                           <input
                             type="date"

@@ -6,18 +6,28 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  ExternalLink,
+  MoreHorizontal,
   RefreshCw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  UserRound,
+  Wrench,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
-import { fetchDefectOperationsBoard } from "@/lib/defects";
+import {
+  fetchDefectOperationsBoard,
+  updateDefectAssignment,
+  updateDefectStatus,
+  verifyDefect,
+} from "@/lib/defects";
 import { fetchEnterpriseRows } from "@/lib/enterprise";
+import { fetchUsers } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import type {
   DefectLifecycleStatus,
@@ -30,6 +40,7 @@ import type {
   DefectSeverity,
 } from "@/types/defects";
 import type { EnterpriseListRow } from "@/types/enterprise";
+import type { ManagedUser } from "@/types/users";
 
 type FilterState = {
   mainhead: string;
@@ -57,6 +68,42 @@ const DEFAULT_FILTERS: FilterState = {
   q: "",
 };
 
+type QuickActionKind = "verify" | "assign" | "progress";
+
+type QuickActionState = {
+  defectId: string;
+  kind: QuickActionKind;
+} | null;
+
+const STICKY_FILTER_STORAGE_KEY = "ascure:operations-board:filters:v1";
+const SEVERITY_FILTER_VALUES: DefectSeverity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+const LIFECYCLE_FILTER_VALUES: Array<Exclude<DefectLifecycleStatus, "UNKNOWN">> = [
+  "DETECTED",
+  "UNDER_REVIEW",
+  "VERIFIED",
+  "REJECTED",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "VERIFICATION_PENDING",
+  "CLOSED",
+];
+const OUTCOME_FILTER_VALUES: Array<Exclude<DefectResolutionOutcome, "UNKNOWN">> = [
+  "RESOLVED",
+  "TEMPORARY_FIX",
+  "MONITORING_REQUIRED",
+  "EXTERNAL_CONSTRAINT",
+  "DUPLICATE",
+  "FALSE_POSITIVE",
+  "DEFERRED",
+];
+const ASSIGNABLE_LIFECYCLE_STATUSES = new Set<DefectLifecycleStatus>([
+  "VERIFIED",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "VERIFICATION_PENDING",
+]);
 const SUMMARY_QUEUE_KEYS: DefectOperationsBoardQueueKey[] = [
   "awaitingQaQc",
   "maintenanceReady",
@@ -80,6 +127,81 @@ const searchControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readStoredStickyFilters(): Partial<FilterState> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const rawFilters = window.localStorage.getItem(STICKY_FILTER_STORAGE_KEY);
+
+    if (!rawFilters) {
+      return {};
+    }
+
+    const parsedFilters: unknown = JSON.parse(rawFilters);
+
+    if (!isRecord(parsedFilters)) {
+      return {};
+    }
+
+    const severity = parsedFilters.severity;
+    const status = parsedFilters.status;
+    const resolutionOutcome = parsedFilters.resolutionOutcome;
+
+    return {
+      mainhead: typeof parsedFilters.mainhead === "string" ? parsedFilters.mainhead : "",
+      severity: SEVERITY_FILTER_VALUES.includes(severity as DefectSeverity)
+        ? (severity as DefectSeverity)
+        : "",
+      status: LIFECYCLE_FILTER_VALUES.includes(
+        status as Exclude<DefectLifecycleStatus, "UNKNOWN">,
+      )
+        ? (status as Exclude<DefectLifecycleStatus, "UNKNOWN">)
+        : "",
+      resolutionOutcome: OUTCOME_FILTER_VALUES.includes(
+        resolutionOutcome as Exclude<DefectResolutionOutcome, "UNKNOWN">,
+      )
+        ? (resolutionOutcome as Exclude<DefectResolutionOutcome, "UNKNOWN">)
+        : "",
+      overdueOnly:
+        typeof parsedFilters.overdueOnly === "boolean" ? parsedFilters.overdueOnly : false,
+      assignedToUserId:
+        typeof parsedFilters.assignedToUserId === "string"
+          ? parsedFilters.assignedToUserId
+          : "",
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredStickyFilters(filters: FilterState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      STICKY_FILTER_STORAGE_KEY,
+      JSON.stringify({
+        mainhead: filters.mainhead,
+        severity: filters.severity,
+        status: filters.status,
+        resolutionOutcome: filters.resolutionOutcome,
+        overdueOnly: filters.overdueOnly,
+        assignedToUserId: filters.assignedToUserId,
+      }),
+    );
+  } catch {
+    // Browsers may block local storage; the board remains usable without persistence.
+  }
+}
 
 function toApiFilters(filters: FilterState): DefectOperationsBoardFilters {
   return {
@@ -126,7 +248,82 @@ function formatDate(date: string | null | undefined) {
   }).format(parsedDate);
 }
 
-function actorLabel(actor: DefectOperationsBoardItem["assignedToUser"]) {
+function parseDateTime(date: string | null | undefined) {
+  if (!date) {
+    return null;
+  }
+
+  const parsedDate = new Date(date);
+
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+function formatCompactDuration(milliseconds: number) {
+  const absoluteMilliseconds = Math.abs(milliseconds);
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+
+  if (absoluteMilliseconds < minute) {
+    return "now";
+  }
+
+  if (absoluteMilliseconds < hour) {
+    return `${Math.floor(absoluteMilliseconds / minute)}m`;
+  }
+
+  if (absoluteMilliseconds < day) {
+    return `${Math.floor(absoluteMilliseconds / hour)}h`;
+  }
+
+  if (absoluteMilliseconds < week) {
+    return `${Math.floor(absoluteMilliseconds / day)}d`;
+  }
+
+  if (absoluteMilliseconds < month) {
+    return `${Math.floor(absoluteMilliseconds / week)}w`;
+  }
+
+  return `${Math.floor(absoluteMilliseconds / month)}mo`;
+}
+
+function formatRelativeAge(date: string | null | undefined) {
+  const parsedDate = parseDateTime(date);
+
+  if (!parsedDate) {
+    return "not set";
+  }
+
+  const delta = Date.now() - parsedDate.getTime();
+
+  if (delta < 0) {
+    return `in ${formatCompactDuration(delta)}`;
+  }
+
+  const duration = formatCompactDuration(delta);
+
+  return duration === "now" ? "just now" : `${duration} ago`;
+}
+
+function formatOverdueDuration(item: DefectOperationsBoardItem) {
+  if (!item.isOverdue) {
+    return null;
+  }
+
+  const dueDate = parseDateTime(item.dueDate);
+
+  if (!dueDate) {
+    return null;
+  }
+
+  const delta = Date.now() - dueDate.getTime();
+
+  return delta > 0 ? formatCompactDuration(delta) : null;
+}
+
+function actorLabel(actor: { name?: string | null; email?: string | null } | null | undefined) {
   return actor?.name?.trim() || actor?.email?.trim() || null;
 }
 
@@ -150,6 +347,15 @@ function ownershipTrail(item: DefectOperationsBoardItem) {
     .join(" | ");
 }
 
+function ownershipSecondaryText(item: DefectOperationsBoardItem) {
+  return [
+    item.assignedAt ? `Assigned ${formatRelativeAge(item.assignedAt)}` : null,
+    ownershipTrail(item) || null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" | ");
+}
+
 function contextLabel(item: DefectOperationsBoardItem) {
   return [
     item.project?.code || item.project?.name,
@@ -158,6 +364,72 @@ function contextLabel(item: DefectOperationsBoardItem) {
   ]
     .filter((value): value is string => Boolean(value))
     .join(" / ");
+}
+
+function timelineTitle(entry: NonNullable<DefectOperationsBoardItem["latestTimelineEvent"]>) {
+  if (entry.type === "DEFECT_VERIFIED") {
+    return "Defect verified";
+  }
+
+  if (entry.type === "DEFECT_ASSIGNED") {
+    return "Defect assigned";
+  }
+
+  if (entry.type === "MAINTENANCE_STARTED") {
+    return "Maintenance started";
+  }
+
+  if (entry.type === "MAINTENANCE_COMPLETED") {
+    return "Maintenance completed";
+  }
+
+  if (entry.type === "RESOLUTION_OUTCOME_UPDATED") {
+    return "Outcome updated";
+  }
+
+  if (entry.type === "CLOSURE_VERIFIED") {
+    return "Closure verified";
+  }
+
+  if (entry.type === "STATUS_CHANGED") {
+    return "Status changed";
+  }
+
+  if (entry.type === "ASSIGNMENT_CHANGED") {
+    return "Assignment updated";
+  }
+
+  if (entry.type === "DUE_DATE_CHANGED") {
+    return "Due date updated";
+  }
+
+  if (entry.type === "COMMENT") {
+    return "Comment";
+  }
+
+  return "Created";
+}
+
+function latestTimelineText(item: DefectOperationsBoardItem) {
+  const entry = item.latestTimelineEvent;
+
+  if (!entry) {
+    return null;
+  }
+
+  const actor = actorLabel(entry.createdBy) ?? "System";
+
+  return `${timelineTitle(entry)} by ${actor} | ${formatRelativeAge(entry.createdAt)}`;
+}
+
+function latestNoteSnippet(item: DefectOperationsBoardItem) {
+  const comment = item.latestTimelineEvent?.comment?.trim();
+
+  if (!comment) {
+    return null;
+  }
+
+  return comment.length > 120 ? `${comment.slice(0, 117).trim()}...` : comment;
 }
 
 function severityClassName(severity: DefectSeverity | null) {
@@ -236,7 +508,7 @@ function outcomeClassName(outcome: DefectResolutionOutcome | null) {
 
 function Badge({ children, className }: { children: React.ReactNode; className: string }) {
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4 ${className}`}>
       {children}
     </span>
   );
@@ -252,10 +524,198 @@ function SlaBadge({ item }: { item: DefectOperationsBoardItem }) {
         : "border-amber-200 bg-amber-50 text-amber-700";
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4 ${className}`}>
       {item.isOverdue ? <AlertTriangle size={13} /> : null}
       {formatEnumLabel(item.slaState)}
     </span>
+  );
+}
+
+function AgeBadge({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "verified" | "warning" | "danger" | "muted";
+}) {
+  const className =
+    tone === "danger"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : tone === "warning"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : tone === "verified"
+          ? "border-teal-200 bg-teal-50 text-teal-700"
+          : tone === "muted"
+            ? "border-slate-200 bg-slate-50 text-slate-500"
+            : "border-slate-200 bg-white text-slate-600";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4 ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function AgingIndicators({ item }: { item: DefectOperationsBoardItem }) {
+  const detectedAt = item.detectedAt ?? item.createdAt;
+  const overdueDuration = formatOverdueDuration(item);
+
+  return (
+    <div className="flex max-w-44 flex-wrap items-center gap-1.5">
+      <AgeBadge tone={item.isOverdue ? "warning" : "neutral"}>
+        Detected {formatRelativeAge(detectedAt)}
+      </AgeBadge>
+      {item.verifiedAt ? (
+        <AgeBadge tone="verified">Verified {formatRelativeAge(item.verifiedAt)}</AgeBadge>
+      ) : (
+        <AgeBadge tone="muted">Verify pending</AgeBadge>
+      )}
+      {overdueDuration ? <AgeBadge tone="danger">Overdue {overdueDuration}</AgeBadge> : null}
+    </div>
+  );
+}
+
+function canVerifyFromBoard(item: DefectOperationsBoardItem) {
+  return item.status === "DETECTED" || item.status === "UNDER_REVIEW";
+}
+
+function canAssignFromBoard(item: DefectOperationsBoardItem) {
+  return ASSIGNABLE_LIFECYCLE_STATUSES.has(item.status);
+}
+
+function canStartMaintenanceFromBoard(item: DefectOperationsBoardItem) {
+  return item.status === "ASSIGNED" && item.workflowStatus !== "IN_PROGRESS";
+}
+
+function RowActionMenu({
+  item,
+  users,
+  canMutate,
+  isOpen,
+  quickAction,
+  onToggle,
+  onOpenDefect,
+  onQuickVerify,
+  onQuickAssign,
+  onQuickStart,
+}: {
+  item: DefectOperationsBoardItem;
+  users: ManagedUser[];
+  canMutate: boolean;
+  isOpen: boolean;
+  quickAction: QuickActionState;
+  onToggle: (defectId: string) => void;
+  onOpenDefect: (defectId: string) => void;
+  onQuickVerify: (item: DefectOperationsBoardItem) => void;
+  onQuickAssign: (item: DefectOperationsBoardItem, userId: string) => void;
+  onQuickStart: (item: DefectOperationsBoardItem) => void;
+}) {
+  const isSaving = quickAction?.defectId === item.id;
+  const canVerify = canMutate && canVerifyFromBoard(item);
+  const canAssign = canMutate && canAssignFromBoard(item);
+  const canStart = canMutate && canStartMaintenanceFromBoard(item);
+  const activeUserIds = new Set(users.map((user) => user.id));
+  const selectedUserId =
+    item.assignedToUserId && activeUserIds.has(item.assignedToUserId)
+      ? item.assignedToUserId
+      : "";
+
+  return (
+    <div className="relative flex justify-end" onClick={(event) => event.stopPropagation()}>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(item.id);
+        }}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+        aria-label={`Open actions for ${item.assetCode}`}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+      >
+        {isSaving ? <RefreshCw size={15} className="animate-spin" /> : <MoreHorizontal size={16} />}
+      </button>
+
+      {isOpen ? (
+        <div
+          className="absolute right-0 top-9 z-30 w-60 rounded-md border border-slate-200 bg-white p-1.5 text-sm shadow-lg"
+          role="menu"
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDefect(item.id);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50 hover:text-[var(--brand)]"
+            role="menuitem"
+          >
+            <ExternalLink size={15} />
+            Open Detail
+          </button>
+
+          {canVerify ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onQuickVerify(item);
+              }}
+              disabled={isSaving}
+              className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-teal-50 hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-400"
+              role="menuitem"
+            >
+              <ShieldCheck size={15} />
+              Verify
+            </button>
+          ) : null}
+
+          {canStart ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onQuickStart(item);
+              }}
+              disabled={isSaving}
+              className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:text-slate-400"
+              role="menuitem"
+            >
+              <Wrench size={15} />
+              Mark In Progress
+            </button>
+          ) : null}
+
+          {canAssign ? (
+            <label className="mt-1 block border-t border-slate-100 px-2.5 py-2">
+              <span className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                <UserRound size={13} />
+                Assign
+              </span>
+              <select
+                value={selectedUserId}
+                onChange={(event) => {
+                  event.stopPropagation();
+                  onQuickAssign(item, event.target.value);
+                }}
+                onClick={(event) => event.stopPropagation()}
+                disabled={isSaving || users.length === 0}
+                className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-800 outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <option value="" disabled>
+                  {users.length > 0 ? "Assign user..." : "No active users"}
+                </option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name || user.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -360,15 +820,31 @@ function MainheadRollup({
 function QueueSection({
   queue,
   onOpenDefect,
+  users,
+  canMutate,
+  openActionMenuId,
+  quickAction,
+  onToggleActionMenu,
+  onQuickVerify,
+  onQuickAssign,
+  onQuickStart,
 }: {
   queue: DefectOperationsBoardQueue;
   onOpenDefect: (defectId: string) => void;
+  users: ManagedUser[];
+  canMutate: boolean;
+  openActionMenuId: string | null;
+  quickAction: QuickActionState;
+  onToggleActionMenu: (defectId: string) => void;
+  onQuickVerify: (item: DefectOperationsBoardItem) => void;
+  onQuickAssign: (item: DefectOperationsBoardItem, userId: string) => void;
+  onQuickStart: (item: DefectOperationsBoardItem) => void;
 }) {
   const defaultOpen = queue.key !== "closedResolved" || queue.count > 0;
 
   return (
     <details open={defaultOpen} className="rounded-lg border border-[var(--line)] bg-white shadow-[var(--shadow-soft)]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+      <summary className="sticky top-0 z-20 flex cursor-pointer list-none items-center justify-between gap-4 border-b border-transparent bg-white/95 px-5 py-4 backdrop-blur">
         <div>
           <h2 className="text-base font-semibold text-slate-950">{queue.title}</h2>
           <p className="text-sm text-[var(--muted)]">{queue.description}</p>
@@ -394,15 +870,16 @@ function QueueSection({
         {queue.items.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10">
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
-                  <th className="min-w-72 px-5 py-3">Defect</th>
-                  <th className="px-5 py-3">Lifecycle</th>
-                  <th className="px-5 py-3">Outcome</th>
-                  <th className="px-5 py-3">Ownership</th>
-                  <th className="px-5 py-3">Context</th>
-                  <th className="px-5 py-3">Due / SLA</th>
-                  <th className="px-5 py-3">Detected</th>
+                  <th className="min-w-72 px-4 py-2.5">Defect</th>
+                  <th className="px-4 py-2.5">Lifecycle</th>
+                  <th className="px-4 py-2.5">Outcome</th>
+                  <th className="px-4 py-2.5">Ownership</th>
+                  <th className="px-4 py-2.5">Context</th>
+                  <th className="px-4 py-2.5">Due / SLA</th>
+                  <th className="px-4 py-2.5">Aging</th>
+                  <th className="px-4 py-2.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -427,7 +904,7 @@ function QueueSection({
                       className={`cursor-pointer outline-none transition focus-visible:bg-teal-50/60 ${highlightClassName}`}
                       aria-label={`Open defect ${item.title} for ${item.assetCode}`}
                     >
-                      <td className="px-5 py-4">
+                      <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold text-slate-950">{item.assetCode}</span>
                           <Badge className={severityClassName(item.severity)}>
@@ -440,13 +917,23 @@ function QueueSection({
                             {item.summary}
                           </div>
                         ) : null}
+                        {latestTimelineText(item) ? (
+                          <div className="mt-2 text-xs font-medium text-slate-600">
+                            {latestTimelineText(item)}
+                          </div>
+                        ) : null}
+                        {latestNoteSnippet(item) ? (
+                          <div className="mt-1 line-clamp-1 text-xs text-[var(--muted)]">
+                            {latestNoteSnippet(item)}
+                          </div>
+                        ) : null}
                       </td>
-                      <td className="whitespace-nowrap px-5 py-4">
+                      <td className="whitespace-nowrap px-4 py-3">
                         <Badge className={lifecycleClassName(item.status)}>
                           {formatEnumLabel(item.status)}
                         </Badge>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-4">
+                      <td className="whitespace-nowrap px-4 py-3">
                         {item.resolutionOutcome ? (
                           <Badge className={outcomeClassName(item.resolutionOutcome)}>
                             {formatEnumLabel(item.resolutionOutcome)}
@@ -455,26 +942,42 @@ function QueueSection({
                           <span className="text-sm text-[var(--muted)]">Not recorded</span>
                         )}
                       </td>
-                      <td className="min-w-56 px-5 py-4">
+                      <td className="min-w-56 px-4 py-3">
                         <div className="font-medium text-slate-800">{assignmentLabel(item)}</div>
-                        {ownershipTrail(item) ? (
-                          <div className="mt-1 text-xs text-[var(--muted)]">{ownershipTrail(item)}</div>
+                        {ownershipSecondaryText(item) ? (
+                          <div className="mt-1 max-w-56 text-xs leading-5 text-[var(--muted)]">
+                            {ownershipSecondaryText(item)}
+                          </div>
                         ) : null}
                       </td>
-                      <td className="min-w-64 px-5 py-4">
+                      <td className="min-w-64 px-4 py-3">
                         <div className="font-medium text-slate-800">{item.mainheadLabel}</div>
                         <div className="mt-1 text-xs text-[var(--muted)]">
                           {contextLabel(item) || "Context not recorded"}
                         </div>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-4">
+                      <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex flex-col items-start gap-2">
                           <span className="text-sm text-slate-700">{formatDate(item.dueDate)}</span>
                           <SlaBadge item={item} />
                         </div>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                        {formatDate(item.detectedAt ?? item.createdAt)}
+                      <td className="px-4 py-3 text-slate-600">
+                        <AgingIndicators item={item} />
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <RowActionMenu
+                          item={item}
+                          users={users}
+                          canMutate={canMutate}
+                          isOpen={openActionMenuId === item.id}
+                          quickAction={quickAction}
+                          onToggle={onToggleActionMenu}
+                          onOpenDefect={onOpenDefect}
+                          onQuickVerify={onQuickVerify}
+                          onQuickAssign={onQuickAssign}
+                          onQuickStart={onQuickStart}
+                        />
                       </td>
                     </tr>
                   );
@@ -497,8 +1000,13 @@ function OperationsBoardContent() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [board, setBoard] = useState<DefectOperationsBoardResponse | null>(null);
   const [mainheads, setMainheads] = useState<EnterpriseListRow[]>([]);
+  const [users, setUsers] = useState<ManagedUser[]>([]);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [isFilterStateReady, setIsFilterStateReady] = useState(false);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [quickAction, setQuickAction] = useState<QuickActionState>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
   const handleLogout = useCallback(() => {
@@ -528,6 +1036,30 @@ function OperationsBoardContent() {
   );
 
   useEffect(() => {
+    setFilters((currentFilters) => ({
+      ...currentFilters,
+      ...readStoredStickyFilters(),
+    }));
+    setIsFilterStateReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isFilterStateReady) {
+      return;
+    }
+
+    writeStoredStickyFilters(filters);
+  }, [
+    filters.assignedToUserId,
+    filters.mainhead,
+    filters.overdueOnly,
+    filters.resolutionOutcome,
+    filters.severity,
+    filters.status,
+    isFilterStateReady,
+  ]);
+
+  useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
 
@@ -538,10 +1070,23 @@ function OperationsBoardContent() {
     void fetchEnterpriseRows(storedSession.token, "mainheads")
       .then(setMainheads)
       .catch(() => setMainheads([]));
-  }, []);
+
+    if (storedSession.user?.role === "ADMIN") {
+      void fetchUsers(storedSession.token)
+        .then((nextUsers) => setUsers(nextUsers.filter((user) => user.isActive)))
+        .catch((usersError) => {
+          if (usersError instanceof ApiError && usersError.status === 401) {
+            handleLogout();
+            return;
+          }
+
+          setUsers([]);
+        });
+    }
+  }, [handleLogout]);
 
   useEffect(() => {
-    if (!session?.token) {
+    if (!session?.token || !isFilterStateReady) {
       return;
     }
 
@@ -550,10 +1095,28 @@ function OperationsBoardContent() {
     }, filters.q ? 300 : 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [filters, loadBoard, session?.token]);
+  }, [filters, isFilterStateReady, loadBoard, session?.token]);
+
+  useEffect(() => {
+    if (!openActionMenuId) {
+      return;
+    }
+
+    function closeActionMenu() {
+      setOpenActionMenuId(null);
+    }
+
+    window.addEventListener("click", closeActionMenu);
+
+    return () => window.removeEventListener("click", closeActionMenu);
+  }, [openActionMenuId]);
 
   const assignedUserOptions = useMemo(() => {
     const options = new Map<string, string>();
+
+    users.forEach((user) => {
+      options.set(user.id, user.name || user.email);
+    });
 
     board?.queues.forEach((queue) => {
       queue.items.forEach((item) => {
@@ -565,10 +1128,14 @@ function OperationsBoardContent() {
       });
     });
 
+    if (filters.assignedToUserId && !options.has(filters.assignedToUserId)) {
+      options.set(filters.assignedToUserId, "Selected user");
+    }
+
     return Array.from(options.entries()).sort((left, right) =>
       left[1].localeCompare(right[1], "en", { sensitivity: "base" }),
     );
-  }, [board]);
+  }, [board, filters.assignedToUserId, users]);
 
   const summaryQueues = useMemo(
     () => board?.queues.filter((queue) => SUMMARY_QUEUE_KEYS.includes(queue.key)) ?? [],
@@ -588,6 +1155,99 @@ function OperationsBoardContent() {
 
   function openDefect(defectId: string) {
     router.push(`/defects/${encodeURIComponent(defectId)}`);
+  }
+
+  const canMutate = session?.user?.role === "ADMIN";
+
+  function toggleActionMenu(defectId: string) {
+    setOpenActionMenuId((currentDefectId) =>
+      currentDefectId === defectId ? null : defectId,
+    );
+  }
+
+  async function runQuickAction(
+    item: DefectOperationsBoardItem,
+    kind: QuickActionKind,
+    action: (token: string) => Promise<unknown>,
+    successMessage: string,
+  ) {
+    if (!session?.token || !canMutate || quickAction) {
+      return;
+    }
+
+    setQuickAction({ defectId: item.id, kind });
+    setError("");
+    setNotice("");
+
+    try {
+      await action(session.token);
+      setOpenActionMenuId(null);
+      setNotice(successMessage);
+      await loadBoard(session.token, filters);
+    } catch (quickActionError) {
+      if (quickActionError instanceof ApiError && quickActionError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(
+        quickActionError instanceof Error
+          ? quickActionError.message
+          : "Unable to update defect from operations board.",
+      );
+    } finally {
+      setQuickAction(null);
+    }
+  }
+
+  function handleQuickVerify(item: DefectOperationsBoardItem) {
+    if (!canVerifyFromBoard(item)) {
+      return;
+    }
+
+    void runQuickAction(
+      item,
+      "verify",
+      (token) => verifyDefect(token, item.id, null),
+      "Defect verified.",
+    );
+  }
+
+  function handleQuickAssign(item: DefectOperationsBoardItem, userId: string) {
+    if (!userId || !canAssignFromBoard(item)) {
+      return;
+    }
+
+    const selectedUser = users.find((user) => user.id === userId);
+
+    void runQuickAction(
+      item,
+      "assign",
+      (token) =>
+        updateDefectAssignment(token, item.id, {
+          assignedToUserId: userId,
+        }),
+      `Assigned to ${selectedUser?.name || selectedUser?.email || "selected user"}.`,
+    );
+  }
+
+  function handleQuickStart(item: DefectOperationsBoardItem) {
+    if (!canStartMaintenanceFromBoard(item)) {
+      return;
+    }
+
+    void runQuickAction(
+      item,
+      "progress",
+      (token) =>
+        updateDefectStatus(
+          token,
+          item.id,
+          "IN_PROGRESS",
+          "Maintenance started from operations board.",
+        ),
+      "Marked in progress.",
+    );
   }
 
   return (
@@ -782,9 +1442,19 @@ function OperationsBoardContent() {
           </section>
 
           <div className="mt-6">
+            {notice ? (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+                {notice}
+              </div>
+            ) : null}
+            {error && board ? (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {error}
+              </div>
+            ) : null}
             {isLoading && !board ? (
               <BoardLoading />
-            ) : error ? (
+            ) : error && !board ? (
               <div className="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-700">
                 {error}
               </div>
@@ -803,7 +1473,19 @@ function OperationsBoardContent() {
 
                 <div className="space-y-4">
                   {board.queues.map((queue) => (
-                    <QueueSection key={queue.key} queue={queue} onOpenDefect={openDefect} />
+                    <QueueSection
+                      key={queue.key}
+                      queue={queue}
+                      onOpenDefect={openDefect}
+                      users={users}
+                      canMutate={canMutate}
+                      openActionMenuId={openActionMenuId}
+                      quickAction={quickAction}
+                      onToggleActionMenu={toggleActionMenu}
+                      onQuickVerify={handleQuickVerify}
+                      onQuickAssign={handleQuickAssign}
+                      onQuickStart={handleQuickStart}
+                    />
                   ))}
                 </div>
               </div>

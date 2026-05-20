@@ -96,6 +96,27 @@ const OPERATIONS_BOARD_INCLUDE = {
   closureVerifiedByUser: {
     select: DEFECT_ACTOR_SELECT,
   },
+  timelineEntries: {
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: 1,
+    select: {
+      id: true,
+      type: true,
+      fromStatus: true,
+      toStatus: true,
+      fromLifecycleStatus: true,
+      toLifecycleStatus: true,
+      fromResolutionOutcome: true,
+      toResolutionOutcome: true,
+      comment: true,
+      createdAt: true,
+      createdBy: {
+        select: DEFECT_ACTOR_SELECT,
+      },
+    },
+  },
   inspectionItemResult: {
     select: {
       id: true,
@@ -210,6 +231,20 @@ type OperationsBoardMainhead = {
   label: string;
 };
 
+type OperationsBoardLatestEvent = {
+  id: string;
+  type: DefectTimelineEventType;
+  fromStatus: DefectStatus | null;
+  toStatus: DefectStatus | null;
+  fromLifecycleStatus: DefectLifecycleStatus | null;
+  toLifecycleStatus: DefectLifecycleStatus | null;
+  fromResolutionOutcome: DefectResolutionOutcome | null;
+  toResolutionOutcome: DefectResolutionOutcome | null;
+  comment: string | null;
+  createdAt: string;
+  createdBy: OperationsBoardActor;
+};
+
 type OperationsBoardItem = {
   id: string;
   inspectionItemResultId: string;
@@ -274,6 +309,7 @@ type OperationsBoardItem = {
   dueDate: string | null;
   slaState: DefectSlaState;
   isOverdue: boolean;
+  latestTimelineEvent: OperationsBoardLatestEvent | null;
 };
 
 type OperationsBoardQueue = {
@@ -2104,6 +2140,34 @@ export class DefectsService {
     const assignedUserId = defect.assignedToUserId ?? defect.assignedUserId;
     const assignedTeamId = defect.assignedToTeamId ?? defect.assignedTeamId;
     const mainhead = this.deriveOperationsMainhead(defect);
+    const latestTimelineEntry = defect.timelineEntries[0] ?? null;
+    const latestTimelineEvent: OperationsBoardLatestEvent = latestTimelineEntry
+      ? {
+          id: latestTimelineEntry.id,
+          type: latestTimelineEntry.type,
+          fromStatus: latestTimelineEntry.fromStatus,
+          toStatus: latestTimelineEntry.toStatus,
+          fromLifecycleStatus: latestTimelineEntry.fromLifecycleStatus,
+          toLifecycleStatus: latestTimelineEntry.toLifecycleStatus,
+          fromResolutionOutcome: latestTimelineEntry.fromResolutionOutcome,
+          toResolutionOutcome: latestTimelineEntry.toResolutionOutcome,
+          comment: latestTimelineEntry.comment,
+          createdAt: latestTimelineEntry.createdAt.toISOString(),
+          createdBy: latestTimelineEntry.createdBy,
+        }
+      : {
+          id: `${defect.id}-created`,
+          type: DefectTimelineEventType.CREATED,
+          fromStatus: null,
+          toStatus: defect.status,
+          fromLifecycleStatus: null,
+          toLifecycleStatus: lifecycleStatus,
+          fromResolutionOutcome: null,
+          toResolutionOutcome: defect.resolutionOutcome,
+          comment: 'Defect opened from failed inspection item.',
+          createdAt: defect.createdAt.toISOString(),
+          createdBy: null,
+        };
 
     return {
       id: defect.id,
@@ -2164,6 +2228,7 @@ export class DefectsService {
       dueDate: defect.dueDate?.toISOString() ?? null,
       slaState,
       isOverdue: slaState === 'OVERDUE',
+      latestTimelineEvent,
     };
   }
 

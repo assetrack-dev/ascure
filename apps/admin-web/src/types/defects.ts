@@ -309,6 +309,7 @@ export interface DefectOperationsBoardItem {
   dueDate?: string | null;
   slaState?: DefectSlaState;
   isOverdue?: boolean;
+  latestTimelineEvent?: DefectTimelineEntry | null;
 }
 
 export interface DefectOperationsBoardQueue {
