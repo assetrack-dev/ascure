@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { api } from '../api';
-import { AppButton, BodyText, Card, ErrorBanner, Screen, TextField } from '../ui';
+import { AppButton, Card, ErrorBanner, Screen, TextField, uiTheme } from '../ui';
 import { SessionUser } from '../types';
 
 export function LoginScreen({
@@ -8,8 +9,8 @@ export function LoginScreen({
 }: {
   onAuthenticated: (token: string, user: SessionUser) => Promise<void>;
 }) {
-  const [email, setEmail] = useState('technician@ascure.local');
-  const [password, setPassword] = useState('Tech123!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -33,15 +34,19 @@ export function LoginScreen({
       subtitle="Sign in to start field check-ins, open visits, and complete dynamic inspection forms."
       keyboardAware
     >
+      <View style={styles.brandLockup}>
+        <View style={styles.brandMark}>
+          <Text style={styles.brandMarkText}>A</Text>
+        </View>
+        <Text style={styles.brandWordmark}>ASCURE</Text>
+        <Text style={styles.brandTagline}>Asset Inspection Platform</Text>
+      </View>
       <Card>
-        <BodyText>
-          Use the technician account below for the seeded MVP flow, or replace it with another valid backend user.
-        </BodyText>
         <TextField
           label="Email"
           value={email}
           onChangeText={setEmail}
-          placeholder="technician@ascure.local"
+          placeholder="name@ascure.local"
           keyboardType="email-address"
         />
         <TextField
@@ -62,3 +67,36 @@ export function LoginScreen({
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  brandLockup: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  brandMark: {
+    width: 60,
+    height: 60,
+    borderRadius: 18,
+    backgroundColor: uiTheme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...uiTheme.shadow.card,
+  },
+  brandMarkText: {
+    color: uiTheme.colors.textOnPrimary,
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  brandWordmark: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 3,
+    color: uiTheme.colors.textPrimary,
+  },
+  brandTagline: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: uiTheme.colors.textSecondary,
+  },
+});

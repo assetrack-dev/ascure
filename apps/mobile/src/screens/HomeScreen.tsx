@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
 import {
   getActiveQueueCount,
@@ -12,9 +13,9 @@ import {
   Card,
   EmptyState,
   ErrorBanner,
-  LoadingBlock,
   Screen,
   SectionTitle,
+  SkeletonCard,
   WarningBanner,
   uiTheme,
 } from '../ui';
@@ -166,7 +167,12 @@ export function HomeScreen({
               : null
           }
         />
-        {isLoading ? <LoadingBlock label="Loading visits..." /> : null}
+        {isLoading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : null}
         <SyncQueueSummaryCard
           snapshot={syncQueueSnapshot}
           isSyncing={isSyncingQueue}
@@ -182,6 +188,7 @@ export function HomeScreen({
 
             {activeVisits.length === 0 ? (
               <EmptyState
+                icon="inbox"
                 title="No active visits"
                 description="Create a new check-in to start work at a substation."
               />
@@ -211,6 +218,7 @@ export function HomeScreen({
 
             {completedVisits.length === 0 ? (
               <EmptyState
+                icon="check-circle"
                 title="No completed visits"
                 description="Completed site visits will stay available here for recheck or correction."
               />
@@ -315,9 +323,11 @@ function VisitRow({
         ) : null}
       </View>
 
-      <Text style={isJoining ? styles.joiningText : styles.rowArrow}>
-        {isJoining ? 'Joining' : '>'}
-      </Text>
+      {isJoining ? (
+        <Text style={styles.joiningText}>Joining</Text>
+      ) : (
+        <Feather name="chevron-right" size={20} color={uiTheme.colors.textMuted} />
+      )}
     </Pressable>
   );
 }
@@ -365,7 +375,7 @@ function HomeDrawer({
                 onPress={onClose}
                 style={({ pressed }) => [styles.drawerCloseButton, pressed && styles.drawerItemPressed]}
               >
-                <Text style={styles.drawerCloseText}>X</Text>
+                <Feather name="x" size={18} color="#E5E7EB" />
               </Pressable>
             </View>
 
@@ -467,7 +477,7 @@ function SyncQueueSummaryCard({
           {pendingCount} pending, {syncingCount} syncing, {failedCount} failed
         </Text>
       </View>
-      <Text style={styles.rowArrow}>{'>'}</Text>
+      <Feather name="chevron-right" size={20} color={uiTheme.colors.textMuted} />
     </Pressable>
   );
 }
@@ -662,13 +672,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '500',
   },
-  rowArrow: {
-    width: 18,
-    color: uiTheme.colors.textMuted,
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
   joiningText: {
     minWidth: 58,
     color: uiTheme.colors.textSecondary,
@@ -685,7 +688,7 @@ const styles = StyleSheet.create({
     width: '82%',
     maxWidth: 340,
     height: '100%',
-    backgroundColor: uiTheme.colors.primary,
+    backgroundColor: '#111827',
     borderRightWidth: 1,
     borderRightColor: '#1F2937',
     shadowColor: '#000000',
@@ -724,11 +727,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1F2937',
     borderWidth: 1,
     borderColor: '#374151',
-  },
-  drawerCloseText: {
-    color: '#E5E7EB',
-    fontSize: 16,
-    fontWeight: '900',
   },
   identityCard: {
     borderRadius: 8,

@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  StatusBar as NativeStatusBar,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-native-maps';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
 import {
   AppButton,
   BodyText,
   Card,
+  Dropdown,
   EmptyState,
   ErrorBanner,
   InlineButton,
@@ -27,6 +40,16 @@ type CapturedSitePhoto = {
 };
 
 type PencawangMode = 'EXISTING' | 'NEW';
+
+type Coordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+type MapPickerState = {
+  coordinate: Coordinate;
+  accuracyMeters: number | null;
+};
 
 type CreateSiteVisitInput = Parameters<typeof api.createSiteVisit>[1];
 
@@ -59,6 +82,13 @@ const VISIT_TYPE_OPTIONS: VisitTypeOption[] = [
   },
 ];
 
+const DEFAULT_MAP_PICKER_COORDINATE: Coordinate = {
+  latitude: 3.139,
+  longitude: 101.6869,
+};
+
+const MAP_PICKER_DELTA = 0.004;
+
 export function CheckInScreen({
   token,
   user,
@@ -77,7 +107,7 @@ export function CheckInScreen({
   const [teams, setTeams] = useState<Team[]>([]);
   const [substations, setSubstations] = useState<Substation[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
-  const [pencawangMode, setPencawangMode] = useState<PencawangMode>('EXISTING');
+  const [pencawangMode, setPencawangMode] = useState<PencawangMode>('NEW');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedSubstationId, setSelectedSubstationId] = useState<string>('');
   const [visitType, setVisitType] = useState<SiteVisitType>('DISCOVERY');
@@ -87,13 +117,15 @@ export function CheckInScreen({
   const [mainhead, setMainhead] = useState('');
   const [checkInLatitude, setCheckInLatitude] = useState('');
   const [checkInLongitude, setCheckInLongitude] = useState('');
-  const [checkInAccuracyMeters, setCheckInAccuracyMeters] = useState('');
+  const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(null);
   const [checkInCapturedAt, setCheckInCapturedAt] = useState<string | null>(null);
+  const [mapPickerState, setMapPickerState] = useState<MapPickerState | null>(null);
   const [sitePhotos, setSitePhotos] = useState<CapturedSitePhoto[]>([]);
   const [notes, setNotes] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isOpeningMapPicker, setIsOpeningMapPicker] = useState(false);
   const [isCapturingPhoto, setIsCapturingPhoto] = useState(false);
   const [isTeamPickerOpen, setIsTeamPickerOpen] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
@@ -134,9 +166,8 @@ export function CheckInScreen({
             pencawangCode.trim() &&
             mainhead.trim() &&
             checkInLatitude.trim() &&
-            checkInLongitude.trim() &&
-            checkInAccuracyMeters.trim(),
-        ));
+            checkInLongitude.trim(),
+        ) && gpsAccuracyMeters !== null);
 
   const loadOptions = useCallback(async () => {
     try {
@@ -271,6 +302,62 @@ export function CheckInScreen({
     }
   }
 
+  async function handleOpenMapPicker() {
+    try {
+      setError(null);
+      setIsOpeningMapPicker(true);
+
+      const currentLocation = await getCurrentLocationForMapPicker();
+      const formCoordinate = parseFormCoordinate(checkInLatitude, checkInLongitude);
+      const coordinate = currentLocation?.coordinate ?? formCoordinate ?? DEFAULT_MAP_PICKER_COORDINATE;
+
+      setMapPickerState({
+        coordinate,
+        accuracyMeters: currentLocation?.accuracyMeters ?? null,
+      });
+    } catch (mapError) {
+      setError(mapError instanceof Error ? mapError.message : 'Unable to open the map picker.');
+    } finally {
+      setIsOpeningMapPicker(false);
+    }
+  }
+
+  function handleConfirmMapCoordinate(params: {
+    coordinate: Coordinate;
+    accuracyMeters: number | null;
+  }) {
+    setCheckInLatitude(formatCoordinate(params.coordinate.latitude));
+    setCheckInLongitude(formatCoordinate(params.coordinate.longitude));
+    setGpsAccuracyMeters(params.accuracyMeters);
+    setCheckInCapturedAt(new Date().toISOString());
+    setMapPickerState(null);
+  }
+
+  async function getCurrentLocationForMapPicker() {
+    const permission = await Location.requestForegroundPermissionsAsync();
+
+    setHasLocationPermission(permission.granted);
+
+    if (!permission.granted) {
+      return null;
+    }
+
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+
+    return {
+      coordinate: {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      },
+      accuracyMeters:
+        typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
+          ? position.coords.accuracy
+          : null,
+    };
+  }
+
   async function handleTakeSitePhoto() {
     try {
       setError(null);
@@ -380,7 +467,6 @@ export function CheckInScreen({
     const normalizedMainhead = normalizeOperationalPayloadText(mainhead);
     const normalizedNotes = normalizeOperationalPayloadText(notes);
     const parsedLatitude = parseCoordinate(checkInLatitude, -90, 90);
-    const parsedAccuracy = parseNonNegativeNumber(checkInAccuracyMeters);
 
     if (parsedLatitude === 'invalid') {
       setError('GPS latitude must be a valid number between -90 and 90.');
@@ -396,11 +482,6 @@ export function CheckInScreen({
 
     if ((parsedLatitude === undefined) !== (parsedLongitude === undefined)) {
       setError('GPS location must include both latitude and longitude.');
-      return null;
-    }
-
-    if (parsedAccuracy === 'invalid') {
-      setError('GPS accuracy must be a valid number greater than or equal to 0.');
       return null;
     }
 
@@ -435,8 +516,8 @@ export function CheckInScreen({
         return null;
       }
 
-      if (parsedAccuracy === undefined) {
-        setError('GPS accuracy is required for a new Pencawang.');
+      if (gpsAccuracyMeters === null) {
+        setError('Capture GPS accuracy with Use GPS or Map for a new Pencawang.');
         return null;
       }
     }
@@ -451,7 +532,7 @@ export function CheckInScreen({
       mainhead: normalizedMainhead,
       checkInLatitude: parsedLatitude,
       checkInLongitude: parsedLongitude,
-      checkInAccuracyMeters: parsedAccuracy,
+      checkInAccuracyMeters: gpsAccuracyMeters ?? undefined,
       checkInCapturedAt: checkInCapturedAt ?? undefined,
       notes: normalizedNotes,
     };
@@ -496,10 +577,10 @@ export function CheckInScreen({
   function applyCheckInLocation(position: Location.LocationObject) {
     setCheckInLatitude(formatCoordinate(position.coords.latitude));
     setCheckInLongitude(formatCoordinate(position.coords.longitude));
-    setCheckInAccuracyMeters(
+    setGpsAccuracyMeters(
       typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
-        ? formatAccuracyMeters(position.coords.accuracy)
-        : '',
+        ? position.coords.accuracy
+        : null,
     );
     setCheckInCapturedAt(new Date(position.timestamp).toISOString());
   }
@@ -523,6 +604,17 @@ export function CheckInScreen({
     setCheckInCapturedAt(null);
   }
 
+  if (mapPickerState) {
+    return (
+      <MapCoordinatePicker
+        initialCoordinate={mapPickerState.coordinate}
+        accuracyMeters={mapPickerState.accuracyMeters}
+        onCancel={() => setMapPickerState(null)}
+        onConfirm={handleConfirmMapCoordinate}
+      />
+    );
+  }
+
   return (
     <Screen
       title="Pencawang Check-In"
@@ -544,6 +636,7 @@ export function CheckInScreen({
             <SectionTitle>Team and PIC</SectionTitle>
             {teams.length === 0 ? (
               <EmptyState
+                icon="users"
                 title="No active teams"
                 description="This user must belong to a team before a site visit can be created."
               />
@@ -587,41 +680,54 @@ export function CheckInScreen({
 
           <Card>
             <SectionTitle>Pencawang Details</SectionTitle>
-            <View style={styles.modeChoiceList}>
-              <SelectCard
-                label="Existing Pencawang"
-                description="Select from master data"
-                selected={pencawangMode === 'EXISTING'}
-                onPress={() => handleSelectPencawangMode('EXISTING')}
-              />
-              <SelectCard
-                label="New Pencawang"
-                description="Enter site details manually"
-                selected={pencawangMode === 'NEW'}
-                onPress={() => handleSelectPencawangMode('NEW')}
-              />
-            </View>
+            <Dropdown
+              label="Pencawang Source"
+              value={pencawangMode}
+              options={[
+                {
+                  label: 'New Pencawang',
+                  value: 'NEW',
+                  description: 'Enter site details manually',
+                },
+                {
+                  label: 'Existing Pencawang',
+                  value: 'EXISTING',
+                  description: 'Select from master data',
+                },
+              ]}
+              onSelect={(nextValue) => handleSelectPencawangMode(nextValue as PencawangMode)}
+            />
 
             {pencawangMode === 'EXISTING' && substations.length === 0 ? (
               <EmptyState
+                icon="database"
                 title="No substations"
                 description="The backend did not return any active substations for this tenant."
               />
             ) : null}
 
             {pencawangMode === 'EXISTING' && substations.length > 0 ? (
-              <View style={styles.selectList}>
-                {substations.map((substation) => (
-                  <SelectCard
-                    key={substation.id}
-                    label={`${substation.code} - ${substation.name}`}
-                    description={substation.location || null}
-                    selected={selectedSubstationId === substation.id}
-                    onPress={() => applyExistingSubstation(substation)}
-                  />
-                ))}
-              </View>
+              <Dropdown
+                label="Select Pencawang"
+                value={selectedSubstationId}
+                placeholder="Choose an existing Pencawang"
+                options={substations.map((substation) => ({
+                  label: `${substation.code} - ${substation.name}`,
+                  value: substation.id,
+                  description: substation.location || null,
+                }))}
+                onSelect={(nextValue) => {
+                  const nextSubstation = substations.find(
+                    (substation) => substation.id === nextValue,
+                  );
+
+                  if (nextSubstation) {
+                    applyExistingSubstation(nextSubstation);
+                  }
+                }}
+              />
             ) : null}
+
             <TextField
               label={pencawangMode === 'NEW' ? 'Nama Pencawang *' : 'Nama Pencawang'}
               value={pencawangName}
@@ -654,54 +760,69 @@ export function CheckInScreen({
 
           <Card>
             <SectionTitle>Visit Type</SectionTitle>
-            <View style={styles.selectList}>
-              {VISIT_TYPE_OPTIONS.map((option) => (
-                <SelectCard
-                  key={option.label}
-                  label={option.label}
-                  description={option.description}
-                  selected={visitType === option.value}
-                  onPress={() => setVisitType(option.value)}
-                />
-              ))}
-            </View>
+            <Dropdown
+              value={visitType}
+              options={VISIT_TYPE_OPTIONS.map((option) => ({
+                label: option.label,
+                value: option.value,
+                description: option.description,
+              }))}
+              onSelect={(nextValue) => setVisitType(nextValue as SiteVisitType)}
+            />
           </Card>
 
           <Card>
             <SectionTitle>GPS Location</SectionTitle>
-            <BodyText muted>
-              Capture device GPS at check-in. Manual coordinates are accepted when site GPS is weak.
-            </BodyText>
-            <TextField
-              label="Latitude"
-              value={checkInLatitude}
-              onChangeText={handleManualLatitude}
-              placeholder="e.g. 2.925900"
-              keyboardType="numbers-and-punctuation"
-            />
-            <TextField
-              label="Longitude"
-              value={checkInLongitude}
-              onChangeText={handleManualLongitude}
-              placeholder="e.g. 101.690000"
-              keyboardType="numbers-and-punctuation"
-            />
-            <TextField
-              label={pencawangMode === 'NEW' ? 'GPS Accuracy (m) *' : 'GPS Accuracy (m)'}
-              value={checkInAccuracyMeters}
-              onChangeText={setCheckInAccuracyMeters}
-              placeholder="e.g. 8"
-              keyboardType="numbers-and-punctuation"
-            />
-            <AppButton
-              label={isLocating ? 'Reading Current GPS...' : 'Use Current GPS'}
-              onPress={handleUseCurrentGps}
-              variant="secondary"
-              loading={isLocating}
-              disabled={isSubmitting}
-            />
+            <View style={styles.coordinateSummaryRow}>
+              <Text style={styles.coordinateSummaryText} numberOfLines={1}>
+                {formatCoordinateSummary(checkInLatitude, checkInLongitude)}
+              </Text>
+              <Text style={styles.coordinateAccuracyText}>{formatGpsAccuracy(gpsAccuracyMeters)}</Text>
+            </View>
+            <View style={styles.coordinateInputRow}>
+              <View style={styles.coordinateInputCell}>
+                <TextField
+                  label="Lat"
+                  value={checkInLatitude}
+                  onChangeText={handleManualLatitude}
+                  placeholder="2.925900"
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+              <View style={styles.coordinateInputCell}>
+                <TextField
+                  label="Lng"
+                  value={checkInLongitude}
+                  onChangeText={handleManualLongitude}
+                  placeholder="101.690000"
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+            </View>
+            <View style={styles.coordinateActionRow}>
+              <View style={styles.coordinateActionCell}>
+                <AppButton
+                  label={isLocating ? 'Reading GPS...' : 'Use GPS'}
+                  onPress={handleUseCurrentGps}
+                  variant="secondary"
+                  loading={isLocating}
+                  disabled={isSubmitting}
+                />
+              </View>
+              <View style={styles.coordinateActionCell}>
+                <AppButton
+                  label={isOpeningMapPicker ? 'Opening...' : 'Map'}
+                  onPress={handleOpenMapPicker}
+                  variant="secondary"
+                  loading={isOpeningMapPicker}
+                  disabled={isSubmitting}
+                />
+              </View>
+            </View>
             {hasLocationPermission === false ? (
-              <BodyText muted>Location permission is off right now. Manual GPS coordinates still work.</BodyText>
+              <Text style={styles.coordinateSourceText}>
+                Location permission off. Manual entry works.
+              </Text>
             ) : null}
           </Card>
 
@@ -733,6 +854,7 @@ export function CheckInScreen({
               </View>
             ) : (
               <EmptyState
+                icon="camera"
                 title="No site photos yet"
                 description="Take at least one photo when site condition needs visual context."
               />
@@ -776,6 +898,100 @@ export function CheckInScreen({
   );
 }
 
+function MapCoordinatePicker({
+  initialCoordinate,
+  accuracyMeters,
+  onCancel,
+  onConfirm,
+}: {
+  initialCoordinate: Coordinate;
+  accuracyMeters: number | null;
+  onCancel: () => void;
+  onConfirm: (params: { coordinate: Coordinate; accuracyMeters: number | null }) => void;
+}) {
+  const [coordinate, setCoordinate] = useState(initialCoordinate);
+  const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
+
+  function handleMapPress(event: MapPressEvent) {
+    const nextCoordinate = event.nativeEvent.coordinate;
+
+    setCoordinate(nextCoordinate);
+    setRegion((currentRegion) => ({
+      ...currentRegion,
+      latitude: nextCoordinate.latitude,
+      longitude: nextCoordinate.longitude,
+    }));
+  }
+
+  function handleMarkerDragEnd(event: MarkerDragStartEndEvent) {
+    const nextCoordinate = event.nativeEvent.coordinate;
+
+    setCoordinate(nextCoordinate);
+    setRegion((currentRegion) => ({
+      ...currentRegion,
+      latitude: nextCoordinate.latitude,
+      longitude: nextCoordinate.longitude,
+    }));
+  }
+
+  return (
+    <SafeAreaView style={styles.mapPickerSafeArea}>
+      <View style={styles.mapPickerScreen}>
+        <View style={styles.mapPickerHeader}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onCancel}
+            style={({ pressed }) => [styles.mapPickerHeaderButton, pressed && styles.pressedButton]}
+          >
+            <Text style={styles.mapPickerHeaderButtonText}>Back</Text>
+          </Pressable>
+          <View style={styles.mapPickerHeaderTitleWrap}>
+            <Text style={styles.mapPickerTitle}>Select Coordinates</Text>
+            <Text style={styles.mapPickerSubtitle}>Satellite view</Text>
+          </View>
+          <View style={styles.mapPickerHeaderSide} />
+        </View>
+
+        <View style={styles.mapPickerMapShell}>
+          <MapView
+            provider={PROVIDER_GOOGLE}
+            style={StyleSheet.absoluteFillObject}
+            initialRegion={region}
+            region={region}
+            mapType="satellite"
+            showsUserLocation
+            showsMyLocationButton
+            onPress={handleMapPress}
+            onRegionChangeComplete={setRegion}
+          >
+            <Marker
+              coordinate={coordinate}
+              draggable
+              title="Selected check-in location"
+              pinColor={uiTheme.colors.primary}
+              onDragEnd={handleMarkerDragEnd}
+            />
+          </MapView>
+        </View>
+
+        <View style={styles.mapPickerFooter}>
+          <View style={styles.mapPickerCoordinatePanel}>
+            <Text style={styles.mapPickerCoordinateLabel}>Selected GPS</Text>
+            <Text style={styles.mapPickerCoordinateValue}>
+              Lat {coordinate.latitude.toFixed(6)} · Lng {coordinate.longitude.toFixed(6)}
+            </Text>
+            <Text style={styles.mapPickerAccuracyText}>{formatGpsAccuracy(accuracyMeters)}</Text>
+          </View>
+          <AppButton
+            label="Confirm Coordinates"
+            onPress={() => onConfirm({ coordinate, accuracyMeters })}
+          />
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 function FieldSummary({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.fieldSummaryRow}>
@@ -816,8 +1032,15 @@ function formatCoordinate(value: number) {
   return value.toFixed(6);
 }
 
-function formatAccuracyMeters(value: number) {
-  return value.toFixed(1).replace(/\.0$/, '');
+function formatCoordinateSummary(latitude: string, longitude: string) {
+  const latitudeLabel = latitude.trim() || 'N/A';
+  const longitudeLabel = longitude.trim() || 'N/A';
+
+  return `Lat ${latitudeLabel} · Lng ${longitudeLabel}`;
+}
+
+function formatGpsAccuracy(value: number | null) {
+  return value === null ? 'GPS --' : `GPS ±${Math.round(value)}m`;
 }
 
 function parseCoordinate(
@@ -840,20 +1063,27 @@ function parseCoordinate(
   return parsedValue;
 }
 
-function parseNonNegativeNumber(rawValue: string) {
-  const normalizedValue = rawValue.trim();
+function parseFormCoordinate(latitude: string, longitude: string): Coordinate | null {
+  const parsedLatitude = parseCoordinate(latitude, -90, 90);
+  const parsedLongitude = parseCoordinate(longitude, -180, 180);
 
-  if (!normalizedValue) {
-    return undefined;
+  if (typeof parsedLatitude === 'number' && typeof parsedLongitude === 'number') {
+    return {
+      latitude: parsedLatitude,
+      longitude: parsedLongitude,
+    };
   }
 
-  const parsedValue = Number(normalizedValue);
+  return null;
+}
 
-  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
-    return 'invalid' as const;
-  }
-
-  return parsedValue;
+function createMapPickerRegion(coordinate: Coordinate): Region {
+  return {
+    latitude: coordinate.latitude,
+    longitude: coordinate.longitude,
+    latitudeDelta: MAP_PICKER_DELTA,
+    longitudeDelta: MAP_PICKER_DELTA,
+  };
 }
 
 const styles = StyleSheet.create({
@@ -904,8 +1134,52 @@ const styles = StyleSheet.create({
   selectList: {
     gap: 10,
   },
-  modeChoiceList: {
+  coordinateSummaryRow: {
+    minHeight: 38,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
+  },
+  coordinateSummaryText: {
+    flex: 1,
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  coordinateAccuracyText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  coordinateSourceText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  coordinateInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  coordinateInputCell: {
+    flex: 1,
+  },
+  coordinateActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  coordinateActionCell: {
+    flex: 1,
   },
   photoGrid: {
     gap: 12,
@@ -955,5 +1229,99 @@ const styles = StyleSheet.create({
   },
   pressedButton: {
     opacity: 0.82,
+  },
+  mapPickerSafeArea: {
+    flex: 1,
+    backgroundColor: uiTheme.colors.background,
+    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+  },
+  mapPickerScreen: {
+    flex: 1,
+    backgroundColor: uiTheme.colors.background,
+  },
+  mapPickerHeader: {
+    minHeight: 54,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mapPickerHeaderButton: {
+    minWidth: 72,
+    minHeight: 40,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.card,
+    paddingHorizontal: 12,
+  },
+  mapPickerHeaderButtonText: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
+  mapPickerHeaderTitleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  mapPickerTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  mapPickerSubtitle: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  mapPickerHeaderSide: {
+    width: 72,
+  },
+  mapPickerMapShell: {
+    flex: 1,
+    backgroundColor: '#e5e7eb',
+  },
+  mapPickerFooter: {
+    borderTopWidth: 1,
+    borderTopColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.background,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  mapPickerCoordinatePanel: {
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 12,
+    gap: 4,
+  },
+  mapPickerCoordinateLabel: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  mapPickerCoordinateValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  mapPickerAccuracyText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
   },
 });

@@ -1,6 +1,8 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  DimensionValue,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { Feather } from '@expo/vector-icons';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
@@ -27,31 +30,56 @@ type HeaderAction = {
 
 export const uiTheme = {
   colors: {
-    primary: '#111827',
+    primary: '#0F766E',
+    primaryStrong: '#115E59',
+    primarySoft: '#CCFBF1',
     background: '#F5F7FA',
     card: '#FFFFFF',
     border: '#E5E7EB',
     textPrimary: '#111827',
     textSecondary: '#6B7280',
     textMuted: '#9CA3AF',
+    textOnPrimary: '#FFFFFF',
     surfaceMuted: '#F9FAFB',
     surfacePressed: '#F3F4F6',
     danger: '#B91C1C',
     dangerSoft: '#FEF2F2',
+    dangerBorder: '#FECACA',
     success: '#166534',
     successSoft: '#ECFDF5',
+    successBorder: '#BBF7D0',
     warning: '#92400E',
     warningSoft: '#FFFBEB',
+    warningBorder: '#FDE68A',
+    info: '#1D4ED8',
+    infoSoft: '#EFF6FF',
+    infoBorder: '#BFDBFE',
   },
   radius: {
-    card: 8,
-    control: 12,
+    card: 12,
+    control: 10,
     pill: 999,
   },
   spacing: {
     screen: 16,
     section: 12,
     card: 12,
+  },
+  shadow: {
+    card: {
+      shadowColor: '#0F172A',
+      shadowOpacity: 0.06,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
+    raised: {
+      shadowColor: '#0F172A',
+      shadowOpacity: 0.1,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
+    },
   },
 } as const;
 
@@ -153,50 +181,16 @@ export function HeaderIconButton({
   );
 }
 
+const HEADER_ICON_GLYPHS: Record<HeaderIconName, keyof typeof Feather.glyphMap> = {
+  back: 'chevron-left',
+  menu: 'menu',
+  refresh: 'refresh-cw',
+  close: 'x',
+  add: 'plus',
+};
+
 function HeaderIcon({ name }: { name: HeaderIconName }) {
-  if (name === 'menu') {
-    return (
-      <View style={styles.menuIcon}>
-        <View style={styles.menuIconLine} />
-        <View style={styles.menuIconLine} />
-        <View style={styles.menuIconLine} />
-      </View>
-    );
-  }
-
-  if (name === 'refresh') {
-    return (
-      <View style={styles.refreshIcon}>
-        <View style={styles.refreshArc} />
-        <View style={styles.refreshHead} />
-      </View>
-    );
-  }
-
-  if (name === 'close') {
-    return (
-      <View style={styles.closeIcon}>
-        <View style={[styles.closeIconLine, styles.closeIconLineForward]} />
-        <View style={[styles.closeIconLine, styles.closeIconLineBack]} />
-      </View>
-    );
-  }
-
-  if (name === 'add') {
-    return (
-      <View style={styles.addIcon}>
-        <View style={styles.addIconHorizontal} />
-        <View style={styles.addIconVertical} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.backIcon}>
-      <View style={[styles.backIconLine, styles.backIconLineTop]} />
-      <View style={[styles.backIconLine, styles.backIconLineBottom]} />
-    </View>
-  );
+  return <Feather name={HEADER_ICON_GLYPHS[name]} size={22} color={uiTheme.colors.textPrimary} />;
 }
 
 export function Card({ children }: { children: ReactNode }) {
@@ -266,15 +260,69 @@ export function LoadingScreen({ label }: { label: string }) {
   );
 }
 
+export function Skeleton({
+  height = 14,
+  width = '100%',
+  radius = uiTheme.radius.control,
+}: {
+  height?: number;
+  width?: DimensionValue;
+  radius?: number;
+}) {
+  const pulse = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.5, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+
+    animation.start();
+
+    return () => animation.stop();
+  }, [pulse]);
+
+  return (
+    <Animated.View
+      style={{
+        height,
+        width,
+        borderRadius: radius,
+        backgroundColor: uiTheme.colors.surfacePressed,
+        opacity: pulse,
+      }}
+    />
+  );
+}
+
+export function SkeletonCard() {
+  return (
+    <View style={styles.card}>
+      <Skeleton height={16} width="55%" />
+      <Skeleton height={12} width="85%" />
+      <Skeleton height={12} width="40%" />
+    </View>
+  );
+}
+
 export function EmptyState({
   title,
   description,
+  icon,
 }: {
   title: string;
   description: string;
+  icon?: keyof typeof Feather.glyphMap;
 }) {
   return (
     <View style={styles.emptyState}>
+      {icon ? (
+        <View style={styles.emptyIconCircle}>
+          <Feather name={icon} size={22} color={uiTheme.colors.textSecondary} />
+        </View>
+      ) : null}
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyDescription}>{description}</Text>
     </View>
@@ -303,6 +351,7 @@ export function AppButton({
         styles[buttonVariantStyles[variant]],
         (disabled || loading) && styles.buttonDisabled,
         pressed && !(disabled || loading) && styles.buttonPressed,
+        pressed && !(disabled || loading) && variant === 'primary' && styles.buttonPrimaryPressed,
       ]}
     >
       {loading ? (
@@ -371,6 +420,133 @@ export function TextField({
   );
 }
 
+export type DropdownOption = {
+  label: string;
+  value: string;
+  description?: string | null;
+};
+
+const DROPDOWN_SEARCH_THRESHOLD = 5;
+
+export function Dropdown({
+  label,
+  value,
+  options,
+  placeholder = 'Select an option',
+  onSelect,
+  disabled = false,
+}: {
+  label?: string;
+  value: string;
+  options: DropdownOption[];
+  placeholder?: string;
+  onSelect: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const selectedOption = options.find((option) => option.value === value) ?? null;
+  const showSearch = options.length > DROPDOWN_SEARCH_THRESHOLD;
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = normalizedQuery
+    ? options.filter((option) => option.label.toLowerCase().includes(normalizedQuery))
+    : options;
+
+  function handleSelect(nextValue: string) {
+    onSelect(nextValue);
+    setIsOpen(false);
+    setQuery('');
+  }
+
+  return (
+    <View style={styles.fieldWrap}>
+      {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
+      <Pressable
+        accessibilityRole="button"
+        disabled={disabled}
+        onPress={() => setIsOpen((current) => !current)}
+        style={({ pressed }) => [
+          styles.dropdownControl,
+          isOpen && styles.dropdownControlOpen,
+          disabled && styles.inputDisabled,
+          pressed && !disabled && styles.dropdownControlPressed,
+        ]}
+      >
+        <Text
+          style={[styles.dropdownValue, !selectedOption && styles.dropdownPlaceholder]}
+          numberOfLines={1}
+        >
+          {selectedOption ? selectedOption.label : placeholder}
+        </Text>
+        <Feather
+          name={isOpen ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={uiTheme.colors.textSecondary}
+        />
+      </Pressable>
+
+      {isOpen ? (
+        <View style={styles.dropdownPanel}>
+          {showSearch ? (
+            <View style={styles.dropdownSearchWrap}>
+              <Feather name="search" size={16} color={uiTheme.colors.textMuted} />
+              <TextInput
+                style={styles.dropdownSearchInput}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search..."
+                placeholderTextColor={uiTheme.colors.textMuted}
+                autoCapitalize="none"
+              />
+            </View>
+          ) : null}
+          <ScrollView
+            style={styles.dropdownList}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+          >
+            {filteredOptions.length === 0 ? (
+              <Text style={styles.dropdownEmptyText}>No matches found.</Text>
+            ) : (
+              filteredOptions.map((option) => {
+                const isSelected = option.value === value;
+
+                return (
+                  <Pressable
+                    key={option.value}
+                    accessibilityRole="button"
+                    onPress={() => handleSelect(option.value)}
+                    style={({ pressed }) => [
+                      styles.dropdownOption,
+                      isSelected && styles.dropdownOptionSelected,
+                      pressed && styles.dropdownOptionPressed,
+                    ]}
+                  >
+                    <View style={styles.dropdownOptionTextWrap}>
+                      <Text style={styles.dropdownOptionLabel} numberOfLines={1}>
+                        {option.label}
+                      </Text>
+                      {option.description ? (
+                        <Text style={styles.dropdownOptionDescription} numberOfLines={1}>
+                          {option.description}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected ? (
+                      <Feather name="check" size={16} color={uiTheme.colors.primary} />
+                    ) : null}
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function KeyValueRow({
   label,
   value,
@@ -393,7 +569,7 @@ export function StatusChip({
   tone = 'neutral',
 }: {
   label: string;
-  tone?: 'neutral' | 'success' | 'warning';
+  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 }) {
   return (
     <View
@@ -401,6 +577,8 @@ export function StatusChip({
         styles.chip,
         tone === 'success' && styles.chipSuccess,
         tone === 'warning' && styles.chipWarning,
+        tone === 'danger' && styles.chipDanger,
+        tone === 'info' && styles.chipInfo,
       ]}
     >
       <Text
@@ -408,6 +586,8 @@ export function StatusChip({
           styles.chipText,
           tone === 'success' && styles.chipTextSuccess,
           tone === 'warning' && styles.chipTextWarning,
+          tone === 'danger' && styles.chipTextDanger,
+          tone === 'info' && styles.chipTextInfo,
         ]}
       >
         {label}
@@ -540,10 +720,11 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: 12,
+    padding: 14,
     gap: 10,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
+    ...uiTheme.shadow.card,
   },
   sectionTitle: {
     fontSize: 15,
@@ -631,6 +812,17 @@ const styles = StyleSheet.create({
     borderColor: uiTheme.colors.border,
     gap: 8,
   },
+  emptyIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    marginBottom: 2,
+  },
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -671,6 +863,9 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {
     transform: [{ scale: 0.99 }],
+  },
+  buttonPrimaryPressed: {
+    backgroundColor: uiTheme.colors.primaryStrong,
   },
   buttonText: {
     fontSize: 15,
@@ -763,6 +958,14 @@ const styles = StyleSheet.create({
     backgroundColor: uiTheme.colors.warningSoft,
     borderColor: '#FDE68A',
   },
+  chipDanger: {
+    backgroundColor: uiTheme.colors.dangerSoft,
+    borderColor: uiTheme.colors.dangerBorder,
+  },
+  chipInfo: {
+    backgroundColor: uiTheme.colors.infoSoft,
+    borderColor: uiTheme.colors.infoBorder,
+  },
   chipText: {
     fontSize: 12,
     fontWeight: '600',
@@ -773,6 +976,12 @@ const styles = StyleSheet.create({
   },
   chipTextWarning: {
     color: '#92400e',
+  },
+  chipTextDanger: {
+    color: uiTheme.colors.danger,
+  },
+  chipTextInfo: {
+    color: uiTheme.colors.info,
   },
   selectCard: {
     flexDirection: 'row',
@@ -819,6 +1028,97 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: uiTheme.colors.textSecondary,
   },
+  dropdownControl: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  dropdownControlOpen: {
+    borderColor: uiTheme.colors.primary,
+  },
+  dropdownControlPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+  },
+  dropdownValue: {
+    flex: 1,
+    fontSize: 15,
+    color: uiTheme.colors.textPrimary,
+    fontWeight: '600',
+  },
+  dropdownPlaceholder: {
+    color: uiTheme.colors.textMuted,
+    fontWeight: '400',
+  },
+  dropdownPanel: {
+    marginTop: 6,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    overflow: 'hidden',
+    ...uiTheme.shadow.card,
+  },
+  dropdownSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+  },
+  dropdownSearchInput: {
+    flex: 1,
+    minHeight: 42,
+    fontSize: 14,
+    color: uiTheme.colors.textPrimary,
+    paddingVertical: 8,
+  },
+  dropdownList: {
+    maxHeight: 250,
+  },
+  dropdownEmptyText: {
+    fontSize: 13,
+    color: uiTheme.colors.textSecondary,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: uiTheme.colors.surfaceMuted,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: uiTheme.colors.primarySoft,
+  },
+  dropdownOptionPressed: {
+    backgroundColor: uiTheme.colors.surfacePressed,
+  },
+  dropdownOptionTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  dropdownOptionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
+  },
+  dropdownOptionDescription: {
+    fontSize: 12,
+    color: uiTheme.colors.textSecondary,
+  },
   headerIconButton: {
     minWidth: 38,
     minHeight: 38,
@@ -837,107 +1137,5 @@ const styles = StyleSheet.create({
   },
   headerIconButtonDisabled: {
     opacity: 0.48,
-  },
-  menuIcon: {
-    width: 18,
-    gap: 4,
-  },
-  menuIconLine: {
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: uiTheme.colors.textPrimary,
-  },
-  backIcon: {
-    width: 22,
-    height: 22,
-    position: 'relative',
-  },
-  backIconLine: {
-    position: 'absolute',
-    left: 5,
-    width: 12,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: uiTheme.colors.textPrimary,
-  },
-  backIconLineTop: {
-    top: 6,
-    transform: [{ rotate: '-45deg' }],
-  },
-  backIconLineBottom: {
-    top: 14,
-    transform: [{ rotate: '45deg' }],
-  },
-  refreshIcon: {
-    width: 22,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  refreshArc: {
-    width: 17,
-    height: 17,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: uiTheme.colors.textPrimary,
-    borderLeftColor: 'transparent',
-    transform: [{ rotate: '24deg' }],
-  },
-  refreshHead: {
-    position: 'absolute',
-    right: 3,
-    top: 4,
-    width: 0,
-    height: 0,
-    borderTopWidth: 4,
-    borderBottomWidth: 4,
-    borderLeftWidth: 6,
-    borderTopColor: 'transparent',
-    borderBottomColor: 'transparent',
-    borderLeftColor: uiTheme.colors.textPrimary,
-    transform: [{ rotate: '26deg' }],
-  },
-  closeIcon: {
-    width: 20,
-    height: 20,
-    position: 'relative',
-  },
-  closeIconLine: {
-    position: 'absolute',
-    left: 2,
-    top: 9,
-    width: 16,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: uiTheme.colors.textPrimary,
-  },
-  closeIconLineForward: {
-    transform: [{ rotate: '45deg' }],
-  },
-  closeIconLineBack: {
-    transform: [{ rotate: '-45deg' }],
-  },
-  addIcon: {
-    width: 20,
-    height: 20,
-    position: 'relative',
-  },
-  addIconHorizontal: {
-    position: 'absolute',
-    left: 3,
-    top: 9,
-    width: 14,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: uiTheme.colors.textPrimary,
-  },
-  addIconVertical: {
-    position: 'absolute',
-    left: 9,
-    top: 3,
-    width: 2,
-    height: 14,
-    borderRadius: 1,
-    backgroundColor: uiTheme.colors.textPrimary,
   },
 });

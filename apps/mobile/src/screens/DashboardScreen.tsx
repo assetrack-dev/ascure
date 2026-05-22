@@ -8,9 +8,9 @@ import {
   BodyText,
   Card,
   ErrorBanner,
-  LoadingBlock,
   Screen,
   SectionTitle,
+  SkeletonCard,
   StatusChip,
   uiTheme,
 } from '../ui';
@@ -68,7 +68,12 @@ export function DashboardScreen({
       }}
     >
       <ErrorBanner message={error} />
-      {isLoading ? <LoadingBlock label="Loading dashboard..." /> : null}
+      {isLoading ? (
+        <>
+          <SkeletonCard />
+          <SkeletonCard />
+        </>
+      ) : null}
 
       {!isLoading && dashboard ? (
         <>
@@ -171,6 +176,10 @@ function getStatusTone(status: DefectStatus) {
 
   if (status === 'OPEN') {
     return 'warning';
+  }
+
+  if (status === 'IN_PROGRESS') {
+    return 'info';
   }
 
   return 'neutral';
