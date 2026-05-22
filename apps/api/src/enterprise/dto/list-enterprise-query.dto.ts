@@ -68,6 +68,13 @@ export class ListBranchesQueryDto {
   isActive?: boolean;
 }
 
+export class ListCapabilitiesQueryDto {
+  @Transform(optionalBoolean)
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export class ListMainheadsQueryDto {
   @IsOptional()
   @IsUUID()

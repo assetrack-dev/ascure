@@ -524,6 +524,7 @@ function normalizeImage(rawImage: unknown, index: number): DefectEvidenceImage |
   return {
     id,
     defectId: firstString(record, ["defectId"]) ?? undefined,
+    uploadedByUserId: firstString(record, ["uploadedByUserId", "createdByUserId"]),
     inspectionId: firstString(record, ["inspectionId"]) ?? undefined,
     evidenceType: firstString(record, ["evidenceType"]),
     url: firstString(record, ["url", "uri"]),
@@ -538,6 +539,7 @@ function normalizeImage(rawImage: unknown, index: number): DefectEvidenceImage |
     latitude: readNumber(record, "latitude"),
     longitude: readNumber(record, "longitude"),
     timestamp: firstString(record, ["timestamp"]),
+    uploadedAt: firstString(record, ["uploadedAt", "createdAt"]) ?? undefined,
     createdAt: firstString(record, ["createdAt"]) ?? undefined,
     updatedAt: firstString(record, ["updatedAt"]) ?? undefined,
   };

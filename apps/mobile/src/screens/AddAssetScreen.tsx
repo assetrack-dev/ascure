@@ -14,7 +14,6 @@ import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-nativ
 import { api, ApiError } from '../api';
 import {
   AppButton,
-  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
@@ -23,6 +22,7 @@ import {
   Screen,
   SectionTitle,
   SelectCard,
+  StatusChip,
   TextField,
   uiTheme,
 } from '../ui';
@@ -126,6 +126,7 @@ export function AddAssetScreen({
   const [isOpeningMapPicker, setIsOpeningMapPicker] = useState(false);
   const [isSubstationMenuOpen, setIsSubstationMenuOpen] = useState(false);
   const [isAssetTypeMenuOpen, setIsAssetTypeMenuOpen] = useState(false);
+  const [isOperationalStatusMenuOpen, setIsOperationalStatusMenuOpen] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,6 +147,12 @@ export function AddAssetScreen({
 
   const assetCodeLabel = isSAVRWorkflow ? 'NO TIANG RONDAAN' : 'Asset Code';
   const assetNameLabel = isSAVRWorkflow ? 'NO TIANG LAMA' : 'Asset Name (Optional)';
+  const selectedOperationalStatusOption = useMemo(
+    () =>
+      SAVR_OPERATIONAL_STATUS_OPTIONS.find((option) => option.value === operationalStatus) ??
+      SAVR_OPERATIONAL_STATUS_OPTIONS[0],
+    [operationalStatus],
+  );
 
   useEffect(() => {
     setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
@@ -179,6 +186,7 @@ export function AddAssetScreen({
     setMapPickerState(null);
     setIsSubstationMenuOpen(false);
     setIsAssetTypeMenuOpen(false);
+    setIsOperationalStatusMenuOpen(false);
     setError(null);
   }, [
     assetToEdit,
@@ -498,11 +506,6 @@ export function AddAssetScreen({
   return (
     <Screen
       title={isEditMode ? 'Edit Asset' : 'Add Asset'}
-      subtitle={
-        isEditMode
-          ? 'Update the selected asset details for this shared site visit.'
-          : 'Register a new asset for this shared site visit before starting an inspection.'
-      }
       actions={
         <>
           <InlineButton label="Back" onPress={onBack} disabled={isSubmitting} />
@@ -658,63 +661,103 @@ export function AddAssetScreen({
 
           {isSAVRWorkflow ? (
             <Card>
-              <SectionTitle>Asset Operational Status</SectionTitle>
-              <View style={styles.dropdownOptions}>
-                {SAVR_OPERATIONAL_STATUS_OPTIONS.map((option) => (
-                  <SelectCard
-                    key={option.value}
-                    label={option.label}
-                    description={option.description}
-                    selected={operationalStatus === option.value}
-                    onPress={() => setOperationalStatus(option.value)}
+              <SectionTitle>Operational Status</SectionTitle>
+              <Pressable
+                onPress={() => setIsOperationalStatusMenuOpen((currentValue) => !currentValue)}
+                style={({ pressed }) => [
+                  styles.dropdownField,
+                  isOperationalStatusMenuOpen && styles.dropdownFieldOpen,
+                  pressed && styles.dropdownFieldPressed,
+                ]}
+              >
+                <View style={styles.dropdownLabelWrap}>
+                  <Text style={styles.dropdownLabel}>Selected</Text>
+                  <StatusChip
+                    label={selectedOperationalStatusOption.label}
+                    tone={getOperationalStatusTone(operationalStatus)}
                   />
-                ))}
-              </View>
+                </View>
+                <Text style={styles.dropdownCaret}>{isOperationalStatusMenuOpen ? 'Hide' : 'Change'}</Text>
+              </Pressable>
+              {isOperationalStatusMenuOpen ? (
+                <View style={styles.statusOptionGrid}>
+                  {SAVR_OPERATIONAL_STATUS_OPTIONS.map((option) => (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: operationalStatus === option.value }}
+                      onPress={() => {
+                        setOperationalStatus(option.value);
+                        setIsOperationalStatusMenuOpen(false);
+                      }}
+                      style={({ pressed }) => [
+                        styles.statusOptionButton,
+                        operationalStatus === option.value && styles.statusOptionButtonSelected,
+                        pressed && styles.dropdownFieldPressed,
+                      ]}
+                    >
+                      <StatusChip
+                        label={option.label}
+                        tone={getOperationalStatusTone(option.value)}
+                      />
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
             </Card>
           ) : null}
 
           <Card>
-            <SectionTitle>Coordinates</SectionTitle>
-            {hasInitialMapLocation ? <BodyText muted>Location selected from map</BodyText> : null}
-            <BodyText muted>
-              Use device GPS, select on satellite map, or enter coordinates manually.
-            </BodyText>
-            <TextField
-              label="Latitude"
-              value={latitude}
-              onChangeText={handleManualLatitude}
-              placeholder="e.g. 2.925900"
-              keyboardType="numbers-and-punctuation"
-            />
-            <TextField
-              label="Longitude"
-              value={longitude}
-              onChangeText={handleManualLongitude}
-              placeholder="e.g. 101.690000"
-              keyboardType="numbers-and-punctuation"
-            />
-            <View style={styles.coordinateMetaPanel}>
-              <Text style={styles.coordinateMetaLabel}>GPS Accuracy</Text>
-              <Text style={styles.coordinateMetaValue}>
-                {gpsAccuracyMeters === null ? 'Not available' : `+/-${Math.round(gpsAccuracyMeters)} m`}
+            <SectionTitle>GPS</SectionTitle>
+            <View style={styles.coordinateSummaryRow}>
+              <Text style={styles.coordinateSummaryText} numberOfLines={1}>
+                {formatCoordinateSummary(latitude, longitude)}
               </Text>
+              <Text style={styles.coordinateAccuracyText}>{formatGpsAccuracy(gpsAccuracyMeters)}</Text>
             </View>
-            <AppButton
-              label={isLocating ? 'Reading Current GPS...' : 'Use Current GPS'}
-              onPress={handleUseCurrentLocation}
-              variant="secondary"
-              loading={isLocating}
-              disabled={isSubmitting}
-            />
-            <AppButton
-              label={isOpeningMapPicker ? 'Opening Map...' : 'Select on Map'}
-              onPress={handleOpenMapPicker}
-              variant="secondary"
-              loading={isOpeningMapPicker}
-              disabled={isSubmitting}
-            />
+            {hasInitialMapLocation ? <Text style={styles.coordinateSourceText}>Map selected</Text> : null}
+            <View style={styles.coordinateInputRow}>
+              <View style={styles.coordinateInputCell}>
+                <TextField
+                  label="Lat"
+                  value={latitude}
+                  onChangeText={handleManualLatitude}
+                  placeholder="2.925900"
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+              <View style={styles.coordinateInputCell}>
+                <TextField
+                  label="Lng"
+                  value={longitude}
+                  onChangeText={handleManualLongitude}
+                  placeholder="101.690000"
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+            </View>
+            <View style={styles.coordinateActionRow}>
+              <View style={styles.coordinateActionCell}>
+                <AppButton
+                  label={isLocating ? 'Reading GPS...' : 'Use GPS'}
+                  onPress={handleUseCurrentLocation}
+                  variant="secondary"
+                  loading={isLocating}
+                  disabled={isSubmitting}
+                />
+              </View>
+              <View style={styles.coordinateActionCell}>
+                <AppButton
+                  label={isOpeningMapPicker ? 'Opening...' : 'Map'}
+                  onPress={handleOpenMapPicker}
+                  variant="secondary"
+                  loading={isOpeningMapPicker}
+                  disabled={isSubmitting}
+                />
+              </View>
+            </View>
             {hasLocationPermission === false ? (
-              <BodyText muted>Location permission is off right now. Manual coordinates still work.</BodyText>
+              <Text style={styles.coordinateSourceText}>Location permission off. Manual entry works.</Text>
             ) : null}
           </Card>
         </>
@@ -803,10 +846,10 @@ function MapCoordinatePicker({
           <View style={styles.mapPickerCoordinatePanel}>
             <Text style={styles.mapPickerCoordinateLabel}>Selected GPS</Text>
             <Text style={styles.mapPickerCoordinateValue}>
-              {coordinate.latitude.toFixed(6)}, {coordinate.longitude.toFixed(6)}
+              Lat {coordinate.latitude.toFixed(6)} · Lng {coordinate.longitude.toFixed(6)}
             </Text>
             <Text style={styles.mapPickerAccuracyText}>
-              Accuracy: {accuracyMeters === null ? 'Not available' : `+/-${Math.round(accuracyMeters)} m`}
+              {formatGpsAccuracy(accuracyMeters)}
             </Text>
           </View>
           <AppButton
@@ -821,6 +864,17 @@ function MapCoordinatePicker({
 
 function formatCoordinate(value: number) {
   return value.toFixed(6);
+}
+
+function formatCoordinateSummary(latitude: string, longitude: string) {
+  const latitudeLabel = latitude.trim() || 'N/A';
+  const longitudeLabel = longitude.trim() || 'N/A';
+
+  return `Lat ${latitudeLabel} · Lng ${longitudeLabel}`;
+}
+
+function formatGpsAccuracy(value: number | null) {
+  return value === null ? 'GPS --' : `GPS ±${Math.round(value)}m`;
 }
 
 function parseCoordinate(
@@ -926,6 +980,14 @@ function getAssetStatusForOperationalStatus(status: SavrOperationalStatus): Asse
   return 'ACTIVE';
 }
 
+function getOperationalStatusTone(status: SavrOperationalStatus) {
+  if (status === 'NOT_FOUND' || status === 'DEMOLISHED') {
+    return 'warning' as const;
+  }
+
+  return 'success' as const;
+}
+
 function buildAssetMetadata({
   existingMetadata,
   coordinateSource,
@@ -1003,21 +1065,21 @@ function getMetadataCoordinateSource(
 
 const styles = StyleSheet.create({
   dropdownField: {
-    minHeight: 64,
-    borderRadius: 16,
+    minHeight: 52,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#c7d5e8',
+    borderColor: uiTheme.colors.border,
     backgroundColor: '#ffffff',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 12,
     alignItems: 'center',
   },
   dropdownFieldOpen: {
-    borderColor: '#0f5cd8',
-    backgroundColor: '#eef4ff',
+    borderColor: '#111827',
+    backgroundColor: '#f8fafc',
   },
   dropdownFieldPressed: {
     opacity: 0.94,
@@ -1027,53 +1089,99 @@ const styles = StyleSheet.create({
   },
   dropdownLabelWrap: {
     flex: 1,
-    gap: 6,
+    gap: 5,
   },
   dropdownLabel: {
-    fontSize: 13,
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: '700',
-    color: '#607086',
+    color: uiTheme.colors.textSecondary,
+    textTransform: 'uppercase',
   },
   dropdownValue: {
-    fontSize: 16,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700',
-    color: '#0f172a',
+    color: uiTheme.colors.textPrimary,
   },
   dropdownCaret: {
-    fontSize: 14,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
-    color: '#0f5cd8',
+    color: uiTheme.colors.textPrimary,
   },
   dropdownOptions: {
-    paddingTop: 12,
-    gap: 10,
+    paddingTop: 8,
+    gap: 8,
   },
-  coordinateMetaPanel: {
-    minHeight: 48,
+  statusOptionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingTop: 8,
+  },
+  statusOptionButton: {
+    minHeight: 38,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    flexGrow: 1,
+    flexBasis: '47%',
+  },
+  statusOptionButtonSelected: {
+    borderColor: '#111827',
+    backgroundColor: uiTheme.colors.surfaceMuted,
+  },
+  coordinateSummaryRow: {
+    minHeight: 38,
     borderRadius: uiTheme.radius.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
     backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 10,
   },
-  coordinateMetaLabel: {
+  coordinateSummaryText: {
     flex: 1,
-    color: uiTheme.colors.textSecondary,
+    color: uiTheme.colors.textPrimary,
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  coordinateMetaValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
+  coordinateAccuracyText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
     textAlign: 'right',
+  },
+  coordinateSourceText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  coordinateInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  coordinateInputCell: {
+    flex: 1,
+  },
+  coordinateActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  coordinateActionCell: {
+    flex: 1,
   },
   mapPickerSafeArea: {
     flex: 1,
@@ -1159,8 +1267,8 @@ const styles = StyleSheet.create({
   },
   mapPickerCoordinateValue: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '800',
   },
   mapPickerAccuracyText: {

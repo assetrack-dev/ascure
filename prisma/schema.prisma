@@ -253,29 +253,44 @@ model Department {
 }
 
 model Team {
-  id                String       @id @default(uuid()) @db.Uuid
-  tenantId          String       @db.Uuid
-  departmentId      String?      @db.Uuid
-  name              String
-  code              String
-  isActive          Boolean      @default(true)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department        Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  members           TeamMember[]
-  siteVisits        SiteVisit[]
-  assignedDefects   Defect[]     @relation("DefectAssignedTeam")
-  assignedToDefects Defect[]     @relation("DefectAssignedToTeam")
+  id                    String           @id @default(uuid()) @db.Uuid
+  tenantId              String           @db.Uuid
+  departmentId          String?          @db.Uuid
+  organizationId        String?          @db.Uuid
+  branchId              String?          @db.Uuid
+  mainheadId            String?          @db.Uuid
+  name                  String
+  code                  String
+  isActive              Boolean          @default(true)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  tenant                Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department            Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  organization          Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  branch                Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  mainhead              Mainhead?        @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  members               TeamMember[]
+  siteVisits            SiteVisit[]
+  assignedDefects       Defect[]         @relation("DefectAssignedTeam")
+  assignedToDefects     Defect[]         @relation("DefectAssignedToTeam")
+  assignedUsers         User[]           @relation("UserOperationalTeam")
+  capabilityAssignments TeamCapability[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([mainheadId])
 }
 
 model User {
   id                      String                   @id @default(uuid()) @db.Uuid
   tenantId                String                   @db.Uuid
   departmentId            String?                  @db.Uuid
+  organizationId          String?                  @db.Uuid
+  branchId                String?                  @db.Uuid
+  mainheadId              String?                  @db.Uuid
+  teamId                  String?                  @db.Uuid
   email                   String                   @unique
   name                    String
   passwordHash            String
@@ -285,6 +300,10 @@ model User {
   updatedAt               DateTime                 @updatedAt
   tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   department              Department?              @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  organization            Organization?            @relation("UserOperationalOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+  branch                  Branch?                  @relation("UserOperationalBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  mainhead                Mainhead?                @relation("UserOperationalMainhead", fields: [mainheadId], references: [id], onDelete: SetNull)
+  team                    Team?                    @relation("UserOperationalTeam", fields: [teamId], references: [id], onDelete: SetNull)
   teamMemberships         TeamMember[]
   siteVisitUsers          SiteVisitUser[]
   createdVisits           SiteVisit[]              @relation("SiteVisitCreatedBy")
@@ -303,8 +322,13 @@ model User {
   organizationMemberships OrganizationMembership[]
   projectMemberships      ProjectMembership[]
   siteVisitParticipants   SiteVisitParticipant[]
+  capabilityAssignments   UserCapability[]
 
   @@index([tenantId])
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([mainheadId])
+  @@index([teamId])
 }
 
 model TeamMember {
@@ -323,20 +347,23 @@ model TeamMember {
 }
 
 model Organization {
-  id                     String                   @id @default(uuid()) @db.Uuid
+  id                     String                             @id @default(uuid()) @db.Uuid
   name                   String
-  code                   String?                  @unique
+  code                   String?                            @unique
   type                   OrganizationType
-  parentOrganizationId   String?                  @db.Uuid
-  isActive               Boolean                  @default(true)
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
-  parentOrganization     Organization?            @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
-  childOrganizations     Organization[]           @relation("OrganizationHierarchy")
+  parentOrganizationId   String?                            @db.Uuid
+  isActive               Boolean                            @default(true)
+  createdAt              DateTime                           @default(now())
+  updatedAt              DateTime                           @updatedAt
+  parentOrganization     Organization?                      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations     Organization[]                     @relation("OrganizationHierarchy")
   memberships            OrganizationMembership[]
   capabilities           OrganizationCapability[]
+  capabilityAssignments  OrganizationCapabilityAssignment[]
   branches               Branch[]
-  clientProjects         Project[]                @relation("ProjectClientOrganization")
+  teams                  Team[]
+  assignedUsers          User[]                             @relation("UserOperationalOrganization")
+  clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
 
@@ -359,6 +386,42 @@ model OrganizationCapability {
   @@index([capability])
 }
 
+model Capability {
+  id                      String                             @id @default(uuid()) @db.Uuid
+  name                    String
+  code                    String                             @unique
+  description             String?
+  isActive                Boolean                            @default(true)
+  createdAt               DateTime                           @default(now())
+  updatedAt               DateTime                           @updatedAt
+  assetTypes              AssetType[]
+  inspectionTemplates     InspectionTemplate[]
+  organizationAssignments OrganizationCapabilityAssignment[]
+  branchAssignments       BranchCapability[]
+  mainheadAssignments     MainheadCapability[]
+  teamAssignments         TeamCapability[]
+  userAssignments         UserCapability[]
+
+  @@index([isActive])
+}
+
+model OrganizationCapabilityAssignment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  capabilityId   String       @db.Uuid
+  isActive       Boolean      @default(true)
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  capability     Capability   @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, capabilityId])
+  @@index([organizationId])
+  @@index([capabilityId])
+  @@index([isActive])
+}
+
 model OrganizationMembership {
   id             String                     @id @default(uuid()) @db.Uuid
   userId         String                     @db.Uuid
@@ -376,37 +439,112 @@ model OrganizationMembership {
 }
 
 model Branch {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @db.Uuid
-  name           String
-  code           String?
-  region         String?
-  isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  mainheads      Mainhead[]
-  projects       Project[]
-  siteVisits     SiteVisit[]
+  id                    String             @id @default(uuid()) @db.Uuid
+  organizationId        String             @db.Uuid
+  name                  String
+  code                  String?
+  region                String?
+  isActive              Boolean            @default(true)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  mainheads             Mainhead[]
+  teams                 Team[]
+  assignedUsers         User[]             @relation("UserOperationalBranch")
+  capabilityAssignments BranchCapability[]
+  projects              Project[]
+  siteVisits            SiteVisit[]
 
   @@index([organizationId])
 }
 
+model BranchCapability {
+  id           String     @id @default(uuid()) @db.Uuid
+  branchId     String     @db.Uuid
+  capabilityId String     @db.Uuid
+  isActive     Boolean    @default(true)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  branch       Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, capabilityId])
+  @@index([branchId])
+  @@index([capabilityId])
+  @@index([isActive])
+}
+
 model Mainhead {
-  id           String        @id @default(uuid()) @db.Uuid
-  branchId     String        @db.Uuid
-  name         String
-  code         String?
-  description  String?
-  isActive     Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  branch       Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  projects     Project[]
-  workPackages WorkPackage[]
-  siteVisits   SiteVisit[]
+  id                    String               @id @default(uuid()) @db.Uuid
+  branchId              String               @db.Uuid
+  name                  String
+  code                  String?
+  description           String?
+  isActive              Boolean              @default(true)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  branch                Branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  teams                 Team[]
+  assignedUsers         User[]               @relation("UserOperationalMainhead")
+  capabilityAssignments MainheadCapability[]
+  projects              Project[]
+  workPackages          WorkPackage[]
+  siteVisits            SiteVisit[]
+  inspectionTemplates   InspectionTemplate[]
 
   @@index([branchId])
+  @@index([isActive])
+}
+
+model MainheadCapability {
+  id           String     @id @default(uuid()) @db.Uuid
+  mainheadId   String     @db.Uuid
+  capabilityId String     @db.Uuid
+  isActive     Boolean    @default(true)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  mainhead     Mainhead   @relation(fields: [mainheadId], references: [id], onDelete: Cascade)
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@unique([mainheadId, capabilityId])
+  @@index([mainheadId])
+  @@index([capabilityId])
+  @@index([isActive])
+}
+
+model TeamCapability {
+  id           String     @id @default(uuid()) @db.Uuid
+  teamId       String     @db.Uuid
+  capabilityId String     @db.Uuid
+  isActive     Boolean    @default(true)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, capabilityId])
+  @@index([teamId])
+  @@index([capabilityId])
+  @@index([isActive])
+}
+
+model UserCapability {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @db.Uuid
+  capabilityId String     @db.Uuid
+  isActive     Boolean    @default(true)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, capabilityId])
+  @@index([userId])
+  @@index([capabilityId])
   @@index([isActive])
 }
 
@@ -511,17 +649,23 @@ model Substation {
 model AssetType {
   id                  String               @id @default(uuid()) @db.Uuid
   tenantId            String               @db.Uuid
+  capabilityId        String?              @db.Uuid
   name                String
   code                String
+  description         String?
   isActive            Boolean              @default(true)
+  sortOrder           Int?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  capability          Capability?          @relation(fields: [capabilityId], references: [id], onDelete: SetNull)
   assets              Asset[]
   inspectionTemplates InspectionTemplate[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([capabilityId])
+  @@index([isActive, sortOrder])
 }
 
 model Asset {
@@ -679,25 +823,34 @@ model SiteVisitAsset {
 }
 
 model InspectionTemplate {
-  id          String                      @id @default(uuid()) @db.Uuid
-  tenantId    String                      @db.Uuid
-  assetTypeId String                      @db.Uuid
-  version     Int
-  name        String
-  status      InspectionTemplateStatus    @default(DRAFT)
-  isActive    Boolean                     @default(false)
-  createdAt   DateTime                    @default(now())
-  updatedAt   DateTime                    @updatedAt
-  publishedAt DateTime?
-  tenant      Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assetType   AssetType                   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  sections    InspectionTemplateSection[]
-  items       InspectionTemplateItem[]
-  inspections Inspection[]
+  id                String                      @id @default(uuid()) @db.Uuid
+  tenantId          String                      @db.Uuid
+  assetTypeId       String                      @db.Uuid
+  capabilityId      String?                     @db.Uuid
+  mainheadId        String?                     @db.Uuid
+  operationalDomain OperationalDomain?
+  version           Int
+  name              String
+  status            InspectionTemplateStatus    @default(DRAFT)
+  isActive          Boolean                     @default(false)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  publishedAt       DateTime?
+  tenant            Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetType         AssetType                   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  capability        Capability?                 @relation(fields: [capabilityId], references: [id], onDelete: SetNull)
+  mainhead          Mainhead?                   @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  sections          InspectionTemplateSection[]
+  items             InspectionTemplateItem[]
+  inspections       Inspection[]
 
   @@unique([assetTypeId, version])
   @@index([tenantId])
+  @@index([tenantId, isActive])
   @@index([assetTypeId, isActive])
+  @@index([capabilityId])
+  @@index([mainheadId])
+  @@index([operationalDomain])
 }
 
 model InspectionTemplateSection {
@@ -857,10 +1010,10 @@ model Defect {
 }
 
 model DefectEvidenceImage {
-  id              String   @id @default(uuid()) @db.Uuid
-  defectId        String   @db.Uuid
-  createdByUserId String?  @db.Uuid
-  evidenceType    String   @default("MAINTENANCE_PROOF")
+  id              String    @id @default(uuid()) @db.Uuid
+  defectId        String    @db.Uuid
+  createdByUserId String?   @db.Uuid
+  evidenceType    String    @default("MAINTENANCE_PROOF")
   fileName        String
   storageKey      String
   contentType     String?
@@ -870,10 +1023,10 @@ model DefectEvidenceImage {
   latitude        Float?
   longitude       Float?
   timestamp       DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  defect          Defect   @relation(fields: [defectId], references: [id], onDelete: Cascade)
-  createdBy       User?    @relation("DefectEvidenceCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  defect          Defect    @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  createdBy       User?     @relation("DefectEvidenceCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([defectId])
   @@index([createdByUserId])

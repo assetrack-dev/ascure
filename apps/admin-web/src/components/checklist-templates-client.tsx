@@ -46,7 +46,9 @@ import {
   fetchChecklistTemplates,
   updateChecklistTemplate,
 } from "@/lib/checklist-templates";
+import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import type { AuthSession } from "@/types/auth";
+import type { EnterpriseOptionRecord } from "@/types/enterprise";
 import type {
   AssetType,
   ChecklistFieldType,
@@ -75,6 +77,7 @@ interface TemplateFormItem {
 
 interface TemplateFormState {
   assetTypeId: string;
+  capabilityId: string;
   name: string;
   items: TemplateFormItem[];
 }
@@ -199,9 +202,10 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
   };
 }
 
-function defaultForm(assetTypeId = ""): TemplateFormState {
+function defaultForm(assetTypeId = "", capabilityId = ""): TemplateFormState {
   return {
     assetTypeId,
+    capabilityId,
     name: "",
     items: [createBlankItem()],
   };
@@ -620,6 +624,7 @@ function TemplateFormModal({
   mode,
   values,
   assetTypes,
+  capabilities,
   selectedTemplate,
   error,
   isSaving,
@@ -630,6 +635,7 @@ function TemplateFormModal({
   mode: ModalMode;
   values: TemplateFormState;
   assetTypes: AssetType[];
+  capabilities: EnterpriseOptionRecord[];
   selectedTemplate: ChecklistTemplate | null;
   error: string;
   isSaving: boolean;
@@ -778,17 +784,23 @@ function TemplateFormModal({
             </div>
           ) : null}
 
-          <div className="grid gap-4 md:grid-cols-[minmax(220px,0.8fr)_minmax(260px,1fr)]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(220px,0.9fr)_minmax(260px,1.1fr)]">
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">Asset Type</span>
               <select
                 value={values.assetTypeId}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const nextAssetTypeId = event.target.value;
+                  const nextAssetType = assetTypes.find(
+                    (assetType) => assetType.id === nextAssetTypeId,
+                  );
+
                   onChange((currentValues) => ({
                     ...currentValues,
-                    assetTypeId: event.target.value,
-                  }))
-                }
+                    assetTypeId: nextAssetTypeId,
+                    capabilityId: nextAssetType?.capabilityId ?? "",
+                  }));
+                }}
                 className={`${inputClassName} mt-1.5`}
                 disabled={!isCreateMode}
                 required
@@ -797,6 +809,27 @@ function TemplateFormModal({
                 {assetTypes.map((assetType) => (
                   <option key={assetType.id} value={assetType.id}>
                     {assetType.code} - {assetType.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Capability</span>
+              <select
+                value={values.capabilityId}
+                onChange={(event) =>
+                  onChange((currentValues) => ({
+                    ...currentValues,
+                    capabilityId: event.target.value,
+                  }))
+                }
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">Use asset type capability</option>
+                {capabilities.map((capability) => (
+                  <option key={capability.id} value={capability.id}>
+                    {capability.code ? `${capability.code} - ${capability.name}` : capability.name}
                   </option>
                 ))}
               </select>
@@ -972,6 +1005,7 @@ function ChecklistTemplatesContent() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
+  const [capabilities, setCapabilities] = useState<EnterpriseOptionRecord[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -999,12 +1033,14 @@ function ChecklistTemplatesContent() {
       setError("");
 
       try {
-        const [nextAssetTypes, nextTemplates] = await Promise.all([
+        const [nextAssetTypes, nextTemplates, options] = await Promise.all([
           fetchAssetTypes(token),
           fetchChecklistTemplates(token),
+          fetchEnterpriseOptions(token),
         ]);
         setAssetTypes(nextAssetTypes);
         setTemplates(nextTemplates);
+        setCapabilities(options.capabilities.filter((capability) => capability.isActive !== false));
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           handleLogout();
@@ -1058,6 +1094,8 @@ function ChecklistTemplatesContent() {
             template.assetType,
             template.assetTypeCode,
             template.assetTypeName,
+            template.capability?.name,
+            template.capability?.code,
             templateStatus,
             `v${template.version}`,
           ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
@@ -1088,9 +1126,10 @@ function ChecklistTemplatesContent() {
 
   function openCreateModal() {
     const defaultAssetTypeId = assetTypeFilter !== "ALL" ? assetTypeFilter : assetTypes[0]?.id ?? "";
+    const defaultAssetType = assetTypes.find((assetType) => assetType.id === defaultAssetTypeId);
 
     setSelectedTemplate(null);
-    setFormValues(defaultForm(defaultAssetTypeId));
+    setFormValues(defaultForm(defaultAssetTypeId, defaultAssetType?.capabilityId ?? ""));
     setModalError("");
     setModalMode("create");
   }
@@ -1103,6 +1142,7 @@ function ChecklistTemplatesContent() {
     setSelectedTemplate(template);
     setFormValues({
       assetTypeId: template.assetTypeId,
+      capabilityId: template.capabilityId ?? template.capability?.id ?? "",
       name: template.name,
       items: items.length > 0 ? items : [createBlankItem()],
     });
@@ -1166,13 +1206,15 @@ function ChecklistTemplatesContent() {
       const savedTemplate =
         modalMode === "create"
           ? await createChecklistTemplate(session.token, {
-              assetType: formValues.assetTypeId,
+              assetTypeId: formValues.assetTypeId,
+              capabilityId: formValues.capabilityId || null,
               name: trimmedName,
               isActive: false,
               items,
             })
           : selectedTemplate
             ? await updateChecklistTemplate(session.token, selectedTemplate.id, {
+                capabilityId: formValues.capabilityId || null,
                 name: trimmedName,
                 items,
               })
@@ -1444,6 +1486,7 @@ function ChecklistTemplatesContent() {
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
                         <th className="min-w-64 px-5 py-3.5 font-semibold">Template</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Asset Type</th>
+                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Capability</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Items</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Inspections</th>
@@ -1492,6 +1535,14 @@ function ChecklistTemplatesContent() {
                               <div className="text-xs text-[var(--muted)]">
                                 {template.assetTypeName ?? "Asset type"}
                               </div>
+                            </td>
+                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
+                              {template.capability?.name ?? "Not assigned"}
+                              {template.capability?.code ? (
+                                <div className="text-xs text-[var(--muted)]">
+                                  {template.capability.code}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="min-w-48 px-5 py-4">
                               <StatusBadge status={templateStatus} showDescription />
@@ -1576,6 +1627,7 @@ function ChecklistTemplatesContent() {
           mode={modalMode}
           values={formValues}
           assetTypes={assetTypes}
+          capabilities={capabilities}
           selectedTemplate={selectedTemplate}
           error={modalError}
           isSaving={isSaving}

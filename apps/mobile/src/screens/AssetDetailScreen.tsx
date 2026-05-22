@@ -18,7 +18,7 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { Asset, AssetDetailImage, AssetDetailResponse } from '../types';
 import { formatDateTime } from '../utils';
-import { HeaderIconButton, uiTheme } from '../ui';
+import { HeaderIconButton, StatusChip, uiTheme } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -100,7 +100,10 @@ export function AssetDetailScreen({
       setIsStartingInspection(true);
       setActionError(null);
 
-      const activeTemplate = await api.getChecklistTemplateByAssetType(token, asset.assetType);
+      const activeTemplate = await api.resolveInspectionTemplate(token, {
+        assetTypeId: asset.assetTypeId,
+        assetType: asset.assetType,
+      });
 
       if (activeTemplate.items.length === 0) {
         setActionError(
@@ -245,6 +248,7 @@ export function AssetDetailScreen({
   }
 
   const latestInspection = asset.latestInspection;
+  const gpsAccuracyMeters = getMetadataNumber(asset.metadata, 'gpsAccuracyMeters');
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -318,17 +322,23 @@ export function AssetDetailScreen({
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Asset Information</Text>
+          <Text style={styles.cardTitle}>Asset</Text>
           <InfoRow label="Asset Code" value={asset.assetCode || 'No asset code available'} />
           {asset.name ? <InfoRow label="Asset Name" value={asset.name} /> : null}
           <InfoRow label="Asset Type" value={asset.assetType || 'No asset type available'} />
-          <InfoRow label="Status" value={formatLabel(asset.status) || 'No status available'} />
-          <InfoRow label="Latitude" value={formatCoordinate(asset.latitude)} />
-          <InfoRow label="Longitude" value={formatCoordinate(asset.longitude)} />
+          <View style={styles.statusLine}>
+            <Text style={styles.infoLabel}>Status</Text>
+            <StatusChip label={formatLabel(asset.status)} tone={getAssetStatusTone(asset.status)} />
+          </View>
+          <CoordinateReadout
+            latitude={asset.latitude}
+            longitude={asset.longitude}
+            accuracyMeters={gpsAccuracyMeters}
+          />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Latest Submitted Inspection</Text>
+          <Text style={styles.cardTitle}>Latest Inspection</Text>
           {latestInspection ? (
             <>
               <InfoRow label="Cycle" value={`Cycle ${latestInspection.cycleNumber}`} />
@@ -340,7 +350,7 @@ export function AssetDetailScreen({
               </Text>
             </>
           ) : (
-            <Text style={styles.placeholderText}>No submitted inspection yet.</Text>
+            <Text style={styles.placeholderText}>No submitted inspection.</Text>
           )}
         </View>
 
@@ -359,9 +369,9 @@ export function AssetDetailScreen({
         ) : null}
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Inspection Images</Text>
+          <Text style={styles.cardTitle}>Images</Text>
           {images.length === 0 ? (
-            <Text style={styles.placeholderText}>No inspection images yet.</Text>
+            <Text style={styles.placeholderText}>No images.</Text>
           ) : (
             <ScrollView
               horizontal
@@ -420,6 +430,29 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function CoordinateReadout({
+  latitude,
+  longitude,
+  accuracyMeters,
+}: {
+  latitude: number | null;
+  longitude: number | null;
+  accuracyMeters: number | null;
+}) {
+  return (
+    <View style={styles.coordinatePanel}>
+      <Text style={styles.coordinateValue} numberOfLines={1}>
+        {hasCoordinatePair(latitude, longitude)
+          ? `Lat ${formatCoordinate(latitude)} · Lng ${formatCoordinate(longitude)}`
+          : 'No GPS'}
+      </Text>
+      {accuracyMeters !== null ? (
+        <Text style={styles.coordinateAccuracy}>GPS ±{Math.round(accuracyMeters)}m</Text>
+      ) : null}
+    </View>
+  );
+}
+
 async function loadEditableAssetList(token: string, substationId: string) {
   try {
     return await api.getAssets(token, substationId);
@@ -434,10 +467,44 @@ async function loadEditableAssetList(token: string, substationId: string) {
 
 function formatCoordinate(value: number | null) {
   if (value === null || value === undefined || !Number.isFinite(value)) {
-    return 'No coordinate available';
+    return 'N/A';
   }
 
   return value.toFixed(6);
+}
+
+function hasCoordinatePair(latitude: number | null, longitude: number | null) {
+  return (
+    typeof latitude === 'number' &&
+    Number.isFinite(latitude) &&
+    typeof longitude === 'number' &&
+    Number.isFinite(longitude)
+  );
+}
+
+function getMetadataNumber(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+) {
+  if (!metadata || typeof metadata !== 'object') {
+    return null;
+  }
+
+  const value = metadata[key];
+
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function getAssetStatusTone(status: Asset['status']) {
+  if (status === 'ACTIVE') {
+    return 'success' as const;
+  }
+
+  if (status === 'NOT_FOUND' || status === 'REMOVED') {
+    return 'warning' as const;
+  }
+
+  return 'neutral' as const;
 }
 
 function formatLabel(value: string) {
@@ -530,37 +597,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 140,
-    gap: 16,
+    paddingHorizontal: uiTheme.spacing.screen,
+    paddingBottom: 128,
+    gap: 12,
   },
   card: {
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: 14,
-    gap: 12,
+    padding: 12,
+    gap: 10,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
   },
   cardTitle: {
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 12,
   },
   infoLabel: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     color: uiTheme.colors.textSecondary,
   },
   infoValue: {
     flex: 1.2,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: uiTheme.colors.textPrimary,
     textAlign: 'right',
@@ -571,13 +638,13 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
   },
   bodyText: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     color: uiTheme.colors.textPrimary,
   },
   placeholderText: {
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 19,
     color: uiTheme.colors.textSecondary,
   },
   emptyTitle: {
@@ -612,13 +679,13 @@ const styles = StyleSheet.create({
   actionPanel: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
   },
   actionButton: {
-    minHeight: 48,
+    minHeight: 42,
     flexGrow: 1,
     flexBasis: 118,
-    borderRadius: uiTheme.radius.control,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -677,7 +744,7 @@ const styles = StyleSheet.create({
   },
   image: {
     width: '100%',
-    height: 220,
+    height: 190,
     borderRadius: uiTheme.radius.card,
     backgroundColor: uiTheme.colors.surfaceMuted,
   },
@@ -691,8 +758,8 @@ const styles = StyleSheet.create({
     borderColor: uiTheme.colors.border,
   },
   historyButton: {
-    minHeight: 48,
-    borderRadius: uiTheme.radius.control,
+    minHeight: 44,
+    borderRadius: uiTheme.radius.card,
     backgroundColor: uiTheme.colors.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
@@ -701,7 +768,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   historyButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: uiTheme.colors.textPrimary,
   },
@@ -710,5 +777,33 @@ const styles = StyleSheet.create({
   },
   pressedButton: {
     transform: [{ scale: 0.99 }],
+  },
+  statusLine: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  coordinatePanel: {
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  coordinateValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  coordinateAccuracy: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
   },
 });

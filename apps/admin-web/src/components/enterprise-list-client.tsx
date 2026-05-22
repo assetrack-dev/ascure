@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
   FolderKanban,
+  GitBranch,
   Network,
   PackageCheck,
   Pencil,
@@ -17,6 +18,8 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Tags,
+  Users,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -59,6 +62,7 @@ interface EnterpriseFormState {
   endDate: string;
   area: string;
   description: string;
+  capabilityIds: string[];
 }
 
 const PAGE_CONFIG: Record<
@@ -73,6 +77,7 @@ const PAGE_CONFIG: Record<
     extraFilterLabel?: string;
     emptyLabel: string;
     icon: typeof Building2;
+    hasDetail?: boolean;
   }
 > = {
   organizations: {
@@ -85,6 +90,29 @@ const PAGE_CONFIG: Record<
     extraFilterLabel: "All capabilities",
     emptyLabel: "No organizations found",
     icon: Building2,
+  },
+  branches: {
+    eyebrow: "Operational Configuration",
+    title: "Branches",
+    basePath: "/branches",
+    searchPlaceholder: "Search branches",
+    primaryFilterLabel: "All states",
+    groupFilterLabel: "All organizations",
+    extraFilterLabel: "All capabilities",
+    emptyLabel: "No branches found",
+    icon: GitBranch,
+    hasDetail: false,
+  },
+  capabilities: {
+    eyebrow: "Operational Configuration",
+    title: "Capabilities",
+    basePath: "/capabilities",
+    searchPlaceholder: "Search capabilities",
+    primaryFilterLabel: "All states",
+    groupFilterLabel: "All states",
+    emptyLabel: "No capabilities found",
+    icon: Tags,
+    hasDetail: false,
   },
   mainheads: {
     eyebrow: "Enterprise Visibility",
@@ -106,6 +134,18 @@ const PAGE_CONFIG: Record<
     extraFilterLabel: "All domains",
     emptyLabel: "No projects found",
     icon: FolderKanban,
+  },
+  teams: {
+    eyebrow: "Operational Configuration",
+    title: "Teams",
+    basePath: "/teams",
+    searchPlaceholder: "Search teams",
+    primaryFilterLabel: "All states",
+    groupFilterLabel: "All organizations",
+    extraFilterLabel: "All capabilities",
+    emptyLabel: "No teams found",
+    icon: Users,
+    hasDetail: false,
   },
   "work-packages": {
     eyebrow: "Enterprise Visibility",
@@ -147,6 +187,7 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   endDate: "",
   area: "",
   description: "",
+  capabilityIds: [],
 };
 
 function toneClassName(tone: EnterpriseTone) {
@@ -237,6 +278,32 @@ function readNestedString(record: Record<string, unknown> | null, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
+function readCapabilityIds(row: EnterpriseListRow | null) {
+  const assignments = row?.raw.capabilityAssignments;
+
+  if (!Array.isArray(assignments)) {
+    return [];
+  }
+
+  return assignments
+    .map((assignment) => {
+      if (!assignment || typeof assignment !== "object" || Array.isArray(assignment)) {
+        return "";
+      }
+
+      const capability = (assignment as Record<string, unknown>).capability;
+
+      if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+        return "";
+      }
+
+      const id = (capability as Record<string, unknown>).id;
+
+      return typeof id === "string" ? id : "";
+    })
+    .filter((id) => id);
+}
+
 function toDateInputValue(date: string | null | undefined) {
   if (!date) {
     return "";
@@ -268,6 +335,7 @@ function createFormFromRow(
   row: EnterpriseListRow,
 ): EnterpriseFormState {
   const branch = nestedRaw(row, "branch");
+  const organization = nestedRaw(row, "organization");
   const branchOrganization = branch?.organization;
 
   return {
@@ -278,7 +346,9 @@ function createFormFromRow(
     status: readRawString(row, "status") || (row.isActive === false ? "ARCHIVED" : "ACTIVE"),
     isActive: readRawBoolean(row, "isActive") ?? row.isActive !== false,
     organizationId:
+      readRawString(row, "organizationId") ||
       readRawString(row, "clientOrganizationId") ||
+      readNestedString(organization, "id") ||
       readNestedString(
         branchOrganization && typeof branchOrganization === "object"
           ? (branchOrganization as Record<string, unknown>)
@@ -288,7 +358,7 @@ function createFormFromRow(
     branchId: readRawString(row, "branchId") || readNestedString(branch, "id"),
     branchName: readNestedString(branch, "name"),
     branchCode: readNestedString(branch, "code"),
-    region: readNestedString(branch, "region"),
+    region: readRawString(row, "region") || readNestedString(branch, "region"),
     mainheadId:
       readRawString(row, "mainheadId") ||
       readNestedString(nestedRaw(row, "mainheadRecord"), "id") ||
@@ -299,17 +369,34 @@ function createFormFromRow(
     endDate: toDateInputValue(readRawString(row, "endDate")),
     area: readRawString(row, "area"),
     description: readRawString(row, "description"),
+    capabilityIds: readCapabilityIds(row),
   };
 }
 
 function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseFormState) {
   const payload: Record<string, unknown> = {
     name: form.name.trim(),
-    code: form.code.trim() || null,
+    code:
+      kind === "capabilities" || kind === "teams"
+        ? form.code.trim()
+        : form.code.trim() || null,
   };
 
   if (kind === "organizations") {
     payload.type = form.type || "OTHER";
+    payload.isActive = form.isActive;
+    payload.capabilityIds = form.capabilityIds;
+  }
+
+  if (kind === "branches") {
+    payload.organizationId = form.organizationId;
+    payload.region = form.region.trim() || null;
+    payload.isActive = form.isActive;
+    payload.capabilityIds = form.capabilityIds;
+  }
+
+  if (kind === "capabilities") {
+    payload.description = form.description.trim() || null;
     payload.isActive = form.isActive;
   }
 
@@ -321,6 +408,7 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     payload.branchName = form.branchName.trim() || undefined;
     payload.branchCode = form.branchCode.trim() || undefined;
     payload.region = form.region.trim() || undefined;
+    payload.capabilityIds = form.capabilityIds;
   }
 
   if (kind === "projects") {
@@ -342,7 +430,63 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     payload.operationalDomain = form.operationalDomain || null;
   }
 
+  if (kind === "teams") {
+    payload.organizationId = form.organizationId || null;
+    payload.branchId = form.branchId || null;
+    payload.mainheadId = form.mainheadId || null;
+    payload.isActive = form.isActive;
+    payload.capabilityIds = form.capabilityIds;
+  }
+
   return payload;
+}
+
+function CapabilityPicker({
+  values,
+  options,
+  onChange,
+}: {
+  values: string[];
+  options: EnterpriseOptions | null;
+  onChange: (nextValues: string[]) => void;
+}) {
+  if (!options?.capabilities.length) {
+    return null;
+  }
+
+  function toggleCapability(capabilityId: string, checked: boolean) {
+    onChange(
+      checked
+        ? Array.from(new Set([...values, capabilityId]))
+        : values.filter((id) => id !== capabilityId),
+    );
+  }
+
+  return (
+    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      <legend className="px-1 text-sm font-semibold text-slate-700">
+        Capabilities
+      </legend>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {options.capabilities.map((capability) => (
+          <label
+            key={capability.id}
+            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+          >
+            <input
+              type="checkbox"
+              checked={values.includes(capability.id)}
+              onChange={(event) =>
+                toggleCapability(capability.id, event.target.checked)
+              }
+              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">{optionLabel(capability)}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
 
 function EnterpriseFormModal({
@@ -420,31 +564,81 @@ function EnterpriseFormModal({
                 value={values.code}
                 onChange={(event) => onChange("code", event.target.value)}
                 className={`${inputClassName} mt-1.5`}
+                required={kind === "capabilities" || kind === "teams"}
                 maxLength={64}
               />
             </label>
           </div>
 
           {kind === "organizations" ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Type</span>
-                <select
-                  value={values.type}
-                  onChange={(event) => onChange("type", event.target.value)}
-                  className={`${inputClassName} mt-1.5`}
-                >
-                  {(options?.organizationTypes.length
-                    ? options.organizationTypes
-                    : ["ASCURE", "TNB", "SUBCONTRACTOR", "CONSULTANT", "CLIENT", "OTHER"]
-                  ).map((type) => (
-                    <option key={type} value={type}>
-                      {formatEnum(type)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="mt-7 inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Type</span>
+                  <select
+                    value={values.type}
+                    onChange={(event) => onChange("type", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    {(options?.organizationTypes.length
+                      ? options.organizationTypes
+                      : ["ASCURE", "TNB", "SUBCONTRACTOR", "CONSULTANT", "CLIENT", "OTHER"]
+                    ).map((type) => (
+                      <option key={type} value={type}>
+                        {formatEnum(type)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="mt-7 inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={values.isActive}
+                    onChange={(event) => onChange("isActive", event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                  />
+                  Active
+                </label>
+              </div>
+              <CapabilityPicker
+                values={values.capabilityIds}
+                options={options}
+                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
+            </>
+          ) : null}
+
+          {kind === "branches" ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Organization</span>
+                  <select
+                    value={values.organizationId}
+                    onChange={(event) => onChange("organizationId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    required
+                  >
+                    <option value="">Select organization</option>
+                    {options?.organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Region/State</span>
+                  <input
+                    type="text"
+                    value={values.region}
+                    onChange={(event) => onChange("region", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                    maxLength={255}
+                  />
+                </label>
+              </div>
+              <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
                 <input
                   type="checkbox"
                   checked={values.isActive}
@@ -453,7 +647,24 @@ function EnterpriseFormModal({
                 />
                 Active
               </label>
-            </div>
+              <CapabilityPicker
+                values={values.capabilityIds}
+                options={options}
+                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
+            </>
+          ) : null}
+
+          {kind === "capabilities" ? (
+            <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={values.isActive}
+                onChange={(event) => onChange("isActive", event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+              />
+              Active
+            </label>
           ) : null}
 
           {kind === "mainheads" ? (
@@ -531,6 +742,77 @@ function EnterpriseFormModal({
                 />
                 Active
               </label>
+              <CapabilityPicker
+                values={values.capabilityIds}
+                options={options}
+                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
+            </>
+          ) : null}
+
+          {kind === "teams" ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Organization</span>
+                  <select
+                    value={values.organizationId}
+                    onChange={(event) => onChange("organizationId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">No organization</option>
+                    {options?.organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Branch</span>
+                  <select
+                    value={values.branchId}
+                    onChange={(event) => onChange("branchId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">No branch</option>
+                    {options?.branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {optionLabel(branch)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+                  <select
+                    value={values.mainheadId}
+                    onChange={(event) => onChange("mainheadId", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">No MAINHEAD</option>
+                    {options?.mainheads.map((mainhead) => (
+                      <option key={mainhead.id} value={mainhead.id}>
+                        {optionLabel(mainhead)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={values.isActive}
+                  onChange={(event) => onChange("isActive", event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                Active
+              </label>
+              <CapabilityPicker
+                values={values.capabilityIds}
+                options={options}
+                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
             </>
           ) : null}
 
@@ -691,7 +973,12 @@ function EnterpriseFormModal({
             </label>
           ) : null}
 
-          {kind !== "organizations" ? (
+          {(
+            kind === "capabilities" ||
+            kind === "mainheads" ||
+            kind === "projects" ||
+            kind === "work-packages"
+          ) ? (
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">Description</span>
               <textarea
@@ -851,6 +1138,10 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   }
 
   function openDetail(rowId: string) {
+    if (config.hasDetail === false) {
+      return;
+    }
+
     router.push(`${config.basePath}/${encodeURIComponent(rowId)}`);
   }
 
@@ -1131,7 +1422,9 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                               openDetail(row.id);
                             }
                           }}
-                          className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
+                          className={`outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40 ${
+                            config.hasDetail === false ? "" : "cursor-pointer"
+                          }`}
                         >
                           <td className="px-5 py-4">
                             <div className="flex min-w-0 items-center gap-3">
@@ -1192,7 +1485,9 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                                 <Power size={14} />
                                 {row.isActive === false ? "Activate" : "Deactivate"}
                               </button>
-                              <ChevronRight size={17} className="self-center text-slate-400" />
+                              {config.hasDetail === false ? null : (
+                                <ChevronRight size={17} className="self-center text-slate-400" />
+                              )}
                             </div>
                           </td>
                         </tr>

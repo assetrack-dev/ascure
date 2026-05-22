@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -42,6 +43,11 @@ export class CreateOrganizationDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
 }
 
 export class UpdateOrganizationDto {
@@ -64,6 +70,121 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsUUID()
   parentOrganizationId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
+}
+
+export class CreateBranchDto {
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(255)
+  name!: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  code?: string | null;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  region?: string | null;
+
+  @IsUUID()
+  organizationId!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
+}
+
+export class UpdateBranchDto {
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  code?: string | null;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  region?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
+}
+
+export class CreateCapabilityDto {
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(255)
+  name!: string;
+
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(64)
+  code!: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateCapabilityDto {
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  code?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string | null;
 
   @IsOptional()
   @IsBoolean()
@@ -117,6 +238,11 @@ export class CreateMainheadDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
 }
 
 export class UpdateMainheadDto {
@@ -167,6 +293,11 @@ export class UpdateMainheadDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
 }
 
 export class CreateProjectDto {

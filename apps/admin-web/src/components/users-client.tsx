@@ -20,15 +20,18 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
+import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import {
   createUser,
+  fetchTeams,
   fetchUsers,
   resetUserPassword,
   updateUser,
   updateUserStatus,
 } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
-import type { ManagedUser, UserRole } from "@/types/users";
+import type { EnterpriseOptions } from "@/types/enterprise";
+import type { ManagedTeam, ManagedUser, UserRole } from "@/types/users";
 import { USER_ROLES } from "@/types/users";
 
 type RoleFilter = "ALL" | UserRole;
@@ -41,6 +44,11 @@ interface UserFormState {
   password: string;
   role: UserRole;
   isActive: boolean;
+  organizationId: string;
+  branchId: string;
+  mainheadId: string;
+  teamId: string;
+  capabilityIds: string[];
 }
 
 const DEFAULT_USER_FORM: UserFormState = {
@@ -49,6 +57,11 @@ const DEFAULT_USER_FORM: UserFormState = {
   password: "",
   role: "TECHNICIAN",
   isActive: true,
+  organizationId: "",
+  branchId: "",
+  mainheadId: "",
+  teamId: "",
+  capabilityIds: [],
 };
 const ROLE_FILTER_OPTIONS: Array<{ label: string; value: RoleFilter }> = [
   { label: "All roles", value: "ALL" },
@@ -94,6 +107,27 @@ function roleLabel(role: UserRole) {
   return role.charAt(0) + role.slice(1).toLowerCase();
 }
 
+function optionLabel(option: { name: string; code?: string | null }) {
+  return option.code ? `${option.code} - ${option.name}` : option.name;
+}
+
+function readUserCapabilityIds(user: ManagedUser | null) {
+  return (
+    user?.capabilityAssignments
+      ?.map((assignment) => assignment.capability?.id)
+      .filter((id): id is string => Boolean(id)) ?? []
+  );
+}
+
+function capabilityNames(user: ManagedUser) {
+  return (
+    user.capabilityAssignments
+      ?.map((assignment) => assignment.capability?.name || assignment.capability?.code)
+      .filter((name): name is string => Boolean(name))
+      .join(", ") || null
+  );
+}
+
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -131,9 +165,59 @@ function RoleBadge({ role }: { role: UserRole }) {
   );
 }
 
+function UserCapabilityPicker({
+  values,
+  options,
+  onChange,
+}: {
+  values: string[];
+  options: EnterpriseOptions | null;
+  onChange: (nextValues: string[]) => void;
+}) {
+  if (!options?.capabilities.length) {
+    return null;
+  }
+
+  function toggleCapability(capabilityId: string, checked: boolean) {
+    onChange(
+      checked
+        ? Array.from(new Set([...values, capabilityId]))
+        : values.filter((id) => id !== capabilityId),
+    );
+  }
+
+  return (
+    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      <legend className="px-1 text-sm font-semibold text-slate-700">
+        Capabilities
+      </legend>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {options.capabilities.map((capability) => (
+          <label
+            key={capability.id}
+            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+          >
+            <input
+              type="checkbox"
+              checked={values.includes(capability.id)}
+              onChange={(event) =>
+                toggleCapability(capability.id, event.target.checked)
+              }
+              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">{optionLabel(capability)}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function UserFormModal({
   mode,
   values,
+  enterpriseOptions,
+  teams,
   error,
   isSaving,
   onChange,
@@ -142,6 +226,8 @@ function UserFormModal({
 }: {
   mode: ModalMode;
   values: UserFormState;
+  enterpriseOptions: EnterpriseOptions | null;
+  teams: ManagedTeam[];
   error: string;
   isSaving: boolean;
   onChange: <K extends keyof UserFormState>(field: K, value: UserFormState[K]) => void;
@@ -152,7 +238,7 @@ function UserFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
-      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase text-[var(--brand)]">
@@ -217,6 +303,75 @@ function UserFormModal({
               ))}
             </select>
           </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Organization</span>
+              <select
+                value={values.organizationId}
+                onChange={(event) => onChange("organizationId", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">No organization</option>
+                {enterpriseOptions?.organizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {optionLabel(organization)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Branch</span>
+              <select
+                value={values.branchId}
+                onChange={(event) => onChange("branchId", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">No branch</option>
+                {enterpriseOptions?.branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {optionLabel(branch)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+              <select
+                value={values.mainheadId}
+                onChange={(event) => onChange("mainheadId", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">No MAINHEAD</option>
+                {enterpriseOptions?.mainheads.map((mainhead) => (
+                  <option key={mainhead.id} value={mainhead.id}>
+                    {optionLabel(mainhead)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">Team</span>
+              <select
+                value={values.teamId}
+                onChange={(event) => onChange("teamId", event.target.value)}
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">No team</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {optionLabel(team)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <UserCapabilityPicker
+            values={values.capabilityIds}
+            options={enterpriseOptions}
+            onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+          />
 
           {isCreateMode ? (
             <label className="block">
@@ -336,6 +491,8 @@ function UsersContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [enterpriseOptions, setEnterpriseOptions] = useState<EnterpriseOptions | null>(null);
+  const [teams, setTeams] = useState<ManagedTeam[]>([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -362,8 +519,14 @@ function UsersContent() {
       setError("");
 
       try {
-        const nextUsers = await fetchUsers(token);
+        const [nextUsers, nextOptions, nextTeams] = await Promise.all([
+          fetchUsers(token),
+          fetchEnterpriseOptions(token),
+          fetchTeams(token),
+        ]);
         setUsers(nextUsers);
+        setEnterpriseOptions(nextOptions);
+        setTeams(nextTeams);
       } catch (usersError) {
         if (usersError instanceof ApiError && usersError.status === 401) {
           handleLogout();
@@ -419,6 +582,15 @@ function UsersContent() {
             user.isActive ? "Active" : "Inactive",
             user.department?.name,
             user.department?.code,
+            user.organization?.name,
+            user.organization?.code,
+            user.branch?.name,
+            user.branch?.code,
+            user.mainhead?.name,
+            user.mainhead?.code,
+            user.team?.name,
+            user.team?.code,
+            capabilityNames(user),
           ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
 
         return matchesRole && matchesStatus && matchesSearch;
@@ -461,6 +633,11 @@ function UsersContent() {
       password: "",
       role: user.role,
       isActive: user.isActive,
+      organizationId: user.organizationId ?? "",
+      branchId: user.branchId ?? "",
+      mainheadId: user.mainheadId ?? "",
+      teamId: user.teamId ?? "",
+      capabilityIds: readUserCapabilityIds(user),
     });
     setModalError("");
     setModalMode("edit");
@@ -525,12 +702,22 @@ function UsersContent() {
               password: userForm.password,
               role: userForm.role,
               isActive: userForm.isActive,
+              organizationId: userForm.organizationId,
+              branchId: userForm.branchId,
+              mainheadId: userForm.mainheadId,
+              teamId: userForm.teamId,
+              capabilityIds: userForm.capabilityIds,
             })
           : selectedUser
             ? await updateUser(session.token, selectedUser.id, {
                 name: trimmedName,
                 email: trimmedEmail,
                 role: userForm.role,
+                organizationId: userForm.organizationId,
+                branchId: userForm.branchId,
+                mainheadId: userForm.mainheadId,
+                teamId: userForm.teamId,
+                capabilityIds: userForm.capabilityIds,
               })
             : null;
 
@@ -735,6 +922,7 @@ function UsersContent() {
                         <th className="min-w-56 px-5 py-3.5 font-semibold">Name</th>
                         <th className="min-w-64 px-5 py-3.5 font-semibold">Email</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Role</th>
+                        <th className="min-w-64 px-5 py-3.5 font-semibold">Scope</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
                         <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">
                           Actions
@@ -745,6 +933,16 @@ function UsersContent() {
                       {filteredUsers.map((user) => {
                         const isCurrentUser = user.id === session?.user?.id;
                         const disableDeactivate = isCurrentUser && user.isActive;
+                        const scopeLabel =
+                          [
+                            user.organization?.code || user.organization?.name,
+                            user.branch?.code || user.branch?.name,
+                            user.mainhead?.code || user.mainhead?.name,
+                            user.team?.code || user.team?.name,
+                          ]
+                            .filter(Boolean)
+                            .join(" / ") || "Not assigned";
+                        const userCapabilities = capabilityNames(user);
 
                         return (
                           <tr key={user.id} className="transition hover:bg-teal-50/40">
@@ -770,6 +968,16 @@ function UsersContent() {
                             </td>
                             <td className="whitespace-nowrap px-5 py-4">
                               <RoleBadge role={user.role} />
+                            </td>
+                            <td className="px-5 py-4 text-slate-700">
+                              <div className="max-w-72 truncate font-medium text-slate-900">
+                                {scopeLabel}
+                              </div>
+                              {userCapabilities ? (
+                                <div className="mt-1 max-w-72 truncate text-xs text-[var(--muted)]">
+                                  {userCapabilities}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="whitespace-nowrap px-5 py-4">
                               <StatusBadge isActive={user.isActive} />
@@ -839,6 +1047,8 @@ function UsersContent() {
         <UserFormModal
           mode={modalMode}
           values={userForm}
+          enterpriseOptions={enterpriseOptions}
+          teams={teams}
           error={modalError}
           isSaving={isSaving}
           onChange={updateForm}

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import {
   OperationalDomain,
   OrganizationType,
@@ -14,16 +15,21 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ListBranchesQueryDto,
+  ListCapabilitiesQueryDto,
   ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
 } from './dto/list-enterprise-query.dto';
 import {
+  CreateBranchDto,
+  CreateCapabilityDto,
   CreateMainheadDto,
   CreateOrganizationDto,
   CreateProjectDto,
   CreateWorkPackageDto,
+  UpdateBranchDto,
+  UpdateCapabilityDto,
   UpdateEnterpriseActiveDto,
   UpdateMainheadDto,
   UpdateOrganizationDto,
@@ -58,11 +64,26 @@ const ORGANIZATION_INCLUDE = Prisma.validator<Prisma.OrganizationInclude>()({
       },
     ],
   },
+  capabilityAssignments: {
+    include: {
+      capability: true,
+    },
+    orderBy: [
+      {
+        capability: {
+          name: 'asc',
+        },
+      },
+    ],
+  },
   _count: {
     select: {
       branches: true,
       capabilities: true,
+      capabilityAssignments: true,
       memberships: true,
+      teams: true,
+      assignedUsers: true,
     },
   },
 });
@@ -77,10 +98,25 @@ const BRANCH_INCLUDE = Prisma.validator<Prisma.BranchInclude>()({
       isActive: true,
     },
   },
+  capabilityAssignments: {
+    include: {
+      capability: true,
+    },
+    orderBy: [
+      {
+        capability: {
+          name: 'asc',
+        },
+      },
+    ],
+  },
   _count: {
     select: {
       mainheads: true,
       projects: true,
+      teams: true,
+      assignedUsers: true,
+      capabilityAssignments: true,
     },
   },
 });
@@ -105,11 +141,38 @@ const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
       },
     },
   },
+  capabilityAssignments: {
+    include: {
+      capability: true,
+    },
+    orderBy: [
+      {
+        capability: {
+          name: 'asc',
+        },
+      },
+    ],
+  },
   _count: {
     select: {
       projects: true,
       workPackages: true,
       siteVisits: true,
+      teams: true,
+      assignedUsers: true,
+      capabilityAssignments: true,
+    },
+  },
+});
+
+const CAPABILITY_INCLUDE = Prisma.validator<Prisma.CapabilityInclude>()({
+  _count: {
+    select: {
+      organizationAssignments: true,
+      branchAssignments: true,
+      mainheadAssignments: true,
+      teamAssignments: true,
+      userAssignments: true,
     },
   },
 });
@@ -215,7 +278,7 @@ export class EnterpriseService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOptions() {
-    const [organizations, branches, mainheads, projects, workPackages] =
+    const [organizations, branches, mainheads, capabilities, projects, workPackages] =
       await Promise.all([
         this.prisma.organization.findMany({
           orderBy: {
@@ -294,6 +357,23 @@ export class EnterpriseService {
             },
           },
         }),
+        this.prisma.capability.findMany({
+          orderBy: [
+            {
+              isActive: 'desc',
+            },
+            {
+              name: 'asc',
+            },
+          ],
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            description: true,
+            isActive: true,
+          },
+        }),
         this.prisma.project.findMany({
           orderBy: [
             {
@@ -343,6 +423,7 @@ export class EnterpriseService {
       organizations,
       branches,
       mainheads,
+      capabilities,
       projects,
       workPackages,
     };
@@ -357,7 +438,7 @@ export class EnterpriseService {
           'Parent organization',
         );
 
-        return tx.organization.create({
+        const organization = await tx.organization.create({
           data: {
             name: this.normalizeRequiredString(dto.name, 'Organization name'),
             code: this.normalizeOptionalString(dto.code),
@@ -368,6 +449,23 @@ export class EnterpriseService {
           },
           include: ORGANIZATION_INCLUDE,
         });
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncOrganizationCapabilities(
+            tx,
+            organization.id,
+            dto.capabilityIds,
+          );
+
+          return tx.organization.findUniqueOrThrow({
+            where: {
+              id: organization.id,
+            },
+            include: ORGANIZATION_INCLUDE,
+          });
+        }
+
+        return organization;
       });
     } catch (error) {
       this.throwDuplicateCodeConflict(error, 'organization');
@@ -425,13 +523,30 @@ export class EnterpriseService {
           data.isActive = dto.isActive;
         }
 
-        this.assertHasChanges(data);
+        if (
+          Object.keys(data).length === 0 &&
+          dto.capabilityIds === undefined
+        ) {
+          this.assertHasChanges(data);
+        }
 
-        return tx.organization.update({
+        if (Object.keys(data).length > 0) {
+          await tx.organization.update({
+            where: {
+              id,
+            },
+            data,
+          });
+        }
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncOrganizationCapabilities(tx, id, dto.capabilityIds);
+        }
+
+        return tx.organization.findUniqueOrThrow({
           where: {
             id,
           },
-          data,
           include: ORGANIZATION_INCLUDE,
         });
       });
@@ -453,6 +568,253 @@ export class EnterpriseService {
     });
   }
 
+  async createBranch(dto: CreateBranchDto) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const organizationId = this.normalizeRequiredString(
+          dto.organizationId,
+          'Organization',
+        );
+
+        await this.assertOrganizationExists(tx, organizationId, 'Organization');
+        await this.assertBranchCodeAvailable(
+          tx,
+          organizationId,
+          dto.code,
+        );
+
+        const branch = await tx.branch.create({
+          data: {
+            organizationId,
+            name: this.normalizeRequiredString(dto.name, 'Branch name'),
+            code: this.normalizeOptionalString(dto.code),
+            region: this.normalizeOptionalString(dto.region),
+            isActive: dto.isActive ?? true,
+          },
+          include: BRANCH_INCLUDE,
+        });
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncBranchCapabilities(tx, branch.id, dto.capabilityIds);
+
+          return tx.branch.findUniqueOrThrow({
+            where: {
+              id: branch.id,
+            },
+            include: BRANCH_INCLUDE,
+          });
+        }
+
+        return branch;
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'branch');
+      throw error;
+    }
+  }
+
+  async updateBranch(id: string, dto: UpdateBranchDto) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingBranch = await tx.branch.findUnique({
+          where: {
+            id,
+          },
+          select: {
+            id: true,
+            organizationId: true,
+            code: true,
+          },
+        });
+
+        if (!existingBranch) {
+          throw new NotFoundException('Branch not found.');
+        }
+
+        const nextOrganizationId =
+          dto.organizationId ?? existingBranch.organizationId;
+
+        if (dto.organizationId !== undefined) {
+          await this.assertOrganizationExists(
+            tx,
+            dto.organizationId,
+            'Organization',
+          );
+        }
+
+        if (
+          dto.code !== undefined ||
+          dto.organizationId !== undefined
+        ) {
+          await this.assertBranchCodeAvailable(
+            tx,
+            nextOrganizationId,
+            dto.code ?? existingBranch.code,
+            id,
+          );
+        }
+
+        const data: Prisma.BranchUncheckedUpdateInput = {};
+
+        if (dto.name !== undefined) {
+          data.name = this.normalizeRequiredString(dto.name, 'Branch name');
+        }
+
+        if (dto.code !== undefined) {
+          data.code = this.normalizeOptionalString(dto.code);
+        }
+
+        if (dto.region !== undefined) {
+          data.region = this.normalizeOptionalString(dto.region);
+        }
+
+        if (dto.organizationId !== undefined) {
+          data.organizationId = dto.organizationId;
+        }
+
+        if (dto.isActive !== undefined) {
+          data.isActive = dto.isActive;
+        }
+
+        if (
+          Object.keys(data).length === 0 &&
+          dto.capabilityIds === undefined
+        ) {
+          this.assertHasChanges(data);
+        }
+
+        if (Object.keys(data).length > 0) {
+          await tx.branch.update({
+            where: {
+              id,
+            },
+            data,
+          });
+        }
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncBranchCapabilities(tx, id, dto.capabilityIds);
+        }
+
+        return tx.branch.findUniqueOrThrow({
+          where: {
+            id,
+          },
+          include: BRANCH_INCLUDE,
+        });
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'branch');
+      throw error;
+    }
+  }
+
+  updateBranchActive(id: string, dto: UpdateEnterpriseActiveDto) {
+    return this.prisma.branch.update({
+      where: {
+        id,
+      },
+      data: {
+        isActive: dto.isActive,
+      },
+      include: BRANCH_INCLUDE,
+    });
+  }
+
+  async createCapability(dto: CreateCapabilityDto) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await this.assertCapabilityCodeAvailable(tx, dto.code);
+
+        return tx.capability.create({
+          data: {
+            name: this.normalizeRequiredString(dto.name, 'Capability name'),
+            code: this.normalizeRequiredString(dto.code, 'Capability code'),
+            description: this.normalizeOptionalString(dto.description),
+            isActive: dto.isActive ?? true,
+          },
+          include: CAPABILITY_INCLUDE,
+        });
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'capability');
+      throw error;
+    }
+  }
+
+  async updateCapability(id: string, dto: UpdateCapabilityDto) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingCapability = await tx.capability.findUnique({
+          where: {
+            id,
+          },
+          select: {
+            id: true,
+            code: true,
+          },
+        });
+
+        if (!existingCapability) {
+          throw new NotFoundException('Capability not found.');
+        }
+
+        if (dto.code !== undefined) {
+          await this.assertCapabilityCodeAvailable(tx, dto.code, id);
+        }
+
+        const data: Prisma.CapabilityUpdateInput = {};
+
+        if (dto.name !== undefined) {
+          data.name = this.normalizeRequiredString(
+            dto.name,
+            'Capability name',
+          );
+        }
+
+        if (dto.code !== undefined) {
+          data.code = this.normalizeRequiredString(
+            dto.code,
+            'Capability code',
+          );
+        }
+
+        if (dto.description !== undefined) {
+          data.description = this.normalizeOptionalString(dto.description);
+        }
+
+        if (dto.isActive !== undefined) {
+          data.isActive = dto.isActive;
+        }
+
+        this.assertHasChanges(data);
+
+        return tx.capability.update({
+          where: {
+            id,
+          },
+          data,
+          include: CAPABILITY_INCLUDE,
+        });
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'capability');
+      throw error;
+    }
+  }
+
+  updateCapabilityActive(id: string, dto: UpdateEnterpriseActiveDto) {
+    return this.prisma.capability.update({
+      where: {
+        id,
+      },
+      data: {
+        isActive: dto.isActive,
+      },
+      include: CAPABILITY_INCLUDE,
+    });
+  }
+
   async createMainhead(dto: CreateMainheadDto) {
     return this.prisma.$transaction(async (tx) => {
       const branchId = await this.resolveBranchId(tx, {
@@ -464,7 +826,7 @@ export class EnterpriseService {
         fallbackName: dto.name,
       });
 
-      return tx.mainhead.create({
+      const mainhead = await tx.mainhead.create({
         data: {
           branchId,
           name: this.normalizeRequiredString(dto.name, 'MAINHEAD name'),
@@ -474,6 +836,23 @@ export class EnterpriseService {
         },
         include: MAINHEAD_INCLUDE,
       });
+
+      if (dto.capabilityIds !== undefined) {
+        await this.syncMainheadCapabilities(
+          tx,
+          mainhead.id,
+          dto.capabilityIds,
+        );
+
+        return tx.mainhead.findUniqueOrThrow({
+          where: {
+            id: mainhead.id,
+          },
+          include: MAINHEAD_INCLUDE,
+        });
+      }
+
+      return mainhead;
     });
   }
 
@@ -558,15 +937,31 @@ export class EnterpriseService {
         data.isActive = dto.isActive;
       }
 
-      if (!branchChanged) {
+      if (
+        !branchChanged &&
+        Object.keys(data).length === 0 &&
+        dto.capabilityIds === undefined
+      ) {
         this.assertHasChanges(data);
       }
 
-      return tx.mainhead.update({
+      if (Object.keys(data).length > 0) {
+        await tx.mainhead.update({
+          where: {
+            id,
+          },
+          data,
+        });
+      }
+
+      if (dto.capabilityIds !== undefined) {
+        await this.syncMainheadCapabilities(tx, id, dto.capabilityIds);
+      }
+
+      return tx.mainhead.findUniqueOrThrow({
         where: {
           id,
         },
-        data,
         include: MAINHEAD_INCLUDE,
       });
     });
@@ -921,6 +1316,38 @@ export class EnterpriseService {
     return branch;
   }
 
+  listCapabilities(query: ListCapabilitiesQueryDto) {
+    return this.prisma.capability.findMany({
+      where: {
+        ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+      },
+      include: CAPABILITY_INCLUDE,
+      orderBy: [
+        {
+          isActive: 'desc',
+        },
+        {
+          name: 'asc',
+        },
+      ],
+    });
+  }
+
+  async getCapability(id: string) {
+    const capability = await this.prisma.capability.findUnique({
+      where: {
+        id,
+      },
+      include: CAPABILITY_INCLUDE,
+    });
+
+    if (!capability) {
+      throw new NotFoundException('Capability not found.');
+    }
+
+    return capability;
+  }
+
   listMainheads(query: ListMainheadsQueryDto) {
     return this.prisma.mainhead.findMany({
       where: this.mainheadWhere(query),
@@ -1152,6 +1579,167 @@ export class EnterpriseService {
     return project;
   }
 
+  private normalizeIdList(ids: string[] | undefined) {
+    if (!ids) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        ids
+          .map((id) => this.normalizeOptionalString(id))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+  }
+
+  private async assertCapabilitiesExist(
+    tx: Prisma.TransactionClient,
+    capabilityIds: string[],
+  ) {
+    if (capabilityIds.length === 0) {
+      return;
+    }
+
+    const count = await tx.capability.count({
+      where: {
+        id: {
+          in: capabilityIds,
+        },
+      },
+    });
+
+    if (count !== capabilityIds.length) {
+      throw new NotFoundException('One or more capabilities were not found.');
+    }
+  }
+
+  private async syncOrganizationCapabilities(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    capabilityIds: string[] | undefined,
+  ) {
+    const normalizedCapabilityIds = this.normalizeIdList(capabilityIds);
+    await this.assertCapabilitiesExist(tx, normalizedCapabilityIds);
+
+    await tx.organizationCapabilityAssignment.deleteMany({
+      where: {
+        organizationId,
+        ...(normalizedCapabilityIds.length > 0
+          ? {
+              capabilityId: {
+                notIn: normalizedCapabilityIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const capabilityId of normalizedCapabilityIds) {
+      await tx.organizationCapabilityAssignment.upsert({
+        where: {
+          organizationId_capabilityId: {
+            organizationId,
+            capabilityId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          organizationId,
+          capabilityId,
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  private async syncBranchCapabilities(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    capabilityIds: string[] | undefined,
+  ) {
+    const normalizedCapabilityIds = this.normalizeIdList(capabilityIds);
+    await this.assertCapabilitiesExist(tx, normalizedCapabilityIds);
+
+    await tx.branchCapability.deleteMany({
+      where: {
+        branchId,
+        ...(normalizedCapabilityIds.length > 0
+          ? {
+              capabilityId: {
+                notIn: normalizedCapabilityIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const capabilityId of normalizedCapabilityIds) {
+      await tx.branchCapability.upsert({
+        where: {
+          branchId_capabilityId: {
+            branchId,
+            capabilityId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          branchId,
+          capabilityId,
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  private async syncMainheadCapabilities(
+    tx: Prisma.TransactionClient,
+    mainheadId: string,
+    capabilityIds: string[] | undefined,
+  ) {
+    const normalizedCapabilityIds = this.normalizeIdList(capabilityIds);
+    await this.assertCapabilitiesExist(tx, normalizedCapabilityIds);
+
+    await tx.mainheadCapability.deleteMany({
+      where: {
+        mainheadId,
+        ...(normalizedCapabilityIds.length > 0
+          ? {
+              capabilityId: {
+                notIn: normalizedCapabilityIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const capabilityId of normalizedCapabilityIds) {
+      await tx.mainheadCapability.upsert({
+        where: {
+          mainheadId_capabilityId: {
+            mainheadId,
+            capabilityId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          mainheadId,
+          capabilityId,
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      });
+    }
+  }
+
   private async assertOrganizationExists(
     tx: Prisma.TransactionClient,
     organizationId: string | null | undefined,
@@ -1172,6 +1760,81 @@ export class EnterpriseService {
 
     if (!organization) {
       throw new NotFoundException(`${label} not found.`);
+    }
+  }
+
+  private async assertBranchCodeAvailable(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    code: string | null | undefined,
+    branchId?: string,
+  ) {
+    const normalizedCode = this.normalizeOptionalString(code);
+
+    if (!normalizedCode) {
+      return;
+    }
+
+    const existingBranch = await tx.branch.findFirst({
+      where: {
+        organizationId,
+        code: {
+          equals: normalizedCode,
+          mode: Prisma.QueryMode.insensitive,
+        },
+        ...(branchId
+          ? {
+              id: {
+                not: branchId,
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingBranch) {
+      throw new ConflictException(
+        'A branch with this code already exists for this organization.',
+      );
+    }
+  }
+
+  private async assertCapabilityCodeAvailable(
+    tx: Prisma.TransactionClient,
+    code: string | null | undefined,
+    capabilityId?: string,
+  ) {
+    const normalizedCode = this.normalizeRequiredString(
+      code,
+      'Capability code',
+    );
+
+    const existingCapability = await tx.capability.findFirst({
+      where: {
+        code: {
+          equals: normalizedCode,
+          mode: Prisma.QueryMode.insensitive,
+        },
+        ...(capabilityId
+          ? {
+              id: {
+                not: capabilityId,
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingCapability) {
+      throw new ConflictException(
+        'A capability with this code already exists.',
+      );
     }
   }
 
@@ -1236,11 +1899,24 @@ export class EnterpriseService {
       ...(query.type ? { type: query.type } : {}),
       ...(query.capability
         ? {
-            capabilities: {
-              some: {
-                capability: query.capability,
+            OR: [
+              {
+                capabilities: {
+                  some: {
+                    capability: query.capability,
+                  },
+                },
               },
-            },
+              {
+                capabilityAssignments: {
+                  some: {
+                    capability: {
+                      code: query.capability,
+                    },
+                  },
+                },
+              },
+            ],
           }
         : {}),
       ...(query.isActive === undefined ? {} : { isActive: query.isActive }),

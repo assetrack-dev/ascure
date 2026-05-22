@@ -108,6 +108,7 @@ export class InspectionsService {
             id: true,
             code: true,
             name: true,
+            capabilityId: true,
           },
         },
       },
@@ -121,7 +122,12 @@ export class InspectionsService {
       throw new BadRequestException('Asset does not belong to the substation for the selected site visit.');
     }
 
-    const template = await this.templatesService.getActiveTemplate(user, asset.assetTypeId);
+    const templateResolution = await this.templatesService.resolveActiveTemplate(user, {
+      assetTypeId: asset.assetTypeId,
+      capabilityId: asset.assetType.capabilityId,
+      mainheadId: siteVisit.mainheadId,
+    });
+    const template = templateResolution.template;
 
     return this.prisma.$transaction(async (tx) => {
       const inspection = await tx.inspection.create({
@@ -1075,6 +1081,8 @@ export class InspectionsService {
         id: inspection.template.id,
         name: inspection.template.name,
         version: inspection.template.version,
+        assetTypeId: inspection.template.assetTypeId,
+        capabilityId: inspection.template.capabilityId,
         sections: inspection.template.sections.map((section) => ({
           id: section.id,
           title: section.title,

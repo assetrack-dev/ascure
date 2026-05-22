@@ -286,7 +286,7 @@ export function VisitDetailScreen({
       <WarningBanner
         message={
           isOffline
-            ? 'Offline mode: submitted inspections and visit completion stay in Sync Queue until connection returns.'
+            ? 'Offline: inspections and completion stay in Sync Queue.'
             : null
         }
       />
@@ -299,7 +299,7 @@ export function VisitDetailScreen({
           <VisitProgressCard rollup={createVisitRollup(visit, assets)} />
 
           <Card>
-            <SectionTitle>Visit Summary</SectionTitle>
+            <SectionTitle>Visit</SectionTitle>
             <KeyValueRow
               label="Pencawang"
               value={`${visit.pencawangCode ?? visit.substation.code} - ${visit.pencawangName ?? visit.substation.name}`}
@@ -312,16 +312,7 @@ export function VisitDetailScreen({
             <KeyValueRow label="Team" value={`${visit.team.code} - ${visit.team.name}`} />
             <KeyValueRow label="Started" value={formatDateTime(visit.startedAt)} />
             {visit.completedAt ? <KeyValueRow label="Completed" value={formatDateTime(visit.completedAt)} /> : null}
-            <KeyValueRow label="Created By" value={visit.createdBy?.name ?? 'Unknown'} />
-            {hasCheckInCoordinate(visit) ? (
-              <KeyValueRow
-                label="Check-In GPS"
-                value={`${formatOptionalCoordinate(visit.checkInLatitude)}, ${formatOptionalCoordinate(visit.checkInLongitude)}`}
-              />
-            ) : null}
-            {visit.checkInAccuracyMeters !== null && visit.checkInAccuracyMeters !== undefined ? (
-              <KeyValueRow label="GPS Accuracy" value={`+/-${Math.round(visit.checkInAccuracyMeters)} m`} />
-            ) : null}
+            {hasCheckInCoordinate(visit) ? <VisitGpsReadout visit={visit} /> : null}
             <StatusChip label={formatStatusLabel(visit.status)} tone={getVisitStatusTone(visit.status)} />
           </Card>
 
@@ -351,7 +342,7 @@ export function VisitDetailScreen({
             {assets.length === 0 ? (
               <EmptyState
                 title="No assets found"
-                description="Add or inspect an asset to link it to this visit."
+                description="Add or inspect an asset."
               />
             ) : (
               <View style={styles.assetList}>
@@ -432,7 +423,7 @@ function VisitProgressCard({ rollup }: { rollup: SiteVisitSummary }) {
         <View style={styles.progressTitleWrap}>
           <SectionTitle>Visit Progress</SectionTitle>
           <Text style={styles.progressSubtitle}>
-            {rollup.inspectedAssets} of {rollup.totalAssets} assets inspected
+            {rollup.inspectedAssets}/{rollup.totalAssets} inspected
           </Text>
         </View>
         <Text style={styles.progressPercent}>{rollup.completionPercentage}%</Text>
@@ -447,8 +438,8 @@ function VisitProgressCard({ rollup }: { rollup: SiteVisitSummary }) {
       </View>
       <View style={styles.progressStats}>
         <ProgressStat label="Pending" value={rollup.pendingAssets} />
+        <ProgressStat label="Done" value={rollup.inspectedAssets} />
         <ProgressStat label="Defects" value={rollup.defectsFound} />
-        <ProgressStat label="Assets" value={rollup.totalAssets} />
       </View>
     </Card>
   );
@@ -490,14 +481,14 @@ function VisitAssetMap({
           onPress={onOpenFullScreen}
           style={({ pressed }) => [styles.fullScreenButton, pressed && styles.buttonPressed]}
         >
-          <Text style={styles.fullScreenButtonText}>View Full Screen</Text>
+          <Text style={styles.fullScreenButtonText}>Full Map</Text>
         </Pressable>
       </View>
 
       {mappedAssets.length === 0 ? (
         <EmptyState
           title="No mapped assets"
-          description="Assets with GPS coordinates will appear on this pencawang map."
+          description="GPS assets appear here."
         />
       ) : (
         <View style={styles.mapFrame}>
@@ -572,10 +563,7 @@ function AssetListRow({
           {asset.name || 'Unnamed asset'}
         </Text>
         <Text style={styles.assetMeta} numberOfLines={1}>
-          Code: {asset.assetCode}
-        </Text>
-        <Text style={styles.assetMeta} numberOfLines={1}>
-          No Tiang Rondaan: {noTiangRondaan}
+          {asset.assetCode} · NTR {noTiangRondaan}
         </Text>
       </View>
 
@@ -583,6 +571,19 @@ function AssetListRow({
         {rightLabel}
       </Text>
     </Pressable>
+  );
+}
+
+function VisitGpsReadout({ visit }: { visit: SiteVisit }) {
+  return (
+    <View style={styles.gpsPanel}>
+      <Text style={styles.gpsValue} numberOfLines={1}>
+        Lat {formatOptionalCoordinate(visit.checkInLatitude)} · Lng {formatOptionalCoordinate(visit.checkInLongitude)}
+      </Text>
+      {visit.checkInAccuracyMeters !== null && visit.checkInAccuracyMeters !== undefined ? (
+        <Text style={styles.gpsAccuracy}>GPS ±{Math.round(visit.checkInAccuracyMeters)}m</Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -857,7 +858,7 @@ function isMappedAsset(
 
 const styles = StyleSheet.create({
   progressHeader: {
-    minHeight: 48,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
@@ -874,16 +875,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   progressPercent: {
-    minWidth: 58,
+    minWidth: 52,
     color: uiTheme.colors.textPrimary,
-    fontSize: 24,
-    lineHeight: 30,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: '800',
     textAlign: 'right',
   },
   progressTrack: {
-    height: 10,
-    borderRadius: 5,
+    height: 8,
+    borderRadius: 4,
     overflow: 'hidden',
     backgroundColor: uiTheme.colors.surfaceMuted,
     borderWidth: 1,
@@ -896,11 +897,11 @@ const styles = StyleSheet.create({
   },
   progressStats: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   progressStat: {
     flex: 1,
-    minHeight: 62,
+    minHeight: 52,
     borderRadius: uiTheme.radius.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
@@ -911,8 +912,8 @@ const styles = StyleSheet.create({
   },
   progressStatValue: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 18,
-    lineHeight: 24,
+    fontSize: 16,
+    lineHeight: 21,
     fontWeight: '800',
   },
   progressStatLabel: {
@@ -930,22 +931,22 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   fullScreenButton: {
-    minHeight: 44,
-    borderRadius: uiTheme.radius.control,
+    minHeight: 38,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: uiTheme.colors.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   fullScreenButtonText: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   mapFrame: {
-    height: 220,
+    height: 180,
     borderRadius: uiTheme.radius.card,
     overflow: 'hidden',
     backgroundColor: uiTheme.colors.surfaceMuted,
@@ -977,8 +978,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   addAssetButton: {
-    minHeight: 44,
-    borderRadius: uiTheme.radius.control,
+    minHeight: 38,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: uiTheme.colors.primary,
@@ -986,14 +987,14 @@ const styles = StyleSheet.create({
   },
   addAssetButtonText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   assetList: {
-    gap: 10,
+    gap: 8,
   },
   assetRow: {
-    minHeight: 76,
+    minHeight: 66,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -1014,8 +1015,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.995 }],
   },
   thumbnailFrame: {
-    width: 54,
-    height: 54,
+    width: 48,
+    height: 48,
     borderRadius: uiTheme.radius.card,
     overflow: 'hidden',
     backgroundColor: uiTheme.colors.surfaceMuted,
@@ -1041,12 +1042,12 @@ const styles = StyleSheet.create({
   },
   assetTextWrap: {
     flex: 1,
-    gap: 3,
+    gap: 2,
   },
   assetName: {
     color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700',
   },
   assetMeta: {
@@ -1054,6 +1055,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
+  },
+  gpsPanel: {
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  gpsValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  gpsAccuracy: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
   },
   rowArrow: {
     width: 18,

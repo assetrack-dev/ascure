@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { DefectSeverity } from '@prisma/client';
+import { DefectSeverity, OperationalDomain } from '@prisma/client';
 
 export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'TEXT',
@@ -93,9 +93,26 @@ export class ChecklistTemplateItemInputDto {
 }
 
 export class CreateChecklistTemplateDto {
+  @IsOptional()
+  @IsUUID()
+  assetTypeId?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(255)
-  assetType!: string;
+  assetType?: string;
+
+  @IsOptional()
+  @IsUUID()
+  capabilityId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string | null;
+
+  @IsOptional()
+  @IsIn(Object.values(OperationalDomain))
+  operationalDomain?: OperationalDomain | null;
 
   @IsString()
   @MaxLength(255)
@@ -113,6 +130,27 @@ export class CreateChecklistTemplateDto {
 }
 
 export class UpdateChecklistTemplateDto {
+  @IsOptional()
+  @IsUUID()
+  assetTypeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  assetType?: string;
+
+  @IsOptional()
+  @IsUUID()
+  capabilityId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string | null;
+
+  @IsOptional()
+  @IsIn(Object.values(OperationalDomain))
+  operationalDomain?: OperationalDomain | null;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)
@@ -138,4 +176,23 @@ export class ChecklistTemplateAssetTypeParamDto {
   @IsString()
   @MaxLength(255)
   assetType!: string;
+}
+
+export class ResolveInspectionTemplateQueryDto {
+  @IsOptional()
+  @IsUUID()
+  assetTypeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  assetType?: string;
+
+  @IsOptional()
+  @IsUUID()
+  capabilityId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string;
 }

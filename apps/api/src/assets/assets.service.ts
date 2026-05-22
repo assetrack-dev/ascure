@@ -153,6 +153,7 @@ export class AssetsService {
             id: true,
             code: true,
             name: true,
+            capabilityId: true,
           },
         },
         substation: {
@@ -212,6 +213,9 @@ export class AssetsService {
       assetCode: asset.assetCode,
       name: asset.name,
       assetType: asset.assetType.name,
+      assetTypeId: asset.assetType.id,
+      assetTypeCode: asset.assetType.code,
+      assetTypeName: asset.assetType.name,
       status: asset.status,
       latitude: asset.latitude,
       longitude: asset.longitude,
@@ -501,6 +505,7 @@ export class AssetsService {
           id: true,
           code: true,
           name: true,
+          capabilityId: true,
         },
       },
       substation: {

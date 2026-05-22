@@ -371,6 +371,27 @@ export const api = {
     );
   },
 
+  resolveInspectionTemplate(
+    token: string,
+    input: { assetTypeId?: string; assetType?: string; capabilityId?: string | null },
+  ) {
+    const query = new URLSearchParams();
+
+    if (input.assetTypeId) {
+      query.set('assetTypeId', input.assetTypeId);
+    } else if (input.assetType) {
+      query.set('assetType', input.assetType);
+    }
+
+    if (input.capabilityId) {
+      query.set('capabilityId', input.capabilityId);
+    }
+
+    return request<ChecklistTemplate>(`/inspection-templates/resolve?${query.toString()}`, {
+      token,
+    });
+  },
+
   createChecklistTemplate(token: string, input: CreateChecklistTemplateInput) {
     return request<ChecklistTemplate>('/checklist-templates', {
       method: 'POST',
@@ -715,11 +736,11 @@ function createDefectEvidenceUploadParameters(photo: DefectEvidenceImageUploadIn
     evidenceType: 'MAINTENANCE_PROOF',
   };
 
-  if (Number.isFinite(photo.latitude)) {
+  if (typeof photo.latitude === 'number' && Number.isFinite(photo.latitude)) {
     parameters.latitude = String(photo.latitude);
   }
 
-  if (Number.isFinite(photo.longitude)) {
+  if (typeof photo.longitude === 'number' && Number.isFinite(photo.longitude)) {
     parameters.longitude = String(photo.longitude);
   }
 

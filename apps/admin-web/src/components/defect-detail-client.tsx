@@ -430,6 +430,78 @@ function getImageSourceUrl(image: DefectEvidenceImage) {
   return source;
 }
 
+type EvidenceImageEntry = {
+  image: DefectEvidenceImage;
+  sourceUrl: string;
+};
+
+function formatEvidenceTimestamp(image: DefectEvidenceImage) {
+  return formatDateTime(image.timestamp ?? image.uploadedAt ?? image.createdAt);
+}
+
+function formatEvidenceGps(image: DefectEvidenceImage) {
+  if (
+    typeof image.latitude === "number" &&
+    Number.isFinite(image.latitude) &&
+    typeof image.longitude === "number" &&
+    Number.isFinite(image.longitude)
+  ) {
+    return `${image.latitude.toFixed(6)}, ${image.longitude.toFixed(6)}`;
+  }
+
+  return null;
+}
+
+function EvidenceImageGrid({
+  entries,
+  emptyText,
+  titlePrefix,
+}: {
+  entries: EvidenceImageEntry[];
+  emptyText: string;
+  titlePrefix: string;
+}) {
+  if (entries.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-sm text-[var(--muted)]">
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {entries.map(({ image, sourceUrl }, index) => {
+        const gps = formatEvidenceGps(image);
+
+        return (
+          <a
+            key={`${image.id}-${index}`}
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="group block overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+          >
+            <img
+              src={sourceUrl}
+              alt={image.filename ?? titlePrefix}
+              className="aspect-video w-full object-cover transition group-hover:scale-[1.02]"
+            />
+            <div className="space-y-1 border-t border-slate-200 px-3 py-2 text-xs text-slate-600">
+              <div className="font-semibold text-slate-800">
+                {titlePrefix} {index + 1}
+              </div>
+              <div>{formatEvidenceTimestamp(image)}</div>
+              {gps ? <div>GPS {gps}</div> : null}
+              {image.note ? <div className="line-clamp-2">{image.note}</div> : null}
+            </div>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 function TimelineIcon({ entry }: { entry: DefectTimelineEntry }) {
   if (entry.type === "DEFECT_VERIFIED" || entry.type === "CLOSURE_VERIFIED") {
     return <ShieldCheck size={16} />;
@@ -693,7 +765,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       comment.trim().length > 0,
   );
 
-  const evidenceImages = useMemo(
+  const maintenanceEvidenceImages = useMemo(
     () =>
       (defect?.maintenanceProofImages?.length
         ? defect.maintenanceProofImages
@@ -702,7 +774,17 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
           image,
           sourceUrl: getImageSourceUrl(image),
         }))
-        .filter((entry) => Boolean(entry.sourceUrl)) ?? [],
+        .filter((entry): entry is EvidenceImageEntry => Boolean(entry.sourceUrl)) ?? [],
+    [defect],
+  );
+  const inspectionEvidenceImages = useMemo(
+    () =>
+      (defect?.images ?? [])
+        .map((image) => ({
+          image,
+          sourceUrl: getImageSourceUrl(image),
+        }))
+        .filter((entry): entry is EvidenceImageEntry => Boolean(entry.sourceUrl)),
     [defect],
   );
   const resolutionGovernance = useMemo(
@@ -1170,6 +1252,23 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                         )}
                       />
                     </dl>
+                    <div className="mt-5 border-t border-slate-100 pt-5">
+                      <div className="flex items-center justify-between gap-4">
+                        <h4 className="text-sm font-semibold text-slate-900">
+                          Maintenance Proof Evidence
+                        </h4>
+                        <span className="text-sm text-[var(--muted)]">
+                          {maintenanceEvidenceImages.length} photos
+                        </span>
+                      </div>
+                      <div className="mt-3">
+                        <EvidenceImageGrid
+                          entries={maintenanceEvidenceImages}
+                          emptyText="No maintenance proof photos linked."
+                          titlePrefix="Maintenance Proof"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </section>
 
@@ -1261,39 +1360,20 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
                           <Camera size={17} className="text-[var(--brand)]" />
-                          Evidence
+                          Inspection Evidence
                         </div>
                         <span className="text-sm text-[var(--muted)]">
-                          {evidenceImages.length} photos
+                          {inspectionEvidenceImages.length} photos
                         </span>
                       </div>
 
-                      {evidenceImages.length > 0 ? (
-                        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                          {evidenceImages.map(({ image, sourceUrl }) => (
-                            <a
-                              key={image.id}
-                              href={sourceUrl ?? undefined}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="group block overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
-                            >
-                              <img
-                                src={sourceUrl ?? undefined}
-                                alt={image.filename ?? "Defect evidence"}
-                                className="aspect-video w-full object-cover transition group-hover:scale-[1.02]"
-                              />
-                              <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-600">
-                                {formatDateTime(image.timestamp ?? image.createdAt)}
-                              </div>
-                            </a>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-sm text-[var(--muted)]">
-                          No evidence photos linked.
-                        </div>
-                      )}
+                      <div className="mt-5">
+                        <EvidenceImageGrid
+                          entries={inspectionEvidenceImages}
+                          emptyText="No inspection evidence photos linked."
+                          titlePrefix="Inspection Image"
+                        />
+                      </div>
                     </section>
 
                     <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">

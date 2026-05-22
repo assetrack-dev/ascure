@@ -3095,6 +3095,7 @@ export class DefectsService {
       defectId: image.defectId,
       createdByUserId: image.createdByUserId,
       evidenceType: image.evidenceType,
+      uploadedByUserId: image.createdByUserId,
       url: image.url,
       path: image.storageKey,
       storageKey: image.storageKey,
@@ -3107,6 +3108,7 @@ export class DefectsService {
       latitude: image.latitude,
       longitude: image.longitude,
       timestamp: image.timestamp?.toISOString() ?? null,
+      uploadedAt: image.createdAt.toISOString(),
       createdAt: image.createdAt.toISOString(),
       updatedAt: image.updatedAt.toISOString(),
     };

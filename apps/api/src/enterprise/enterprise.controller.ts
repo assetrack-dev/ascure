@@ -12,16 +12,21 @@ import { IsUUID } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   ListBranchesQueryDto,
+  ListCapabilitiesQueryDto,
   ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
 } from './dto/list-enterprise-query.dto';
 import {
+  CreateBranchDto,
+  CreateCapabilityDto,
   CreateMainheadDto,
   CreateOrganizationDto,
   CreateProjectDto,
   CreateWorkPackageDto,
+  UpdateBranchDto,
+  UpdateCapabilityDto,
   UpdateEnterpriseActiveDto,
   UpdateMainheadDto,
   UpdateOrganizationDto,
@@ -83,9 +88,61 @@ export class EnterpriseController {
     return this.enterpriseService.listBranches(query);
   }
 
+  @Post('branches')
+  createBranch(@Body() dto: CreateBranchDto) {
+    return this.enterpriseService.createBranch(dto);
+  }
+
+  @Patch('branches/:id')
+  updateBranch(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateBranchDto,
+  ) {
+    return this.enterpriseService.updateBranch(params.id, dto);
+  }
+
+  @Patch('branches/:id/status')
+  updateBranchActive(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.enterpriseService.updateBranchActive(params.id, dto);
+  }
+
   @Get('branches/:id')
   getBranch(@Param() params: EnterpriseIdParamDto) {
     return this.enterpriseService.getBranch(params.id);
+  }
+
+  @Get('capabilities')
+  listCapabilities(@Query() query: ListCapabilitiesQueryDto) {
+    return this.enterpriseService.listCapabilities(query);
+  }
+
+  @Post('capabilities')
+  createCapability(@Body() dto: CreateCapabilityDto) {
+    return this.enterpriseService.createCapability(dto);
+  }
+
+  @Patch('capabilities/:id')
+  updateCapability(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateCapabilityDto,
+  ) {
+    return this.enterpriseService.updateCapability(params.id, dto);
+  }
+
+  @Patch('capabilities/:id/status')
+  updateCapabilityActive(
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.enterpriseService.updateCapabilityActive(params.id, dto);
+  }
+
+  @Get('capabilities/:id')
+  getCapability(@Param() params: EnterpriseIdParamDto) {
+    return this.enterpriseService.getCapability(params.id);
   }
 
   @Post('mainheads')

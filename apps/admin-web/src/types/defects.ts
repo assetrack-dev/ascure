@@ -101,6 +101,7 @@ export interface DefectTimelineEntry {
 export interface DefectEvidenceImage {
   id: string;
   defectId?: string;
+  uploadedByUserId?: string | null;
   inspectionId?: string;
   evidenceType?: string | null;
   url?: string | null;
@@ -115,6 +116,7 @@ export interface DefectEvidenceImage {
   latitude?: number | null;
   longitude?: number | null;
   timestamp?: string | null;
+  uploadedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }

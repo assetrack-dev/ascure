@@ -25,11 +25,9 @@ import {
 } from '../utils';
 import {
   AppButton,
-  Card,
   EmptyState,
   ErrorBanner,
   InlineButton,
-  KeyValueRow,
   LoadingBlock,
   Screen,
   StatusChip,
@@ -581,8 +579,12 @@ export function InspectionFormScreen({
 
   return (
     <Screen
-      title="Inspection Form"
-      subtitle="Field checklist for this inspection cycle."
+      title="Inspection"
+      subtitle={
+        form
+          ? `${form.inspection.asset.assetType.name} · ${form.inspection.asset.assetCode}`
+          : 'Checklist'
+      }
       keyboardAware
       actions={
         <>
@@ -628,14 +630,12 @@ export function InspectionFormScreen({
 
       {!isLoading && form ? (
         <>
-          <Card>
+          <View style={styles.inspectionHeaderCard}>
             <View style={styles.summaryHeader}>
               <View style={styles.summaryTitleWrap}>
-                <Text style={styles.kickerLabel}>Asset</Text>
+                <Text style={styles.kickerLabel}>Asset Code</Text>
                 <Text style={styles.summaryAsset} numberOfLines={2}>
-                  {form.inspection.asset.name
-                    ? `${form.inspection.asset.assetCode} - ${form.inspection.asset.name}`
-                    : `${form.inspection.asset.assetCode} - Unnamed asset`}
+                  {form.inspection.asset.assetCode}
                 </Text>
               </View>
               <StatusChip
@@ -643,16 +643,21 @@ export function InspectionFormScreen({
                 tone={isSubmitted ? 'success' : 'warning'}
               />
             </View>
-            <KeyValueRow
-              label="Visit Team"
-              value={form.inspection.siteVisit.team.name}
-            />
-            <KeyValueRow label="Asset Type" value={form.inspection.asset.assetType.name} />
-            <KeyValueRow label="Substation" value={form.inspection.asset.substation.name} />
-            <KeyValueRow label="Template" value={`${form.template.name} (v${form.template.version})`} />
-            <KeyValueRow label="Cycle" value={String(form.inspection.inspectionCycle)} />
-            <KeyValueRow label="Started" value={formatDateTime(form.inspection.createdAt)} />
-          </Card>
+            <View style={styles.contextChipRow}>
+              <Text style={styles.contextChip} numberOfLines={1}>
+                {form.inspection.asset.assetType.name}
+              </Text>
+              <Text style={styles.contextChip} numberOfLines={1}>
+                {form.template.name} v{form.template.version}
+              </Text>
+              <Text style={styles.contextChip} numberOfLines={1}>
+                Cycle {form.inspection.inspectionCycle}
+              </Text>
+            </View>
+            <Text style={styles.summaryMetaText} numberOfLines={1}>
+              {form.inspection.asset.name || 'Unnamed asset'} · {form.inspection.asset.substation.name} · {form.inspection.siteVisit.team.name}
+            </Text>
+          </View>
 
           <InspectionPhotoSection
             photos={photos}
@@ -668,7 +673,7 @@ export function InspectionFormScreen({
           {checklistItemCount === 0 ? (
             <EmptyState
               title="No active checklist items"
-              description="No active checklist template is available for this asset type. Ask an admin to activate a template before submitting."
+              description="Activate a checklist template before submitting."
             />
           ) : (
             <View style={styles.checklistStack}>
@@ -756,7 +761,7 @@ function InspectionPhotoSection({
       <View style={styles.photoSectionHeader}>
         <View style={styles.photoTitleWrap}>
           <Text style={styles.kickerLabel}>Images</Text>
-          <Text style={styles.sectionHeading}>Inspection Photos</Text>
+          <Text style={styles.sectionHeading}>Photos</Text>
         </View>
         <Text style={styles.photoCount}>{photos.length}</Text>
       </View>
@@ -769,52 +774,58 @@ function InspectionPhotoSection({
       />
       {photos.length === 0 ? (
         <View style={styles.emptyPhotoPanel}>
-          <Text style={styles.emptyPhotoTitle}>No photos captured</Text>
-          <Text style={styles.emptyPhotoText}>0 images attached to this inspection.</Text>
+          <Text style={styles.emptyPhotoTitle}>No photos</Text>
         </View>
       ) : null}
-      {photos.map((photo, index) => (
-        <View key={photo.id} style={styles.photoCard}>
-          <View style={styles.photoCardHeader}>
-            <View style={styles.photoMetaTitleWrap}>
-              <Text style={styles.kickerLabel}>Photo {index + 1}</Text>
-              <Text style={styles.photoTitle}>{formatDateTime(photo.timestamp)}</Text>
+      {photos.length > 0 ? (
+        <View style={styles.photoGrid}>
+          {photos.map((photo, index) => (
+            <View key={photo.id} style={styles.photoCard}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onOpenPhoto(photo.uri)}
+                style={({ pressed }) => [styles.photoPreviewButton, pressed && styles.photoPreviewPressed]}
+              >
+                <Image source={{ uri: photo.uri }} style={styles.photoPreview} resizeMode="cover" />
+                <View style={styles.photoPreviewBadge}>
+                  <Text style={styles.photoPreviewBadgeText}>{index + 1}</Text>
+                </View>
+              </Pressable>
+              <View style={styles.photoTileBody}>
+                <View style={styles.photoCardHeader}>
+                  <Text style={styles.photoTitle} numberOfLines={1}>
+                    {formatDateTime(photo.timestamp)}
+                  </Text>
+                  <PhotoStatusPill state={photo.uploadState} />
+                </View>
+                <Text style={styles.photoCoordLine} numberOfLines={1}>
+                  Lat {formatCoordinate(photo.latitude)} · Lng {formatCoordinate(photo.longitude)}
+                </Text>
+                {photo.uploadState === 'error' ? (
+                  <Text style={styles.photoUploadError} numberOfLines={2}>
+                    {photo.uploadError ?? 'Upload failed. Local copy kept.'}
+                  </Text>
+                ) : null}
+                {!isSubmitted ? (
+                  <View style={styles.photoActionRow}>
+                    <PhotoActionButton
+                      label="Retake"
+                      onPress={() => onRetakePhoto(photo.id)}
+                      disabled={isBusy}
+                    />
+                    <PhotoActionButton
+                      label="Remove"
+                      onPress={() => onRemovePhoto(photo.id)}
+                      disabled={isBusy}
+                      danger
+                    />
+                  </View>
+                ) : null}
+              </View>
             </View>
-            <PhotoStatusPill state={photo.uploadState} />
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => onOpenPhoto(photo.uri)}
-            style={({ pressed }) => [styles.photoPreviewButton, pressed && styles.photoPreviewPressed]}
-          >
-            <Image source={{ uri: photo.uri }} style={styles.photoPreview} resizeMode="cover" />
-          </Pressable>
-          <View style={styles.photoDetailsGrid}>
-            <PhotoMeta label="Lat" value={formatCoordinate(photo.latitude)} />
-            <PhotoMeta label="Lng" value={formatCoordinate(photo.longitude)} />
-          </View>
-          {photo.uploadState === 'error' ? (
-            <Text style={styles.photoUploadError}>
-              {photo.uploadError ?? 'Upload failed. The local photo preview is still available.'}
-            </Text>
-          ) : null}
-          {!isSubmitted ? (
-            <View style={styles.photoActionRow}>
-              <PhotoActionButton
-                label="Retake"
-                onPress={() => onRetakePhoto(photo.id)}
-                disabled={isBusy}
-              />
-              <PhotoActionButton
-                label="Remove"
-                onPress={() => onRemovePhoto(photo.id)}
-                disabled={isBusy}
-                danger
-              />
-            </View>
-          ) : null}
+          ))}
         </View>
-      ))}
+      ) : null}
     </View>
   );
 }
@@ -863,7 +874,6 @@ function ChecklistSectionCard({
           <Text style={styles.sectionMeta}>{section.items.length} checks</Text>
         </View>
       </View>
-      {section.description ? <Text style={styles.sectionDescription}>{section.description}</Text> : null}
       <View style={styles.sectionItems}>
         {section.items.map((item) => (
           <ChecklistItemCard
@@ -899,9 +909,13 @@ function ChecklistItemCard({
         <View style={styles.itemTextWrap}>
           <Text style={styles.itemLabel}>{item.label}</Text>
         </View>
-        {item.isRequired ? <Text style={styles.requiredLabel}>Required</Text> : null}
+        {item.isRequired ? <Text style={styles.requiredLabel}>Req</Text> : null}
       </View>
-      {item.helperText ? <Text style={styles.helperText}>{item.helperText}</Text> : null}
+      {item.helperText ? (
+        <Text style={styles.helperText} numberOfLines={1}>
+          {item.helperText}
+        </Text>
+      ) : null}
       {inputType === 'TEXT' ? (
         <TextField
           label="Response"
@@ -1146,15 +1160,6 @@ function PhotoStatusPill({ state }: { state: PhotoUploadState }) {
   );
 }
 
-function PhotoMeta({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.photoMetaItem}>
-      <Text style={styles.photoMetaLabel}>{label}</Text>
-      <Text style={styles.photoMetaValue}>{value}</Text>
-    </View>
-  );
-}
-
 function PhotoActionButton({
   label,
   onPress,
@@ -1330,6 +1335,14 @@ const styles = StyleSheet.create({
     flex: 1.08,
     minHeight: 52,
   },
+  inspectionHeaderCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+  },
   summaryHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -1349,16 +1362,39 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   summaryAsset: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '700',
     color: '#111827',
+  },
+  contextChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  contextChip: {
+    maxWidth: '100%',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d9e1ea',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  summaryMetaText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#64748b',
   },
   photoSection: {
     backgroundColor: '#ffffff',
     borderRadius: 8,
-    padding: 18,
-    gap: 18,
+    padding: 12,
+    gap: 12,
     borderWidth: 1,
     borderColor: '#cbd5e1',
   },
@@ -1373,34 +1409,33 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   sectionHeading: {
-    fontSize: 17,
-    lineHeight: 23,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600',
     color: '#111827',
   },
   photoCount: {
-    minWidth: 42,
-    minHeight: 36,
-    borderRadius: 18,
+    minWidth: 34,
+    minHeight: 28,
+    borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#eef2f7',
     color: '#111827',
     textAlign: 'center',
     textAlignVertical: 'center',
-    fontSize: 15,
-    lineHeight: 36,
+    fontSize: 13,
+    lineHeight: 28,
     fontWeight: '600',
   },
   emptyPhotoPanel: {
-    minHeight: 124,
+    minHeight: 56,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 18,
-    gap: 6,
+    padding: 12,
   },
   emptyPhotoTitle: {
     fontSize: 15,
@@ -1415,8 +1450,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   itemCard: {
-    padding: 14,
-    gap: 14,
+    padding: 10,
+    gap: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -1429,7 +1464,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checklistStack: {
-    gap: 22,
+    gap: 14,
   },
   sectionCard: {
     backgroundColor: '#ffffff',
@@ -1439,12 +1474,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   sectionTopRail: {
-    height: 5,
+    height: 3,
   },
   sectionHeader: {
-    minHeight: 76,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    minHeight: 54,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -1453,9 +1488,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e2e8f0',
   },
   sectionIndexBadge: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: '#111827',
     borderWidth: 1,
     alignItems: 'center',
@@ -1483,8 +1518,8 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   sectionItems: {
-    padding: 16,
-    gap: 12,
+    padding: 10,
+    gap: 8,
     backgroundColor: '#f8fafc',
   },
   photoCardHeader: {
@@ -1494,25 +1529,32 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   photoCard: {
-    gap: 16,
-    padding: 14,
+    flexBasis: '47%',
+    flexGrow: 1,
+    minWidth: 144,
     borderRadius: 8,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
+  },
+  photoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
   photoMetaTitleWrap: {
     flex: 1,
     gap: 2,
   },
   photoTitle: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '500',
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
     color: '#111827',
   },
   photoPreviewButton: {
-    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#e5edf8',
   },
@@ -1521,9 +1563,36 @@ const styles = StyleSheet.create({
   },
   photoPreview: {
     width: '100%',
-    height: 320,
-    borderRadius: 8,
+    height: 124,
     backgroundColor: '#e5edf8',
+  },
+  photoPreviewBadge: {
+    position: 'absolute',
+    left: 8,
+    top: 8,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  photoPreviewBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  photoTileBody: {
+    padding: 9,
+    gap: 7,
+  },
+  photoCoordLine: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: '#64748b',
+    fontWeight: '600',
   },
   photoDetailsGrid: {
     flexDirection: 'row',
@@ -1558,8 +1627,8 @@ const styles = StyleSheet.create({
   },
   photoStatusPill: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     backgroundColor: '#eef2ff',
     borderWidth: 1,
     borderColor: '#c7d2fe',
@@ -1573,8 +1642,8 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
   },
   photoStatusText: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 14,
     fontWeight: '600',
     color: '#3730a3',
   },
@@ -1585,17 +1654,17 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
   },
   photoUploadError: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 11,
+    lineHeight: 15,
     color: '#b91c1c',
   },
   photoActionRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 6,
   },
   photoActionButton: {
     flex: 1,
-    minHeight: 54,
+    minHeight: 34,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1616,8 +1685,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.99 }],
   },
   photoActionText: {
-    fontSize: 15,
-    lineHeight: 21,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '600',
     color: '#111827',
   },
@@ -1669,25 +1738,25 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   itemLabel: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '500',
     color: '#111827',
   },
   requiredLabel: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '600',
     color: '#92400e',
     backgroundColor: '#fffbeb',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#fde68a',
   },
   helperText: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
+    lineHeight: 17,
     color: '#6b7280',
   },
   resultControl: {
@@ -1708,16 +1777,16 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   optionStack: {
-    gap: 8,
+    gap: 6,
   },
   optionButton: {
-    minHeight: 52,
+    minHeight: 42,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#cbd5e1',
     backgroundColor: '#ffffff',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -1769,7 +1838,7 @@ const styles = StyleSheet.create({
   },
   choiceButton: {
     flex: 1,
-    minHeight: 62,
+    minHeight: 44,
     borderRadius: 7,
     borderWidth: 1,
     borderColor: 'transparent',
@@ -1804,8 +1873,8 @@ const styles = StyleSheet.create({
     opacity: 0.92,
   },
   choiceButtonText: {
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700',
     color: '#374151',
   },

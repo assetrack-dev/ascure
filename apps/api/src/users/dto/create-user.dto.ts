@@ -1,6 +1,7 @@
 import { UserRole } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
   IsEnum,
@@ -52,6 +53,31 @@ export class CreateUserDto {
   @IsOptional()
   @IsUUID()
   departmentId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  branchId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string | null;
+
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  teamId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  capabilityIds?: string[];
 
   @IsOptional()
   @IsBoolean()

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -47,11 +48,21 @@ export class UsersService {
           dto.departmentId,
         );
         await this.assertEmailAvailable(tx, dto.email);
+        const operationalLinks = await this.resolveOperationalLinks(tx, user.tenantId, {
+          organizationId: dto.organizationId,
+          branchId: dto.branchId,
+          mainheadId: dto.mainheadId,
+          teamId: dto.teamId,
+        });
 
-        return tx.user.create({
+        const createdUser = await tx.user.create({
           data: {
             tenantId: user.tenantId,
             departmentId: dto.departmentId ?? null,
+            organizationId: operationalLinks.organizationId,
+            branchId: operationalLinks.branchId,
+            mainheadId: operationalLinks.mainheadId,
+            teamId: operationalLinks.teamId,
             email: dto.email,
             name: dto.name,
             passwordHash,
@@ -60,6 +71,28 @@ export class UsersService {
           },
           select: this.userSelect(),
         });
+
+        if (operationalLinks.teamId) {
+          await this.syncPrimaryTeamMembership(
+            tx,
+            createdUser.id,
+            null,
+            operationalLinks.teamId,
+          );
+        }
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncUserCapabilities(tx, createdUser.id, dto.capabilityIds);
+
+          return tx.user.findUniqueOrThrow({
+            where: {
+              id: createdUser.id,
+            },
+            select: this.userSelect(),
+          });
+        }
+
+        return createdUser;
       });
     } catch (error) {
       this.throwConflictForDuplicateEmail(error);
@@ -79,6 +112,10 @@ export class UsersService {
             id: true,
             role: true,
             isActive: true,
+            organizationId: true,
+            branchId: true,
+            mainheadId: true,
+            teamId: true,
           },
         });
 
@@ -91,6 +128,26 @@ export class UsersService {
           user.tenantId,
           dto.departmentId,
         );
+        const shouldResolveOperationalLinks =
+          dto.organizationId !== undefined ||
+          dto.branchId !== undefined ||
+          dto.mainheadId !== undefined ||
+          dto.teamId !== undefined;
+        const operationalLinks = shouldResolveOperationalLinks
+          ? await this.resolveOperationalLinks(tx, user.tenantId, {
+              organizationId:
+                dto.organizationId === undefined
+                  ? existingUser.organizationId
+                  : dto.organizationId,
+              branchId:
+                dto.branchId === undefined ? existingUser.branchId : dto.branchId,
+              mainheadId:
+                dto.mainheadId === undefined
+                  ? existingUser.mainheadId
+                  : dto.mainheadId,
+              teamId: dto.teamId === undefined ? existingUser.teamId : dto.teamId,
+            })
+          : null;
 
         const data: Prisma.UserUncheckedUpdateInput = {};
 
@@ -119,17 +176,48 @@ export class UsersService {
           data.departmentId = dto.departmentId;
         }
 
-        if (Object.keys(data).length === 0) {
+        if (operationalLinks) {
+          data.organizationId = operationalLinks.organizationId;
+          data.branchId = operationalLinks.branchId;
+          data.mainheadId = operationalLinks.mainheadId;
+          data.teamId = operationalLinks.teamId;
+        }
+
+        if (
+          Object.keys(data).length === 0 &&
+          dto.capabilityIds === undefined
+        ) {
           throw new BadRequestException(
             'At least one editable user field must be provided.',
           );
         }
 
-        return tx.user.update({
+        if (Object.keys(data).length > 0) {
+          await tx.user.update({
+            where: {
+              id,
+            },
+            data,
+          });
+        }
+
+        if (operationalLinks) {
+          await this.syncPrimaryTeamMembership(
+            tx,
+            id,
+            existingUser.teamId,
+            operationalLinks.teamId,
+          );
+        }
+
+        if (dto.capabilityIds !== undefined) {
+          await this.syncUserCapabilities(tx, id, dto.capabilityIds);
+        }
+
+        return tx.user.findUniqueOrThrow({
           where: {
             id,
           },
-          data,
           select: this.userSelect(),
         });
       });
@@ -233,6 +321,9 @@ export class UsersService {
             id: true,
             tenantId: true,
             departmentId: true,
+            organizationId: true,
+            branchId: true,
+            mainheadId: true,
             code: true,
             name: true,
             isActive: true,
@@ -253,6 +344,10 @@ export class UsersService {
       id: true,
       tenantId: true,
       departmentId: true,
+      organizationId: true,
+      branchId: true,
+      mainheadId: true,
+      teamId: true,
       email: true,
       name: true,
       role: true,
@@ -266,7 +361,342 @@ export class UsersService {
           name: true,
         },
       },
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          type: true,
+          isActive: true,
+        },
+      },
+      branch: {
+        select: {
+          id: true,
+          organizationId: true,
+          name: true,
+          code: true,
+          region: true,
+          isActive: true,
+        },
+      },
+      mainhead: {
+        select: {
+          id: true,
+          branchId: true,
+          name: true,
+          code: true,
+          description: true,
+          isActive: true,
+        },
+      },
+      team: {
+        select: {
+          id: true,
+          tenantId: true,
+          departmentId: true,
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+          code: true,
+          name: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+      capabilityAssignments: {
+        include: {
+          capability: true,
+        },
+        orderBy: [
+          {
+            capability: {
+              name: 'asc',
+            },
+          },
+        ],
+      },
     } satisfies Prisma.UserSelect;
+  }
+
+  private async resolveOperationalLinks(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    input: {
+      organizationId?: string | null;
+      branchId?: string | null;
+      mainheadId?: string | null;
+      teamId?: string | null;
+    },
+  ) {
+    let organizationId = this.normalizeOptionalString(input.organizationId);
+    let branchId = this.normalizeOptionalString(input.branchId);
+    let mainheadId = this.normalizeOptionalString(input.mainheadId);
+    const teamId = this.normalizeOptionalString(input.teamId);
+
+    if (teamId) {
+      const team = await tx.team.findFirst({
+        where: {
+          id: teamId,
+          tenantId,
+        },
+        select: {
+          id: true,
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+        },
+      });
+
+      if (!team) {
+        throw new NotFoundException('Team not found.');
+      }
+
+      if (team.organizationId) {
+        if (organizationId && organizationId !== team.organizationId) {
+          throw new BadRequestException(
+            'Selected team does not belong to the selected organization.',
+          );
+        }
+
+        organizationId = team.organizationId;
+      }
+
+      if (team.branchId) {
+        if (branchId && branchId !== team.branchId) {
+          throw new BadRequestException(
+            'Selected team does not belong to the selected branch.',
+          );
+        }
+
+        branchId = team.branchId;
+      }
+
+      if (team.mainheadId) {
+        if (mainheadId && mainheadId !== team.mainheadId) {
+          throw new BadRequestException(
+            'Selected team does not belong to the selected MAINHEAD.',
+          );
+        }
+
+        mainheadId = team.mainheadId;
+      }
+    }
+
+    if (mainheadId) {
+      const mainhead = await tx.mainhead.findUnique({
+        where: {
+          id: mainheadId,
+        },
+        select: {
+          id: true,
+          branchId: true,
+          branch: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      if (!mainhead) {
+        throw new NotFoundException('MAINHEAD not found.');
+      }
+
+      if (branchId && branchId !== mainhead.branchId) {
+        throw new BadRequestException(
+          'Selected MAINHEAD does not belong to the selected branch.',
+        );
+      }
+
+      branchId = mainhead.branchId;
+
+      if (
+        organizationId &&
+        organizationId !== mainhead.branch.organizationId
+      ) {
+        throw new BadRequestException(
+          'Selected MAINHEAD does not belong to the selected organization.',
+        );
+      }
+
+      organizationId = mainhead.branch.organizationId;
+    }
+
+    if (branchId) {
+      const branch = await tx.branch.findUnique({
+        where: {
+          id: branchId,
+        },
+        select: {
+          id: true,
+          organizationId: true,
+        },
+      });
+
+      if (!branch) {
+        throw new NotFoundException('Branch not found.');
+      }
+
+      if (organizationId && organizationId !== branch.organizationId) {
+        throw new BadRequestException(
+          'Selected branch does not belong to the selected organization.',
+        );
+      }
+
+      organizationId = branch.organizationId;
+    }
+
+    if (organizationId) {
+      const organization = await tx.organization.findUnique({
+        where: {
+          id: organizationId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!organization) {
+        throw new NotFoundException('Organization not found.');
+      }
+    }
+
+    return {
+      organizationId,
+      branchId,
+      mainheadId,
+      teamId,
+    };
+  }
+
+  private async syncPrimaryTeamMembership(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    previousTeamId: string | null,
+    nextTeamId: string | null,
+  ) {
+    if (previousTeamId && previousTeamId !== nextTeamId) {
+      await tx.teamMember.updateMany({
+        where: {
+          teamId: previousTeamId,
+          userId,
+        },
+        data: {
+          isActive: false,
+        },
+      });
+    }
+
+    if (!nextTeamId) {
+      return;
+    }
+
+    await tx.teamMember.upsert({
+      where: {
+        teamId_userId: {
+          teamId: nextTeamId,
+          userId,
+        },
+      },
+      create: {
+        id: randomUUID(),
+        teamId: nextTeamId,
+        userId,
+        isActive: true,
+      },
+      update: {
+        isActive: true,
+      },
+    });
+  }
+
+  private normalizeIdList(ids: string[] | undefined) {
+    if (!ids) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        ids
+          .map((id) => this.normalizeOptionalString(id))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+  }
+
+  private async assertCapabilitiesExist(
+    tx: Prisma.TransactionClient,
+    capabilityIds: string[],
+  ) {
+    if (capabilityIds.length === 0) {
+      return;
+    }
+
+    const count = await tx.capability.count({
+      where: {
+        id: {
+          in: capabilityIds,
+        },
+      },
+    });
+
+    if (count !== capabilityIds.length) {
+      throw new NotFoundException('One or more capabilities were not found.');
+    }
+  }
+
+  private async syncUserCapabilities(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    capabilityIds: string[] | undefined,
+  ) {
+    const normalizedCapabilityIds = this.normalizeIdList(capabilityIds);
+    await this.assertCapabilitiesExist(tx, normalizedCapabilityIds);
+
+    await tx.userCapability.deleteMany({
+      where: {
+        userId,
+        ...(normalizedCapabilityIds.length > 0
+          ? {
+              capabilityId: {
+                notIn: normalizedCapabilityIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const capabilityId of normalizedCapabilityIds) {
+      await tx.userCapability.upsert({
+        where: {
+          userId_capabilityId: {
+            userId,
+            capabilityId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          userId,
+          capabilityId,
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  private normalizeOptionalString(value?: string | null) {
+    if (!value) {
+      return null;
+    }
+
+    const trimmedValue = value.trim();
+
+    return trimmedValue ? trimmedValue : null;
   }
 
   private async assertDepartmentBelongsToTenant(

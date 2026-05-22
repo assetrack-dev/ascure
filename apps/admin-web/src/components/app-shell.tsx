@@ -7,12 +7,15 @@ import {
   Building2,
   ClipboardList,
   FolderKanban,
+  GitBranch,
   LayoutDashboard,
+  Layers2,
   LogOut,
   MapPinned,
   Network,
   PackageCheck,
   ShieldCheck,
+  Tags,
   Users,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -44,6 +47,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: Archive,
     },
     {
+      href: "/asset-types",
+      label: "Asset Types",
+      icon: Layers2,
+      adminOnly: true,
+    },
+    {
       href: "/site-visits",
       label: "Site Visits",
       icon: MapPinned,
@@ -54,9 +63,25 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: Building2,
     },
     {
+      href: "/branches",
+      label: "Branches",
+      icon: GitBranch,
+    },
+    {
+      href: "/capabilities",
+      label: "Capabilities",
+      icon: Tags,
+    },
+    {
       href: "/mainheads",
       label: "Mainheads",
       icon: Network,
+    },
+    {
+      href: "/teams",
+      label: "Teams",
+      icon: Users,
+      adminOnly: true,
     },
     {
       href: "/projects",

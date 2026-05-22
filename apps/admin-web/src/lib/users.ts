@@ -39,6 +39,11 @@ export function createUser(token: string, payload: CreateUserPayload) {
       role: payload.role,
       isActive: payload.isActive ?? true,
       departmentId: normalizeDepartmentId(payload.departmentId),
+      organizationId: normalizeDepartmentId(payload.organizationId),
+      branchId: normalizeDepartmentId(payload.branchId),
+      mainheadId: normalizeDepartmentId(payload.mainheadId),
+      teamId: normalizeDepartmentId(payload.teamId),
+      capabilityIds: payload.capabilityIds,
     }),
   });
 }
@@ -50,6 +55,11 @@ export function updateUser(token: string, userId: string, payload: UpdateUserPay
     body: JSON.stringify({
       ...payload,
       departmentId: normalizeDepartmentId(payload.departmentId),
+      organizationId: normalizeDepartmentId(payload.organizationId),
+      branchId: normalizeDepartmentId(payload.branchId),
+      mainheadId: normalizeDepartmentId(payload.mainheadId),
+      teamId: normalizeDepartmentId(payload.teamId),
+      capabilityIds: payload.capabilityIds ?? [],
     }),
   });
 }

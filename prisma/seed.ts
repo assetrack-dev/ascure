@@ -43,6 +43,128 @@ async function ensureOrganizationCapability(
   });
 }
 
+async function ensureCapability(
+  code: string,
+  name: string,
+  description: string,
+) {
+  return prisma.capability.upsert({
+    where: { code },
+    update: {
+      name,
+      description,
+      isActive: true,
+    },
+    create: {
+      code,
+      name,
+      description,
+      isActive: true,
+    },
+  });
+}
+
+async function ensureOrganizationCapabilityAssignment(
+  organizationId: string,
+  capabilityId: string,
+) {
+  await prisma.organizationCapabilityAssignment.upsert({
+    where: {
+      organizationId_capabilityId: {
+        organizationId,
+        capabilityId,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      organizationId,
+      capabilityId,
+      isActive: true,
+    },
+  });
+}
+
+async function ensureBranchCapability(branchId: string, capabilityId: string) {
+  await prisma.branchCapability.upsert({
+    where: {
+      branchId_capabilityId: {
+        branchId,
+        capabilityId,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      branchId,
+      capabilityId,
+      isActive: true,
+    },
+  });
+}
+
+async function ensureMainheadCapability(
+  mainheadId: string,
+  capabilityId: string,
+) {
+  await prisma.mainheadCapability.upsert({
+    where: {
+      mainheadId_capabilityId: {
+        mainheadId,
+        capabilityId,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      mainheadId,
+      capabilityId,
+      isActive: true,
+    },
+  });
+}
+
+async function ensureTeamCapability(teamId: string, capabilityId: string) {
+  await prisma.teamCapability.upsert({
+    where: {
+      teamId_capabilityId: {
+        teamId,
+        capabilityId,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      teamId,
+      capabilityId,
+      isActive: true,
+    },
+  });
+}
+
+async function ensureUserCapability(userId: string, capabilityId: string) {
+  await prisma.userCapability.upsert({
+    where: {
+      userId_capabilityId: {
+        userId,
+        capabilityId,
+      },
+    },
+    update: {
+      isActive: true,
+    },
+    create: {
+      userId,
+      capabilityId,
+      isActive: true,
+    },
+  });
+}
+
 async function main() {
   const passwordSaltRounds = 10;
   const adminPasswordHash = await bcrypt.hash('Admin123!', passwordSaltRounds);
@@ -141,6 +263,41 @@ async function main() {
     await ensureOrganizationCapability(tnbOrganization.id, capability);
   }
 
+  const operationalCapabilities = new Map(
+    (
+      await Promise.all([
+        ensureCapability('SAVR', 'SAVR', 'SAVR asset inspection capability.'),
+        ensureCapability('SAVT', 'SAVT', 'SAVT asset inspection capability.'),
+        ensureCapability('PENCAWANG', 'Pencawang', 'Pencawang inspection capability.'),
+        ensureCapability('FEEDER_PILLAR', 'Feeder Pillar', 'Feeder Pillar inspection capability.'),
+        ensureCapability('LINK_BOX', 'Link Box', 'Link Box inspection capability.'),
+        ensureCapability('CABLE_BRIDGE', 'Cable Bridge', 'Cable Bridge inspection capability.'),
+        ensureCapability('UNDERGROUND_CABLE', 'Underground Cable', 'Underground cable operations capability.'),
+        ensureCapability('THERMAL_INSPECTION', 'Thermal Inspection', 'Thermal inspection capability.'),
+        ensureCapability('MAINTENANCE', 'Maintenance', 'Maintenance execution capability.'),
+        ensureCapability('INSPECTION', 'Inspection', 'General inspection capability.'),
+        ensureCapability('QA_VALIDATION', 'QA Validation', 'QA validation capability.'),
+        ensureCapability('REPORTING', 'Reporting', 'Operational reporting capability.'),
+      ])
+    ).map((capability) => [capability.code, capability]),
+  );
+
+  for (const code of ['SAVR', 'INSPECTION', 'MAINTENANCE', 'QA_VALIDATION', 'REPORTING']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureOrganizationCapabilityAssignment(ascureOrganization.id, capability.id);
+    }
+  }
+
+  for (const code of ['INSPECTION', 'QA_VALIDATION', 'REPORTING']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureOrganizationCapabilityAssignment(tnbOrganization.id, capability.id);
+    }
+  }
+
   const existingBranch = await prisma.branch.findFirst({
     where: {
       organizationId: ascureOrganization.id,
@@ -168,6 +325,14 @@ async function main() {
         },
       });
 
+  for (const code of ['SAVR', 'INSPECTION', 'MAINTENANCE']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureBranchCapability(branch.id, capability.id);
+    }
+  }
+
   const existingMainhead = await prisma.mainhead.findFirst({
     where: {
       branchId: branch.id,
@@ -194,6 +359,33 @@ async function main() {
           isActive: true,
         },
       });
+
+  for (const code of ['SAVR', 'INSPECTION']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureMainheadCapability(mainhead.id, capability.id);
+    }
+  }
+
+  await prisma.team.update({
+    where: {
+      id: team.id,
+    },
+    data: {
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+    },
+  });
+
+  for (const code of ['SAVR', 'INSPECTION']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureTeamCapability(team.id, capability.id);
+    }
+  }
 
   const project = await prisma.project.upsert({
     where: { code: 'SAVR-PHASE-1' },
@@ -256,6 +448,10 @@ async function main() {
     update: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       name: 'ASCURE Admin',
       role: UserRole.ADMIN,
       isActive: true,
@@ -263,6 +459,10 @@ async function main() {
     create: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       email: 'admin@ascure.local',
       name: 'ASCURE Admin',
       passwordHash: adminPasswordHash,
@@ -289,11 +489,23 @@ async function main() {
     },
   });
 
+  for (const code of ['SAVR', 'INSPECTION', 'MAINTENANCE', 'QA_VALIDATION', 'REPORTING']) {
+    const capability = operationalCapabilities.get(code);
+
+    if (capability) {
+      await ensureUserCapability(adminUser.id, capability.id);
+    }
+  }
+
   const technicianUser = await prisma.user.upsert({
     where: { email: 'technician@ascure.local' },
     update: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       name: 'Field Technician',
       role: UserRole.TECHNICIAN,
       isActive: true,
@@ -301,6 +513,10 @@ async function main() {
     create: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       email: 'technician@ascure.local',
       name: 'Field Technician',
       passwordHash: technicianPasswordHash,
@@ -314,6 +530,10 @@ async function main() {
     update: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       name: 'Operations Manager',
       role: UserRole.MANAGER,
       isActive: true,
@@ -321,6 +541,10 @@ async function main() {
     create: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       email: 'manager@ascure.local',
       name: 'Operations Manager',
       passwordHash: managerPasswordHash,
@@ -334,6 +558,10 @@ async function main() {
     update: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       name: 'Field Supervisor',
       role: UserRole.SUPERVISOR,
       isActive: true,
@@ -341,6 +569,10 @@ async function main() {
     create: {
       tenantId: tenant.id,
       departmentId: department.id,
+      organizationId: ascureOrganization.id,
+      branchId: branch.id,
+      mainheadId: mainhead.id,
+      teamId: team.id,
       email: 'supervisor@ascure.local',
       name: 'Field Supervisor',
       passwordHash: supervisorPasswordHash,
@@ -348,6 +580,16 @@ async function main() {
       isActive: true,
     },
   });
+
+  for (const userId of [technicianUser.id, managerUser.id, supervisorUser.id]) {
+    for (const code of ['SAVR', 'INSPECTION']) {
+      const capability = operationalCapabilities.get(code);
+
+      if (capability) {
+        await ensureUserCapability(userId, capability.id);
+      }
+    }
+  }
 
   await prisma.teamMember.upsert({
     where: {
@@ -438,16 +680,92 @@ async function main() {
       },
     },
     update: {
-      name: 'SAVR',
+      name: 'SAVR POLE',
+      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
+      description: 'SAVR pole inspection asset type.',
       isActive: true,
+      sortOrder: 10,
     },
     create: {
       tenantId: tenant.id,
       code: 'SAVR',
-      name: 'SAVR',
+      name: 'SAVR POLE',
+      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
+      description: 'SAVR pole inspection asset type.',
       isActive: true,
+      sortOrder: 10,
     },
   });
+
+  for (const seedAssetType of [
+    {
+      code: 'SAVT_POLE',
+      name: 'SAVT POLE',
+      capabilityCode: 'SAVT',
+      description: 'SAVT pole inspection asset type.',
+      sortOrder: 20,
+    },
+    {
+      code: 'FEEDER_PILLAR',
+      name: 'FEEDER PILLAR',
+      capabilityCode: 'FEEDER_PILLAR',
+      description: 'Feeder pillar inspection asset type.',
+      sortOrder: 30,
+    },
+    {
+      code: 'PENCAWANG',
+      name: 'PENCAWANG',
+      capabilityCode: 'PENCAWANG',
+      description: 'Pencawang inspection asset type.',
+      sortOrder: 40,
+    },
+    {
+      code: 'LINK_BOX',
+      name: 'LINK BOX',
+      capabilityCode: 'LINK_BOX',
+      description: 'Link box inspection asset type.',
+      sortOrder: 50,
+    },
+    {
+      code: 'CABLE_BRIDGE',
+      name: 'CABLE BRIDGE',
+      capabilityCode: 'CABLE_BRIDGE',
+      description: 'Cable bridge inspection asset type.',
+      sortOrder: 60,
+    },
+    {
+      code: 'UNDERGROUND_CABLE',
+      name: 'UNDERGROUND CABLE',
+      capabilityCode: 'UNDERGROUND_CABLE',
+      description: 'Underground cable inspection asset type.',
+      sortOrder: 70,
+    },
+  ]) {
+    await prisma.assetType.upsert({
+      where: {
+        tenantId_code: {
+          tenantId: tenant.id,
+          code: seedAssetType.code,
+        },
+      },
+      update: {
+        name: seedAssetType.name,
+        capabilityId: operationalCapabilities.get(seedAssetType.capabilityCode)?.id ?? null,
+        description: seedAssetType.description,
+        isActive: true,
+        sortOrder: seedAssetType.sortOrder,
+      },
+      create: {
+        tenantId: tenant.id,
+        code: seedAssetType.code,
+        name: seedAssetType.name,
+        capabilityId: operationalCapabilities.get(seedAssetType.capabilityCode)?.id ?? null,
+        description: seedAssetType.description,
+        isActive: true,
+        sortOrder: seedAssetType.sortOrder,
+      },
+    });
+  }
 
   await prisma.asset.upsert({
     where: {
@@ -505,6 +823,7 @@ async function main() {
     update: {
       tenantId: tenant.id,
       name: 'SAVR Phase 1 Checklist',
+      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
       status: InspectionTemplateStatus.ACTIVE,
       isActive: true,
       publishedAt: new Date(),
@@ -512,6 +831,7 @@ async function main() {
     create: {
       tenantId: tenant.id,
       assetTypeId: assetType.id,
+      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
       version: 1,
       name: 'SAVR Phase 1 Checklist',
       status: InspectionTemplateStatus.ACTIVE,

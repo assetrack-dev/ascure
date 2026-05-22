@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { captureRef } from 'react-native-view-shot';
 import {
   ActivityIndicator,
   Image,
+  PixelRatio,
   Pressable,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -19,7 +22,7 @@ import {
   InspectionImage,
 } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
-import { Screen } from '../ui';
+import { Screen, uiTheme } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 const MAINTENANCE_OUTCOMES: DefectResolutionOutcome[] = [
@@ -31,10 +34,20 @@ const MAINTENANCE_OUTCOMES: DefectResolutionOutcome[] = [
 ];
 
 type CapturedMaintenanceProofPhoto = {
+  id: string;
   uri: string;
   timestamp: string;
   latitude?: number | null;
   longitude?: number | null;
+};
+
+type PendingMaintenanceProofOverlayPhoto = Omit<CapturedMaintenanceProofPhoto, 'id' | 'uri'> & {
+  timestampLabel: string;
+  originalUri: string;
+  captureWidth: number;
+  captureHeight: number;
+  layoutWidth: number;
+  layoutHeight: number;
 };
 
 export function DefectDetailScreen({
@@ -55,13 +68,20 @@ export function DefectDetailScreen({
   const [maintenanceNote, setMaintenanceNote] = useState('');
   const [resolutionOutcome, setResolutionOutcome] =
     useState<DefectResolutionOutcome>('RESOLVED');
-  const [proofPhoto, setProofPhoto] = useState<CapturedMaintenanceProofPhoto | null>(null);
+  const [proofPhotos, setProofPhotos] = useState<CapturedMaintenanceProofPhoto[]>([]);
+  const [pendingOverlayPhoto, setPendingOverlayPhoto] =
+    useState<PendingMaintenanceProofOverlayPhoto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [savingStatus, setSavingStatus] = useState<DefectStatus | null>(null);
   const [savingMaintenanceAction, setSavingMaintenanceAction] = useState<
     'start' | 'capture' | 'complete' | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const overlayCaptureRef = useRef<View>(null);
+  const overlayPromiseHandlersRef = useRef<{
+    resolve: (uri: string) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
 
   const loadDefectDetail = useCallback(
     async (showLoading = true) => {
@@ -102,6 +122,66 @@ export function DefectDetailScreen({
   useEffect(() => {
     loadDefectDetail();
   }, [loadDefectDetail]);
+
+  useEffect(() => {
+    setProofPhotos([]);
+    setPendingOverlayPhoto(null);
+    overlayPromiseHandlersRef.current = null;
+  }, [defectId]);
+
+  useEffect(() => {
+    if (!pendingOverlayPhoto) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const renderOverlayPhoto = async () => {
+      try {
+        await waitForNextPaint();
+        await delay(400);
+
+        if (!overlayCaptureRef.current) {
+          throw new Error('Unable to prepare the overlaid proof image.');
+        }
+
+        const overlayUri = await captureRef(overlayCaptureRef, {
+          format: 'jpg',
+          quality: 0.9,
+          result: 'tmpfile',
+          width: pendingOverlayPhoto.captureWidth,
+          height: pendingOverlayPhoto.captureHeight,
+        });
+
+        if (isCancelled) {
+          return;
+        }
+
+        overlayPromiseHandlersRef.current?.resolve(overlayUri);
+      } catch (overlayError) {
+        if (isCancelled) {
+          return;
+        }
+
+        overlayPromiseHandlersRef.current?.reject(
+          overlayError instanceof Error
+            ? overlayError
+            : new Error('Unable to create the overlaid proof image.'),
+        );
+      } finally {
+        if (!isCancelled) {
+          overlayPromiseHandlersRef.current = null;
+          setPendingOverlayPhoto(null);
+        }
+      }
+    };
+
+    renderOverlayPhoto();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [pendingOverlayPhoto]);
 
   async function handleUpdateStatus(status: DefectStatus) {
     try {
@@ -182,19 +262,67 @@ export function DefectDetailScreen({
         throw new Error('Unable to read the captured proof photo.');
       }
 
-      const timestamp = new Date().toISOString();
+      const capturedAt = new Date();
+      const timestamp = capturedAt.toISOString();
       const position = await getOptionalCurrentPosition();
-
-      setProofPhoto({
-        uri: capturedAsset.uri,
+      const latitude = position?.coords.latitude ?? null;
+      const longitude = position?.coords.longitude ?? null;
+      const overlayImageUri = await createOverlayPhoto({
+        originalUri: capturedAsset.uri,
         timestamp,
-        latitude: position?.coords.latitude ?? null,
-        longitude: position?.coords.longitude ?? null,
+        timestampLabel: formatPhotoTimestampLabel(capturedAt),
+        latitude,
+        longitude,
+        ...(await getOverlayCaptureSize(
+          capturedAsset.uri,
+          capturedAsset.width,
+          capturedAsset.height,
+        )),
       });
+
+      setProofPhotos((current) => [
+        ...current,
+        {
+          id: createLocalProofPhotoId(timestamp),
+          uri: overlayImageUri,
+          timestamp,
+          latitude,
+          longitude,
+        },
+      ]);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : 'Unable to capture proof photo.');
     } finally {
       setSavingMaintenanceAction(null);
+    }
+  }
+
+  function createOverlayPhoto(photo: PendingMaintenanceProofOverlayPhoto) {
+    return new Promise<string>((resolve, reject) => {
+      overlayPromiseHandlersRef.current = {
+        resolve,
+        reject,
+      };
+      setPendingOverlayPhoto(photo);
+    });
+  }
+
+  function handleRemoveProofPhoto(photoId: string) {
+    setProofPhotos((current) => current.filter((photo) => photo.id !== photoId));
+  }
+
+  async function uploadPendingProofPhotos(note: string | null) {
+    const pendingPhotos = [...proofPhotos];
+
+    for (const proofPhoto of pendingPhotos) {
+      await api.uploadDefectEvidenceImage(token, defectId, {
+        uri: proofPhoto.uri,
+        timestamp: proofPhoto.timestamp,
+        latitude: proofPhoto.latitude,
+        longitude: proofPhoto.longitude,
+        note,
+      });
+      setProofPhotos((current) => current.filter((photo) => photo.id !== proofPhoto.id));
     }
   }
 
@@ -205,12 +333,9 @@ export function DefectDetailScreen({
 
       const normalizedNote = normalizeOperationalPayloadText(maintenanceNote) ?? null;
 
-      if (proofPhoto) {
-        await api.uploadDefectEvidenceImage(token, defectId, {
-          ...proofPhoto,
-          note: normalizedNote,
-        });
-        setProofPhoto(null);
+      if (proofPhotos.length > 0) {
+        await uploadPendingProofPhotos(normalizedNote);
+        setProofPhotos([]);
       }
 
       await api.completeDefectMaintenance(token, defectId, {
@@ -305,71 +430,32 @@ export function DefectDetailScreen({
 
         {!isLoading && defect ? (
           <>
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                    {defect.assetCode || 'Unknown Asset'}
-                  </Text>
-                  <Text style={{ fontSize: 14, lineHeight: 20, color: '#607086' }}>
-                    {defect.assetType || 'No asset type available'}
+            <View style={styles.card}>
+              <View style={styles.summaryHeader}>
+                <View style={styles.summaryTitleWrap}>
+                  <Text style={styles.assetCodeText}>{defect.assetCode || 'Unknown Asset'}</Text>
+                  <Text style={styles.mutedText} numberOfLines={1}>
+                    {defect.assetType || 'No asset type'} · {defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : 'No cycle'}
                   </Text>
                 </View>
                 <StatusBadge status={defect.status} />
               </View>
-              <InfoRow label="Inspection Cycle" value={defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : 'Not available'} />
-              <InfoRow label="Submitted" value={formatDateTime(defect.submittedAt)} />
-              {defect.closedAt ? <InfoRow label="Closed" value={formatDateTime(defect.closedAt)} /> : null}
+              <View style={styles.statusGrid}>
+                <CompactFact label="Lifecycle" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
+                <CompactFact label="Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
+                <CompactFact label="Assigned" value={defect.assignedTo || 'Unassigned'} />
+                <CompactFact label="Submitted" value={formatDateTime(defect.submittedAt)} />
+              </View>
             </View>
 
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                Operational Ownership
-              </Text>
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Workflow</Text>
               <InfoRow label="Lifecycle Status" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
               <InfoRow label="Resolution Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
               <InfoRow label="Assigned" value={formatDateTime(defect.assignedAt)} />
               <InfoRow label="QA/QC Verified" value={formatDateTime(defect.verifiedAt)} />
               <InfoRow label="Maintained" value={formatDateTime(defect.maintainedAt)} />
               <InfoRow label="Closure Verified" value={formatDateTime(defect.closureVerifiedAt)} />
-            </View>
-
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                Resolution Governance
-              </Text>
-              <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
-                {getGovernanceHelper(defect)}
-              </Text>
-              <InfoRow label="Lifecycle Status" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
-              <InfoRow label="Resolution Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
               <NoteBlock
                 label="Maintenance Notes"
                 value={defect.maintenanceNotes}
@@ -387,19 +473,8 @@ export function DefectDetailScreen({
             </View>
 
             {canShowMaintenanceActions ? (
-              <View
-                style={{
-                  backgroundColor: '#ffffff',
-                  borderRadius: 16,
-                  padding: 16,
-                  gap: 12,
-                  borderWidth: 1,
-                  borderColor: '#dce5f1',
-                }}
-              >
-                <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                  Maintenance Action
-                </Text>
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Maintenance</Text>
                 <InfoRow label="Assigned To" value={defect.assignedTo || 'Unassigned'} />
                 <TextInput
                   value={maintenanceNote}
@@ -409,23 +484,10 @@ export function DefectDetailScreen({
                   multiline
                   autoCapitalize="characters"
                   textAlignVertical="top"
-                  style={{
-                    minHeight: 96,
-                    borderRadius: 14,
-                    borderWidth: 1,
-                    borderColor: '#c7d5e8',
-                    backgroundColor: '#ffffff',
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                    fontSize: 16,
-                    lineHeight: 22,
-                    color: '#0f172a',
-                  }}
+                  style={styles.noteInput}
                 />
-                <View style={{ gap: 8 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>
-                    Resolution Outcome
-                  </Text>
+                <View style={styles.outcomeWrap}>
+                  <Text style={styles.controlLabel}>Outcome</Text>
                   {MAINTENANCE_OUTCOMES.map((outcome) => (
                     <OutcomeButton
                       key={outcome}
@@ -436,44 +498,80 @@ export function DefectDetailScreen({
                   ))}
                 </View>
 
-                {proofPhoto ? (
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() =>
-                      onOpenImagePreview({
-                        uri: proofPhoto.uri,
-                        title: 'Repair Proof',
-                      })
-                    }
-                  >
-                    <Image
-                      source={{ uri: proofPhoto.uri }}
-                      style={{
-                        width: '100%',
-                        height: 220,
-                        borderRadius: 14,
-                        backgroundColor: '#e5edf8',
-                      }}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-                ) : null}
+                <View style={styles.proofSection}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.controlLabel}>After Proof</Text>
+                    <Text style={styles.countPill}>{proofPhotos.length}</Text>
+                  </View>
+                  {proofPhotos.length > 0 ? (
+                    <View style={styles.evidenceGrid}>
+                      {proofPhotos.map((photo, index) => (
+                        <View key={photo.id} style={styles.evidenceTile}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() =>
+                              onOpenImagePreview({
+                                uri: photo.uri,
+                                title: `Proof ${index + 1}`,
+                              })
+                            }
+                          >
+                            <Image
+                              source={{ uri: photo.uri }}
+                              style={styles.evidenceImage}
+                              resizeMode="cover"
+                            />
+                          </TouchableOpacity>
+                          <View style={styles.evidenceMeta}>
+                            <Text style={styles.evidenceTitle}>After {index + 1}</Text>
+                            <Text style={styles.evidenceMetaText} numberOfLines={1}>
+                              {formatDateTime(photo.timestamp)}
+                            </Text>
+                            {hasCoordinatePair(photo.latitude, photo.longitude) ? (
+                              <Text style={styles.evidenceMetaText} numberOfLines={1}>
+                                GPS {formatCoordinatePairCompact(photo.latitude, photo.longitude)}
+                              </Text>
+                            ) : null}
+                            <Pressable
+                              disabled={savingMaintenanceAction !== null}
+                              onPress={() => handleRemoveProofPhoto(photo.id)}
+                              style={({ pressed }) => [
+                                styles.smallDangerButton,
+                                savingMaintenanceAction !== null && styles.disabledButton,
+                                pressed && savingMaintenanceAction === null && styles.pressedButton,
+                              ]}
+                            >
+                              <Text style={styles.smallDangerButtonText}>Remove</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.compactEmptyPanel}>
+                      <Text style={styles.mutedText}>No proof images</Text>
+                    </View>
+                  )}
+                  {savingMaintenanceAction === 'complete' && proofPhotos.length > 0 ? (
+                    <Text style={styles.uploadText}>
+                      Uploading {proofPhotos.length} proof image{proofPhotos.length === 1 ? '' : 's'}...
+                    </Text>
+                  ) : null}
+                </View>
 
-                <View style={{ gap: 10 }}>
+                <View style={styles.actionStack}>
                   <Pressable
                     disabled={savingMaintenanceAction !== null}
                     onPress={handleMarkInProgress}
-                    style={({ pressed }) => ({
-                      minHeight: 50,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: '#dbeafe',
-                      opacity: savingMaintenanceAction && savingMaintenanceAction !== 'start' ? 0.55 : pressed ? 0.9 : 1,
-                    })}
+                    style={({ pressed }) => [
+                      styles.maintenanceButton,
+                      styles.maintenanceButtonBlue,
+                      savingMaintenanceAction && savingMaintenanceAction !== 'start' && styles.disabledButton,
+                      pressed && !savingMaintenanceAction && styles.pressedButton,
+                    ]}
                   >
                     {savingMaintenanceAction === 'start' ? <ActivityIndicator color="#1d4ed8" /> : null}
-                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#1d4ed8' }}>
+                    <Text style={styles.maintenanceButtonBlueText}>
                       {savingMaintenanceAction === 'start' ? 'Saving...' : 'Mark In Progress'}
                     </Text>
                   </Pressable>
@@ -481,21 +579,19 @@ export function DefectDetailScreen({
                   <Pressable
                     disabled={savingMaintenanceAction !== null}
                     onPress={captureMaintenanceProofPhoto}
-                    style={({ pressed }) => ({
-                      minHeight: 50,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: '#e5edf8',
-                      opacity: savingMaintenanceAction && savingMaintenanceAction !== 'capture' ? 0.55 : pressed ? 0.9 : 1,
-                    })}
+                    style={({ pressed }) => [
+                      styles.maintenanceButton,
+                      styles.maintenanceButtonNeutral,
+                      savingMaintenanceAction && savingMaintenanceAction !== 'capture' && styles.disabledButton,
+                      pressed && !savingMaintenanceAction && styles.pressedButton,
+                    ]}
                   >
                     {savingMaintenanceAction === 'capture' ? <ActivityIndicator color="#10233d" /> : null}
-                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#10233d' }}>
+                    <Text style={styles.maintenanceButtonNeutralText}>
                       {savingMaintenanceAction === 'capture'
                         ? 'Opening Camera...'
-                        : proofPhoto
-                          ? 'Retake Repair Proof'
+                        : proofPhotos.length > 0
+                          ? 'Add Proof Image'
                           : 'Capture Repair Proof'}
                     </Text>
                   </Pressable>
@@ -503,17 +599,15 @@ export function DefectDetailScreen({
                   <Pressable
                     disabled={savingMaintenanceAction !== null}
                     onPress={handleMaintenanceCompleted}
-                    style={({ pressed }) => ({
-                      minHeight: 50,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: '#dcfce7',
-                      opacity: savingMaintenanceAction && savingMaintenanceAction !== 'complete' ? 0.55 : pressed ? 0.9 : 1,
-                    })}
+                    style={({ pressed }) => [
+                      styles.maintenanceButton,
+                      styles.maintenanceButtonGreen,
+                      savingMaintenanceAction && savingMaintenanceAction !== 'complete' && styles.disabledButton,
+                      pressed && !savingMaintenanceAction && styles.pressedButton,
+                    ]}
                   >
                     {savingMaintenanceAction === 'complete' ? <ActivityIndicator color="#166534" /> : null}
-                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#166534' }}>
+                    <Text style={styles.maintenanceButtonGreenText}>
                       {savingMaintenanceAction === 'complete'
                         ? 'Completing...'
                         : 'Mark Maintenance Completed'}
@@ -523,19 +617,39 @@ export function DefectDetailScreen({
               </View>
             ) : null}
 
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                Operational Evidence
-              </Text>
+            {pendingOverlayPhoto ? (
+              <View pointerEvents="none" style={styles.overlayCaptureRoot}>
+                <View
+                  ref={overlayCaptureRef}
+                  collapsable={false}
+                  style={[
+                    styles.overlayCaptureCanvas,
+                    {
+                      width: pendingOverlayPhoto.layoutWidth,
+                      height: pendingOverlayPhoto.layoutHeight,
+                    },
+                  ]}
+                >
+                  <Image
+                    source={{ uri: pendingOverlayPhoto.originalUri }}
+                    style={styles.overlayCaptureImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.overlayBadge}>
+                    <Text style={styles.overlayText}>{pendingOverlayPhoto.timestampLabel}</Text>
+                    {hasCoordinatePair(pendingOverlayPhoto.latitude, pendingOverlayPhoto.longitude) ? (
+                      <Text style={styles.overlayText}>
+                        Lat: {formatOverlayCoordinate(pendingOverlayPhoto.latitude)}, Lng:{' '}
+                        {formatOverlayCoordinate(pendingOverlayPhoto.longitude)}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Evidence</Text>
               <NoteBlock
                 label="Verification Notes"
                 value={defect.verificationNotes ?? defect.verificationRemarks}
@@ -548,88 +662,30 @@ export function DefectDetailScreen({
                 label="Closure Notes"
                 value={defect.closureVerificationNotes ?? defect.closureRemarks}
               />
-              {proofImages.length > 0 ? (
-                <View style={{ gap: 10 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>
-                    Maintenance Proof Images
-                  </Text>
-                  {proofImages.map((image, index) => {
-                    const imageUri = getImageSourceUri(image);
-
-                    return imageUri ? (
-                      <TouchableOpacity
-                        key={`${image.id ?? imageUri}-${index}`}
-                        activeOpacity={0.85}
-                        onPress={() =>
-                          onOpenImagePreview({
-                            uri: imageUri,
-                            title: 'Maintenance Proof',
-                          })
-                        }
-                      >
-                        <Image
-                          source={{ uri: imageUri }}
-                          style={{
-                            width: '100%',
-                            height: 220,
-                            borderRadius: 14,
-                            backgroundColor: '#e5edf8',
-                          }}
-                          resizeMode="cover"
-                        />
-                        <Text style={{ marginTop: 6, fontSize: 12, color: '#607086' }}>
-                          {formatDateTime(image.timestamp ?? image.createdAt)}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null;
-                  })}
-                </View>
-              ) : null}
+              <EvidenceGrid
+                title="After Proof"
+                images={proofImages}
+                emptyText="No maintenance proof"
+                titlePrefix="After"
+                onOpenImagePreview={onOpenImagePreview}
+              />
             </View>
 
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>Defect</Text>
-              <Text style={{ fontSize: 16, lineHeight: 23, fontWeight: '700', color: '#10233d' }}>
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Defect</Text>
+              <Text style={styles.defectLabel}>
                 {defect.label}
               </Text>
-              <View style={{ gap: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>
-                  Checklist Remark
-                </Text>
-                <Text
-                  style={{
-                    fontSize: 15,
-                    lineHeight: 22,
-                    color: defect.checklistRemark ? '#10233d' : '#607086',
-                  }}
-                >
+              <View style={styles.noteBlock}>
+                <Text style={styles.noteLabel}>Checklist Remark</Text>
+                <Text style={[styles.noteValue, !defect.checklistRemark && styles.noteValueMuted]}>
                   {defect.checklistRemark || 'No remark.'}
                 </Text>
               </View>
             </View>
 
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 12,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                Action Remark
-              </Text>
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Action Remark</Text>
               <TextInput
                 value={actionRemark}
                 onChangeText={setActionRemark}
@@ -638,20 +694,9 @@ export function DefectDetailScreen({
                 multiline
                 autoCapitalize="characters"
                 textAlignVertical="top"
-                style={{
-                  minHeight: 110,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: '#c7d5e8',
-                  backgroundColor: '#ffffff',
-                  paddingHorizontal: 16,
-                  paddingVertical: 12,
-                  fontSize: 16,
-                  lineHeight: 22,
-                  color: '#0f172a',
-                }}
+                style={styles.noteInput}
               />
-              <View style={{ gap: 10 }}>
+              <View style={styles.actionStack}>
                 <StatusButton
                   label="Mark Open"
                   status="OPEN"
@@ -676,71 +721,14 @@ export function DefectDetailScreen({
               </View>
             </View>
 
-            <View
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                padding: 16,
-                gap: 14,
-                borderWidth: 1,
-                borderColor: '#dce5f1',
-              }}
-            >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
-                Inspection Images
-              </Text>
-              {defect.images.length === 0 ? (
-                <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
-                  No inspection images yet.
-                </Text>
-              ) : (
-                defect.images.map((image, index) => {
-                  const imageUri = getImageSourceUri(image);
-
-                  return (
-                    <View key={`${image.id ?? imageUri ?? 'image'}-${index}`} style={{ gap: 8 }}>
-                      {imageUri ? (
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={() =>
-                            onOpenImagePreview({
-                              uri: imageUri,
-                              title: 'Inspection Image',
-                            })
-                          }
-                        >
-                          <Image
-                            source={{ uri: imageUri }}
-                            style={{
-                              width: '100%',
-                              height: 220,
-                              borderRadius: 14,
-                              backgroundColor: '#e5edf8',
-                            }}
-                            resizeMode="cover"
-                          />
-                        </TouchableOpacity>
-                      ) : (
-                        <View
-                          style={{
-                            height: 120,
-                            borderRadius: 14,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backgroundColor: '#eef4fb',
-                            borderWidth: 1,
-                            borderColor: '#d9e4f2',
-                          }}
-                        >
-                          <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
-                            Image unavailable.
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  );
-                })
-              )}
+            <View style={styles.card}>
+              <EvidenceGrid
+                title="Before / Inspection"
+                images={defect.images}
+                emptyText="No inspection images"
+                titlePrefix="Before"
+                onOpenImagePreview={onOpenImagePreview}
+              />
             </View>
           </>
         ) : null}
@@ -750,17 +738,18 @@ export function DefectDetailScreen({
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
-      <Text style={{ flex: 1, fontSize: 14, color: '#607086' }}>{label}</Text>
-      <Text
-        style={{
-          flex: 1.2,
-          fontSize: 14,
-          fontWeight: '600',
-          color: '#0f172a',
-          textAlign: 'right',
-        }}
-      >
+    <View style={styles.infoRow}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function CompactFact({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.compactFact}>
+      <Text style={styles.compactFactLabel}>{label}</Text>
+      <Text style={styles.compactFactValue} numberOfLines={1}>
         {value}
       </Text>
     </View>
@@ -769,19 +758,79 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function NoteBlock({ label, value }: { label: string; value?: string | null }) {
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>
-        {label}
-      </Text>
-      <Text
-        style={{
-          fontSize: 15,
-          lineHeight: 22,
-          color: value?.trim() ? '#10233d' : '#607086',
-        }}
-      >
+    <View style={styles.noteBlock}>
+      <Text style={styles.noteLabel}>{label}</Text>
+      <Text style={[styles.noteValue, !value?.trim() && styles.noteValueMuted]}>
         {value?.trim() || 'Not recorded.'}
       </Text>
+    </View>
+  );
+}
+
+function EvidenceGrid({
+  title,
+  images,
+  emptyText,
+  titlePrefix,
+  onOpenImagePreview,
+}: {
+  title: string;
+  images: Array<InspectionImage | DefectEvidenceImage>;
+  emptyText: string;
+  titlePrefix: string;
+  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
+}) {
+  return (
+    <View style={styles.proofSection}>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.controlLabel}>{title}</Text>
+        <Text style={styles.countPill}>{images.length}</Text>
+      </View>
+      {images.length === 0 ? (
+        <View style={styles.compactEmptyPanel}>
+          <Text style={styles.mutedText}>{emptyText}</Text>
+        </View>
+      ) : (
+        <View style={styles.evidenceGrid}>
+          {images.map((image, index) => {
+            const imageUri = getImageSourceUri(image);
+            const timestamp = getEvidenceTimestamp(image);
+
+            return (
+              <View key={`${image.id ?? imageUri ?? 'image'}-${index}`} style={styles.evidenceTile}>
+                {imageUri ? (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() =>
+                      onOpenImagePreview({
+                        uri: imageUri,
+                        title: `${titlePrefix} ${index + 1}`,
+                      })
+                    }
+                  >
+                    <Image source={{ uri: imageUri }} style={styles.evidenceImage} resizeMode="cover" />
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.evidenceUnavailable}>
+                    <Text style={styles.mutedText}>Unavailable</Text>
+                  </View>
+                )}
+                <View style={styles.evidenceMeta}>
+                  <Text style={styles.evidenceTitle}>{titlePrefix} {index + 1}</Text>
+                  <Text style={styles.evidenceMetaText} numberOfLines={1}>
+                    {formatDateTime(timestamp)}
+                  </Text>
+                  {hasCoordinatePair(image.latitude, image.longitude) ? (
+                    <Text style={styles.evidenceMetaText} numberOfLines={1}>
+                      GPS {formatCoordinatePairCompact(image.latitude, image.longitude)}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -791,15 +840,15 @@ function StatusBadge({ status }: { status: DefectStatus }) {
 
   return (
     <View
-      style={{
-        alignSelf: 'flex-start',
-        borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        backgroundColor: style.backgroundColor,
-      }}
+      style={[
+        styles.statusBadge,
+        {
+          backgroundColor: style.backgroundColor,
+          borderColor: style.borderColor,
+        },
+      ]}
     >
-      <Text style={{ fontSize: 12, fontWeight: '800', color: style.color }}>
+      <Text style={[styles.statusBadgeText, { color: style.color }]}>
         {formatStatus(status)}
       </Text>
     </View>
@@ -828,22 +877,18 @@ function StatusButton({
     <Pressable
       disabled={isDisabled}
       onPress={() => onPress(status)}
-      style={({ pressed }) => ({
-        minHeight: 50,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 10,
-        paddingHorizontal: 16,
-        backgroundColor: isCurrent ? style.backgroundColor : '#e5edf8',
-        borderWidth: isCurrent ? 1 : 0,
-        borderColor: style.color,
-        opacity: isDisabled && !isSaving ? 0.55 : pressed ? 0.9 : 1,
-      })}
+      style={({ pressed }) => [
+        styles.statusButton,
+        {
+          backgroundColor: isCurrent ? style.backgroundColor : '#f1f5f9',
+          borderColor: isCurrent ? style.borderColor : '#dbe3ee',
+        },
+        isDisabled && !isSaving && styles.disabledButton,
+        pressed && !isDisabled && styles.pressedButton,
+      ]}
     >
       {isSaving ? <ActivityIndicator color={style.color} /> : null}
-      <Text style={{ fontSize: 15, fontWeight: '800', color: isCurrent ? style.color : '#10233d' }}>
+      <Text style={[styles.statusButtonText, { color: isCurrent ? style.color : '#10233d' }]}>
         {isSaving ? 'Saving...' : label}
       </Text>
     </Pressable>
@@ -864,19 +909,13 @@ function OutcomeButton({
   return (
     <Pressable
       onPress={() => onPress(outcome)}
-      style={({ pressed }) => ({
-        minHeight: 46,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 16,
-        backgroundColor: isSelected ? '#ecfdf5' : '#e5edf8',
-        borderWidth: isSelected ? 1 : 0,
-        borderColor: '#0f766e',
-        opacity: pressed ? 0.9 : 1,
-      })}
+      style={({ pressed }) => [
+        styles.outcomeButton,
+        isSelected && styles.outcomeButtonSelected,
+        pressed && styles.pressedButton,
+      ]}
     >
-      <Text style={{ fontSize: 14, fontWeight: '800', color: isSelected ? '#0f766e' : '#10233d' }}>
+      <Text style={[styles.outcomeButtonText, isSelected && styles.outcomeButtonTextSelected]}>
         {formatEnumLabel(outcome)}
       </Text>
     </Pressable>
@@ -887,6 +926,7 @@ function getStatusStyle(status: DefectStatus) {
   if (status === 'CLOSED') {
     return {
       backgroundColor: '#dcfce7',
+      borderColor: '#bbf7d0',
       color: '#166534',
     };
   }
@@ -894,12 +934,14 @@ function getStatusStyle(status: DefectStatus) {
   if (status === 'IN_PROGRESS') {
     return {
       backgroundColor: '#dbeafe',
+      borderColor: '#bfdbfe',
       color: '#1d4ed8',
     };
   }
 
   return {
     backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
     color: '#92400e',
   };
 }
@@ -951,22 +993,6 @@ function getExceptionNotes(defect: DefectDetail) {
   return defect.maintenanceNotes ?? defect.closureVerificationNotes ?? defect.closureRemarks ?? defect.actionRemark;
 }
 
-function getGovernanceHelper(defect: DefectDetail) {
-  if (getDisplayLifecycleStatus(defect.lifecycleStatus) === 'REJECTED') {
-    return 'Rejected QA/QC decisions stay visible with notes and timestamps.';
-  }
-
-  if (defect.resolutionOutcome === 'EXTERNAL_CONSTRAINT') {
-    return 'External constraints are operational exceptions, not deleted defects.';
-  }
-
-  if (isExceptionOutcome(defect.resolutionOutcome)) {
-    return 'Outcome exceptions stay separate from the lifecycle status.';
-  }
-
-  return 'Resolution outcome is tracked separately from lifecycle status.';
-}
-
 function isMaintenanceOutcome(outcome?: string | null): outcome is DefectResolutionOutcome {
   return MAINTENANCE_OUTCOMES.includes(outcome as DefectResolutionOutcome);
 }
@@ -993,6 +1019,89 @@ async function getOptionalCurrentPosition() {
   }
 }
 
+function hasCoordinatePair(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+) {
+  return (
+    typeof latitude === 'number' &&
+    Number.isFinite(latitude) &&
+    typeof longitude === 'number' &&
+    Number.isFinite(longitude)
+  );
+}
+
+function formatCoordinatePairCompact(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+) {
+  if (!hasCoordinatePair(latitude, longitude)) {
+    return 'N/A';
+  }
+
+  return `Lat ${formatOverlayCoordinate(latitude)} · Lng ${formatOverlayCoordinate(longitude)}`;
+}
+
+function getEvidenceTimestamp(image: InspectionImage | DefectEvidenceImage) {
+  const uploadedAt = 'uploadedAt' in image ? image.uploadedAt : undefined;
+
+  return image.timestamp ?? uploadedAt ?? image.createdAt;
+}
+
+function formatOverlayCoordinate(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(5) : 'N/A';
+}
+
+function createLocalProofPhotoId(timestamp: string) {
+  return `proof-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatPhotoTimestampLabel(value: Date) {
+  return `${value.getFullYear()}-${padNumber(value.getMonth() + 1)}-${padNumber(value.getDate())} ${padNumber(value.getHours())}:${padNumber(value.getMinutes())}:${padNumber(value.getSeconds())}`;
+}
+
+function padNumber(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+async function getOverlayCaptureSize(
+  uri: string,
+  width?: number,
+  height?: number,
+) {
+  const imageSize = width && height ? { width, height } : await loadImageSize(uri);
+  const longestEdge = Math.max(imageSize.width, imageSize.height);
+  const scale = longestEdge > 1600 ? 1600 / longestEdge : 1;
+  const captureWidth = Math.max(1, Math.round(imageSize.width * scale));
+  const captureHeight = Math.max(1, Math.round(imageSize.height * scale));
+  const pixelRatio = PixelRatio.get() || 1;
+
+  return {
+    captureWidth,
+    captureHeight,
+    layoutWidth: captureWidth / pixelRatio,
+    layoutHeight: captureHeight / pixelRatio,
+  };
+}
+
+async function loadImageSize(uri: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(
+      uri,
+      (width, height) => resolve({ width, height }),
+      () => reject(new Error('Unable to measure the captured proof photo.')),
+    );
+  });
+}
+
+async function waitForNextPaint() {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
+
+async function delay(durationMs: number) {
+  await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
+}
+
 function getImageSourceUri(image: InspectionImage | DefectEvidenceImage) {
   const source = image.uri || image.url;
 
@@ -1010,3 +1119,358 @@ function getImageSourceUri(image: InspectionImage | DefectEvidenceImage) {
 
   return source;
 }
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: uiTheme.radius.card,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  summaryTitleWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  assetCodeText: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '800',
+  },
+  mutedText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  sectionTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  statusGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  compactFact: {
+    flexGrow: 1,
+    flexBasis: '47%',
+    minWidth: 136,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  compactFactLabel: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  compactFactValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  infoLabel: {
+    flex: 1,
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  infoValue: {
+    flex: 1.2,
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  noteBlock: {
+    gap: 4,
+  },
+  noteLabel: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  noteValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  noteValueMuted: {
+    color: uiTheme.colors.textSecondary,
+  },
+  noteInput: {
+    minHeight: 78,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    lineHeight: 21,
+    color: uiTheme.colors.textPrimary,
+  },
+  controlLabel: {
+    flex: 1,
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  outcomeWrap: {
+    gap: 6,
+  },
+  outcomeButton: {
+    minHeight: 40,
+    borderRadius: uiTheme.radius.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  outcomeButtonSelected: {
+    backgroundColor: uiTheme.colors.successSoft,
+    borderColor: '#bbf7d0',
+  },
+  outcomeButtonText: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  outcomeButtonTextSelected: {
+    color: uiTheme.colors.success,
+  },
+  proofSection: {
+    gap: 8,
+  },
+  sectionHeaderRow: {
+    minHeight: 26,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  countPill: {
+    minWidth: 28,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    color: uiTheme.colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  evidenceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  evidenceTile: {
+    flexGrow: 1,
+    flexBasis: '47%',
+    minWidth: 146,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    overflow: 'hidden',
+  },
+  evidenceImage: {
+    width: '100%',
+    height: 126,
+    backgroundColor: '#e5edf8',
+  },
+  evidenceUnavailable: {
+    height: 126,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef4fb',
+  },
+  evidenceMeta: {
+    padding: 8,
+    gap: 4,
+  },
+  evidenceTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  evidenceMetaText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
+  compactEmptyPanel: {
+    minHeight: 48,
+    borderRadius: uiTheme.radius.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+  },
+  uploadText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  smallDangerButton: {
+    minHeight: 32,
+    borderRadius: uiTheme.radius.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff7f7',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  smallDangerButtonText: {
+    color: uiTheme.colors.danger,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  actionStack: {
+    gap: 8,
+  },
+  maintenanceButton: {
+    minHeight: 44,
+    borderRadius: uiTheme.radius.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  maintenanceButtonBlue: {
+    backgroundColor: '#dbeafe',
+  },
+  maintenanceButtonNeutral: {
+    backgroundColor: '#e5edf8',
+  },
+  maintenanceButtonGreen: {
+    backgroundColor: uiTheme.colors.successSoft,
+  },
+  maintenanceButtonBlueText: {
+    color: '#1d4ed8',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  maintenanceButtonNeutralText: {
+    color: '#10233d',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  maintenanceButtonGreenText: {
+    color: uiTheme.colors.success,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800',
+  },
+  statusButton: {
+    minHeight: 42,
+    borderRadius: uiTheme.radius.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+  },
+  statusButtonText: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  defectLabel: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  pressedButton: {
+    opacity: 0.9,
+  },
+  overlayCaptureRoot: {
+    position: 'absolute',
+    left: -10000,
+    top: 0,
+  },
+  overlayCaptureCanvas: {
+    position: 'relative',
+    backgroundColor: '#000000',
+  },
+  overlayCaptureImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  overlayBadge: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    maxWidth: '78%',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  overlayText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+});

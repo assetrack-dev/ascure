@@ -8,6 +8,7 @@ import {
   DefectSeverity,
   InspectionItemInputType,
   InspectionTemplateStatus,
+  OperationalDomain,
   Prisma,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -23,6 +24,30 @@ import {
 
 const templateDetailInclude = {
   assetType: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      capabilityId: true,
+      capability: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          isActive: true,
+        },
+      },
+    },
+  },
+  capability: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      isActive: true,
+    },
+  },
+  mainhead: {
     select: {
       id: true,
       code: true,
@@ -48,27 +73,134 @@ type TemplateDetailRecord = Prisma.InspectionTemplateGetPayload<{
 }>;
 
 type PrismaClientLike = Prisma.TransactionClient | PrismaService;
+type TemplateResolutionSource = 'ASSET_TYPE_MAINHEAD' | 'ASSET_TYPE' | 'CAPABILITY' | 'TENANT_ACTIVE';
+
+type TemplateMappingInput = {
+  capabilityId?: string | null;
+  mainheadId?: string | null;
+  operationalDomain?: OperationalDomain | null;
+};
 
 @Injectable()
 export class TemplatesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getActiveTemplate(user: RequestUser, assetTypeId: string) {
-    const template = await this.prisma.inspectionTemplate.findFirst({
-      where: {
+    const resolution = await this.resolveActiveTemplate(user, { assetTypeId });
+
+    return resolution.template;
+  }
+
+  async resolveActiveTemplate(
+    user: RequestUser,
+    input: {
+      assetTypeId?: string;
+      capabilityId?: string | null;
+      mainheadId?: string | null;
+    },
+  ): Promise<{ template: TemplateDetailRecord; source: TemplateResolutionSource }> {
+    if (input.assetTypeId && input.mainheadId) {
+      const mainheadTemplate = await this.findActiveTemplate({
         tenantId: user.tenantId,
-        assetTypeId,
+        assetTypeId: input.assetTypeId,
+        mainheadId: input.mainheadId,
+      });
+
+      if (mainheadTemplate) {
+        return {
+          template: mainheadTemplate,
+          source: 'ASSET_TYPE_MAINHEAD',
+        };
+      }
+    }
+
+    if (input.assetTypeId) {
+      const assetTypeTemplate = await this.findActiveTemplate({
+        tenantId: user.tenantId,
+        assetTypeId: input.assetTypeId,
+      });
+
+      if (assetTypeTemplate) {
+        return {
+          template: assetTypeTemplate,
+          source: 'ASSET_TYPE',
+        };
+      }
+    }
+
+    const capabilityId =
+      input.capabilityId ?? (input.assetTypeId ? await this.findAssetTypeCapabilityId(user.tenantId, input.assetTypeId) : null);
+
+    if (capabilityId) {
+      const capabilityTemplate = await this.findActiveTemplate({
+        tenantId: user.tenantId,
+        capabilityId,
+      });
+
+      if (capabilityTemplate) {
+        return {
+          template: capabilityTemplate,
+          source: 'CAPABILITY',
+        };
+      }
+    }
+
+    const fallbackTemplate = await this.findActiveTemplate({
+      tenantId: user.tenantId,
+    });
+
+    if (!fallbackTemplate) {
+      throw new NotFoundException('Active inspection template not found.');
+    }
+
+    return {
+      template: fallbackTemplate,
+      source: 'TENANT_ACTIVE',
+    };
+  }
+
+  private findActiveTemplate(where: {
+    tenantId: string;
+    assetTypeId?: string;
+    capabilityId?: string;
+    mainheadId?: string;
+  }) {
+    return this.prisma.inspectionTemplate.findFirst({
+      where: {
+        tenantId: where.tenantId,
+        ...(where.assetTypeId ? { assetTypeId: where.assetTypeId } : {}),
+        ...(where.capabilityId ? { capabilityId: where.capabilityId } : {}),
+        ...(where.mainheadId ? { mainheadId: where.mainheadId } : {}),
         isActive: true,
         status: InspectionTemplateStatus.ACTIVE,
       },
       include: templateDetailInclude,
+      orderBy: [
+        {
+          publishedAt: 'desc',
+        },
+        {
+          updatedAt: 'desc',
+        },
+        {
+          version: 'desc',
+        },
+      ],
+    });
+  }
+
+  private async findAssetTypeCapabilityId(tenantId: string, assetTypeId: string) {
+    const assetType = await this.prisma.assetType.findFirst({
+      where: {
+        id: assetTypeId,
+        tenantId,
+      },
+      select: {
+        capabilityId: true,
+      },
     });
 
-    if (!template) {
-      throw new NotFoundException('Active inspection template not found for the selected asset type.');
-    }
-
-    return template;
+    return assetType?.capabilityId ?? null;
   }
 
   async listTemplates(user: RequestUser, query: ListTemplatesQueryDto) {
@@ -76,10 +208,36 @@ export class TemplatesService {
       where: {
         tenantId: user.tenantId,
         ...(query.assetTypeId ? { assetTypeId: query.assetTypeId } : {}),
+        ...(query.capabilityId ? { capabilityId: query.capabilityId } : {}),
+        ...(query.mainheadId ? { mainheadId: query.mainheadId } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
       include: {
         assetType: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            capabilityId: true,
+            capability: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                isActive: true,
+              },
+            },
+          },
+        },
+        capability: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            isActive: true,
+          },
+        },
+        mainhead: {
           select: {
             id: true,
             code: true,
@@ -114,6 +272,9 @@ export class TemplatesService {
       .map((template) => ({
         id: template.id,
         assetTypeId: template.assetTypeId,
+        capabilityId: template.capabilityId,
+        mainheadId: template.mainheadId,
+        operationalDomain: template.operationalDomain,
         name: template.name,
         version: template.version,
         status: template.status,
@@ -122,6 +283,8 @@ export class TemplatesService {
         createdAt: template.createdAt,
         updatedAt: template.updatedAt,
         assetType: template.assetType,
+        capability: template.capability ?? template.assetType.capability,
+        mainhead: template.mainhead,
         sectionCount: template._count.sections,
         itemCount: template._count.items,
         inspectionCount: template._count.inspections,
@@ -141,7 +304,8 @@ export class TemplatesService {
   }
 
   async createTemplate(user: RequestUser, dto: CreateTemplateDto) {
-    await this.findAssetTypeOrThrow(this.prisma, user.tenantId, dto.assetTypeId);
+    const assetType = await this.findAssetTypeOrThrow(this.prisma, user.tenantId, dto.assetTypeId);
+    const mapping = await this.resolveTemplateMapping(this.prisma, assetType, dto);
 
     const version = dto.version ?? (await this.getNextVersion(this.prisma, dto.assetTypeId));
 
@@ -152,6 +316,9 @@ export class TemplatesService {
         data: {
           tenantId: user.tenantId,
           assetTypeId: dto.assetTypeId,
+          capabilityId: mapping.capabilityId,
+          mainheadId: mapping.mainheadId,
+          operationalDomain: mapping.operationalDomain,
           name: this.normalizeRequiredText(dto.name, 'Template name'),
           version,
           status: InspectionTemplateStatus.DRAFT,
@@ -352,6 +519,9 @@ export class TemplatesService {
           data: {
             tenantId: user.tenantId,
             assetTypeId: sourceTemplate.assetTypeId,
+            capabilityId: sourceTemplate.capabilityId,
+            mainheadId: sourceTemplate.mainheadId,
+            operationalDomain: sourceTemplate.operationalDomain,
             name: sourceTemplate.name,
             version: nextVersion,
             status: InspectionTemplateStatus.DRAFT,
@@ -530,6 +700,9 @@ export class TemplatesService {
       },
       select: {
         id: true,
+        code: true,
+        name: true,
+        capabilityId: true,
       },
     });
 
@@ -538,6 +711,78 @@ export class TemplatesService {
     }
 
     return assetType;
+  }
+
+  private async resolveTemplateMapping(
+    client: PrismaClientLike,
+    assetType: {
+      id: string;
+      capabilityId: string | null;
+    },
+    input: TemplateMappingInput,
+    fallback?: {
+      capabilityId: string | null;
+      mainheadId: string | null;
+      operationalDomain: OperationalDomain | null;
+    },
+  ) {
+    const capabilityId =
+      input.capabilityId !== undefined
+        ? input.capabilityId
+        : fallback?.capabilityId ?? assetType.capabilityId ?? null;
+    const mainheadId =
+      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
+    const operationalDomain =
+      input.operationalDomain !== undefined
+        ? input.operationalDomain
+        : fallback?.operationalDomain ?? null;
+
+    await this.assertCapabilityExists(client, capabilityId);
+    await this.assertMainheadExists(client, mainheadId);
+
+    return {
+      capabilityId,
+      mainheadId,
+      operationalDomain,
+    };
+  }
+
+  private async assertCapabilityExists(client: PrismaClientLike, capabilityId: string | null) {
+    if (!capabilityId) {
+      return;
+    }
+
+    const capability = await client.capability.findUnique({
+      where: {
+        id: capabilityId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!capability) {
+      throw new NotFoundException('Capability not found.');
+    }
+  }
+
+  private async assertMainheadExists(client: PrismaClientLike, mainheadId: string | null) {
+    if (!mainheadId) {
+      return;
+    }
+
+    const mainhead = await client.mainhead.findUnique({
+      where: {
+        id: mainheadId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!mainhead) {
+      throw new NotFoundException('MAINHEAD not found.');
+    }
   }
 
   private async findSectionOrThrow(
@@ -839,6 +1084,9 @@ export class TemplatesService {
         id: template.id,
         tenantId: template.tenantId,
         assetTypeId: template.assetTypeId,
+        capabilityId: template.capabilityId,
+        mainheadId: template.mainheadId,
+        operationalDomain: template.operationalDomain,
         name: template.name,
         version: template.version,
         status: template.status,
@@ -848,6 +1096,8 @@ export class TemplatesService {
         updatedAt: template.updatedAt,
       },
       assetType: template.assetType,
+      capability: template.capability ?? template.assetType.capability,
+      mainhead: template.mainhead,
       sections: template.sections.map((section) => ({
         id: section.id,
         title: section.title,

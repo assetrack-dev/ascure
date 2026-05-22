@@ -8,6 +8,7 @@ import {
   DefectSeverity,
   InspectionItemInputType,
   InspectionTemplateStatus,
+  OperationalDomain,
   Prisma,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -15,12 +16,37 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   ChecklistTemplateItemInputDto,
   CreateChecklistTemplateDto,
+  ResolveInspectionTemplateQueryDto,
   UpdateChecklistTemplateDto,
 } from './dto/checklist-template.dto';
 import { normalizeTemplateSelectOptions } from './template-builder.constants';
 
 const checklistTemplateInclude = {
   assetType: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      capabilityId: true,
+      capability: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          isActive: true,
+        },
+      },
+    },
+  },
+  capability: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      isActive: true,
+    },
+  },
+  mainhead: {
     select: {
       id: true,
       code: true,
@@ -52,6 +78,19 @@ type ChecklistTemplateRecord = Prisma.InspectionTemplateGetPayload<{
 
 type ChecklistTemplateItemRecord = ChecklistTemplateRecord['sections'][number]['items'][number];
 type PrismaClientLike = Prisma.TransactionClient | PrismaService;
+type ChecklistTemplateResolutionSource =
+  | 'ASSET_TYPE_MAINHEAD'
+  | 'ASSET_TYPE'
+  | 'CAPABILITY'
+  | 'TENANT_ACTIVE';
+
+type ChecklistTemplateMappingInput = {
+  assetType?: string;
+  assetTypeId?: string;
+  capabilityId?: string | null;
+  mainheadId?: string | null;
+  operationalDomain?: OperationalDomain | null;
+};
 
 type DesiredChecklistItem = {
   id?: string;
@@ -96,25 +135,16 @@ export class ChecklistTemplatesService {
   }
 
   async getActiveByAssetType(user: RequestUser, assetType: string) {
-    const assetTypeRecord = await this.findAssetTypeOrThrow(this.prisma, user.tenantId, assetType);
-    const template = await this.prisma.inspectionTemplate.findFirst({
-      where: {
-        tenantId: user.tenantId,
-        assetTypeId: assetTypeRecord.id,
-        isActive: true,
-        status: InspectionTemplateStatus.ACTIVE,
-      },
-      include: checklistTemplateInclude,
-      orderBy: {
-        version: 'desc',
-      },
+    return this.resolve(user, { assetType });
+  }
+
+  async resolve(user: RequestUser, query: ResolveInspectionTemplateQueryDto) {
+    const resolution = await this.resolveActiveTemplate(user, query);
+
+    return this.serialize(resolution.template, {
+      onlyActiveItems: true,
+      resolutionSource: resolution.source,
     });
-
-    if (!template) {
-      throw new NotFoundException('Active checklist template not found for the selected asset type.');
-    }
-
-    return this.serialize(template, { onlyActiveItems: true });
   }
 
   async getById(user: RequestUser, templateId: string) {
@@ -124,7 +154,7 @@ export class ChecklistTemplatesService {
   }
 
   async create(user: RequestUser, dto: CreateChecklistTemplateDto) {
-    const assetType = await this.findAssetTypeOrThrow(this.prisma, user.tenantId, dto.assetType);
+    const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto);
     const items = this.normalizeIncomingItems([], dto.items);
     const templateWillBeActive = dto.isActive ?? true;
 
@@ -132,14 +162,17 @@ export class ChecklistTemplatesService {
 
     const createdTemplate = await this.prisma.$transaction(async (tx) => {
       if (templateWillBeActive) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, assetType.id);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId);
       }
 
-      const version = await this.getNextVersion(tx, assetType.id);
+      const version = await this.getNextVersion(tx, mapping.assetTypeId);
       const template = await tx.inspectionTemplate.create({
         data: {
           tenantId: user.tenantId,
-          assetTypeId: assetType.id,
+          assetTypeId: mapping.assetTypeId,
+          capabilityId: mapping.capabilityId,
+          mainheadId: mapping.mainheadId,
+          operationalDomain: mapping.operationalDomain,
           version,
           name: this.normalizeRequiredText(dto.name, 'Template name'),
           status: templateWillBeActive
@@ -170,7 +203,14 @@ export class ChecklistTemplatesService {
 
   async update(user: RequestUser, templateId: string, dto: UpdateChecklistTemplateDto) {
     const template = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
-    const hasStructureChanges = dto.name !== undefined || dto.items !== undefined;
+    const hasStructureChanges =
+      dto.name !== undefined ||
+      dto.items !== undefined ||
+      dto.assetType !== undefined ||
+      dto.assetTypeId !== undefined ||
+      dto.capabilityId !== undefined ||
+      dto.mainheadId !== undefined ||
+      dto.operationalDomain !== undefined;
 
     if (hasStructureChanges && template.status !== InspectionTemplateStatus.DRAFT) {
       return this.createPatchedVersion(user, template, dto);
@@ -220,6 +260,110 @@ export class ChecklistTemplatesService {
     return this.findAndSerialize(user.tenantId, template.id);
   }
 
+  private async resolveActiveTemplate(
+    user: RequestUser,
+    query: ResolveInspectionTemplateQueryDto,
+  ): Promise<{
+    template: ChecklistTemplateRecord;
+    source: ChecklistTemplateResolutionSource;
+  }> {
+    const assetType = query.assetTypeId || query.assetType
+      ? await this.findAssetTypeOrThrow(
+          this.prisma,
+          user.tenantId,
+          query.assetTypeId ?? query.assetType ?? '',
+        )
+      : null;
+
+    if (assetType && query.mainheadId) {
+      const mainheadTemplate = await this.findActiveTemplate({
+        tenantId: user.tenantId,
+        assetTypeId: assetType.id,
+        mainheadId: query.mainheadId,
+      });
+
+      if (mainheadTemplate) {
+        return {
+          template: mainheadTemplate,
+          source: 'ASSET_TYPE_MAINHEAD',
+        };
+      }
+    }
+
+    if (assetType) {
+      const assetTypeTemplate = await this.findActiveTemplate({
+        tenantId: user.tenantId,
+        assetTypeId: assetType.id,
+      });
+
+      if (assetTypeTemplate) {
+        return {
+          template: assetTypeTemplate,
+          source: 'ASSET_TYPE',
+        };
+      }
+    }
+
+    const capabilityId = query.capabilityId ?? assetType?.capabilityId ?? null;
+
+    if (capabilityId) {
+      const capabilityTemplate = await this.findActiveTemplate({
+        tenantId: user.tenantId,
+        capabilityId,
+      });
+
+      if (capabilityTemplate) {
+        return {
+          template: capabilityTemplate,
+          source: 'CAPABILITY',
+        };
+      }
+    }
+
+    const fallbackTemplate = await this.findActiveTemplate({
+      tenantId: user.tenantId,
+    });
+
+    if (!fallbackTemplate) {
+      throw new NotFoundException('Active checklist template not found.');
+    }
+
+    return {
+      template: fallbackTemplate,
+      source: 'TENANT_ACTIVE',
+    };
+  }
+
+  private findActiveTemplate(where: {
+    tenantId: string;
+    assetTypeId?: string;
+    capabilityId?: string;
+    mainheadId?: string;
+  }) {
+    return this.prisma.inspectionTemplate.findFirst({
+      where: {
+        tenantId: where.tenantId,
+        ...(where.assetTypeId ? { assetTypeId: where.assetTypeId } : {}),
+        ...(where.capabilityId ? { capabilityId: where.capabilityId } : {}),
+        ...(where.mainheadId ? { mainheadId: where.mainheadId } : {}),
+        isActive: true,
+        status: InspectionTemplateStatus.ACTIVE,
+      },
+      include: checklistTemplateInclude,
+      orderBy: [
+        {
+          publishedAt: 'desc',
+        },
+        {
+          updatedAt: 'desc',
+        },
+        {
+          version: 'desc',
+        },
+      ],
+    });
+  }
+
   async duplicate(user: RequestUser, templateId: string) {
     const sourceTemplate = await this.findTemplateOrThrow(this.prisma, user.tenantId, templateId);
 
@@ -230,6 +374,9 @@ export class ChecklistTemplatesService {
           data: {
             tenantId: user.tenantId,
             assetTypeId: sourceTemplate.assetTypeId,
+            capabilityId: sourceTemplate.capabilityId,
+            mainheadId: sourceTemplate.mainheadId,
+            operationalDomain: sourceTemplate.operationalDomain,
             version: nextVersion,
             name: this.buildDuplicateTemplateName(sourceTemplate),
             status: InspectionTemplateStatus.DRAFT,
@@ -296,6 +443,7 @@ export class ChecklistTemplatesService {
       dto.items === undefined
         ? existingItems.map((item) => this.fromExistingItem(item))
         : this.normalizeIncomingItems(existingItems, dto.items);
+    const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive =
       dto.isActive ??
       (template._count.inspections > 0 ? false : template.isActive);
@@ -304,7 +452,7 @@ export class ChecklistTemplatesService {
 
     const createdTemplate = await this.prisma.$transaction(async (tx) => {
       if (nextIsActive) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, template.assetTypeId);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId);
       } else if (template.isActive && dto.isActive === false) {
         await tx.inspectionTemplate.update({
           where: {
@@ -320,8 +468,11 @@ export class ChecklistTemplatesService {
       const nextTemplate = await tx.inspectionTemplate.create({
         data: {
           tenantId: user.tenantId,
-          assetTypeId: template.assetTypeId,
-          version: await this.getNextVersion(tx, template.assetTypeId),
+          assetTypeId: mapping.assetTypeId,
+          capabilityId: mapping.capabilityId,
+          mainheadId: mapping.mainheadId,
+          operationalDomain: mapping.operationalDomain,
+          version: await this.getNextVersion(tx, mapping.assetTypeId),
           name:
             dto.name === undefined
               ? template.name
@@ -358,6 +509,7 @@ export class ChecklistTemplatesService {
     const existingItems = this.flattenItems(template);
     const desiredItems =
       dto.items === undefined ? null : this.normalizeIncomingItems(existingItems, dto.items);
+    const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive = dto.isActive ?? template.isActive;
 
     if (desiredItems) {
@@ -368,14 +520,23 @@ export class ChecklistTemplatesService {
 
     await this.prisma.$transaction(async (tx) => {
       if (dto.isActive === true) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, template.assetTypeId, template.id);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId, template.id);
       }
+
+      const assetTypeChanged = mapping.assetTypeId !== template.assetTypeId;
 
       await tx.inspectionTemplate.update({
         where: {
           id: template.id,
         },
         data: {
+          assetTypeId: mapping.assetTypeId,
+          capabilityId: mapping.capabilityId,
+          mainheadId: mapping.mainheadId,
+          operationalDomain: mapping.operationalDomain,
+          ...(assetTypeChanged
+            ? { version: await this.getNextVersion(tx, mapping.assetTypeId) }
+            : {}),
           ...(dto.name === undefined
             ? {}
             : { name: this.normalizeRequiredText(dto.name, 'Template name') }),
@@ -746,6 +907,7 @@ export class ChecklistTemplatesService {
         id: true,
         code: true,
         name: true,
+        capabilityId: true,
       },
     });
 
@@ -756,6 +918,89 @@ export class ChecklistTemplatesService {
     return assetTypeRecord;
   }
 
+  private async resolveTemplateMapping(
+    client: PrismaClientLike,
+    tenantId: string,
+    input: ChecklistTemplateMappingInput,
+    fallback?: ChecklistTemplateRecord,
+  ) {
+    const requestedAssetType = input.assetTypeId ?? input.assetType;
+    const assetType =
+      requestedAssetType !== undefined
+        ? await this.findAssetTypeOrThrow(client, tenantId, requestedAssetType)
+        : fallback
+          ? {
+              id: fallback.assetTypeId,
+              code: fallback.assetType.code,
+              name: fallback.assetType.name,
+              capabilityId: fallback.assetType.capabilityId,
+            }
+          : null;
+
+    if (!assetType) {
+      throw new BadRequestException('Asset type is required for checklist templates.');
+    }
+
+    const capabilityId =
+      input.capabilityId !== undefined
+        ? input.capabilityId
+        : fallback?.capabilityId ?? assetType.capabilityId ?? null;
+    const mainheadId =
+      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
+    const operationalDomain =
+      input.operationalDomain !== undefined
+        ? input.operationalDomain
+        : fallback?.operationalDomain ?? null;
+
+    await this.assertCapabilityExists(client, capabilityId);
+    await this.assertMainheadExists(client, mainheadId);
+
+    return {
+      assetTypeId: assetType.id,
+      capabilityId,
+      mainheadId,
+      operationalDomain,
+    };
+  }
+
+  private async assertCapabilityExists(client: PrismaClientLike, capabilityId: string | null) {
+    if (!capabilityId) {
+      return;
+    }
+
+    const capability = await client.capability.findUnique({
+      where: {
+        id: capabilityId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!capability) {
+      throw new NotFoundException('Capability not found.');
+    }
+  }
+
+  private async assertMainheadExists(client: PrismaClientLike, mainheadId: string | null) {
+    if (!mainheadId) {
+      return;
+    }
+
+    const mainhead = await client.mainhead.findUnique({
+      where: {
+        id: mainheadId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!mainhead) {
+      throw new NotFoundException('MAINHEAD not found.');
+    }
+  }
+
   private flattenItems(template: ChecklistTemplateRecord) {
     return template.sections
       .flatMap((section) => section.items)
@@ -764,9 +1009,13 @@ export class ChecklistTemplatesService {
 
   private serialize(
     template: ChecklistTemplateRecord,
-    options: { onlyActiveItems?: boolean } = {},
+    options: {
+      onlyActiveItems?: boolean;
+      resolutionSource?: ChecklistTemplateResolutionSource;
+    } = {},
   ) {
     const items = this.flattenItems(template).filter((item) => !options.onlyActiveItems || item.isActive);
+    const capability = template.capability ?? template.assetType.capability ?? null;
 
     return {
       id: template.id,
@@ -774,6 +1023,11 @@ export class ChecklistTemplatesService {
       assetTypeId: template.assetTypeId,
       assetTypeCode: template.assetType.code,
       assetTypeName: template.assetType.name,
+      capabilityId: capability?.id ?? template.capabilityId ?? template.assetType.capabilityId,
+      capability,
+      mainheadId: template.mainheadId,
+      mainhead: template.mainhead,
+      operationalDomain: template.operationalDomain,
       name: template.name,
       version: template.version,
       status: template.status,
@@ -782,6 +1036,7 @@ export class ChecklistTemplatesService {
       updatedAt: template.updatedAt,
       itemCount: items.filter((item) => item.isActive).length,
       inspectionCount: template._count.inspections,
+      resolutionSource: options.resolutionSource,
       items: items.map((item) => ({
         id: item.id,
         templateId: item.templateId,

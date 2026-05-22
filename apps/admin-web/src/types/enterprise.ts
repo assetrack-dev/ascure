@@ -1,7 +1,10 @@
 export type EnterpriseEntityKind =
   | "organizations"
+  | "branches"
+  | "capabilities"
   | "mainheads"
   | "projects"
+  | "teams"
   | "work-packages";
 
 export type EnterpriseTone = "neutral" | "success" | "warning" | "danger" | "info";
@@ -56,6 +59,7 @@ export interface EnterpriseOptionRecord {
   clientOrganizationId?: string | null;
   operationalDomain?: string | null;
   region?: string | null;
+  description?: string | null;
 }
 
 export interface EnterpriseOptions {
@@ -66,6 +70,7 @@ export interface EnterpriseOptions {
   organizations: EnterpriseOptionRecord[];
   branches: EnterpriseOptionRecord[];
   mainheads: EnterpriseOptionRecord[];
+  capabilities: EnterpriseOptionRecord[];
   projects: EnterpriseOptionRecord[];
   workPackages: EnterpriseOptionRecord[];
 }

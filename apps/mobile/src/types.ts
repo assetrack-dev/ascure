@@ -55,6 +55,15 @@ export interface AssetType {
   id: string;
   code: string;
   name: string;
+  capabilityId?: string | null;
+  capability?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
+  description?: string | null;
+  isActive?: boolean;
+  sortOrder?: number | null;
 }
 
 export type AssetStatus = 'ACTIVE' | 'INACTIVE' | 'NOT_FOUND' | 'REMOVED' | 'DUPLICATE';
@@ -99,6 +108,9 @@ export interface AssetDetailResponse {
   assetCode: string;
   name?: string | null;
   assetType: string;
+  assetTypeId?: string;
+  assetTypeCode?: string;
+  assetTypeName?: string;
   status: AssetStatus;
   latitude: number | null;
   longitude: number | null;
@@ -273,6 +285,8 @@ export interface InspectionFormResponse {
     id: string;
     name: string;
     version: number;
+    assetTypeId?: string;
+    capabilityId?: string | null;
     sections: InspectionTemplateSection[];
   };
   results: Array<{
@@ -338,11 +352,13 @@ export interface InspectionImage {
 
 export interface DefectEvidenceImage extends InspectionImage {
   defectId?: string;
+  uploadedByUserId?: string | null;
   evidenceType?: string | null;
   storageKey?: string | null;
   fileName?: string | null;
   contentType?: string | null;
   note?: string | null;
+  uploadedAt?: string;
   updatedAt?: string;
 }
 
@@ -540,6 +556,15 @@ export interface ChecklistTemplate {
   assetTypeId: string;
   assetTypeCode?: string;
   assetTypeName?: string;
+  capabilityId?: string | null;
+  capability?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
+  mainheadId?: string | null;
+  operationalDomain?: string | null;
+  resolutionSource?: string;
   name: string;
   version: number;
   status: string;
@@ -566,13 +591,18 @@ export interface ChecklistTemplateItemInput {
 }
 
 export interface CreateChecklistTemplateInput {
-  assetType: string;
+  assetType?: string;
+  assetTypeId?: string;
+  capabilityId?: string | null;
   name: string;
   isActive?: boolean;
   items: ChecklistTemplateItemInput[];
 }
 
 export interface UpdateChecklistTemplateInput {
+  assetType?: string;
+  assetTypeId?: string;
+  capabilityId?: string | null;
   name?: string;
   isActive?: boolean;
   items?: ChecklistTemplateItemInput[];

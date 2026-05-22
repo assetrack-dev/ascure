@@ -49,9 +49,9 @@ export const uiTheme = {
     pill: 999,
   },
   spacing: {
-    screen: 20,
-    section: 16,
-    card: 16,
+    screen: 16,
+    section: 12,
+    card: 12,
   },
 } as const;
 
@@ -475,8 +475,8 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 10,
-    gap: 8,
+    paddingBottom: 8,
+    gap: 6,
   },
   topBar: {
     minHeight: 44,
@@ -514,14 +514,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   subtitle: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     color: uiTheme.colors.textSecondary,
     textAlign: 'center',
   },
   scrollContent: {
     paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 140,
+    paddingBottom: 128,
     gap: uiTheme.spacing.section,
   },
   content: {
@@ -531,7 +531,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: uiTheme.spacing.screen,
-    paddingVertical: 16,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: uiTheme.colors.border,
     backgroundColor: uiTheme.colors.background,
@@ -540,14 +540,14 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: uiTheme.colors.card,
     borderRadius: uiTheme.radius.card,
-    padding: 14,
-    gap: 12,
+    padding: 12,
+    gap: 10,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
   },
   sectionTitle: {
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
@@ -642,13 +642,13 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
   },
   button: {
-    minHeight: 50,
-    borderRadius: uiTheme.radius.control,
+    minHeight: 46,
+    borderRadius: uiTheme.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 10,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
   },
   buttonPrimary: {
     backgroundColor: uiTheme.colors.primary,
@@ -686,7 +686,7 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textPrimary,
   },
   inlineButton: {
-    minHeight: 40,
+    minHeight: 36,
     justifyContent: 'center',
     paddingVertical: 8,
     paddingHorizontal: 6,
@@ -700,7 +700,7 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textMuted,
   },
   fieldWrap: {
-    gap: 8,
+    gap: 6,
   },
   fieldLabel: {
     fontSize: 13,
@@ -708,18 +708,18 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
   },
   textInput: {
-    minHeight: 52,
-    borderRadius: uiTheme.radius.control,
+    minHeight: 46,
+    borderRadius: uiTheme.radius.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
     backgroundColor: uiTheme.colors.card,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
     color: uiTheme.colors.textPrimary,
   },
   textArea: {
-    minHeight: 96,
+    minHeight: 78,
     textAlignVertical: 'top',
   },
   inputDisabled: {
@@ -729,11 +729,11 @@ const styles = StyleSheet.create({
   keyValueRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 12,
   },
   keyValueLabel: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     color: uiTheme.colors.textSecondary,
   },
   keyValueValueWrap: {
@@ -741,7 +741,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   keyValueValue: {
-    fontSize: 14,
+    fontSize: 13,
     color: uiTheme.colors.textPrimary,
     fontWeight: '500',
     textAlign: 'right',
@@ -749,8 +749,8 @@ const styles = StyleSheet.create({
   chip: {
     alignSelf: 'flex-start',
     borderRadius: uiTheme.radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     backgroundColor: uiTheme.colors.surfaceMuted,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
@@ -777,8 +777,8 @@ const styles = StyleSheet.create({
   selectCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 14,
+    gap: 10,
+    padding: 10,
     borderRadius: uiTheme.radius.card,
     borderWidth: 1,
     borderColor: uiTheme.colors.border,
@@ -792,18 +792,18 @@ const styles = StyleSheet.create({
     opacity: 0.92,
   },
   selectIndicator: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: uiTheme.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   selectIndicatorInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: uiTheme.colors.primary,
   },
   selectTextWrap: {
@@ -811,12 +811,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   selectTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: uiTheme.colors.textPrimary,
   },
   selectDescription: {
-    fontSize: 13,
+    fontSize: 12,
     color: uiTheme.colors.textSecondary,
   },
   headerIconButton: {

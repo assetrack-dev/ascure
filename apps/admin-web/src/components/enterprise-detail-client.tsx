@@ -6,10 +6,13 @@ import {
   ArrowLeft,
   Building2,
   FolderKanban,
+  GitBranch,
   Network,
   PackageCheck,
   RefreshCw,
   ShieldCheck,
+  Tags,
+  Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -36,6 +39,16 @@ const PAGE_CONFIG: Record<
     basePath: "/organizations",
     icon: Building2,
   },
+  branches: {
+    label: "Branches",
+    basePath: "/branches",
+    icon: GitBranch,
+  },
+  capabilities: {
+    label: "Capabilities",
+    basePath: "/capabilities",
+    icon: Tags,
+  },
   mainheads: {
     label: "MAINHEAD",
     basePath: "/mainheads",
@@ -45,6 +58,11 @@ const PAGE_CONFIG: Record<
     label: "Projects",
     basePath: "/projects",
     icon: FolderKanban,
+  },
+  teams: {
+    label: "Teams",
+    basePath: "/teams",
+    icon: Users,
   },
   "work-packages": {
     label: "Work Packages",

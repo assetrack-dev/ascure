@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -9,6 +9,7 @@ import { ChecklistTemplatesService } from './checklist-templates.service';
 import {
   ChecklistTemplateIdParamDto,
   CreateChecklistTemplateDto,
+  ResolveInspectionTemplateQueryDto,
   UpdateChecklistTemplateDto,
 } from './dto/checklist-template.dto';
 
@@ -20,6 +21,14 @@ export class InspectionTemplatesController {
   @Get()
   list(@CurrentUser() user: RequestUser) {
     return this.checklistTemplatesService.list(user);
+  }
+
+  @Get('resolve')
+  resolve(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ResolveInspectionTemplateQueryDto,
+  ) {
+    return this.checklistTemplatesService.resolve(user, query);
   }
 
   @Get(':id')

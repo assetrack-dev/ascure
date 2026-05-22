@@ -14,8 +14,11 @@ type ApiRecord = Record<string, unknown>;
 
 const API_PATH_BY_KIND: Record<EnterpriseEntityKind, string> = {
   organizations: "/enterprise/organizations",
+  branches: "/enterprise/branches",
+  capabilities: "/enterprise/capabilities",
   mainheads: "/enterprise/mainheads",
   projects: "/enterprise/projects",
+  teams: "/teams",
   "work-packages": "/enterprise/work-packages",
 };
 
@@ -232,7 +235,7 @@ function withSearchText<T extends Omit<EnterpriseListRow, "searchText">>(
 }
 
 function capabilityLabels(record: ApiRecord | null) {
-  return readArray(record, "capabilities")
+  const legacyCapabilities = readArray(record, "capabilities")
     .map((capability) => asRecord(capability))
     .filter((capability): capability is ApiRecord => Boolean(capability))
     .map((capability) => {
@@ -246,6 +249,33 @@ function capabilityLabels(record: ApiRecord | null) {
       };
     })
     .filter((capability) => capability.label !== "Not recorded");
+  const assignmentCapabilities = readArray(record, "capabilityAssignments")
+    .map((assignment) => asRecord(assignment))
+    .filter((assignment): assignment is ApiRecord => Boolean(assignment))
+    .map((assignment) => {
+      const capability = nestedRecord(assignment, "capability");
+      const label = readString(capability, "name") ?? formatEnum(readString(capability, "code"));
+      const isActive =
+        readBoolean(assignment, "isActive") === false ||
+        readBoolean(capability, "isActive") === false
+          ? false
+          : true;
+
+      return {
+        label,
+        filterLabel: label,
+        displayLabel: isActive === false ? `${label} (Inactive)` : label,
+      };
+    })
+    .filter((capability) => capability.label !== "Not recorded");
+  const capabilitiesByLabel = new Map(
+    [...legacyCapabilities, ...assignmentCapabilities].map((capability) => [
+      capability.label,
+      capability,
+    ]),
+  );
+
+  return Array.from(capabilitiesByLabel.values());
 }
 
 function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | null {
@@ -311,6 +341,112 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
   });
 }
 
+function normalizeBranch(rawBranch: unknown): EnterpriseDetail | null {
+  const record = asRecord(rawBranch);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, "id");
+  const name = readString(record, "name");
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const activeState = stateChip(readBoolean(record, "isActive"));
+  const organization = nestedRecord(record, "organization");
+  const capabilities = capabilityLabels(record);
+  const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
+  const organizationLabel = compactLabel(organization);
+  const metrics: EnterpriseMetric[] = [
+    { label: "MAINHEAD", value: count(record, "mainheads") },
+    { label: "Teams", value: count(record, "teams") },
+    { label: "Capabilities", value: count(record, "capabilityAssignments") },
+  ];
+  const fields: EnterpriseField[] = [
+    { label: "Code", value: readString(record, "code") },
+    { label: "Status", value: activeState.label },
+    { label: "Organization", value: organization ? organizationLabel : null },
+    { label: "Region/State", value: readString(record, "region") },
+    { label: "Capabilities", value: capabilityDisplay || null },
+  ];
+
+  return withSearchText({
+    id,
+    kind: "branches",
+    name,
+    code: readString(record, "code"),
+    isActive: readBoolean(record, "isActive"),
+    status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
+    primaryChip: activeState.label,
+    primaryTone: activeState.tone,
+    secondaryChip: organization ? organizationLabel : null,
+    secondaryTone: "info",
+    relationLabel: organization
+      ? joinLabels([organizationLabel, readString(record, "region")])
+      : "Organization not recorded",
+    filterGroup: organization ? organizationLabel : null,
+    extraFilterGroups: capabilities.map((capability) => capability.filterLabel),
+    metrics,
+    fields,
+    description: null,
+    createdAt: readString(record, "createdAt"),
+    updatedAt: readString(record, "updatedAt"),
+    raw: record,
+  });
+}
+
+function normalizeCapability(rawCapability: unknown): EnterpriseDetail | null {
+  const record = asRecord(rawCapability);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, "id");
+  const name = readString(record, "name");
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const activeState = stateChip(readBoolean(record, "isActive"));
+  const metrics: EnterpriseMetric[] = [
+    { label: "Organizations", value: count(record, "organizationAssignments") },
+    { label: "Branches", value: count(record, "branchAssignments") },
+    { label: "Teams", value: count(record, "teamAssignments") },
+  ];
+  const fields: EnterpriseField[] = [
+    { label: "Code", value: readString(record, "code") },
+    { label: "Status", value: activeState.label },
+    { label: "Description", value: readString(record, "description") },
+  ];
+
+  return withSearchText({
+    id,
+    kind: "capabilities",
+    name,
+    code: readString(record, "code"),
+    isActive: readBoolean(record, "isActive"),
+    status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
+    primaryChip: activeState.label,
+    primaryTone: activeState.tone,
+    secondaryChip: readString(record, "code"),
+    secondaryTone: "info",
+    relationLabel: readString(record, "description") ?? "No description recorded",
+    filterGroup: activeState.label,
+    extraFilterGroups: [],
+    metrics,
+    fields,
+    description: readString(record, "description"),
+    createdAt: readString(record, "createdAt"),
+    updatedAt: readString(record, "updatedAt"),
+    raw: record,
+  });
+}
+
 function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
   const record = asRecord(rawMainhead);
 
@@ -329,16 +465,20 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
   const branch = nestedRecord(record, "branch");
   const branchOrganization = nestedRecord(branch, "organization");
   const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
+  const capabilities = capabilityLabels(record);
+  const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
   const metrics: EnterpriseMetric[] = [
     { label: "Projects", value: count(record, "projects") },
     { label: "Work Packages", value: count(record, "workPackages") },
     { label: "Site Visits", value: count(record, "siteVisits") },
+    { label: "Capabilities", value: count(record, "capabilityAssignments") },
   ];
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: activeState.label },
     { label: "Branch", value: branchLabel || null },
     { label: "Region", value: readString(branch, "region") },
+    { label: "Capabilities", value: capabilityDisplay || null },
   ];
 
   return withSearchText({
@@ -352,9 +492,11 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     primaryTone: activeState.tone,
     secondaryChip: branch ? compactLabel(branch) : null,
     secondaryTone: "info",
-    relationLabel: branchLabel || "Branch not recorded",
+    relationLabel: capabilityDisplay
+      ? `${branchLabel || "Branch not recorded"} / ${capabilityDisplay}`
+      : branchLabel || "Branch not recorded",
     filterGroup: branch ? compactLabel(branch) : null,
-    extraFilterGroups: [],
+    extraFilterGroups: capabilities.map((capability) => capability.filterLabel),
     metrics,
     fields,
     description: readString(record, "description"),
@@ -419,6 +561,68 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     metrics,
     fields,
     description: readString(record, "description"),
+    createdAt: readString(record, "createdAt"),
+    updatedAt: readString(record, "updatedAt"),
+    raw: record,
+  });
+}
+
+function normalizeTeam(rawTeam: unknown): EnterpriseDetail | null {
+  const record = asRecord(rawTeam);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, "id");
+  const name = readString(record, "name");
+
+  if (!id || !name) {
+    return null;
+  }
+
+  const activeState = stateChip(readBoolean(record, "isActive"));
+  const organization = nestedRecord(record, "organization");
+  const branch = nestedRecord(record, "branch");
+  const mainhead = nestedRecord(record, "mainhead");
+  const capabilities = capabilityLabels(record);
+  const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
+  const scopeLabel = joinLabels([
+    organization ? compactLabel(organization) : null,
+    branch ? compactLabel(branch) : null,
+    mainhead ? compactLabel(mainhead) : null,
+  ]);
+  const metrics: EnterpriseMetric[] = [
+    { label: "Members", value: count(record, "members") },
+    { label: "Visits", value: count(record, "siteVisits") },
+    { label: "Capabilities", value: count(record, "capabilityAssignments") },
+  ];
+  const fields: EnterpriseField[] = [
+    { label: "Code", value: readString(record, "code") },
+    { label: "Status", value: activeState.label },
+    { label: "Organization", value: organization ? compactLabel(organization) : null },
+    { label: "Branch", value: branch ? compactLabel(branch) : null },
+    { label: "MAINHEAD", value: mainhead ? compactLabel(mainhead) : null },
+    { label: "Capabilities", value: capabilityDisplay || null },
+  ];
+
+  return withSearchText({
+    id,
+    kind: "teams",
+    name,
+    code: readString(record, "code"),
+    isActive: readBoolean(record, "isActive"),
+    status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
+    primaryChip: activeState.label,
+    primaryTone: activeState.tone,
+    secondaryChip: capabilityDisplay || null,
+    secondaryTone: "info",
+    relationLabel: scopeLabel || "Operational scope not recorded",
+    filterGroup: organization ? compactLabel(organization) : activeState.label,
+    extraFilterGroups: capabilities.map((capability) => capability.filterLabel),
+    metrics,
+    fields,
+    description: null,
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
     raw: record,
@@ -494,12 +698,24 @@ function normalizeEnterpriseEntity(
     return normalizeOrganization(rawEntity);
   }
 
+  if (kind === "branches") {
+    return normalizeBranch(rawEntity);
+  }
+
+  if (kind === "capabilities") {
+    return normalizeCapability(rawEntity);
+  }
+
   if (kind === "mainheads") {
     return normalizeMainhead(rawEntity);
   }
 
   if (kind === "projects") {
     return normalizeProject(rawEntity);
+  }
+
+  if (kind === "teams") {
+    return normalizeTeam(rawEntity);
   }
 
   return normalizeWorkPackage(rawEntity);
@@ -568,6 +784,7 @@ function normalizeOption(rawOption: unknown): EnterpriseOptionRecord | null {
     clientOrganizationId: readString(record, "clientOrganizationId"),
     operationalDomain: readString(record, "operationalDomain"),
     region: readString(record, "region"),
+    description: readString(record, "description"),
   };
 }
 
@@ -593,6 +810,7 @@ export async function fetchEnterpriseOptions(token: string): Promise<EnterpriseO
     organizations: normalizeOptionArray(record, "organizations"),
     branches: normalizeOptionArray(record, "branches"),
     mainheads: normalizeOptionArray(record, "mainheads"),
+    capabilities: normalizeOptionArray(record, "capabilities"),
     projects: normalizeOptionArray(record, "projects"),
     workPackages: normalizeOptionArray(record, "workPackages"),
   };
@@ -648,7 +866,11 @@ export async function updateEnterpriseOperationalStatus(
   active: boolean,
 ): Promise<EnterpriseDetail> {
   const body =
-    kind === "organizations" || kind === "mainheads"
+    kind === "organizations" ||
+    kind === "branches" ||
+    kind === "capabilities" ||
+    kind === "mainheads" ||
+    kind === "teams"
       ? { isActive: active }
       : { status: active ? "ACTIVE" : "ARCHIVED" };
   const detail = normalizeEnterpriseEntity(

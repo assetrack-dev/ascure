@@ -7,6 +7,14 @@ export class ListTemplatesQueryDto {
   assetTypeId?: string;
 
   @IsOptional()
+  @IsUUID()
+  capabilityId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string;
+
+  @IsOptional()
   @IsEnum(InspectionTemplateStatus)
   status?: InspectionTemplateStatus;
 }

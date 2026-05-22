@@ -8,6 +8,24 @@ export interface AssetType {
   id: string;
   code: string;
   name: string;
+  capabilityId?: string | null;
+  capability?: TemplateCapability | null;
+  description?: string | null;
+  isActive?: boolean;
+  sortOrder?: number | null;
+}
+
+export interface TemplateCapability {
+  id: string;
+  code: string;
+  name: string;
+  isActive?: boolean | null;
+}
+
+export interface TemplateMainhead {
+  id: string;
+  code?: string | null;
+  name: string;
 }
 
 export interface ChecklistTemplateOption {
@@ -39,6 +57,12 @@ export interface ChecklistTemplate {
   assetTypeId: string;
   assetTypeCode?: string;
   assetTypeName?: string;
+  capabilityId?: string | null;
+  capability?: TemplateCapability | null;
+  mainheadId?: string | null;
+  mainhead?: TemplateMainhead | null;
+  operationalDomain?: string | null;
+  resolutionSource?: string;
   name: string;
   version: number;
   status: ChecklistTemplateStatus;
@@ -63,13 +87,22 @@ export interface ChecklistTemplateItemPayload {
 }
 
 export interface CreateChecklistTemplatePayload {
-  assetType: string;
+  assetType?: string;
+  assetTypeId?: string;
+  capabilityId?: string | null;
+  mainheadId?: string | null;
+  operationalDomain?: string | null;
   name: string;
   isActive?: boolean;
   items: ChecklistTemplateItemPayload[];
 }
 
 export interface UpdateChecklistTemplatePayload {
+  assetType?: string;
+  assetTypeId?: string;
+  capabilityId?: string | null;
+  mainheadId?: string | null;
+  operationalDomain?: string | null;
   name?: string;
   isActive?: boolean;
   items?: ChecklistTemplateItemPayload[];
