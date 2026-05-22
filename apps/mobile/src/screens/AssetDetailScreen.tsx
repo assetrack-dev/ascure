@@ -15,38 +15,21 @@ import {
   View,
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import { Asset, AssetDetailImage, AssetDetailResponse } from '../types';
 import { formatDateTime } from '../utils';
 import { HeaderIconButton, StatusChip, uiTheme } from '../ui';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
-export function AssetDetailScreen({
-  token,
-  visitId,
-  substationId,
-  assetId,
-  assetSnapshot,
-  onBack,
-  onOpenInspection,
-  onOpenInspectionHistory,
-  onOpenEditAsset,
-  onOpenImagePreview,
-  onUnauthorized,
-}: {
-  token: string;
-  visitId?: string;
-  substationId?: string;
-  assetId: string;
-  assetSnapshot?: Asset;
-  onBack: () => void;
-  onOpenInspection: (inspectionId: string) => void;
-  onOpenInspectionHistory: (params: { assetId: string; assetCode?: string }) => void;
-  onOpenEditAsset: (asset: Asset) => void;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function AssetDetailScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'AssetDetail'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
+  const { visitId, substationId, assetId, assetSnapshot } = route.params;
+  const { token, handleUnauthorized } = useSession();
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
   const [editableAsset, setEditableAsset] = useState<Asset | null>(assetSnapshot ?? null);
   const [isLoading, setIsLoading] = useState(true);
@@ -73,7 +56,7 @@ export function AssetDetailScreen({
       console.error('[ASSET DETAIL LOAD ERROR]', error);
 
       if (error instanceof ApiError && error.status === 401) {
-        await onUnauthorized(error);
+        await handleUnauthorized(error);
         return;
       }
 
@@ -82,7 +65,7 @@ export function AssetDetailScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [assetId, assetSnapshot, onUnauthorized, substationId, token]);
+  }, [assetId, assetSnapshot, handleUnauthorized, substationId, token]);
 
   useEffect(() => {
     loadAssetDetail();
@@ -118,12 +101,18 @@ export function AssetDetailScreen({
         inspectionCycle: asset.latestInspection ? asset.latestInspection.cycleNumber + 1 : 1,
       });
 
-      onOpenInspection(inspection.id);
+      if (visitId) {
+        navigation.navigate('InspectionForm', {
+          inspectionId: inspection.id,
+          visitId,
+          substationId: substationId ?? '',
+        });
+      }
     } catch (error) {
       console.error('[ASSET DETAIL START INSPECTION ERROR]', error);
 
       if (error instanceof ApiError && error.status === 401) {
-        await onUnauthorized(error);
+        await handleUnauthorized(error);
         return;
       }
 
@@ -145,7 +134,11 @@ export function AssetDetailScreen({
       return;
     }
 
-    onOpenEditAsset(editableAsset);
+    navigation.navigate('AddAsset', {
+      visitId,
+      substationId,
+      assetToEdit: editableAsset,
+    });
   }
 
   async function handleMarkAssetNotFound() {
@@ -174,7 +167,7 @@ export function AssetDetailScreen({
       console.error('[ASSET DETAIL MARK NOT FOUND ERROR]', error);
 
       if (error instanceof ApiError && error.status === 401) {
-        await onUnauthorized(error);
+        await handleUnauthorized(error);
         return;
       }
 
@@ -225,7 +218,11 @@ export function AssetDetailScreen({
         <View style={styles.screen}>
           <View style={styles.header}>
             <View style={styles.headerSide}>
-              <HeaderIconButton icon="back" onPress={onBack} accessibilityLabel="Back" />
+              <HeaderIconButton
+                icon="back"
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Back"
+              />
             </View>
             <View style={styles.headerTitleWrap}>
               <Text style={styles.title}>Asset Detail</Text>
@@ -256,7 +253,11 @@ export function AssetDetailScreen({
       <View style={styles.screen}>
         <View style={styles.header}>
           <View style={styles.headerSide}>
-            <HeaderIconButton icon="back" onPress={onBack} accessibilityLabel="Back" />
+            <HeaderIconButton
+              icon="back"
+              onPress={() => navigation.goBack()}
+              accessibilityLabel="Back"
+            />
           </View>
           <View style={styles.headerTitleWrap}>
             <Text style={styles.title}>Asset Detail</Text>
@@ -357,7 +358,7 @@ export function AssetDetailScreen({
         {visitId ? (
           <Pressable
             onPress={() =>
-              onOpenInspectionHistory({
+              navigation.navigate('AssetInspectionHistory', {
                 assetId: asset.id,
                 assetCode: asset.assetCode,
               })
@@ -395,7 +396,7 @@ export function AssetDetailScreen({
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={() =>
-                          onOpenImagePreview({
+                          navigation.navigate('ImagePreview', {
                             uri: imageUri,
                             title: image.type || 'Inspection Image',
                           })

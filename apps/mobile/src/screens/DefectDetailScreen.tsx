@@ -13,7 +13,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import {
   DefectDetail,
   DefectEvidenceImage,
@@ -50,19 +53,11 @@ type PendingMaintenanceProofOverlayPhoto = Omit<CapturedMaintenanceProofPhoto, '
   layoutHeight: number;
 };
 
-export function DefectDetailScreen({
-  token,
-  defectId,
-  onBack,
-  onOpenImagePreview,
-  onUnauthorized,
-}: {
-  token: string;
-  defectId: string;
-  onBack: () => void;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function DefectDetailScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'DefectDetail'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'DefectDetail'>['route']>();
+  const { defectId } = route.params;
+  const { token, handleUnauthorized } = useSession();
   const [defect, setDefect] = useState<DefectDetail | null>(null);
   const [actionRemark, setActionRemark] = useState('');
   const [maintenanceNote, setMaintenanceNote] = useState('');
@@ -104,7 +99,7 @@ export function DefectDetailScreen({
         console.error('[DEFECT DETAIL LOAD ERROR]', loadError);
 
         if (loadError instanceof ApiError && loadError.status === 401) {
-          await onUnauthorized(loadError);
+          await handleUnauthorized(loadError);
           return;
         }
 
@@ -116,7 +111,7 @@ export function DefectDetailScreen({
         }
       }
     },
-    [defectId, onUnauthorized, token],
+    [defectId, handleUnauthorized, token],
   );
 
   useEffect(() => {
@@ -199,7 +194,7 @@ export function DefectDetailScreen({
       console.error('[DEFECT STATUS UPDATE ERROR]', updateError);
 
       if (updateError instanceof ApiError && updateError.status === 401) {
-        await onUnauthorized(updateError);
+        await handleUnauthorized(updateError);
         return;
       }
 
@@ -225,7 +220,7 @@ export function DefectDetailScreen({
       console.error('[DEFECT MAINTENANCE START ERROR]', updateError);
 
       if (updateError instanceof ApiError && updateError.status === 401) {
-        await onUnauthorized(updateError);
+        await handleUnauthorized(updateError);
         return;
       }
 
@@ -347,7 +342,7 @@ export function DefectDetailScreen({
       console.error('[DEFECT MAINTENANCE COMPLETION ERROR]', completionError);
 
       if (completionError instanceof ApiError && completionError.status === 401) {
-        await onUnauthorized(completionError);
+        await handleUnauthorized(completionError);
         return;
       }
 
@@ -373,7 +368,11 @@ export function DefectDetailScreen({
     <Screen
       title="Defect Detail"
       subtitle={defect?.assetCode}
-      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      leftAction={{
+        icon: 'back',
+        onPress: () => navigation.goBack(),
+        accessibilityLabel: 'Back',
+      }}
     >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 36, gap: 12 }}>
@@ -510,7 +509,7 @@ export function DefectDetailScreen({
                           <TouchableOpacity
                             activeOpacity={0.85}
                             onPress={() =>
-                              onOpenImagePreview({
+                              navigation.navigate('ImagePreview', {
                                 uri: photo.uri,
                                 title: `Proof ${index + 1}`,
                               })
@@ -667,7 +666,7 @@ export function DefectDetailScreen({
                 images={proofImages}
                 emptyText="No maintenance proof"
                 titlePrefix="After"
-                onOpenImagePreview={onOpenImagePreview}
+                onOpenImagePreview={(params) => navigation.navigate('ImagePreview', params)}
               />
             </View>
 
@@ -727,7 +726,7 @@ export function DefectDetailScreen({
                 images={defect.images}
                 emptyText="No inspection images"
                 titlePrefix="Before"
-                onOpenImagePreview={onOpenImagePreview}
+                onOpenImagePreview={(params) => navigation.navigate('ImagePreview', params)}
               />
             </View>
           </>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
@@ -26,6 +27,9 @@ import {
 } from '../syncQueue';
 import { Asset, SiteVisit, SiteVisitSummary } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
+import { useSession } from '../context/AuthContext';
+import { useSync } from '../context/SyncContext';
+import type { RootStackScreenProps } from '../navigation/types';
 
 type Coordinate = {
   latitude: number;
@@ -56,31 +60,13 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.08,
 };
 
-export function VisitDetailScreen({
-  token,
-  visitId,
-  substationId,
-  successMessage,
-  isOffline,
-  syncQueueSnapshot,
-  onBack,
-  onOpenAddAsset,
-  onOpenAssetMap,
-  onOpenAssetDetail,
-  onUnauthorized,
-}: {
-  token: string;
-  visitId: string;
-  substationId: string;
-  successMessage?: string;
-  isOffline: boolean;
-  syncQueueSnapshot: SyncQueueSnapshot;
-  onBack: () => void;
-  onOpenAddAsset: () => void;
-  onOpenAssetMap: () => void;
-  onOpenAssetDetail: (asset: Asset) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function VisitDetailScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'VisitDetail'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'VisitDetail'>['route']>();
+  const { visitId, substationId, successMessage } = route.params;
+  const { token, handleUnauthorized } = useSession();
+  const { isOffline, snapshot: syncQueueSnapshot } = useSync();
+
   const [visit, setVisit] = useState<SiteVisit | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [availableAssets, setAvailableAssets] = useState<Asset[]>([]);
@@ -108,7 +94,7 @@ export function VisitDetailScreen({
       setAvailableAssets(createAvailableAssetList(substationAssetList, visitAssetList));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -116,7 +102,7 @@ export function VisitDetailScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, substationId, token, visitId]);
+  }, [handleUnauthorized, substationId, token, visitId]);
 
   useEffect(() => {
     loadVisitData();
@@ -148,7 +134,7 @@ export function VisitDetailScreen({
       setCompletionNotice('Visit completed successfully.');
     } catch (completeError) {
       if (completeError instanceof ApiError && completeError.status === 401) {
-        await onUnauthorized(completeError);
+        await handleUnauthorized(completeError);
         return;
       }
 
@@ -252,7 +238,7 @@ export function VisitDetailScreen({
       setCompletionNotice(`${asset.assetCode} linked to this visit.`);
     } catch (linkError) {
       if (linkError instanceof ApiError && linkError.status === 401) {
-        await onUnauthorized(linkError);
+        await handleUnauthorized(linkError);
         return;
       }
 
@@ -271,10 +257,23 @@ export function VisitDetailScreen({
     }
   }
 
+  function handleOpenAssetDetail(asset: Asset) {
+    navigation.navigate('AssetDetail', {
+      visitId,
+      substationId,
+      assetId: asset.id,
+      assetSnapshot: asset,
+    });
+  }
+
   return (
     <Screen
       title="Visit Detail"
-      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      leftAction={{
+        icon: 'back',
+        onPress: () => navigation.goBack(),
+        accessibilityLabel: 'Back',
+      }}
       rightAction={{
         icon: 'refresh',
         onPress: loadVisitData,
@@ -318,8 +317,13 @@ export function VisitDetailScreen({
 
           <VisitAssetMap
             assets={assets}
-            onOpenAsset={onOpenAssetDetail}
-            onOpenFullScreen={onOpenAssetMap}
+            onOpenAsset={handleOpenAssetDetail}
+            onOpenFullScreen={() =>
+              navigation.navigate('AppDrawer', {
+                screen: 'AssetMap',
+                params: { visitId, substationId },
+              })
+            }
           />
 
           <Card>
@@ -328,7 +332,7 @@ export function VisitDetailScreen({
               <Pressable
                 accessibilityRole="button"
                 disabled={isVisitTerminal(visit.status)}
-                onPress={onOpenAddAsset}
+                onPress={() => navigation.navigate('AddAsset', { visitId, substationId })}
                 style={({ pressed }) => [
                   styles.addAssetButton,
                   isVisitTerminal(visit.status) && styles.disabledButton,
@@ -351,7 +355,7 @@ export function VisitDetailScreen({
                     key={asset.id}
                     asset={asset}
                     visit={visit}
-                    onPress={() => onOpenAssetDetail(asset)}
+                    onPress={() => handleOpenAssetDetail(asset)}
                   />
                 ))}
               </View>

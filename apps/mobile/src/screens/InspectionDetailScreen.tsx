@@ -9,7 +9,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import { InspectionDetail, InspectionImage, InspectionItemResult } from '../types';
 import { formatDateTime } from '../utils';
 
@@ -18,21 +21,11 @@ const IMAGE_GROUPS = ['BEFORE', 'DURING', 'AFTER', 'OTHER'] as const;
 
 type ImageGroup = (typeof IMAGE_GROUPS)[number];
 
-export function InspectionDetailScreen({
-  token,
-  inspectionId,
-  assetCode,
-  onBack,
-  onOpenImagePreview,
-  onUnauthorized,
-}: {
-  token: string;
-  inspectionId: string;
-  assetCode?: string;
-  onBack: () => void;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function InspectionDetailScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'InspectionDetail'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'InspectionDetail'>['route']>();
+  const { inspectionId, assetCode } = route.params;
+  const { token, handleUnauthorized } = useSession();
   const [inspection, setInspection] = useState<InspectionDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +41,7 @@ export function InspectionDetailScreen({
       console.error('[INSPECTION DETAIL LOAD ERROR]', loadError);
 
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -57,7 +50,7 @@ export function InspectionDetailScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [inspectionId, onUnauthorized, token]);
+  }, [inspectionId, handleUnauthorized, token]);
 
   useEffect(() => {
     loadInspectionDetail();
@@ -94,7 +87,7 @@ export function InspectionDetailScreen({
             <Text style={{ fontSize: 15, lineHeight: 22, color: '#526277' }}>{assetCode}</Text>
           ) : null}
         </View>
-        <Pressable onPress={onBack} style={{ paddingVertical: 6 }}>
+        <Pressable onPress={() => navigation.goBack()} style={{ paddingVertical: 6 }}>
           <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f5cd8' }}>Back</Text>
         </Pressable>
       </View>
@@ -239,7 +232,7 @@ export function InspectionDetailScreen({
                               <TouchableOpacity
                                 activeOpacity={0.85}
                                 onPress={() =>
-                                  onOpenImagePreview({
+                                  navigation.navigate('ImagePreview', {
                                     uri: imageUri,
                                     title: image.type || 'Inspection Image',
                                   })

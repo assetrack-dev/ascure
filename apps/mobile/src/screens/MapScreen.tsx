@@ -5,7 +5,10 @@ import ClusteredMapView from 'react-native-map-clustering';
 import { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type MapView from 'react-native-maps';
 import type { LongPressEvent, Region } from 'react-native-maps';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { AppDrawerScreenProps } from '../navigation/types';
 import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen, uiTheme } from '../ui';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
@@ -156,30 +159,27 @@ const MAP_CONTROL_BUTTON_SURFACE = 'rgba(248, 250, 252, 0.98)';
 
 console.log('MAP API KEY:', process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
-export function MapScreen({
-  token,
-  visitId,
-  substationId,
-  onBack,
-  onAddAssetHere,
-  onOpenAssetDetail,
-  onOpenDefectDetail,
-  onUnauthorized,
-}: {
-  token: string;
-  visitId?: string;
-  substationId?: string;
-  onBack: () => void;
-  onAddAssetHere: (params: {
-    visitId?: string;
-    substationId?: string;
-    latitude: number;
-    longitude: number;
-  }) => void;
-  onOpenAssetDetail: (asset: Asset) => void;
-  onOpenDefectDetail: (defectId: string) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function MapScreen() {
+  const navigation = useNavigation<AppDrawerScreenProps<'AssetMap'>['navigation']>();
+  const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
+  const { visitId, substationId } = route.params ?? {};
+  const { token, handleUnauthorized } = useSession();
+
+  const handleOpenAssetDetail = useCallback(
+    (asset: Asset) =>
+      navigation.navigate('AssetDetail', {
+        visitId,
+        substationId: asset.substationId,
+        assetId: asset.id,
+        assetSnapshot: asset,
+      }),
+    [navigation, visitId],
+  );
+  const handleOpenDefectDetail = useCallback(
+    (defectId: string) => navigation.navigate('DefectDetail', { defectId }),
+    [navigation],
+  );
+
   const mapRef = useRef<MapView | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [defectMarkers, setDefectMarkers] = useState<DefectMapMarker[]>([]);
@@ -353,7 +353,7 @@ export function MapScreen({
       setRegion(nextRegion);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -361,7 +361,7 @@ export function MapScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, substationId, token, visitId]);
+  }, [handleUnauthorized, substationId, token, visitId]);
 
   useEffect(() => {
     loadMapData();
@@ -406,7 +406,7 @@ export function MapScreen({
           title={asset.assetCode}
           description={asset.name ?? asset.assetType.name}
           pinColor="#0f5cd8"
-          onPress={() => onOpenAssetDetail(asset)}
+          onPress={() => handleOpenAssetDetail(asset)}
         />,
       ];
     });
@@ -424,7 +424,7 @@ export function MapScreen({
             centerOffset={{ x: 0, y: -20 }}
           >
             <DefectMarkerView defect={defect} />
-            <Callout onPress={() => onOpenDefectDetail(defect.id)}>
+            <Callout onPress={() => handleOpenDefectDetail(defect.id)}>
               <DefectCallout defect={defect} />
             </Callout>
           </Marker>
@@ -470,8 +470,8 @@ export function MapScreen({
   }, [
     filteredAssets,
     filteredDefectMarkers,
-    onOpenAssetDetail,
-    onOpenDefectDetail,
+    handleOpenAssetDetail,
+    handleOpenDefectDetail,
     selectedCoordinate,
     sequenceWarningMarkers,
     showHeatmap,
@@ -481,7 +481,11 @@ export function MapScreen({
   return (
     <Screen
       title="Map"
-      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      leftAction={{
+        icon: 'menu',
+        onPress: () => navigation.openDrawer(),
+        accessibilityLabel: 'Menu',
+      }}
       rightAction={{
         icon: 'refresh',
         onPress: loadMapData,
@@ -579,11 +583,11 @@ export function MapScreen({
             <AppButton
               label="Add Asset Here"
               onPress={() =>
-                onAddAssetHere({
+                navigation.navigate('AddAsset', {
                   visitId,
                   substationId,
-                  latitude: selectedCoordinate.latitude,
-                  longitude: selectedCoordinate.longitude,
+                  initialLatitude: selectedCoordinate.latitude,
+                  initialLongitude: selectedCoordinate.longitude,
                 })
               }
             />

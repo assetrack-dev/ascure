@@ -3,7 +3,11 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import { Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { useSession } from '../context/AuthContext';
+import { useSync } from '../context/SyncContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import {
   cleanupLocalInspectionPhotos,
   enqueueInspectionSubmission,
@@ -65,21 +69,17 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
 
-export function InspectionFormScreen({
-  token,
-  inspectionId,
-  onBack,
-  onSubmitted,
-  onUnauthorized,
-  isOffline,
-}: {
-  token: string;
-  inspectionId: string;
-  onBack: () => void;
-  onSubmitted: (successMessage: string) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-  isOffline: boolean;
-}) {
+export function InspectionFormScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'InspectionForm'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'InspectionForm'>['route']>();
+  const { inspectionId, visitId, substationId } = route.params;
+  const { token, handleUnauthorized } = useSession();
+  const { isOffline } = useSync();
+
+  function goBackToVisit(successMessage: string) {
+    navigation.popTo('VisitDetail', { visitId, substationId, successMessage });
+  }
+
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
@@ -120,7 +120,7 @@ export function InspectionFormScreen({
       setDraftValues(createInitialDraftValues(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -128,7 +128,7 @@ export function InspectionFormScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [inspectionId, onUnauthorized, token]);
+  }, [inspectionId, handleUnauthorized, token]);
 
   useEffect(() => {
     loadForm();
@@ -263,7 +263,7 @@ export function InspectionFormScreen({
           uploadState: 'error',
           uploadError: uploadError.message,
         });
-        await onUnauthorized(uploadError);
+        await handleUnauthorized(uploadError);
         return;
       }
 
@@ -489,10 +489,10 @@ export function InspectionFormScreen({
       await api.submitInspection(token, inspectionId);
       await cleanupLocalInspectionPhotos(photosRef.current);
 
-      onSubmitted('Inspection submitted successfully.');
+      goBackToVisit('Inspection submitted successfully.');
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
-        await onUnauthorized(submitError);
+        await handleUnauthorized(submitError);
         return;
       }
 
@@ -507,7 +507,7 @@ export function InspectionFormScreen({
           errorMessage: message,
         });
 
-        onSubmitted('Inspection saved to Sync Queue. It will retry when connection returns.');
+        goBackToVisit('Inspection saved to Sync Queue. It will retry when connection returns.');
         return;
       }
 
@@ -567,7 +567,7 @@ export function InspectionFormScreen({
       setSaveNotice(`Draft saved ${formatDraftSavedTime(new Date())}.`);
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.status === 401) {
-        await onUnauthorized(saveError);
+        await handleUnauthorized(saveError);
         return;
       }
 
@@ -588,7 +588,11 @@ export function InspectionFormScreen({
       keyboardAware
       actions={
         <>
-          <InlineButton label="Back" onPress={onBack} disabled={isSavingDraft || isSubmitting} />
+          <InlineButton
+            label="Back"
+            onPress={() => navigation.goBack()}
+            disabled={isSavingDraft || isSubmitting}
+          />
           <InlineButton label="Refresh" onPress={loadForm} disabled={isBusy} />
         </>
       }

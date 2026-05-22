@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { AppDrawerScreenProps } from '../navigation/types';
 import { DefectListItem } from '../types';
 import { formatDateTime } from '../utils';
 import {
@@ -17,19 +20,9 @@ import {
   uiTheme,
 } from '../ui';
 
-export function DefectListScreen({
-  token,
-  onBack,
-  onOpenDefect,
-  onOpenInspection,
-  onUnauthorized,
-}: {
-  token: string;
-  onBack: () => void;
-  onOpenDefect: (item: DefectListItem) => void;
-  onOpenInspection: (item: DefectListItem) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function DefectListScreen() {
+  const navigation = useNavigation<AppDrawerScreenProps<'DefectList'>['navigation']>();
+  const { token, handleUnauthorized } = useSession();
   const [defects, setDefects] = useState<DefectListItem[]>([]);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -46,7 +39,7 @@ export function DefectListScreen({
       console.error('[DEFECT LIST LOAD ERROR]', loadError);
 
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -55,7 +48,7 @@ export function DefectListScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, token]);
+  }, [handleUnauthorized, token]);
 
   useEffect(() => {
     loadDefects();
@@ -79,7 +72,11 @@ export function DefectListScreen({
   return (
     <Screen
       title="Defects"
-      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      leftAction={{
+        icon: 'menu',
+        onPress: () => navigation.openDrawer(),
+        accessibilityLabel: 'Menu',
+      }}
       rightAction={{
         icon: 'refresh',
         onPress: loadDefects,
@@ -123,8 +120,15 @@ export function DefectListScreen({
                 <DefectCard
                   key={defect.id}
                   defect={defect}
-                  onOpenDefect={() => onOpenDefect(defect)}
-                  onOpenInspection={() => onOpenInspection(defect)}
+                  onOpenDefect={() =>
+                    navigation.navigate('DefectDetail', { defectId: defect.id })
+                  }
+                  onOpenInspection={() =>
+                    navigation.navigate('InspectionDetail', {
+                      inspectionId: defect.inspectionId,
+                      assetCode: defect.assetCode,
+                    })
+                  }
                 />
               ))
             : null}

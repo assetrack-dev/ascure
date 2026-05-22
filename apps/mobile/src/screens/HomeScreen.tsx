@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
+import { useSession } from '../context/AuthContext';
+import { useSync } from '../context/SyncContext';
+import type { AppDrawerScreenProps } from '../navigation/types';
 import {
   getActiveQueueCount,
   getFailedQueueCount,
@@ -19,7 +23,7 @@ import {
   WarningBanner,
   uiTheme,
 } from '../ui';
-import { SessionUser, SiteVisit, Team } from '../types';
+import { SiteVisit } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -30,42 +34,12 @@ type VisitThumbnailImage = {
   path?: string | null;
 };
 
-export function HomeScreen({
-  token,
-  initialUser,
-  onUserRefreshed,
-  onOpenCheckIn,
-  onOpenDashboard,
-  onOpenAssetMap,
-  onOpenDefects,
-  onOpenSyncQueue,
-  onOpenVisit,
-  onLogout,
-  onUnauthorized,
-  syncQueueSnapshot,
-  isSyncingQueue,
-  isOffline,
-}: {
-  token: string;
-  initialUser: SessionUser;
-  onUserRefreshed: (user: SessionUser) => void;
-  onOpenCheckIn: () => void;
-  onOpenDashboard: () => void;
-  onOpenAssetMap: () => void;
-  onOpenDefects: () => void;
-  onOpenSyncQueue: () => void;
-  onOpenVisit: (visit: SiteVisit) => void;
-  onLogout: () => Promise<void>;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-  syncQueueSnapshot: SyncQueueSnapshot;
-  isSyncingQueue: boolean;
-  isOffline: boolean;
-}) {
-  const [user, setUser] = useState(initialUser);
-  const [teams, setTeams] = useState<Team[]>([]);
+export function HomeScreen() {
+  const navigation = useNavigation<AppDrawerScreenProps<'Home'>['navigation']>();
+  const { token, setUser, handleUnauthorized } = useSession();
+  const { snapshot: syncQueueSnapshot, isSyncing: isSyncingQueue, isOffline } = useSync();
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [completedVisits, setCompletedVisits] = useState<SiteVisit[]>([]);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [joiningVisitId, setJoiningVisitId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,22 +49,19 @@ export function HomeScreen({
       setError(null);
       setIsLoading(true);
 
-      const [me, teamList, activeVisitList, completedVisitList] = await Promise.all([
+      const [me, activeVisitList, completedVisitList] = await Promise.all([
         api.getMe(token),
-        api.getTeams(token),
         api.getActiveSiteVisits(token),
         api.getCompletedSiteVisits(token),
       ]);
       const activeVisitsWithImageData = await loadVisitDetails(token, activeVisitList);
 
       setUser(me);
-      setTeams(teamList);
       setActiveVisits(activeVisitsWithImageData);
       setCompletedVisits(completedVisitList);
-      onUserRefreshed(me);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -98,7 +69,7 @@ export function HomeScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, onUserRefreshed, token]);
+  }, [handleUnauthorized, setUser, token]);
 
   useEffect(() => {
     loadHomeData();
@@ -111,20 +82,29 @@ export function HomeScreen({
         setJoiningVisitId(visit.id);
 
         if (isCompletedVisit(visit)) {
-          onOpenVisit(visit);
+          navigation.navigate('VisitDetail', {
+            visitId: visit.id,
+            substationId: visit.substationId,
+          });
           return;
         }
 
         const joinedVisit = await api.joinSiteVisit(token, visit.id);
-        onOpenVisit(joinedVisit);
+        navigation.navigate('VisitDetail', {
+          visitId: joinedVisit.id,
+          substationId: joinedVisit.substationId,
+        });
       } catch (joinError) {
         if (joinError instanceof ApiError && joinError.status === 401) {
-          await onUnauthorized(joinError);
+          await handleUnauthorized(joinError);
           return;
         }
 
         if (isEndpointUnavailableError(joinError)) {
-          onOpenVisit(visit);
+          navigation.navigate('VisitDetail', {
+            visitId: visit.id,
+            substationId: visit.substationId,
+          });
           return;
         }
 
@@ -133,130 +113,115 @@ export function HomeScreen({
         setJoiningVisitId(null);
       }
     },
-    [onOpenVisit, onUnauthorized, token],
+    [handleUnauthorized, navigation, token],
   );
 
   return (
-    <View style={styles.root}>
-      <Screen
-        title="Visits"
-        leftAction={{
-          icon: 'menu',
-          onPress: () => setIsDrawerOpen(true),
-          accessibilityLabel: 'Menu',
-        }}
-        rightActions={[
-          {
-            icon: 'refresh',
-            onPress: loadHomeData,
-            accessibilityLabel: 'Refresh',
-            disabled: isLoading,
-          },
-          {
-            icon: 'add',
-            onPress: onOpenCheckIn,
-            accessibilityLabel: 'Create Check In',
-          },
-        ]}
-      >
-        <ErrorBanner message={error} />
-        <WarningBanner
-          message={
-            isOffline
-              ? 'Offline mode: inspections and visit completion can be queued until connection returns.'
-              : null
-          }
-        />
-        {isLoading ? (
-          <>
-            <SkeletonCard />
-            <SkeletonCard />
-          </>
-        ) : null}
-        <SyncQueueSummaryCard
-          snapshot={syncQueueSnapshot}
-          isSyncing={isSyncingQueue}
-          onOpen={onOpenSyncQueue}
-        />
-
-        {!isLoading ? (
-          <Card>
-            <View style={styles.listHeader}>
-              <SectionTitle>Active Visits</SectionTitle>
-              <Text style={styles.countText}>{activeVisits.length}</Text>
-            </View>
-
-            {activeVisits.length === 0 ? (
-              <EmptyState
-                icon="inbox"
-                title="No active visits"
-                description="Create a new check-in to start work at a substation."
-              />
-            ) : (
-              <View style={styles.visitList}>
-                {activeVisits.map((visit) => (
-                  <VisitRow
-                    key={visit.id}
-                    visit={visit}
-                    isJoining={joiningVisitId === visit.id}
-                    onPress={() => {
-                      void handleOpenVisit(visit);
-                    }}
-                  />
-                ))}
-              </View>
-            )}
-          </Card>
-        ) : null}
-
-        {!isLoading ? (
-          <Card>
-            <View style={styles.listHeader}>
-              <SectionTitle>Completed Visits</SectionTitle>
-              <Text style={styles.countText}>{completedVisits.length}</Text>
-            </View>
-
-            {completedVisits.length === 0 ? (
-              <EmptyState
-                icon="check-circle"
-                title="No completed visits"
-                description="Completed site visits will stay available here for recheck or correction."
-              />
-            ) : (
-              <View style={styles.visitList}>
-                {completedVisits.map((visit) => (
-                  <VisitRow
-                    key={visit.id}
-                    visit={visit}
-                    isJoining={false}
-                    metaLabel={{
-                      label: 'Completed',
-                      value: formatDateTime(visit.completedAt ?? visit.endedAt ?? visit.startedAt),
-                    }}
-                    onPress={() => {
-                      void handleOpenVisit(visit);
-                    }}
-                  />
-                ))}
-              </View>
-            )}
-          </Card>
-        ) : null}
-      </Screen>
-
-      <HomeDrawer
-        visible={isDrawerOpen}
-        user={user}
-        teams={teams}
-        onClose={() => setIsDrawerOpen(false)}
-        onOpenDashboard={onOpenDashboard}
-        onOpenAssetMap={onOpenAssetMap}
-        onOpenDefects={onOpenDefects}
-        onOpenSyncQueue={onOpenSyncQueue}
-        onLogout={onLogout}
-        syncQueueSnapshot={syncQueueSnapshot}
+    <Screen
+      title="Visits"
+      leftAction={{
+        icon: 'menu',
+        onPress: () => navigation.openDrawer(),
+        accessibilityLabel: 'Menu',
+      }}
+      rightActions={[
+        {
+          icon: 'refresh',
+          onPress: loadHomeData,
+          accessibilityLabel: 'Refresh',
+          disabled: isLoading,
+        },
+        {
+          icon: 'add',
+          onPress: () => navigation.navigate('CheckIn'),
+          accessibilityLabel: 'Create Check In',
+        },
+      ]}
+    >
+      <ErrorBanner message={error} />
+      <WarningBanner
+        message={
+          isOffline
+            ? 'Offline mode: inspections and visit completion can be queued until connection returns.'
+            : null
+        }
       />
-    </View>
+      {isLoading ? (
+        <>
+          <SkeletonCard />
+          <SkeletonCard />
+        </>
+      ) : null}
+      <SyncQueueSummaryCard
+        snapshot={syncQueueSnapshot}
+        isSyncing={isSyncingQueue}
+        onOpen={() => navigation.navigate('SyncQueue')}
+      />
+
+      {!isLoading ? (
+        <Card>
+          <View style={styles.listHeader}>
+            <SectionTitle>Active Visits</SectionTitle>
+            <Text style={styles.countText}>{activeVisits.length}</Text>
+          </View>
+
+          {activeVisits.length === 0 ? (
+            <EmptyState
+              icon="inbox"
+              title="No active visits"
+              description="Create a new check-in to start work at a substation."
+            />
+          ) : (
+            <View style={styles.visitList}>
+              {activeVisits.map((visit) => (
+                <VisitRow
+                  key={visit.id}
+                  visit={visit}
+                  isJoining={joiningVisitId === visit.id}
+                  onPress={() => {
+                    void handleOpenVisit(visit);
+                  }}
+                />
+              ))}
+            </View>
+          )}
+        </Card>
+      ) : null}
+
+      {!isLoading ? (
+        <Card>
+          <View style={styles.listHeader}>
+            <SectionTitle>Completed Visits</SectionTitle>
+            <Text style={styles.countText}>{completedVisits.length}</Text>
+          </View>
+
+          {completedVisits.length === 0 ? (
+            <EmptyState
+              icon="check-circle"
+              title="No completed visits"
+              description="Completed site visits will stay available here for recheck or correction."
+            />
+          ) : (
+            <View style={styles.visitList}>
+              {completedVisits.map((visit) => (
+                <VisitRow
+                  key={visit.id}
+                  visit={visit}
+                  isJoining={false}
+                  metaLabel={{
+                    label: 'Completed',
+                    value: formatDateTime(visit.completedAt ?? visit.endedAt ?? visit.startedAt),
+                  }}
+                  onPress={() => {
+                    void handleOpenVisit(visit);
+                  }}
+                />
+              ))}
+            </View>
+          )}
+        </Card>
+      ) : null}
+    </Screen>
   );
 }
 
@@ -336,114 +301,6 @@ function isCompletedVisit(visit: SiteVisit) {
   return visit.status === 'COMPLETED';
 }
 
-function HomeDrawer({
-  visible,
-  user,
-  teams,
-  onClose,
-  onOpenDashboard,
-  onOpenAssetMap,
-  onOpenDefects,
-  onOpenSyncQueue,
-  onLogout,
-  syncQueueSnapshot,
-}: {
-  visible: boolean;
-  user: SessionUser;
-  teams: Team[];
-  onClose: () => void;
-  onOpenDashboard: () => void;
-  onOpenAssetMap: () => void;
-  onOpenDefects: () => void;
-  onOpenSyncQueue: () => void;
-  onLogout: () => Promise<void>;
-  syncQueueSnapshot: SyncQueueSnapshot;
-}) {
-  const activeSyncCount = getActiveQueueCount(syncQueueSnapshot);
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.drawerRoot}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
-        <View style={styles.drawerPanel}>
-          <ScrollView contentContainerStyle={styles.drawerContent}>
-            <View style={styles.drawerHeader}>
-              <Text style={styles.drawerTitle}>Menu</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close menu"
-                onPress={onClose}
-                style={({ pressed }) => [styles.drawerCloseButton, pressed && styles.drawerItemPressed]}
-              >
-                <Feather name="x" size={18} color="#E5E7EB" />
-              </Pressable>
-            </View>
-
-            <View style={styles.identityCard}>
-              <Text style={styles.identityLabel}>User Info / Team Info</Text>
-              <Text style={styles.identityName}>{user.name}</Text>
-              <Text style={styles.identityEmail}>{user.email}</Text>
-              <View style={styles.teamList}>
-                {teams.length > 0 ? (
-                  teams.map((team) => (
-                    <View key={team.id} style={styles.teamRow}>
-                      <Text style={styles.teamName}>{team.name}</Text>
-                      <Text style={styles.teamCode}>{team.code}</Text>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.teamEmpty}>No team available</Text>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.drawerNav}>
-              <DrawerItem label="Visits" active onPress={onClose} />
-              <DrawerItem
-                label="Dashboard"
-                onPress={() => {
-                  onClose();
-                  onOpenDashboard();
-                }}
-              />
-              <DrawerItem
-                label="Map"
-                onPress={() => {
-                  onClose();
-                  onOpenAssetMap();
-                }}
-              />
-              <DrawerItem
-                label="Defects"
-                onPress={() => {
-                  onClose();
-                  onOpenDefects();
-                }}
-              />
-              <DrawerItem
-                label={activeSyncCount > 0 ? `Sync Queue (${activeSyncCount})` : 'Sync Queue'}
-                onPress={() => {
-                  onClose();
-                  onOpenSyncQueue();
-                }}
-              />
-            </View>
-
-            <DrawerItem
-              label="Logout"
-              tone="danger"
-              onPress={() => {
-                onClose();
-                void onLogout();
-              }}
-            />
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 function SyncQueueSummaryCard({
   snapshot,
   isSyncing,
@@ -478,40 +335,6 @@ function SyncQueueSummaryCard({
         </Text>
       </View>
       <Feather name="chevron-right" size={20} color={uiTheme.colors.textMuted} />
-    </Pressable>
-  );
-}
-
-function DrawerItem({
-  label,
-  onPress,
-  tone = 'default',
-  active = false,
-}: {
-  label: string;
-  onPress: () => void;
-  tone?: 'default' | 'danger';
-  active?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.drawerItem,
-        active && styles.drawerItemActive,
-        pressed && styles.drawerItemPressed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.drawerItemText,
-          active && styles.drawerItemTextActive,
-          tone === 'danger' && styles.drawerItemTextDanger,
-        ]}
-      >
-        {label}
-      </Text>
     </Pressable>
   );
 }
@@ -555,9 +378,6 @@ function getImageSourceUri(image: VisitThumbnailImage) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-  },
   listHeader: {
     minHeight: 44,
     flexDirection: 'row',
@@ -679,140 +499,5 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '700',
     textAlign: 'right',
-  },
-  drawerRoot: {
-    flex: 1,
-    backgroundColor: 'rgba(17, 24, 39, 0.42)',
-  },
-  drawerPanel: {
-    width: '82%',
-    maxWidth: 340,
-    height: '100%',
-    backgroundColor: '#111827',
-    borderRightWidth: 1,
-    borderRightColor: '#1F2937',
-    shadowColor: '#000000',
-    shadowOffset: {
-      width: 8,
-      height: 0,
-    },
-    shadowOpacity: 0.22,
-    shadowRadius: 18,
-    elevation: 12,
-  },
-  drawerContent: {
-    paddingTop: 34,
-    paddingHorizontal: 16,
-    paddingBottom: 28,
-    gap: 16,
-  },
-  drawerHeader: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  drawerTitle: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  drawerCloseButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1F2937',
-    borderWidth: 1,
-    borderColor: '#374151',
-  },
-  identityCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    backgroundColor: '#1F2937',
-    padding: 16,
-    gap: 9,
-  },
-  identityLabel: {
-    color: '#9CA3AF',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  identityName: {
-    color: '#FFFFFF',
-    fontSize: 19,
-    lineHeight: 25,
-    fontWeight: '700',
-  },
-  identityEmail: {
-    color: '#D1D5DB',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  teamList: {
-    gap: 8,
-    paddingTop: 6,
-  },
-  teamRow: {
-    borderRadius: 8,
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#374151',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 3,
-  },
-  teamName: {
-    color: '#F9FAFB',
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  teamCode: {
-    color: '#9CA3AF',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  teamEmpty: {
-    color: '#9CA3AF',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  drawerNav: {
-    gap: 8,
-  },
-  drawerItem: {
-    minHeight: 52,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  drawerItemActive: {
-    borderColor: '#374151',
-    backgroundColor: '#1F2937',
-  },
-  drawerItemPressed: {
-    opacity: 0.82,
-  },
-  drawerItemText: {
-    color: '#D1D5DB',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  drawerItemTextActive: {
-    color: '#FFFFFF',
-  },
-  drawerItemTextDanger: {
-    color: '#FCA5A5',
   },
 });

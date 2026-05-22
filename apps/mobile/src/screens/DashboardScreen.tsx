@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { AppDrawerScreenProps } from '../navigation/types';
 import { DashboardData, DashboardRecentDefect, DefectStatus } from '../types';
 import { formatDateTime } from '../utils';
 import {
@@ -15,17 +18,9 @@ import {
   uiTheme,
 } from '../ui';
 
-export function DashboardScreen({
-  token,
-  onBack,
-  onOpenDefect,
-  onUnauthorized,
-}: {
-  token: string;
-  onBack: () => void;
-  onOpenDefect: (defectId: string) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function DashboardScreen() {
+  const navigation = useNavigation<AppDrawerScreenProps<'Dashboard'>['navigation']>();
+  const { token, handleUnauthorized } = useSession();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +36,7 @@ export function DashboardScreen({
       console.error('[DASHBOARD LOAD ERROR]', loadError);
 
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -50,7 +45,7 @@ export function DashboardScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, token]);
+  }, [handleUnauthorized, token]);
 
   useEffect(() => {
     loadDashboard();
@@ -59,7 +54,11 @@ export function DashboardScreen({
   return (
     <Screen
       title="Dashboard"
-      leftAction={{ icon: 'back', onPress: onBack, accessibilityLabel: 'Back' }}
+      leftAction={{
+        icon: 'menu',
+        onPress: () => navigation.openDrawer(),
+        accessibilityLabel: 'Menu',
+      }}
       rightAction={{
         icon: 'refresh',
         onPress: loadDashboard,
@@ -102,7 +101,7 @@ export function DashboardScreen({
                 <RecentDefectRow
                   key={defect.id}
                   defect={defect}
-                  onPress={() => onOpenDefect(defect.id)}
+                  onPress={() => navigation.navigate('DefectDetail', { defectId: defect.id })}
                 />
               ))
             )}

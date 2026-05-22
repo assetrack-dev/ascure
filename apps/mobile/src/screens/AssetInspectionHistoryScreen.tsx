@@ -9,29 +9,21 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import { AssetInspectionHistoryItem, InspectionImage } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
-export function AssetInspectionHistoryScreen({
-  token,
-  assetId,
-  assetCode,
-  onBack,
-  onOpenImagePreview,
-  onOpenInspectionDetail,
-  onUnauthorized,
-}: {
-  token: string;
-  assetId: string;
-  assetCode?: string;
-  onBack: () => void;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
-  onOpenInspectionDetail: (params: { inspectionId: string; assetCode?: string }) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function AssetInspectionHistoryScreen() {
+  const navigation =
+    useNavigation<RootStackScreenProps<'AssetInspectionHistory'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'AssetInspectionHistory'>['route']>();
+  const { assetId, assetCode } = route.params;
+  const { token, handleUnauthorized } = useSession();
   const [inspections, setInspections] = useState<AssetInspectionHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +39,7 @@ export function AssetInspectionHistoryScreen({
       console.error('[ASSET INSPECTION HISTORY LOAD ERROR]', loadError);
 
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -56,7 +48,7 @@ export function AssetInspectionHistoryScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [assetId, onUnauthorized, token]);
+  }, [assetId, handleUnauthorized, token]);
 
   useEffect(() => {
     loadInspections();
@@ -100,7 +92,7 @@ export function AssetInspectionHistoryScreen({
               Refresh
             </Text>
           </Pressable>
-          <Pressable onPress={onBack} style={{ paddingVertical: 6 }}>
+          <Pressable onPress={() => navigation.goBack()} style={{ paddingVertical: 6 }}>
             <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f5cd8' }}>Back</Text>
           </Pressable>
         </View>
@@ -172,9 +164,11 @@ export function AssetInspectionHistoryScreen({
               <InspectionHistoryCard
                 key={inspection.id}
                 inspection={inspection}
-                onOpenImagePreview={onOpenImagePreview}
+                onOpenImagePreview={(params) =>
+                  navigation.navigate('ImagePreview', params)
+                }
                 onOpenInspectionDetail={() =>
-                  onOpenInspectionDetail({
+                  navigation.navigate('InspectionDetail', {
                     inspectionId: inspection.id,
                     assetCode,
                   })

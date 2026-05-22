@@ -1,17 +1,14 @@
 import { Image, Platform, Pressable, StatusBar, Text, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { API_BASE_URL } from '../api';
+import type { RootStackScreenProps } from '../navigation/types';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
-export function ImagePreviewScreen({
-  uri,
-  title,
-  onBack,
-}: {
-  uri: string;
-  title?: string;
-  onBack: () => void;
-}) {
+export function ImagePreviewScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'ImagePreview'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'ImagePreview'>['route']>();
+  const { uri, title } = route.params;
   const imageUri = getImageSourceUri(uri.trim());
 
   return (
@@ -34,7 +31,7 @@ export function ImagePreviewScreen({
         }}
       >
         <Pressable
-          onPress={onBack}
+          onPress={() => navigation.goBack()}
           style={({ pressed }) => ({
             paddingVertical: 8,
             paddingRight: 10,

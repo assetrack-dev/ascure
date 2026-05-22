@@ -11,7 +11,10 @@ import {
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-native-maps';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
   Card,
@@ -79,27 +82,27 @@ const DEFAULT_MAP_PICKER_COORDINATE: Coordinate = {
 
 const MAP_PICKER_DELTA = 0.004;
 
-export function AddAssetScreen({
-  token,
-  substationId,
-  siteVisitId,
-  assetToEdit,
-  initialLatitude,
-  initialLongitude,
-  onBack,
-  onSaved,
-  onUnauthorized,
-}: {
-  token: string;
-  substationId?: string;
-  siteVisitId?: string;
-  assetToEdit?: Asset;
-  initialLatitude?: number;
-  initialLongitude?: number;
-  onBack: () => void;
-  onSaved: (asset: Asset, successMessage: string) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function AddAssetScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'AddAsset'>['navigation']>();
+  const route = useRoute<RootStackScreenProps<'AddAsset'>['route']>();
+  const {
+    visitId: siteVisitId,
+    substationId,
+    assetToEdit,
+    initialLatitude,
+    initialLongitude,
+  } = route.params;
+  const { token, handleUnauthorized } = useSession();
+
+  function goToSavedAsset(asset: Asset) {
+    navigation.replace('AssetDetail', {
+      visitId: siteVisitId,
+      substationId: asset.substationId || substationId,
+      assetId: asset.id,
+      assetSnapshot: asset,
+    });
+  }
+
   const isEditMode = Boolean(assetToEdit);
   const initialMapLatitude =
     typeof initialLatitude === 'number' && Number.isFinite(initialLatitude) ? initialLatitude : null;
@@ -250,7 +253,7 @@ export function AddAssetScreen({
       }
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -261,7 +264,7 @@ export function AddAssetScreen({
   }, [
     hasInitialMapLocation,
     isEditMode,
-    onUnauthorized,
+    handleUnauthorized,
     prefillCurrentLocation,
     substationId,
     token,
@@ -457,7 +460,7 @@ export function AddAssetScreen({
           });
         }
 
-        onSaved(savedAsset, `Asset ${normalizedAssetCode} updated successfully.`);
+        goToSavedAsset(savedAsset);
         return;
       }
 
@@ -473,10 +476,10 @@ export function AddAssetScreen({
         createdDuringVisitId: siteVisitId,
       });
 
-      onSaved(savedAsset, `Asset ${normalizedAssetCode} added successfully.`);
+      goToSavedAsset(savedAsset);
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
-        await onUnauthorized(submitError);
+        await handleUnauthorized(submitError);
         return;
       }
 
@@ -508,7 +511,11 @@ export function AddAssetScreen({
       title={isEditMode ? 'Edit Asset' : 'Add Asset'}
       actions={
         <>
-          <InlineButton label="Back" onPress={onBack} disabled={isSubmitting} />
+          <InlineButton
+            label="Back"
+            onPress={() => navigation.goBack()}
+            disabled={isSubmitting}
+          />
           <InlineButton label="Refresh" onPress={loadOptions} disabled={isSubmitting || isLocating} />
         </>
       }

@@ -1,14 +1,11 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { api } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { AppButton, Card, ErrorBanner, Screen, TextField, uiTheme } from '../ui';
-import { SessionUser } from '../types';
 
-export function LoginScreen({
-  onAuthenticated,
-}: {
-  onAuthenticated: (token: string, user: SessionUser) => Promise<void>;
-}) {
+export function LoginScreen() {
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +17,7 @@ export function LoginScreen({
       setError(null);
 
       const response = await api.login(email.trim(), password);
-      await onAuthenticated(response.access_token, response.user);
+      await signIn(response.access_token, response.user);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'Unable to sign in.');
     } finally {

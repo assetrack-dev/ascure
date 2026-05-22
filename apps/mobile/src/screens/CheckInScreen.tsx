@@ -14,7 +14,10 @@ import {
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-native-maps';
+import { useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
+import { useSession } from '../context/AuthContext';
+import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
   BodyText,
@@ -30,7 +33,7 @@ import {
   TextField,
   uiTheme,
 } from '../ui';
-import { SessionUser, SiteVisit, SiteVisitType, Substation, Team } from '../types';
+import { SiteVisit, SiteVisitType, Substation, Team } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 
 type CapturedSitePhoto = {
@@ -89,21 +92,17 @@ const DEFAULT_MAP_PICKER_COORDINATE: Coordinate = {
 
 const MAP_PICKER_DELTA = 0.004;
 
-export function CheckInScreen({
-  token,
-  user,
-  onBack,
-  onCreated,
-  onOpenExistingVisit,
-  onUnauthorized,
-}: {
-  token: string;
-  user: SessionUser;
-  onBack: () => void;
-  onCreated: (visit: SiteVisit) => void;
-  onOpenExistingVisit: (visit: SiteVisit) => void;
-  onUnauthorized: (error?: unknown) => Promise<void>;
-}) {
+export function CheckInScreen() {
+  const navigation = useNavigation<RootStackScreenProps<'CheckIn'>['navigation']>();
+  const { token, user, handleUnauthorized } = useSession();
+
+  function goToVisit(visit: SiteVisit) {
+    navigation.replace('VisitDetail', {
+      visitId: visit.id,
+      substationId: visit.substationId,
+    });
+  }
+
   const [teams, setTeams] = useState<Team[]>([]);
   const [substations, setSubstations] = useState<Substation[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
@@ -205,7 +204,7 @@ export function CheckInScreen({
       await prefillCurrentLocation();
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
-        await onUnauthorized(loadError);
+        await handleUnauthorized(loadError);
         return;
       }
 
@@ -213,7 +212,7 @@ export function CheckInScreen({
     } finally {
       setIsLoading(false);
     }
-  }, [onUnauthorized, pencawangMode, token]);
+  }, [handleUnauthorized, pencawangMode, token]);
 
   useEffect(() => {
     loadOptions();
@@ -442,15 +441,15 @@ export function CheckInScreen({
       setError(null);
 
       const joinedVisit = await api.joinSiteVisit(token, visit.id);
-      onOpenExistingVisit(joinedVisit);
+      goToVisit(joinedVisit);
     } catch (openError) {
       if (openError instanceof ApiError && openError.status === 401) {
-        await onUnauthorized(openError);
+        await handleUnauthorized(openError);
         return;
       }
 
       if (isEndpointUnavailableError(openError)) {
-        onOpenExistingVisit(visit);
+        goToVisit(visit);
         return;
       }
 
@@ -549,7 +548,7 @@ export function CheckInScreen({
         await uploadSitePhotos(visit.id);
       } catch (uploadError) {
         if (uploadError instanceof ApiError && uploadError.status === 401) {
-          await onUnauthorized(uploadError);
+          await handleUnauthorized(uploadError);
           return;
         }
 
@@ -561,10 +560,10 @@ export function CheckInScreen({
         }
       }
 
-      onCreated(visit);
+      goToVisit(visit);
     } catch (createError) {
       if (createError instanceof ApiError && createError.status === 401) {
-        await onUnauthorized(createError);
+        await handleUnauthorized(createError);
         return;
       }
 
@@ -621,7 +620,7 @@ export function CheckInScreen({
       subtitle="Start a shared site visit with the field details needed for SAVR work."
       actions={
         <>
-          <InlineButton label="Back" onPress={onBack} disabled={isSubmitting} />
+          <InlineButton label="Back" onPress={() => navigation.goBack()} disabled={isSubmitting} />
           <InlineButton label="Refresh" onPress={loadOptions} disabled={isSubmitting} />
         </>
       }

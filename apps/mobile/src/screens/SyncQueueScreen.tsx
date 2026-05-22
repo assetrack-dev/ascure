@@ -1,6 +1,9 @@
 import { Children, type ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useSync } from '../context/SyncContext';
+import type { AppDrawerScreenProps } from '../navigation/types';
 import {
   AppButton,
   Card,
@@ -23,24 +26,12 @@ import {
   OfflineInspectionQueueItem,
   OfflineVisitCompletionQueueItem,
   SyncQueueDisplayStatus,
-  SyncQueueRunResult,
-  SyncQueueSnapshot,
 } from '../syncQueue';
 import { formatDateTime } from '../utils';
 
-export function SyncQueueScreen({
-  snapshot,
-  isSyncing,
-  isOffline,
-  onBack,
-  onRetry,
-}: {
-  snapshot: SyncQueueSnapshot;
-  isSyncing: boolean;
-  isOffline: boolean;
-  onBack: () => void;
-  onRetry: () => Promise<SyncQueueRunResult>;
-}) {
+export function SyncQueueScreen() {
+  const navigation = useNavigation<AppDrawerScreenProps<'SyncQueue'>['navigation']>();
+  const { snapshot, isSyncing, isOffline, runQueueSync } = useSync();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const groupedItems = useMemo(
@@ -74,7 +65,7 @@ export function SyncQueueScreen({
       setError(null);
       setNotice(null);
 
-      const result = await onRetry();
+      const result = await runQueueSync();
 
       if (result.completed > 0) {
         setNotice(`${result.completed} item${result.completed === 1 ? '' : 's'} synced.`);
@@ -97,9 +88,9 @@ export function SyncQueueScreen({
       title="Sync Queue"
       subtitle="Offline inspection submissions and visit completion waiting for upload."
       leftAction={{
-        icon: 'back',
-        onPress: onBack,
-        accessibilityLabel: 'Back',
+        icon: 'menu',
+        onPress: () => navigation.openDrawer(),
+        accessibilityLabel: 'Menu',
       }}
     >
       <ErrorBanner message={error} />
