@@ -790,7 +790,7 @@ model Asset {
   inspections              Inspection[]
   images                   Image[]
 
-  @@unique([tenantId, assetCode])
+  @@unique([tenantId, substationId, assetCode], map: "Asset_tenantId_substationId_code_key")
   @@index([tenantId])
   @@index([substationId])
   @@index([assetTypeId])

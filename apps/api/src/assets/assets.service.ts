@@ -19,6 +19,9 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 
+const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
+  'An asset with this code already exists in this Pencawang.';
+
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -89,6 +92,21 @@ export class AssetsService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        const existingAsset = await tx.asset.findFirst({
+          where: {
+            tenantId: user.tenantId,
+            substationId: dto.substationId,
+            assetCode,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingAsset) {
+          throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
+        }
+
         const asset = await tx.asset.create({
           data: {
             tenantId: user.tenantId,
@@ -134,7 +152,7 @@ export class AssetsService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('An asset with this asset code already exists.');
+        throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
       }
 
       throw error;
@@ -369,6 +387,7 @@ export class AssetsService {
       },
       select: {
         id: true,
+        substationId: true,
         assetTypeId: true,
       },
     });
@@ -419,6 +438,26 @@ export class AssetsService {
       data.assetCode = assetCode;
     }
 
+    if (data.assetCode !== undefined) {
+      const existingAsset = await this.prisma.asset.findFirst({
+        where: {
+          tenantId: user.tenantId,
+          substationId: asset.substationId,
+          assetCode: data.assetCode,
+          id: {
+            not: asset.id,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingAsset) {
+        throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
+      }
+    }
+
     if (dto.name !== undefined) {
       data.name = this.normalizeOperationalString(dto.name);
     }
@@ -455,7 +494,7 @@ export class AssetsService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('An asset with this asset code already exists.');
+        throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
       }
 
       throw error;

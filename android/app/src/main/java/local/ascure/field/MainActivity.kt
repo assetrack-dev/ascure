@@ -1,4 +1,4 @@
-package com.helloworld
+package local.ascure.field
 
 import android.os.Build
 import android.os.Bundle

@@ -769,8 +769,9 @@ async function main() {
 
   await prisma.asset.upsert({
     where: {
-      tenantId_assetCode: {
+      tenantId_substationId_assetCode: {
         tenantId: tenant.id,
+        substationId: substation.id,
         assetCode: 'SAVR-001',
       },
     },
