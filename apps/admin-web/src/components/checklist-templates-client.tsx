@@ -141,6 +141,7 @@ const dangerButtonClassName =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const rowActionButtonClassName =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+const lastActiveItemError = "At least one checklist item must remain active.";
 
 function createLocalId() {
   return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -157,6 +158,14 @@ function createBlankItem(): TemplateFormItem {
     severity: "MEDIUM",
     optionsText: "",
   };
+}
+
+function isFormItemActive(item: Pick<TemplateFormItem, "isActive">) {
+  return item.isActive !== false;
+}
+
+function activeFormItemCount(items: TemplateFormItem[]) {
+  return items.filter(isFormItemActive).length;
 }
 
 function normalizeFieldType(value: string | undefined): ChecklistFieldType {
@@ -195,7 +204,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     label: item.label,
     fieldType: normalizeFieldType(item.fieldType ?? item.inputType),
     isRequired: item.isRequired,
-    isActive: item.isActive,
+    isActive: item.isActive !== false,
     isDefectTrigger: item.isDefectTrigger,
     severity: item.severity ?? "MEDIUM",
     optionsText: optionLines(item.options),
@@ -373,7 +382,13 @@ function parseOptions(optionsText: string) {
 function buildPayloadItems(items: TemplateFormItem[]) {
   const payloadItems: ChecklistTemplateItemPayload[] = [];
 
-  items.forEach((item, index) => {
+  items.forEach((item) => {
+    const itemIsActive = isFormItemActive(item);
+
+    if (!item.id && !itemIsActive) {
+      return;
+    }
+
     const label = item.label.trim();
 
     if (!label) {
@@ -390,9 +405,9 @@ function buildPayloadItems(items: TemplateFormItem[]) {
       id: item.id,
       label,
       fieldType: item.fieldType,
-      sortOrder: index + 1,
+      sortOrder: payloadItems.length + 1,
       isRequired: item.isRequired,
-      isActive: item.isActive,
+      isActive: itemIsActive,
       isDefectTrigger: item.isDefectTrigger,
       severity: item.severity,
       options,
@@ -400,7 +415,7 @@ function buildPayloadItems(items: TemplateFormItem[]) {
   });
 
   if (!payloadItems.some((item) => item.isActive)) {
-    throw new Error("At least one checklist item must remain active.");
+    throw new Error(lastActiveItemError);
   }
 
   return payloadItems;
@@ -509,7 +524,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             onChange={(event) => onUpdateItem(item.localId, { label: event.target.value })}
             className={`${inputClassName} mt-1.5`}
             maxLength={255}
-            required={item.isActive}
+            required={isFormItemActive(item)}
           />
         </label>
 
@@ -561,7 +576,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
           <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
             <input
               type="checkbox"
-              checked={item.isActive}
+              checked={isFormItemActive(item)}
               onChange={(event) => onUpdateItem(item.localId, { isActive: event.target.checked })}
               className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
             />
@@ -574,7 +589,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50"
           >
             <Trash2 size={14} className="shrink-0" />
-            {item.id ? "Deactivate" : "Remove"}
+            {item.id && isFormItemActive(item) ? "Deactivate" : "Remove"}
           </button>
         </div>
       </div>
@@ -630,6 +645,7 @@ function TemplateFormModal({
   isSaving,
   onChange,
   onClose,
+  onError,
   onSubmit,
 }: {
   mode: ModalMode;
@@ -641,6 +657,7 @@ function TemplateFormModal({
   isSaving: boolean;
   onChange: Dispatch<SetStateAction<TemplateFormState>>;
   onClose: () => void;
+  onError: Dispatch<SetStateAction<string>>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isCreateMode = mode === "create";
@@ -657,36 +674,66 @@ function TemplateFormModal({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+  const activeItemCount = useMemo(() => activeFormItemCount(values.items), [values.items]);
+  const clearModalError = useCallback(() => {
+    if (error) {
+      onError("");
+    }
+  }, [error, onError]);
+  const updateFormValues = useCallback(
+    (updater: SetStateAction<TemplateFormState>) => {
+      clearModalError();
+      onChange(updater);
+    },
+    [clearModalError, onChange],
+  );
 
   const updateItem = useCallback(
     (itemLocalId: string, changes: Partial<TemplateFormItem>) => {
-      onChange((currentValues) => ({
+      const item = values.items.find((entry) => entry.localId === itemLocalId);
+
+      if (
+        item &&
+        changes.isActive === false &&
+        isFormItemActive(item) &&
+        activeItemCount <= 1
+      ) {
+        onError(lastActiveItemError);
+        return;
+      }
+
+      updateFormValues((currentValues) => ({
         ...currentValues,
         items: currentValues.items.map((item) =>
           item.localId === itemLocalId ? { ...item, ...changes } : item,
         ),
       }));
     },
-    [onChange],
+    [activeItemCount, onError, updateFormValues, values.items],
   );
 
   const addItem = useCallback(() => {
-    onChange((currentValues) => ({
+    updateFormValues((currentValues) => ({
       ...currentValues,
       items: [...currentValues.items, createBlankItem()],
     }));
-  }, [onChange]);
+  }, [updateFormValues]);
 
   const removeItem = useCallback(
     (itemLocalId: string) => {
-      onChange((currentValues) => {
-        const item = currentValues.items.find((entry) => entry.localId === itemLocalId);
+      const item = values.items.find((entry) => entry.localId === itemLocalId);
 
-        if (!item) {
-          return currentValues;
-        }
+      if (!item) {
+        return;
+      }
 
-        if (item.id) {
+      if (isFormItemActive(item) && activeItemCount <= 1) {
+        onError(lastActiveItemError);
+        return;
+      }
+
+      updateFormValues((currentValues) => {
+        if (item.id && isFormItemActive(item)) {
           return {
             ...currentValues,
             items: currentValues.items.map((entry) =>
@@ -703,7 +750,7 @@ function TemplateFormModal({
         };
       });
     },
-    [onChange],
+    [activeItemCount, onError, updateFormValues, values.items],
   );
 
   const handleDragEnd = useCallback(
@@ -714,7 +761,7 @@ function TemplateFormModal({
         return;
       }
 
-      onChange((currentValues) => {
+      updateFormValues((currentValues) => {
         const activeId = String(active.id);
         const overId = String(over.id);
         const oldIndex = currentValues.items.findIndex((item) => item.localId === activeId);
@@ -730,173 +777,189 @@ function TemplateFormModal({
         };
       });
     },
-    [onChange],
+    [updateFormValues],
   );
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-6">
-      <div className="w-full max-w-6xl rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-                {isCreateMode ? "New Checklist Template" : `Template v${selectedTemplate?.version ?? ""}`}
-              </p>
-              {!isCreateMode && selectedTemplate ? <StatusBadge status={selectedStatus} /> : null}
-            </div>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">
-              {isCreateMode ? "Create Template Draft" : "Edit Checklist Template"}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            aria-label="Close checklist template modal"
-          >
-            <X size={17} />
-          </button>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-5 px-5 py-5">
-          {error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          ) : null}
-
-          {!isCreateMode && selectedTemplate ? (
-            <div className={`rounded-lg border px-3 py-2 text-sm ${selectedStatusMeta.panelClassName}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge status={selectedStatus} />
-                <span className="font-semibold">Version {selectedTemplate.version}</span>
-                <span className="text-xs">
-                  {selectedTemplate.assetTypeCode ?? selectedTemplate.assetType}
-                </span>
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+        <form onSubmit={onSubmit} className="flex min-h-0 flex-col">
+          <div className="sticky top-0 z-20 border-b border-slate-200 bg-white">
+            <div className="flex items-start justify-between gap-4 px-5 py-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+                    {isCreateMode ? "New Checklist Template" : `Template v${selectedTemplate?.version ?? ""}`}
+                  </p>
+                  {!isCreateMode && selectedTemplate ? <StatusBadge status={selectedStatus} /> : null}
+                </div>
+                <h2 className="mt-1 text-lg font-bold text-slate-900">
+                  {isCreateMode ? "Create Template Draft" : "Edit Checklist Template"}
+                </h2>
               </div>
-              <p className="mt-1 text-xs leading-5">{selectedStatusMeta.modalDescription}</p>
-            </div>
-          ) : null}
-
-          {!isCreateMode && selectedStatus !== "DRAFT" ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              Saving structure changes to a used active or archived template creates a new draft version.
-            </div>
-          ) : null}
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(220px,0.9fr)_minmax(260px,1.1fr)]">
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Asset Type</span>
-              <select
-                value={values.assetTypeId}
-                onChange={(event) => {
-                  const nextAssetTypeId = event.target.value;
-                  const nextAssetType = assetTypes.find(
-                    (assetType) => assetType.id === nextAssetTypeId,
-                  );
-
-                  onChange((currentValues) => ({
-                    ...currentValues,
-                    assetTypeId: nextAssetTypeId,
-                    capabilityId: nextAssetType?.capabilityId ?? "",
-                  }));
-                }}
-                className={`${inputClassName} mt-1.5`}
-                disabled={!isCreateMode}
-                required
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                aria-label="Close checklist template modal"
               >
-                <option value="">Choose asset type</option>
-                {assetTypes.map((assetType) => (
-                  <option key={assetType.id} value={assetType.id}>
-                    {assetType.code} - {assetType.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <X size={17} />
+              </button>
+            </div>
 
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Capability</span>
-              <select
-                value={values.capabilityId}
-                onChange={(event) =>
-                  onChange((currentValues) => ({
-                    ...currentValues,
-                    capabilityId: event.target.value,
-                  }))
-                }
-                className={`${inputClassName} mt-1.5`}
-              >
-                <option value="">Use asset type capability</option>
-                {capabilities.map((capability) => (
-                  <option key={capability.id} value={capability.id}>
-                    {capability.code ? `${capability.code} - ${capability.name}` : capability.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="space-y-4 px-5 pb-5">
+              {error ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {error}
+                </div>
+              ) : null}
 
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Template Name</span>
-              <input
-                type="text"
-                value={values.name}
-                onChange={(event) =>
-                  onChange((currentValues) => ({
-                    ...currentValues,
-                    name: event.target.value,
-                  }))
-                }
-                className={`${inputClassName} mt-1.5`}
-                required
-                maxLength={255}
-              />
-            </label>
+              {!isCreateMode && selectedTemplate ? (
+                <div className={`rounded-lg border px-3 py-2 text-sm ${selectedStatusMeta.panelClassName}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge status={selectedStatus} />
+                    <span className="font-semibold">Version {selectedTemplate.version}</span>
+                    <span className="text-xs">
+                      {selectedTemplate.assetTypeCode ?? selectedTemplate.assetType}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5">{selectedStatusMeta.modalDescription}</p>
+                </div>
+              ) : null}
+
+              {!isCreateMode && selectedStatus !== "DRAFT" ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Saving structure changes to a used active or archived template creates a new draft version.
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(220px,0.9fr)_minmax(260px,1.1fr)_auto] lg:items-end">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Asset Type</span>
+                  <select
+                    value={values.assetTypeId}
+                    onChange={(event) => {
+                      const nextAssetTypeId = event.target.value;
+                      const nextAssetType = assetTypes.find(
+                        (assetType) => assetType.id === nextAssetTypeId,
+                      );
+
+                      updateFormValues((currentValues) => ({
+                        ...currentValues,
+                        assetTypeId: nextAssetTypeId,
+                        capabilityId: nextAssetType?.capabilityId ?? "",
+                      }));
+                    }}
+                    className={`${inputClassName} mt-1.5`}
+                    disabled={!isCreateMode}
+                    required
+                  >
+                    <option value="">Choose asset type</option>
+                    {assetTypes.map((assetType) => (
+                      <option key={assetType.id} value={assetType.id}>
+                        {assetType.code} - {assetType.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Capability</span>
+                  <select
+                    value={values.capabilityId}
+                    onChange={(event) =>
+                      updateFormValues((currentValues) => ({
+                        ...currentValues,
+                        capabilityId: event.target.value,
+                      }))
+                    }
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Use asset type capability</option>
+                    {capabilities.map((capability) => (
+                      <option key={capability.id} value={capability.id}>
+                        {capability.code ? `${capability.code} - ${capability.name}` : capability.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Template Name</span>
+                  <input
+                    type="text"
+                    value={values.name}
+                    onChange={(event) =>
+                      updateFormValues((currentValues) => ({
+                        ...currentValues,
+                        name: event.target.value,
+                      }))
+                    }
+                    className={`${inputClassName} mt-1.5`}
+                    required
+                    maxLength={255}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={addItem}
+                  className={`${secondaryButtonClassName} w-full lg:w-auto`}
+                >
+                  <Plus size={16} />
+                  Add Item
+                </button>
+              </div>
+            </div>
           </div>
 
-          <section className="min-w-0 rounded-xl border border-slate-200 bg-slate-50">
-            <div className="flex flex-col gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
+          <div className="space-y-5 px-5 py-5">
+            <section className="min-w-0 rounded-xl border border-slate-200 bg-slate-50">
+              <div className="border-b border-slate-200 bg-white px-4 py-3">
                 <h3 className="text-sm font-bold text-slate-900">Checklist Items</h3>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
                   Active rows are shown to field users when this version is activated.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={addItem}
-                className={secondaryButtonClassName}
-              >
-                <Plus size={16} />
-                Add Item
+
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-3 p-4">
+                    {values.items.map((item, index) => (
+                      <SortableTemplateItemCard
+                        key={item.localId}
+                        item={item}
+                        index={index}
+                        itemCount={values.items.length}
+                        onUpdateItem={updateItem}
+                        onRemoveItem={removeItem}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+
+              <div className="flex border-t border-slate-200 bg-white px-4 py-3">
+                <button
+                  type="button"
+                  onClick={addItem}
+                  className={`${secondaryButtonClassName} w-full sm:w-auto`}
+                >
+                  <Plus size={16} />
+                  Add Item
+                </button>
+              </div>
+            </section>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+              <button type="button" onClick={onClose} className={secondaryButtonClassName}>
+                Cancel
+              </button>
+              <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+                <CheckCircle2 size={16} />
+                {isSaving ? "Saving" : isCreateMode ? "Create Draft" : "Save Changes"}
               </button>
             </div>
-
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-                <div className="space-y-3 p-4">
-                  {values.items.map((item, index) => (
-                    <SortableTemplateItemCard
-                      key={item.localId}
-                      item={item}
-                      index={index}
-                      itemCount={values.items.length}
-                      onUpdateItem={updateItem}
-                      onRemoveItem={removeItem}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
-          </section>
-
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
-              Cancel
-            </button>
-            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
-              <CheckCircle2 size={16} />
-              {isSaving ? "Saving" : isCreateMode ? "Create Draft" : "Save Changes"}
-            </button>
           </div>
         </form>
       </div>
@@ -1633,6 +1696,7 @@ function ChecklistTemplatesContent() {
           isSaving={isSaving}
           onChange={setFormValues}
           onClose={closeModal}
+          onError={setModalError}
           onSubmit={handleTemplateSubmit}
         />
       ) : null}

@@ -63,6 +63,16 @@ const DEFAULT_USER_FORM: UserFormState = {
   teamId: "",
   capabilityIds: [],
 };
+
+function createDefaultUserForm(): UserFormState {
+  return {
+    ...DEFAULT_USER_FORM,
+    email: "",
+    password: "",
+    capabilityIds: [],
+  };
+}
+
 const ROLE_FILTER_OPTIONS: Array<{ label: string; value: RoleFilter }> = [
   { label: "All roles", value: "ALL" },
   { label: "Admin", value: "ADMIN" },
@@ -258,7 +268,7 @@ function UserFormModal({
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
+        <form onSubmit={onSubmit} autoComplete="off" className="space-y-4 px-5 py-5">
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
@@ -283,6 +293,7 @@ function UserFormModal({
               type="email"
               value={values.email}
               onChange={(event) => onChange("email", event.target.value)}
+              autoComplete="new-email"
               className={`${inputClassName} mt-1.5`}
               required
               maxLength={320}
@@ -380,6 +391,7 @@ function UserFormModal({
                 type="password"
                 value={values.password}
                 onChange={(event) => onChange("password", event.target.value)}
+                autoComplete="new-password"
                 className={`${inputClassName} mt-1.5`}
                 required
                 minLength={8}
@@ -465,6 +477,7 @@ function PasswordModal({
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
               className={`${inputClassName} mt-1.5`}
               required
               minLength={8}
@@ -500,7 +513,7 @@ function UsersContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
-  const [userForm, setUserForm] = useState<UserFormState>(DEFAULT_USER_FORM);
+  const [userForm, setUserForm] = useState<UserFormState>(() => createDefaultUserForm());
   const [modalError, setModalError] = useState("");
   const [passwordUser, setPasswordUser] = useState<ManagedUser | null>(null);
   const [password, setPassword] = useState("");
@@ -620,7 +633,7 @@ function UsersContent() {
 
   function openCreateModal() {
     setSelectedUser(null);
-    setUserForm(DEFAULT_USER_FORM);
+    setUserForm(createDefaultUserForm());
     setModalError("");
     setModalMode("create");
   }
