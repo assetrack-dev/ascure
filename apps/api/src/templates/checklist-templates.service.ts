@@ -7,9 +7,11 @@ import {
 import {
   DefectSeverity,
   InspectionItemInputType,
+  InspectionTemplateScopeLevel,
   InspectionTemplateStatus,
   OperationalDomain,
   Prisma,
+  UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -49,11 +51,29 @@ const checklistTemplateInclude = {
       isActive: true,
     },
   },
+  organization: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      type: true,
+    },
+  },
+  branch: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      region: true,
+      organizationId: true,
+    },
+  },
   mainhead: {
     select: {
       id: true,
       code: true,
       name: true,
+      branchId: true,
     },
   },
   sections: {
@@ -82,17 +102,39 @@ type ChecklistTemplateRecord = Prisma.InspectionTemplateGetPayload<{
 type ChecklistTemplateItemRecord = ChecklistTemplateRecord['sections'][number]['items'][number];
 type PrismaClientLike = Prisma.TransactionClient | PrismaService;
 type ChecklistTemplateResolutionSource =
-  | 'ASSET_TYPE_MAINHEAD'
-  | 'ASSET_TYPE'
-  | 'CAPABILITY'
-  | 'TENANT_ACTIVE';
+  | 'MAINHEAD'
+  | 'BRANCH'
+  | 'ORGANIZATION'
+  | 'GLOBAL';
+
+type TemplateScopeFields = {
+  scopeLevel: InspectionTemplateScopeLevel;
+  organizationId: string | null;
+  branchId: string | null;
+  mainheadId: string | null;
+};
 
 type ChecklistTemplateMappingInput = {
   assetType?: string;
   assetTypeId?: string;
   capabilityId?: string | null;
+  scopeLevel?: InspectionTemplateScopeLevel | null;
+  organizationId?: string | null;
+  branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: OperationalDomain | null;
+};
+
+type TemplateResolutionContextInput = {
+  assetType?: string;
+  assetTypeId?: string;
+  assetId?: string;
+  capabilityId?: string | null;
+  siteVisitId?: string;
+  operationalSessionId?: string;
+  organizationId?: string | null;
+  branchId?: string | null;
+  mainheadId?: string | null;
 };
 
 type DesiredChecklistItem = {
@@ -203,15 +245,18 @@ export class ChecklistTemplatesService {
 
     const createdTemplate = await this.prisma.$transaction(async (tx) => {
       if (templateWillBeActive) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping);
       }
 
-      const version = await this.getNextVersion(tx, mapping.assetTypeId);
+      const version = await this.getNextVersion(tx, mapping);
       const template = await tx.inspectionTemplate.create({
         data: {
           tenantId: user.tenantId,
           assetTypeId: mapping.assetTypeId,
           capabilityId: mapping.capabilityId,
+          scopeLevel: mapping.scopeLevel,
+          organizationId: mapping.organizationId,
+          branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
           version,
@@ -250,6 +295,9 @@ export class ChecklistTemplatesService {
       dto.assetType !== undefined ||
       dto.assetTypeId !== undefined ||
       dto.capabilityId !== undefined ||
+      dto.scopeLevel !== undefined ||
+      dto.organizationId !== undefined ||
+      dto.branchId !== undefined ||
       dto.mainheadId !== undefined ||
       dto.operationalDomain !== undefined;
 
@@ -269,7 +317,7 @@ export class ChecklistTemplatesService {
     this.ensureActiveItems(items, true);
 
     await this.prisma.$transaction(async (tx) => {
-      await this.deactivateActiveTemplates(tx, user.tenantId, template.assetTypeId, template.id);
+      await this.deactivateActiveTemplates(tx, user.tenantId, template, template.id);
       await tx.inspectionTemplate.update({
         where: {
           id: template.id,
@@ -308,61 +356,72 @@ export class ChecklistTemplatesService {
     template: ChecklistTemplateRecord;
     source: ChecklistTemplateResolutionSource;
   }> {
-    const assetType = query.assetTypeId || query.assetType
+    const context = await this.resolveTemplateResolutionContext(user, query);
+    const assetType = context.assetTypeId || query.assetType
       ? await this.findAssetTypeOrThrow(
           this.prisma,
           user.tenantId,
-          query.assetTypeId ?? query.assetType ?? '',
+          context.assetTypeId ?? query.assetType ?? '',
         )
       : null;
+    const capabilityId = context.capabilityId ?? assetType?.capabilityId ?? null;
+    const baseWhere = {
+      tenantId: user.tenantId,
+      assetTypeId: assetType?.id,
+      capabilityId,
+    };
 
-    if (assetType && query.mainheadId) {
+    if (assetType && context.mainheadId) {
       const mainheadTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        assetTypeId: assetType.id,
-        mainheadId: query.mainheadId,
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.MAINHEAD,
+        mainheadId: context.mainheadId,
       });
 
       if (mainheadTemplate) {
         return {
           template: mainheadTemplate,
-          source: 'ASSET_TYPE_MAINHEAD',
+          source: 'MAINHEAD',
         };
       }
     }
 
-    if (assetType) {
-      const assetTypeTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        assetTypeId: assetType.id,
+    if (assetType && context.branchId) {
+      const branchTemplate = await this.findActiveTemplate({
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.BRANCH,
+        branchId: context.branchId,
       });
 
-      if (assetTypeTemplate) {
+      if (branchTemplate) {
         return {
-          template: assetTypeTemplate,
-          source: 'ASSET_TYPE',
+          template: branchTemplate,
+          source: 'BRANCH',
         };
       }
     }
 
-    const capabilityId = query.capabilityId ?? assetType?.capabilityId ?? null;
-
-    if (capabilityId) {
-      const capabilityTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        capabilityId,
+    if (assetType && context.organizationId) {
+      const organizationTemplate = await this.findActiveTemplate({
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.ORGANIZATION,
+        organizationId: context.organizationId,
       });
 
-      if (capabilityTemplate) {
+      if (organizationTemplate) {
         return {
-          template: capabilityTemplate,
-          source: 'CAPABILITY',
+          template: organizationTemplate,
+          source: 'ORGANIZATION',
         };
       }
     }
 
     const fallbackTemplate = await this.findActiveTemplate({
-      tenantId: user.tenantId,
+      ...baseWhere,
+      scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+      organizationId: null,
+      branchId: null,
+      mainheadId: null,
     });
 
     if (!fallbackTemplate) {
@@ -371,22 +430,230 @@ export class ChecklistTemplatesService {
 
     return {
       template: fallbackTemplate,
-      source: 'TENANT_ACTIVE',
+      source: 'GLOBAL',
+    };
+  }
+
+  private async resolveTemplateResolutionContext(
+    user: RequestUser,
+    input: TemplateResolutionContextInput,
+  ) {
+    let assetTypeId = input.assetTypeId ?? null;
+    let capabilityId = input.capabilityId ?? null;
+    let organizationId = input.organizationId ?? null;
+    let branchId = input.branchId ?? null;
+    let mainheadId = input.mainheadId ?? null;
+
+    if (input.assetId && (!assetTypeId || capabilityId === null)) {
+      const asset = await this.prisma.asset.findFirst({
+        where: {
+          id: input.assetId,
+          tenantId: user.tenantId,
+        },
+        select: {
+          assetTypeId: true,
+          assetType: {
+            select: {
+              capabilityId: true,
+            },
+          },
+        },
+      });
+
+      if (!asset) {
+        throw new NotFoundException('Asset not found.');
+      }
+
+      assetTypeId = assetTypeId ?? asset.assetTypeId;
+      capabilityId = capabilityId ?? asset.assetType.capabilityId;
+    }
+
+    if (input.siteVisitId) {
+      const siteVisit = await this.prisma.siteVisit.findFirst({
+        where: {
+          id: input.siteVisitId,
+          tenantId: user.tenantId,
+          ...this.siteVisitAccessScope(user),
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+          project: {
+            select: {
+              branchId: true,
+              mainheadId: true,
+              branch: {
+                select: {
+                  organizationId: true,
+                },
+              },
+            },
+          },
+          workPackage: {
+            select: {
+              mainheadId: true,
+              project: {
+                select: {
+                  branchId: true,
+                  mainheadId: true,
+                  branch: {
+                    select: {
+                      organizationId: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!siteVisit) {
+        throw new NotFoundException('Site visit not found.');
+      }
+
+      // Resolution prefers the explicit visit governance fields. Project and work
+      // package links are used only as fallback because older visits may not have
+      // copied branch / MAINHEAD ids onto the visit row yet.
+      organizationId =
+        organizationId ??
+        siteVisit.organizationId ??
+        siteVisit.project?.branch.organizationId ??
+        siteVisit.workPackage?.project.branch.organizationId ??
+        null;
+      branchId =
+        branchId ??
+        siteVisit.branchId ??
+        siteVisit.project?.branchId ??
+        siteVisit.workPackage?.project.branchId ??
+        null;
+      mainheadId =
+        mainheadId ??
+        siteVisit.mainheadId ??
+        siteVisit.workPackage?.mainheadId ??
+        siteVisit.project?.mainheadId ??
+        siteVisit.workPackage?.project.mainheadId ??
+        null;
+    }
+
+    if (input.operationalSessionId) {
+      const operationalSession = await this.prisma.operationalSession.findFirst({
+        where: {
+          id: input.operationalSessionId,
+          workspaceId: user.tenantId,
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+        },
+      });
+
+      if (!operationalSession) {
+        throw new NotFoundException('Operational session not found.');
+      }
+
+      organizationId = organizationId ?? operationalSession.organizationId;
+      branchId = branchId ?? operationalSession.branchId;
+      mainheadId = mainheadId ?? operationalSession.mainheadId;
+    }
+
+    if (!organizationId || !branchId || !mainheadId) {
+      const currentUser = await this.prisma.user.findFirst({
+        where: {
+          id: user.id,
+          tenantId: user.tenantId,
+          isActive: true,
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+        },
+      });
+
+      organizationId = organizationId ?? currentUser?.organizationId ?? null;
+      branchId = branchId ?? currentUser?.branchId ?? null;
+      mainheadId = mainheadId ?? currentUser?.mainheadId ?? null;
+    }
+
+    if (mainheadId && (!branchId || !organizationId)) {
+      const mainhead = await this.prisma.mainhead.findUnique({
+        where: {
+          id: mainheadId,
+        },
+        select: {
+          branchId: true,
+          branch: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      branchId = branchId ?? mainhead?.branchId ?? null;
+      organizationId = organizationId ?? mainhead?.branch.organizationId ?? null;
+    }
+
+    if (branchId && !organizationId) {
+      const branch = await this.prisma.branch.findUnique({
+        where: {
+          id: branchId,
+        },
+        select: {
+          organizationId: true,
+        },
+      });
+
+      organizationId = branch?.organizationId ?? null;
+    }
+
+    return {
+      assetTypeId: assetTypeId ?? undefined,
+      capabilityId,
+      organizationId,
+      branchId,
+      mainheadId,
+    };
+  }
+
+  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
+    if (user.role === UserRole.ADMIN) {
+      return {};
+    }
+
+    return {
+      team: {
+        members: {
+          some: {
+            userId: user.id,
+            isActive: true,
+          },
+        },
+      },
     };
   }
 
   private findActiveTemplate(where: {
     tenantId: string;
     assetTypeId?: string;
-    capabilityId?: string;
-    mainheadId?: string;
+    capabilityId?: string | null;
+    scopeLevel: InspectionTemplateScopeLevel;
+    organizationId?: string | null;
+    branchId?: string | null;
+    mainheadId?: string | null;
   }) {
     return this.prisma.inspectionTemplate.findFirst({
       where: {
         tenantId: where.tenantId,
         ...(where.assetTypeId ? { assetTypeId: where.assetTypeId } : {}),
-        ...(where.capabilityId ? { capabilityId: where.capabilityId } : {}),
-        ...(where.mainheadId ? { mainheadId: where.mainheadId } : {}),
+        ...(where.capabilityId !== undefined ? { capabilityId: where.capabilityId } : {}),
+        scopeLevel: where.scopeLevel,
+        ...(where.organizationId !== undefined ? { organizationId: where.organizationId } : {}),
+        ...(where.branchId !== undefined ? { branchId: where.branchId } : {}),
+        ...(where.mainheadId !== undefined ? { mainheadId: where.mainheadId } : {}),
         isActive: true,
         status: InspectionTemplateStatus.ACTIVE,
       },
@@ -410,12 +677,15 @@ export class ChecklistTemplatesService {
 
     try {
       const duplicatedTemplate = await this.prisma.$transaction(async (tx) => {
-        const nextVersion = await this.getNextVersion(tx, sourceTemplate.assetTypeId);
+        const nextVersion = await this.getNextVersion(tx, sourceTemplate);
         const duplicate = await tx.inspectionTemplate.create({
           data: {
             tenantId: user.tenantId,
             assetTypeId: sourceTemplate.assetTypeId,
             capabilityId: sourceTemplate.capabilityId,
+            scopeLevel: sourceTemplate.scopeLevel,
+            organizationId: sourceTemplate.organizationId,
+            branchId: sourceTemplate.branchId,
             mainheadId: sourceTemplate.mainheadId,
             operationalDomain: sourceTemplate.operationalDomain,
             version: nextVersion,
@@ -493,7 +763,7 @@ export class ChecklistTemplatesService {
 
     const createdTemplate = await this.prisma.$transaction(async (tx) => {
       if (nextIsActive) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping);
       } else if (template.isActive && dto.isActive === false) {
         await tx.inspectionTemplate.update({
           where: {
@@ -511,9 +781,12 @@ export class ChecklistTemplatesService {
           tenantId: user.tenantId,
           assetTypeId: mapping.assetTypeId,
           capabilityId: mapping.capabilityId,
+          scopeLevel: mapping.scopeLevel,
+          organizationId: mapping.organizationId,
+          branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
-          version: await this.getNextVersion(tx, mapping.assetTypeId),
+          version: await this.getNextVersion(tx, mapping),
           name:
             dto.name === undefined
               ? template.name
@@ -561,10 +834,10 @@ export class ChecklistTemplatesService {
 
     await this.prisma.$transaction(async (tx) => {
       if (dto.isActive === true) {
-        await this.deactivateActiveTemplates(tx, user.tenantId, mapping.assetTypeId, template.id);
+        await this.deactivateActiveTemplates(tx, user.tenantId, mapping, template.id);
       }
 
-      const assetTypeChanged = mapping.assetTypeId !== template.assetTypeId;
+      const versionScopeChanged = this.templateVersionScopeChanged(template, mapping);
 
       await tx.inspectionTemplate.update({
         where: {
@@ -573,10 +846,13 @@ export class ChecklistTemplatesService {
         data: {
           assetTypeId: mapping.assetTypeId,
           capabilityId: mapping.capabilityId,
+          scopeLevel: mapping.scopeLevel,
+          organizationId: mapping.organizationId,
+          branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
-          ...(assetTypeChanged
-            ? { version: await this.getNextVersion(tx, mapping.assetTypeId) }
+          ...(versionScopeChanged
+            ? { version: await this.getNextVersion(tx, mapping) }
             : {}),
           ...(dto.name === undefined
             ? {}
@@ -1127,14 +1403,20 @@ export class ChecklistTemplatesService {
   private async deactivateActiveTemplates(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    assetTypeId: string,
+    scope: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
     excludeTemplateId?: string,
   ) {
     await tx.inspectionTemplate.updateMany({
       where: {
         tenantId,
-        assetTypeId,
+        assetTypeId: scope.assetTypeId,
+        capabilityId: scope.capabilityId,
+        scopeLevel: scope.scopeLevel,
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+        mainheadId: scope.mainheadId,
         isActive: true,
+        status: InspectionTemplateStatus.ACTIVE,
         ...(excludeTemplateId ? { id: { not: excludeTemplateId } } : {}),
       },
       data: {
@@ -1144,10 +1426,18 @@ export class ChecklistTemplatesService {
     });
   }
 
-  private async getNextVersion(client: PrismaClientLike, assetTypeId: string) {
+  private async getNextVersion(
+    client: PrismaClientLike,
+    scope: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
+  ) {
     const latestTemplate = await client.inspectionTemplate.findFirst({
       where: {
-        assetTypeId,
+        assetTypeId: scope.assetTypeId,
+        capabilityId: scope.capabilityId,
+        scopeLevel: scope.scopeLevel,
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+        mainheadId: scope.mainheadId,
       },
       orderBy: {
         version: 'desc',
@@ -1158,6 +1448,20 @@ export class ChecklistTemplatesService {
     });
 
     return (latestTemplate?.version ?? 0) + 1;
+  }
+
+  private templateVersionScopeChanged(
+    template: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
+    nextScope: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
+  ) {
+    return (
+      template.assetTypeId !== nextScope.assetTypeId ||
+      template.capabilityId !== nextScope.capabilityId ||
+      template.scopeLevel !== nextScope.scopeLevel ||
+      template.organizationId !== nextScope.organizationId ||
+      template.branchId !== nextScope.branchId ||
+      template.mainheadId !== nextScope.mainheadId
+    );
   }
 
   private buildDuplicateTemplateName(template: ChecklistTemplateRecord) {
@@ -1261,20 +1565,19 @@ export class ChecklistTemplatesService {
       input.capabilityId !== undefined
         ? input.capabilityId
         : fallback?.capabilityId ?? assetType.capabilityId ?? null;
-    const mainheadId =
-      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
     const operationalDomain =
       input.operationalDomain !== undefined
         ? input.operationalDomain
         : fallback?.operationalDomain ?? null;
+    const scope = this.normalizeTemplateScope(input, fallback);
 
     await this.assertCapabilityExists(client, capabilityId);
-    await this.assertMainheadExists(client, mainheadId);
+    await this.assertTemplateScopeExists(client, scope);
 
     return {
       assetTypeId: assetType.id,
       capabilityId,
-      mainheadId,
+      ...scope,
       operationalDomain,
     };
   }
@@ -1298,22 +1601,151 @@ export class ChecklistTemplatesService {
     }
   }
 
-  private async assertMainheadExists(client: PrismaClientLike, mainheadId: string | null) {
+  private normalizeTemplateScope(
+    input: ChecklistTemplateMappingInput,
+    fallback?: ChecklistTemplateRecord,
+  ): TemplateScopeFields {
+    const scopeLevel =
+      input.scopeLevel ??
+      (input.mainheadId ? InspectionTemplateScopeLevel.MAINHEAD : null) ??
+      (input.branchId ? InspectionTemplateScopeLevel.BRANCH : null) ??
+      (input.organizationId ? InspectionTemplateScopeLevel.ORGANIZATION : null) ??
+      fallback?.scopeLevel ??
+      InspectionTemplateScopeLevel.GLOBAL;
+
+    if (scopeLevel === InspectionTemplateScopeLevel.GLOBAL) {
+      if (input.organizationId || input.branchId || input.mainheadId) {
+        throw new BadRequestException(
+          'GLOBAL templates cannot include organizationId, branchId, or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId: null,
+        branchId: null,
+        mainheadId: null,
+      };
+    }
+
+    if (scopeLevel === InspectionTemplateScopeLevel.ORGANIZATION) {
+      const organizationId =
+        input.organizationId !== undefined
+          ? input.organizationId
+          : fallback?.organizationId ?? null;
+
+      if (!organizationId) {
+        throw new BadRequestException('ORGANIZATION scoped templates require organizationId.');
+      }
+
+      if (input.branchId || input.mainheadId) {
+        throw new BadRequestException(
+          'ORGANIZATION scoped templates cannot include branchId or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId,
+        branchId: null,
+        mainheadId: null,
+      };
+    }
+
+    if (scopeLevel === InspectionTemplateScopeLevel.BRANCH) {
+      const branchId =
+        input.branchId !== undefined ? input.branchId : fallback?.branchId ?? null;
+
+      if (!branchId) {
+        throw new BadRequestException('BRANCH scoped templates require branchId.');
+      }
+
+      if (input.organizationId || input.mainheadId) {
+        throw new BadRequestException(
+          'BRANCH scoped templates cannot include organizationId or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId: null,
+        branchId,
+        mainheadId: null,
+      };
+    }
+
+    const mainheadId =
+      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
+
     if (!mainheadId) {
+      throw new BadRequestException('MAINHEAD scoped templates require mainheadId.');
+    }
+
+    if (input.organizationId || input.branchId) {
+      throw new BadRequestException(
+        'MAINHEAD scoped templates cannot include organizationId or branchId.',
+      );
+    }
+
+    return {
+      scopeLevel,
+      organizationId: null,
+      branchId: null,
+      mainheadId,
+    };
+  }
+
+  private async assertTemplateScopeExists(
+    client: PrismaClientLike,
+    scope: TemplateScopeFields,
+  ) {
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.ORGANIZATION) {
+      const organization = await client.organization.findUnique({
+        where: {
+          id: scope.organizationId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!organization) {
+        throw new NotFoundException('Organization not found.');
+      }
+
       return;
     }
 
-    const mainhead = await client.mainhead.findUnique({
-      where: {
-        id: mainheadId,
-      },
-      select: {
-        id: true,
-      },
-    });
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.BRANCH) {
+      const branch = await client.branch.findUnique({
+        where: {
+          id: scope.branchId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
 
-    if (!mainhead) {
-      throw new NotFoundException('MAINHEAD not found.');
+      if (!branch) {
+        throw new NotFoundException('Branch not found.');
+      }
+
+      return;
+    }
+
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.MAINHEAD) {
+      const mainhead = await client.mainhead.findUnique({
+        where: {
+          id: scope.mainheadId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!mainhead) {
+        throw new NotFoundException('MAINHEAD not found.');
+      }
     }
   }
 
@@ -1341,6 +1773,11 @@ export class ChecklistTemplatesService {
       assetTypeName: template.assetType.name,
       capabilityId: capability?.id ?? template.capabilityId ?? template.assetType.capabilityId,
       capability,
+      scopeLevel: template.scopeLevel,
+      organizationId: template.organizationId,
+      organization: template.organization,
+      branchId: template.branchId,
+      branch: template.branch,
       mainheadId: template.mainheadId,
       mainhead: template.mainhead,
       operationalDomain: template.operationalDomain,

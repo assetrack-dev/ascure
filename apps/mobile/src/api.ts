@@ -443,9 +443,23 @@ export const api = {
 
   resolveInspectionTemplate(
     token: string,
-    input: { assetTypeId?: string; assetType?: string; capabilityId?: string | null },
+    input: {
+      assetId?: string;
+      assetTypeId?: string;
+      assetType?: string;
+      capabilityId?: string | null;
+      siteVisitId?: string;
+      operationalSessionId?: string | null;
+      organizationId?: string | null;
+      branchId?: string | null;
+      mainheadId?: string | null;
+    },
   ) {
     const query = new URLSearchParams();
+
+    if (input.assetId) {
+      query.set('assetId', input.assetId);
+    }
 
     if (input.assetTypeId) {
       query.set('assetTypeId', input.assetTypeId);
@@ -455,6 +469,26 @@ export const api = {
 
     if (input.capabilityId) {
       query.set('capabilityId', input.capabilityId);
+    }
+
+    if (input.siteVisitId) {
+      query.set('siteVisitId', input.siteVisitId);
+    }
+
+    if (input.operationalSessionId) {
+      query.set('operationalSessionId', input.operationalSessionId);
+    }
+
+    if (input.organizationId) {
+      query.set('organizationId', input.organizationId);
+    }
+
+    if (input.branchId) {
+      query.set('branchId', input.branchId);
+    }
+
+    if (input.mainheadId) {
+      query.set('mainheadId', input.mainheadId);
     }
 
     return request<ChecklistTemplate>(`/inspection-templates/resolve?${query.toString()}`, {

@@ -2,6 +2,7 @@ import {
   AssetStatus,
   PrismaClient,
   InspectionItemInputType,
+  InspectionTemplateScopeLevel,
   InspectionTemplateStatus,
   OrganizationCapabilityType,
   OrganizationMembershipRole,
@@ -792,10 +793,17 @@ async function main() {
     },
   });
 
+  const templateCapabilityId = operationalCapabilities.get('SAVR')?.id ?? null;
   const existingActiveTemplates = await prisma.inspectionTemplate.findMany({
     where: {
       assetTypeId: assetType.id,
+      capabilityId: templateCapabilityId,
+      scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+      organizationId: null,
+      branchId: null,
+      mainheadId: null,
       isActive: true,
+      status: InspectionTemplateStatus.ACTIVE,
     },
     select: { id: true },
   });
@@ -814,32 +822,52 @@ async function main() {
     });
   }
 
-  const template = await prisma.inspectionTemplate.upsert({
+  const existingTemplate = await prisma.inspectionTemplate.findFirst({
     where: {
-      assetTypeId_version: {
-        assetTypeId: assetType.id,
-        version: 1,
-      },
-    },
-    update: {
-      tenantId: tenant.id,
-      name: 'SAVR Phase 1 Checklist',
-      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
-      status: InspectionTemplateStatus.ACTIVE,
-      isActive: true,
-      publishedAt: new Date(),
-    },
-    create: {
       tenantId: tenant.id,
       assetTypeId: assetType.id,
-      capabilityId: operationalCapabilities.get('SAVR')?.id ?? null,
+      capabilityId: templateCapabilityId,
+      scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+      organizationId: null,
+      branchId: null,
+      mainheadId: null,
       version: 1,
-      name: 'SAVR Phase 1 Checklist',
-      status: InspectionTemplateStatus.ACTIVE,
-      isActive: true,
-      publishedAt: new Date(),
     },
   });
+  const template = existingTemplate
+    ? await prisma.inspectionTemplate.update({
+        where: {
+          id: existingTemplate.id,
+        },
+        data: {
+          tenantId: tenant.id,
+          name: 'SAVR Phase 1 Checklist',
+          capabilityId: templateCapabilityId,
+          scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+          organizationId: null,
+          branchId: null,
+          mainheadId: null,
+          status: InspectionTemplateStatus.ACTIVE,
+          isActive: true,
+          publishedAt: new Date(),
+        },
+      })
+    : await prisma.inspectionTemplate.create({
+        data: {
+          tenantId: tenant.id,
+          assetTypeId: assetType.id,
+          capabilityId: templateCapabilityId,
+          scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+          organizationId: null,
+          branchId: null,
+          mainheadId: null,
+          version: 1,
+          name: 'SAVR Phase 1 Checklist',
+          status: InspectionTemplateStatus.ACTIVE,
+          isActive: true,
+          publishedAt: new Date(),
+        },
+      });
 
   const existingSection = await prisma.inspectionTemplateSection.findFirst({
     where: {

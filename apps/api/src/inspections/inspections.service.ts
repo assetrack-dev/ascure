@@ -136,7 +136,11 @@ export class InspectionsService {
     const templateResolution = await this.templatesService.resolveActiveTemplate(user, {
       assetTypeId: asset.assetTypeId,
       capabilityId: asset.assetType.capabilityId,
-      mainheadId: siteVisit.mainheadId,
+      siteVisitId: siteVisit.id,
+      operationalSessionId: operationalSession?.id,
+      organizationId: siteVisit.organizationId ?? operationalSession?.organizationId ?? null,
+      branchId: siteVisit.branchId ?? operationalSession?.branchId ?? null,
+      mainheadId: siteVisit.mainheadId ?? operationalSession?.mainheadId ?? null,
     });
     const template = templateResolution.template;
     const operationalScope =
@@ -699,6 +703,9 @@ export class InspectionsService {
       },
       select: {
         id: true,
+        organizationId: true,
+        branchId: true,
+        mainheadId: true,
       },
     });
 
@@ -846,6 +853,11 @@ export class InspectionsService {
           name: true,
           version: true,
           assetTypeId: true,
+          capabilityId: true,
+          scopeLevel: true,
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
           operationalScope: true,
           requiresQAQC: true,
         },
@@ -1360,6 +1372,10 @@ export class InspectionsService {
         version: inspection.template.version,
         assetTypeId: inspection.template.assetTypeId,
         capabilityId: inspection.template.capabilityId,
+        scopeLevel: inspection.template.scopeLevel,
+        organizationId: inspection.template.organizationId,
+        branchId: inspection.template.branchId,
+        mainheadId: inspection.template.mainheadId,
         operationalScope: inspection.template.operationalScope,
         requiresQAQC: inspection.template.requiresQAQC,
         sections: inspection.template.sections.map((section) => ({

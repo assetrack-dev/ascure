@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -12,7 +13,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { DefectSeverity, OperationalDomain } from '@prisma/client';
+import { DefectSeverity, InspectionTemplateScopeLevel, OperationalDomain } from '@prisma/client';
 
 export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'TEXT',
@@ -204,6 +205,18 @@ export class CreateChecklistTemplateDto {
   capabilityId?: string | null;
 
   @IsOptional()
+  @IsEnum(InspectionTemplateScopeLevel)
+  scopeLevel?: InspectionTemplateScopeLevel | null;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string | null;
+
+  @IsOptional()
   @IsUUID()
   mainheadId?: string | null;
 
@@ -239,6 +252,18 @@ export class UpdateChecklistTemplateDto {
   @IsOptional()
   @IsUUID()
   capabilityId?: string | null;
+
+  @IsOptional()
+  @IsEnum(InspectionTemplateScopeLevel)
+  scopeLevel?: InspectionTemplateScopeLevel | null;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -278,6 +303,10 @@ export class ChecklistTemplateAssetTypeParamDto {
 export class ResolveInspectionTemplateQueryDto {
   @IsOptional()
   @IsUUID()
+  assetId?: string;
+
+  @IsOptional()
+  @IsUUID()
   assetTypeId?: string;
 
   @IsOptional()
@@ -288,6 +317,22 @@ export class ResolveInspectionTemplateQueryDto {
   @IsOptional()
   @IsUUID()
   capabilityId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  siteVisitId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  operationalSessionId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @IsOptional()
   @IsUUID()

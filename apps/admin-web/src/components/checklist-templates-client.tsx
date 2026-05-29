@@ -60,6 +60,7 @@ import type {
   ChecklistTemplateItem,
   ChecklistTemplateItemPayload,
   ChecklistTemplateOption,
+  ChecklistTemplateScopeLevel,
   ChecklistTemplateStatus,
   DefectSeverity,
 } from "@/types/checklist-templates";
@@ -87,6 +88,10 @@ interface TemplateFormItem {
 interface TemplateFormState {
   assetTypeId: string;
   capabilityId: string;
+  scopeLevel: ChecklistTemplateScopeLevel;
+  organizationId: string;
+  branchId: string;
+  mainheadId: string;
   name: string;
   items: TemplateFormItem[];
 }
@@ -117,6 +122,12 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "DRAFT", value: "DRAFT" },
   { label: "ACTIVE", value: "ACTIVE" },
   { label: "ARCHIVED", value: "ARCHIVED" },
+];
+const SCOPE_LEVEL_OPTIONS: Array<{ label: string; value: ChecklistTemplateScopeLevel }> = [
+  { label: "Global", value: "GLOBAL" },
+  { label: "Organization", value: "ORGANIZATION" },
+  { label: "Branch", value: "BRANCH" },
+  { label: "MAINHEAD", value: "MAINHEAD" },
 ];
 const DEFECT_SEVERITY_OPTIONS: Array<{
   label: string;
@@ -319,6 +330,10 @@ function defaultForm(assetTypeId = "", capabilityId = ""): TemplateFormState {
   return {
     assetTypeId,
     capabilityId,
+    scopeLevel: "GLOBAL",
+    organizationId: "",
+    branchId: "",
+    mainheadId: "",
     name: "",
     items: [createBlankItem()],
   };
@@ -352,6 +367,42 @@ function formatDate(value: string | undefined) {
 
 function templateVersionLabel(template: ChecklistTemplate) {
   return `${template.assetTypeCode ?? template.assetType} V${template.version}`;
+}
+
+function optionDisplayName(option: EnterpriseOptionRecord | null | undefined) {
+  if (!option) {
+    return null;
+  }
+
+  return option.code ? `${option.code} - ${option.name}` : option.name;
+}
+
+function templateScopeLabel(template: ChecklistTemplate) {
+  if (template.scopeLevel === "ORGANIZATION") {
+    return `Organization: ${template.organization?.code ?? template.organization?.name ?? template.organizationId ?? "Unknown"}`;
+  }
+
+  if (template.scopeLevel === "BRANCH") {
+    return `Branch: ${template.branch?.code ?? template.branch?.name ?? template.branchId ?? "Unknown"}`;
+  }
+
+  if (template.scopeLevel === "MAINHEAD") {
+    return `MAINHEAD: ${template.mainhead?.code ?? template.mainhead?.name ?? template.mainheadId ?? "Unknown"}`;
+  }
+
+  return "Global";
+}
+
+function sameTemplateActivationScope(left: ChecklistTemplate, right: ChecklistTemplate) {
+  return (
+    left.assetTypeId === right.assetTypeId &&
+    (left.capabilityId ?? left.capability?.id ?? null) ===
+      (right.capabilityId ?? right.capability?.id ?? null) &&
+    (left.scopeLevel ?? "GLOBAL") === (right.scopeLevel ?? "GLOBAL") &&
+    (left.organizationId ?? null) === (right.organizationId ?? null) &&
+    (left.branchId ?? null) === (right.branchId ?? null) &&
+    (left.mainheadId ?? null) === (right.mainheadId ?? null)
+  );
 }
 
 function duplicateTemplateNamePreview(template: ChecklistTemplate) {
@@ -1008,6 +1059,9 @@ function TemplateFormModal({
   values,
   assetTypes,
   capabilities,
+  organizations,
+  branches,
+  mainheads,
   selectedTemplate,
   error,
   isSaving,
@@ -1020,6 +1074,9 @@ function TemplateFormModal({
   values: TemplateFormState;
   assetTypes: AssetType[];
   capabilities: EnterpriseOptionRecord[];
+  organizations: EnterpriseOptionRecord[];
+  branches: EnterpriseOptionRecord[];
+  mainheads: EnterpriseOptionRecord[];
   selectedTemplate: ChecklistTemplate | null;
   error: string;
   isSaving: boolean;
@@ -1043,6 +1100,18 @@ function TemplateFormModal({
     }),
   );
   const activeItemCount = useMemo(() => activeFormItemCount(values.items), [values.items]);
+  const activeOrganizations = useMemo(
+    () => organizations.filter((organization) => organization.isActive !== false),
+    [organizations],
+  );
+  const activeBranches = useMemo(
+    () => branches.filter((branch) => branch.isActive !== false),
+    [branches],
+  );
+  const activeMainheads = useMemo(
+    () => mainheads.filter((mainhead) => mainhead.isActive !== false),
+    [mainheads],
+  );
   const clearModalError = useCallback(() => {
     if (error) {
       onError("");
@@ -1278,6 +1347,105 @@ function TemplateFormModal({
                   Add Item
                 </button>
               </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Scope Level</span>
+                  <select
+                    value={values.scopeLevel}
+                    onChange={(event) => {
+                      const scopeLevel = event.target.value as ChecklistTemplateScopeLevel;
+
+                      updateFormValues((currentValues) => ({
+                        ...currentValues,
+                        scopeLevel,
+                        organizationId: scopeLevel === "ORGANIZATION" ? currentValues.organizationId : "",
+                        branchId: scopeLevel === "BRANCH" ? currentValues.branchId : "",
+                        mainheadId: scopeLevel === "MAINHEAD" ? currentValues.mainheadId : "",
+                      }));
+                    }}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    {SCOPE_LEVEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {values.scopeLevel === "ORGANIZATION" ? (
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Organization</span>
+                    <select
+                      value={values.organizationId}
+                      onChange={(event) =>
+                        updateFormValues((currentValues) => ({
+                          ...currentValues,
+                          organizationId: event.target.value,
+                        }))
+                      }
+                      className={`${inputClassName} mt-1.5`}
+                      required
+                    >
+                      <option value="">Choose organization</option>
+                      {activeOrganizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {optionDisplayName(organization)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {values.scopeLevel === "BRANCH" ? (
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Branch</span>
+                    <select
+                      value={values.branchId}
+                      onChange={(event) =>
+                        updateFormValues((currentValues) => ({
+                          ...currentValues,
+                          branchId: event.target.value,
+                        }))
+                      }
+                      className={`${inputClassName} mt-1.5`}
+                      required
+                    >
+                      <option value="">Choose branch</option>
+                      {activeBranches.map((branch) => (
+                        <option key={branch.id} value={branch.id}>
+                          {optionDisplayName(branch)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {values.scopeLevel === "MAINHEAD" ? (
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+                    <select
+                      value={values.mainheadId}
+                      onChange={(event) =>
+                        updateFormValues((currentValues) => ({
+                          ...currentValues,
+                          mainheadId: event.target.value,
+                        }))
+                      }
+                      className={`${inputClassName} mt-1.5`}
+                      required
+                    >
+                      <option value="">Choose MAINHEAD</option>
+                      {activeMainheads.map((mainhead) => (
+                        <option key={mainhead.id} value={mainhead.id}>
+                          {optionDisplayName(mainhead)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -1403,7 +1571,7 @@ function DuplicateTemplateModal({
           </div>
 
           <p className="text-sm leading-6 text-[var(--muted)]">
-            The duplicate will be editable and inactive. Existing inspections and the current active template stay unchanged.
+            The duplicate will be editable and inactive with the same scope. Existing inspections and active templates stay unchanged.
           </p>
 
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
@@ -1437,6 +1605,9 @@ function ChecklistTemplatesContent() {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [capabilities, setCapabilities] = useState<EnterpriseOptionRecord[]>([]);
+  const [organizations, setOrganizations] = useState<EnterpriseOptionRecord[]>([]);
+  const [branches, setBranches] = useState<EnterpriseOptionRecord[]>([]);
+  const [mainheads, setMainheads] = useState<EnterpriseOptionRecord[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -1472,6 +1643,9 @@ function ChecklistTemplatesContent() {
         setAssetTypes(nextAssetTypes);
         setTemplates(nextTemplates);
         setCapabilities(options.capabilities.filter((capability) => capability.isActive !== false));
+        setOrganizations(options.organizations);
+        setBranches(options.branches);
+        setMainheads(options.mainheads);
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           handleLogout();
@@ -1527,6 +1701,7 @@ function ChecklistTemplatesContent() {
             template.assetTypeName,
             template.capability?.name,
             template.capability?.code,
+            templateScopeLabel(template),
             templateStatus,
             `v${template.version}`,
           ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
@@ -1574,6 +1749,10 @@ function ChecklistTemplatesContent() {
     setFormValues({
       assetTypeId: template.assetTypeId,
       capabilityId: template.capabilityId ?? template.capability?.id ?? "",
+      scopeLevel: template.scopeLevel ?? "GLOBAL",
+      organizationId: template.organizationId ?? "",
+      branchId: template.branchId ?? "",
+      mainheadId: template.mainheadId ?? "",
       name: template.name,
       items: items.length > 0 ? items : [createBlankItem()],
     });
@@ -1629,6 +1808,37 @@ function ChecklistTemplatesContent() {
         throw new Error("Template name cannot be empty.");
       }
 
+      const scopePayload = {
+        scopeLevel: formValues.scopeLevel,
+        organizationId: null as string | null,
+        branchId: null as string | null,
+        mainheadId: null as string | null,
+      };
+
+      if (formValues.scopeLevel === "ORGANIZATION") {
+        if (!formValues.organizationId) {
+          throw new Error("Choose an organization for this scoped template.");
+        }
+
+        scopePayload.organizationId = formValues.organizationId;
+      }
+
+      if (formValues.scopeLevel === "BRANCH") {
+        if (!formValues.branchId) {
+          throw new Error("Choose a branch for this scoped template.");
+        }
+
+        scopePayload.branchId = formValues.branchId;
+      }
+
+      if (formValues.scopeLevel === "MAINHEAD") {
+        if (!formValues.mainheadId) {
+          throw new Error("Choose a MAINHEAD for this scoped template.");
+        }
+
+        scopePayload.mainheadId = formValues.mainheadId;
+      }
+
       const items = buildPayloadItems(formValues.items);
       setIsSaving(true);
       setModalError("");
@@ -1639,16 +1849,18 @@ function ChecklistTemplatesContent() {
           ? await createChecklistTemplate(session.token, {
               assetTypeId: formValues.assetTypeId,
               capabilityId: formValues.capabilityId || null,
+              ...scopePayload,
               name: trimmedName,
               isActive: false,
               items,
             })
           : selectedTemplate
             ? await updateChecklistTemplate(session.token, selectedTemplate.id, {
-                capabilityId: formValues.capabilityId || null,
-                name: trimmedName,
-                items,
-              })
+              capabilityId: formValues.capabilityId || null,
+              ...scopePayload,
+              name: trimmedName,
+              items,
+            })
             : null;
 
       if (savedTemplate) {
@@ -1714,7 +1926,7 @@ function ChecklistTemplatesContent() {
     }
 
     const confirmed = window.confirm(
-      `Activate "${template.name}" v${template.version}? The current active template for ${template.assetTypeName ?? template.assetType} will be archived.`,
+      `Activate "${template.name}" v${template.version} for ${templateScopeLabel(template)}? The current active template for the same asset type, capability, and scope will be archived.`,
     );
 
     if (!confirmed) {
@@ -1729,7 +1941,7 @@ function ChecklistTemplatesContent() {
       const activatedTemplate = await activateChecklistTemplate(session.token, template.id);
       setTemplates((currentTemplates) => {
         const archivedTemplates = currentTemplates.map((entry) =>
-          entry.assetTypeId === activatedTemplate.assetTypeId && entry.id !== activatedTemplate.id
+          sameTemplateActivationScope(entry, activatedTemplate) && entry.id !== activatedTemplate.id
             ? { ...entry, status: entry.isActive ? "ARCHIVED" as ChecklistTemplateStatus : entry.status, isActive: false }
             : entry,
         );
@@ -1918,6 +2130,7 @@ function ChecklistTemplatesContent() {
                         <th className="min-w-64 px-5 py-3.5 font-semibold">Template</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Asset Type</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Capability</th>
+                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Scope</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Items</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Inspections</th>
@@ -1974,6 +2187,9 @@ function ChecklistTemplatesContent() {
                                   {template.capability.code}
                                 </div>
                               ) : null}
+                            </td>
+                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
+                              {templateScopeLabel(template)}
                             </td>
                             <td className="min-w-48 px-5 py-4">
                               <StatusBadge status={templateStatus} showDescription />
@@ -2059,6 +2275,9 @@ function ChecklistTemplatesContent() {
           values={formValues}
           assetTypes={assetTypes}
           capabilities={capabilities}
+          organizations={organizations}
+          branches={branches}
+          mainheads={mainheads}
           selectedTemplate={selectedTemplate}
           error={modalError}
           isSaving={isSaving}

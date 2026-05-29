@@ -1,5 +1,5 @@
-import { OperationalDomain } from '@prisma/client';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { InspectionTemplateScopeLevel, OperationalDomain } from '@prisma/client';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
 export class CreateTemplateDto {
   @IsUUID()
@@ -8,6 +8,18 @@ export class CreateTemplateDto {
   @IsOptional()
   @IsUUID()
   capabilityId?: string | null;
+
+  @IsOptional()
+  @IsEnum(InspectionTemplateScopeLevel)
+  scopeLevel?: InspectionTemplateScopeLevel | null;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string | null;
 
   @IsOptional()
   @IsUUID()

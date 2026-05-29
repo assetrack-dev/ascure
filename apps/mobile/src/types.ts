@@ -433,6 +433,10 @@ export interface InspectionFormResponse {
     version: number;
     assetTypeId?: string;
     capabilityId?: string | null;
+    scopeLevel?: ChecklistTemplateScopeLevel;
+    organizationId?: string | null;
+    branchId?: string | null;
+    mainheadId?: string | null;
     operationalScope?: OperationalScope | null;
     requiresQAQC?: boolean | null;
     sections: InspectionTemplateSection[];
@@ -686,6 +690,8 @@ export interface SelectOption {
   prefix?: string;
 }
 
+export type ChecklistTemplateScopeLevel = 'GLOBAL' | 'ORGANIZATION' | 'BRANCH' | 'MAINHEAD';
+
 export interface ChecklistTemplateItem {
   id: string;
   templateId: string;
@@ -716,6 +722,9 @@ export interface ChecklistTemplate {
     code: string;
     name: string;
   } | null;
+  scopeLevel?: ChecklistTemplateScopeLevel;
+  organizationId?: string | null;
+  branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: string | null;
   operationalScope?: OperationalScope | null;
@@ -750,6 +759,10 @@ export interface CreateChecklistTemplateInput {
   assetType?: string;
   assetTypeId?: string;
   capabilityId?: string | null;
+  scopeLevel?: ChecklistTemplateScopeLevel | null;
+  organizationId?: string | null;
+  branchId?: string | null;
+  mainheadId?: string | null;
   name: string;
   isActive?: boolean;
   items: ChecklistTemplateItemInput[];
@@ -759,6 +772,10 @@ export interface UpdateChecklistTemplateInput {
   assetType?: string;
   assetTypeId?: string;
   capabilityId?: string | null;
+  scopeLevel?: ChecklistTemplateScopeLevel | null;
+  organizationId?: string | null;
+  branchId?: string | null;
+  mainheadId?: string | null;
   name?: string;
   isActive?: boolean;
   items?: ChecklistTemplateItemInput[];

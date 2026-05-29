@@ -1,4 +1,4 @@
-import { InspectionTemplateStatus } from '@prisma/client';
+import { InspectionTemplateScopeLevel, InspectionTemplateStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsUUID } from 'class-validator';
 
 export class ListTemplatesQueryDto {
@@ -9,6 +9,18 @@ export class ListTemplatesQueryDto {
   @IsOptional()
   @IsUUID()
   capabilityId?: string;
+
+  @IsOptional()
+  @IsEnum(InspectionTemplateScopeLevel)
+  scopeLevel?: InspectionTemplateScopeLevel;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @IsOptional()
   @IsUUID()

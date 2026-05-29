@@ -7,9 +7,11 @@ import {
 import {
   DefectSeverity,
   InspectionItemInputType,
+  InspectionTemplateScopeLevel,
   InspectionTemplateStatus,
   OperationalDomain,
   Prisma,
+  UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,11 +49,29 @@ const templateDetailInclude = {
       isActive: true,
     },
   },
+  organization: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      type: true,
+    },
+  },
+  branch: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      region: true,
+      organizationId: true,
+    },
+  },
   mainhead: {
     select: {
       id: true,
       code: true,
       name: true,
+      branchId: true,
     },
   },
   sections: {
@@ -73,10 +93,20 @@ type TemplateDetailRecord = Prisma.InspectionTemplateGetPayload<{
 }>;
 
 type PrismaClientLike = Prisma.TransactionClient | PrismaService;
-type TemplateResolutionSource = 'ASSET_TYPE_MAINHEAD' | 'ASSET_TYPE' | 'CAPABILITY' | 'TENANT_ACTIVE';
+type TemplateResolutionSource = 'MAINHEAD' | 'BRANCH' | 'ORGANIZATION' | 'GLOBAL';
+
+type TemplateScopeFields = {
+  scopeLevel: InspectionTemplateScopeLevel;
+  organizationId: string | null;
+  branchId: string | null;
+  mainheadId: string | null;
+};
 
 type TemplateMappingInput = {
   capabilityId?: string | null;
+  scopeLevel?: InspectionTemplateScopeLevel | null;
+  organizationId?: string | null;
+  branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: OperationalDomain | null;
 };
@@ -95,58 +125,77 @@ export class TemplatesService {
     user: RequestUser,
     input: {
       assetTypeId?: string;
+      assetId?: string;
       capabilityId?: string | null;
+      siteVisitId?: string;
+      operationalSessionId?: string;
+      organizationId?: string | null;
+      branchId?: string | null;
       mainheadId?: string | null;
     },
   ): Promise<{ template: TemplateDetailRecord; source: TemplateResolutionSource }> {
-    if (input.assetTypeId && input.mainheadId) {
+    const context = await this.resolveTemplateResolutionContext(user, input);
+    const assetTypeId = context.assetTypeId ?? input.assetTypeId;
+    const capabilityId =
+      context.capabilityId ??
+      (assetTypeId ? await this.findAssetTypeCapabilityId(user.tenantId, assetTypeId) : null);
+    const baseWhere = {
+      tenantId: user.tenantId,
+      assetTypeId,
+      capabilityId,
+    };
+
+    if (assetTypeId && context.mainheadId) {
       const mainheadTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        assetTypeId: input.assetTypeId,
-        mainheadId: input.mainheadId,
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.MAINHEAD,
+        mainheadId: context.mainheadId,
       });
 
       if (mainheadTemplate) {
         return {
           template: mainheadTemplate,
-          source: 'ASSET_TYPE_MAINHEAD',
+          source: 'MAINHEAD',
         };
       }
     }
 
-    if (input.assetTypeId) {
-      const assetTypeTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        assetTypeId: input.assetTypeId,
+    if (assetTypeId && context.branchId) {
+      const branchTemplate = await this.findActiveTemplate({
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.BRANCH,
+        branchId: context.branchId,
       });
 
-      if (assetTypeTemplate) {
+      if (branchTemplate) {
         return {
-          template: assetTypeTemplate,
-          source: 'ASSET_TYPE',
+          template: branchTemplate,
+          source: 'BRANCH',
         };
       }
     }
 
-    const capabilityId =
-      input.capabilityId ?? (input.assetTypeId ? await this.findAssetTypeCapabilityId(user.tenantId, input.assetTypeId) : null);
-
-    if (capabilityId) {
-      const capabilityTemplate = await this.findActiveTemplate({
-        tenantId: user.tenantId,
-        capabilityId,
+    if (assetTypeId && context.organizationId) {
+      const organizationTemplate = await this.findActiveTemplate({
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.ORGANIZATION,
+        organizationId: context.organizationId,
       });
 
-      if (capabilityTemplate) {
+      if (organizationTemplate) {
         return {
-          template: capabilityTemplate,
-          source: 'CAPABILITY',
+          template: organizationTemplate,
+          source: 'ORGANIZATION',
         };
       }
     }
 
     const fallbackTemplate = await this.findActiveTemplate({
-      tenantId: user.tenantId,
+      ...baseWhere,
+      scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
+      organizationId: null,
+      branchId: null,
+      mainheadId: null,
     });
 
     if (!fallbackTemplate) {
@@ -155,22 +204,239 @@ export class TemplatesService {
 
     return {
       template: fallbackTemplate,
-      source: 'TENANT_ACTIVE',
+      source: 'GLOBAL',
+    };
+  }
+
+  private async resolveTemplateResolutionContext(
+    user: RequestUser,
+    input: {
+      assetTypeId?: string;
+      assetId?: string;
+      capabilityId?: string | null;
+      siteVisitId?: string;
+      operationalSessionId?: string;
+      organizationId?: string | null;
+      branchId?: string | null;
+      mainheadId?: string | null;
+    },
+  ) {
+    let assetTypeId = input.assetTypeId ?? null;
+    let capabilityId = input.capabilityId ?? null;
+    let organizationId = input.organizationId ?? null;
+    let branchId = input.branchId ?? null;
+    let mainheadId = input.mainheadId ?? null;
+
+    if (input.assetId && (!assetTypeId || capabilityId === null)) {
+      const asset = await this.prisma.asset.findFirst({
+        where: {
+          id: input.assetId,
+          tenantId: user.tenantId,
+        },
+        select: {
+          assetTypeId: true,
+          assetType: {
+            select: {
+              capabilityId: true,
+            },
+          },
+        },
+      });
+
+      if (!asset) {
+        throw new NotFoundException('Asset not found.');
+      }
+
+      assetTypeId = assetTypeId ?? asset.assetTypeId;
+      capabilityId = capabilityId ?? asset.assetType.capabilityId;
+    }
+
+    if (input.siteVisitId) {
+      const siteVisit = await this.prisma.siteVisit.findFirst({
+        where: {
+          id: input.siteVisitId,
+          tenantId: user.tenantId,
+          ...this.siteVisitAccessScope(user),
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+          project: {
+            select: {
+              branchId: true,
+              mainheadId: true,
+              branch: {
+                select: {
+                  organizationId: true,
+                },
+              },
+            },
+          },
+          workPackage: {
+            select: {
+              mainheadId: true,
+              project: {
+                select: {
+                  branchId: true,
+                  mainheadId: true,
+                  branch: {
+                    select: {
+                      organizationId: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!siteVisit) {
+        throw new NotFoundException('Site visit not found.');
+      }
+
+      // Assumption: the site visit row is the authoritative inspection context.
+      // Project/work package scope is a fallback for older visits that predate
+      // copied organization / branch / MAINHEAD fields.
+      organizationId =
+        organizationId ??
+        siteVisit.organizationId ??
+        siteVisit.project?.branch.organizationId ??
+        siteVisit.workPackage?.project.branch.organizationId ??
+        null;
+      branchId =
+        branchId ??
+        siteVisit.branchId ??
+        siteVisit.project?.branchId ??
+        siteVisit.workPackage?.project.branchId ??
+        null;
+      mainheadId =
+        mainheadId ??
+        siteVisit.mainheadId ??
+        siteVisit.workPackage?.mainheadId ??
+        siteVisit.project?.mainheadId ??
+        siteVisit.workPackage?.project.mainheadId ??
+        null;
+    }
+
+    if (input.operationalSessionId) {
+      const operationalSession = await this.prisma.operationalSession.findFirst({
+        where: {
+          id: input.operationalSessionId,
+          workspaceId: user.tenantId,
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+        },
+      });
+
+      if (!operationalSession) {
+        throw new NotFoundException('Operational session not found.');
+      }
+
+      organizationId = organizationId ?? operationalSession.organizationId;
+      branchId = branchId ?? operationalSession.branchId;
+      mainheadId = mainheadId ?? operationalSession.mainheadId;
+    }
+
+    if (!organizationId || !branchId || !mainheadId) {
+      const currentUser = await this.prisma.user.findFirst({
+        where: {
+          id: user.id,
+          tenantId: user.tenantId,
+          isActive: true,
+        },
+        select: {
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
+        },
+      });
+
+      organizationId = organizationId ?? currentUser?.organizationId ?? null;
+      branchId = branchId ?? currentUser?.branchId ?? null;
+      mainheadId = mainheadId ?? currentUser?.mainheadId ?? null;
+    }
+
+    if (mainheadId && (!branchId || !organizationId)) {
+      const mainhead = await this.prisma.mainhead.findUnique({
+        where: {
+          id: mainheadId,
+        },
+        select: {
+          branchId: true,
+          branch: {
+            select: {
+              organizationId: true,
+            },
+          },
+        },
+      });
+
+      branchId = branchId ?? mainhead?.branchId ?? null;
+      organizationId = organizationId ?? mainhead?.branch.organizationId ?? null;
+    }
+
+    if (branchId && !organizationId) {
+      const branch = await this.prisma.branch.findUnique({
+        where: {
+          id: branchId,
+        },
+        select: {
+          organizationId: true,
+        },
+      });
+
+      organizationId = branch?.organizationId ?? null;
+    }
+
+    return {
+      assetTypeId,
+      capabilityId,
+      organizationId,
+      branchId,
+      mainheadId,
+    };
+  }
+
+  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
+    if (user.role === UserRole.ADMIN) {
+      return {};
+    }
+
+    return {
+      team: {
+        members: {
+          some: {
+            userId: user.id,
+            isActive: true,
+          },
+        },
+      },
     };
   }
 
   private findActiveTemplate(where: {
     tenantId: string;
     assetTypeId?: string;
-    capabilityId?: string;
-    mainheadId?: string;
+    capabilityId?: string | null;
+    scopeLevel: InspectionTemplateScopeLevel;
+    organizationId?: string | null;
+    branchId?: string | null;
+    mainheadId?: string | null;
   }) {
     return this.prisma.inspectionTemplate.findFirst({
       where: {
         tenantId: where.tenantId,
         ...(where.assetTypeId ? { assetTypeId: where.assetTypeId } : {}),
-        ...(where.capabilityId ? { capabilityId: where.capabilityId } : {}),
-        ...(where.mainheadId ? { mainheadId: where.mainheadId } : {}),
+        ...(where.capabilityId !== undefined ? { capabilityId: where.capabilityId } : {}),
+        scopeLevel: where.scopeLevel,
+        ...(where.organizationId !== undefined ? { organizationId: where.organizationId } : {}),
+        ...(where.branchId !== undefined ? { branchId: where.branchId } : {}),
+        ...(where.mainheadId !== undefined ? { mainheadId: where.mainheadId } : {}),
         isActive: true,
         status: InspectionTemplateStatus.ACTIVE,
       },
@@ -209,6 +475,9 @@ export class TemplatesService {
         tenantId: user.tenantId,
         ...(query.assetTypeId ? { assetTypeId: query.assetTypeId } : {}),
         ...(query.capabilityId ? { capabilityId: query.capabilityId } : {}),
+        ...(query.scopeLevel ? { scopeLevel: query.scopeLevel } : {}),
+        ...(query.organizationId ? { organizationId: query.organizationId } : {}),
+        ...(query.branchId ? { branchId: query.branchId } : {}),
         ...(query.mainheadId ? { mainheadId: query.mainheadId } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
@@ -237,11 +506,29 @@ export class TemplatesService {
             isActive: true,
           },
         },
+        organization: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+          },
+        },
+        branch: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            region: true,
+            organizationId: true,
+          },
+        },
         mainhead: {
           select: {
             id: true,
             code: true,
             name: true,
+            branchId: true,
           },
         },
         _count: {
@@ -273,6 +560,9 @@ export class TemplatesService {
         id: template.id,
         assetTypeId: template.assetTypeId,
         capabilityId: template.capabilityId,
+        scopeLevel: template.scopeLevel,
+        organizationId: template.organizationId,
+        branchId: template.branchId,
         mainheadId: template.mainheadId,
         operationalDomain: template.operationalDomain,
         name: template.name,
@@ -284,6 +574,8 @@ export class TemplatesService {
         updatedAt: template.updatedAt,
         assetType: template.assetType,
         capability: template.capability ?? template.assetType.capability,
+        organization: template.organization,
+        branch: template.branch,
         mainhead: template.mainhead,
         sectionCount: template._count.sections,
         itemCount: template._count.items,
@@ -307,9 +599,15 @@ export class TemplatesService {
     const assetType = await this.findAssetTypeOrThrow(this.prisma, user.tenantId, dto.assetTypeId);
     const mapping = await this.resolveTemplateMapping(this.prisma, assetType, dto);
 
-    const version = dto.version ?? (await this.getNextVersion(this.prisma, dto.assetTypeId));
+    const version = dto.version ?? (await this.getNextVersion(this.prisma, {
+      assetTypeId: dto.assetTypeId,
+      ...mapping,
+    }));
 
-    await this.ensureVersionAvailable(this.prisma, user.tenantId, dto.assetTypeId, version);
+    await this.ensureVersionAvailable(this.prisma, user.tenantId, {
+      assetTypeId: dto.assetTypeId,
+      ...mapping,
+    }, version);
 
     try {
       const template = await this.prisma.inspectionTemplate.create({
@@ -317,6 +615,9 @@ export class TemplatesService {
           tenantId: user.tenantId,
           assetTypeId: dto.assetTypeId,
           capabilityId: mapping.capabilityId,
+          scopeLevel: mapping.scopeLevel,
+          organizationId: mapping.organizationId,
+          branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
           name: this.normalizeRequiredText(dto.name, 'Template name'),
@@ -330,7 +631,7 @@ export class TemplatesService {
     } catch (error) {
       this.rethrowKnownPrismaError(
         error,
-        'A template with that version already exists for the selected asset type.',
+        'A template with that version already exists for the selected asset type, capability, and scope.',
       );
       throw error;
     }
@@ -514,12 +815,15 @@ export class TemplatesService {
 
     try {
       const clonedTemplate = await this.prisma.$transaction(async (tx) => {
-        const nextVersion = await this.getNextVersion(tx, sourceTemplate.assetTypeId);
+        const nextVersion = await this.getNextVersion(tx, sourceTemplate);
         const clonedTemplateRecord = await tx.inspectionTemplate.create({
           data: {
             tenantId: user.tenantId,
             assetTypeId: sourceTemplate.assetTypeId,
             capabilityId: sourceTemplate.capabilityId,
+            scopeLevel: sourceTemplate.scopeLevel,
+            organizationId: sourceTemplate.organizationId,
+            branchId: sourceTemplate.branchId,
             mainheadId: sourceTemplate.mainheadId,
             operationalDomain: sourceTemplate.operationalDomain,
             name: sourceTemplate.name,
@@ -594,6 +898,11 @@ export class TemplatesService {
         where: {
           tenantId: user.tenantId,
           assetTypeId: draftTemplate.assetTypeId,
+          capabilityId: draftTemplate.capabilityId,
+          scopeLevel: draftTemplate.scopeLevel,
+          organizationId: draftTemplate.organizationId,
+          branchId: draftTemplate.branchId,
+          mainheadId: draftTemplate.mainheadId,
           isActive: true,
           status: InspectionTemplateStatus.ACTIVE,
         },
@@ -604,6 +913,10 @@ export class TemplatesService {
           status: true,
           isActive: true,
           publishedAt: true,
+          scopeLevel: true,
+          organizationId: true,
+          branchId: true,
+          mainheadId: true,
         },
       });
 
@@ -722,6 +1035,9 @@ export class TemplatesService {
     input: TemplateMappingInput,
     fallback?: {
       capabilityId: string | null;
+      scopeLevel: InspectionTemplateScopeLevel;
+      organizationId: string | null;
+      branchId: string | null;
       mainheadId: string | null;
       operationalDomain: OperationalDomain | null;
     },
@@ -730,19 +1046,18 @@ export class TemplatesService {
       input.capabilityId !== undefined
         ? input.capabilityId
         : fallback?.capabilityId ?? assetType.capabilityId ?? null;
-    const mainheadId =
-      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
     const operationalDomain =
       input.operationalDomain !== undefined
         ? input.operationalDomain
         : fallback?.operationalDomain ?? null;
+    const scope = this.normalizeTemplateScope(input, fallback);
 
     await this.assertCapabilityExists(client, capabilityId);
-    await this.assertMainheadExists(client, mainheadId);
+    await this.assertTemplateScopeExists(client, scope);
 
     return {
       capabilityId,
-      mainheadId,
+      ...scope,
       operationalDomain,
     };
   }
@@ -766,22 +1081,151 @@ export class TemplatesService {
     }
   }
 
-  private async assertMainheadExists(client: PrismaClientLike, mainheadId: string | null) {
+  private normalizeTemplateScope(
+    input: TemplateMappingInput,
+    fallback?: TemplateScopeFields,
+  ): TemplateScopeFields {
+    const scopeLevel =
+      input.scopeLevel ??
+      (input.mainheadId ? InspectionTemplateScopeLevel.MAINHEAD : null) ??
+      (input.branchId ? InspectionTemplateScopeLevel.BRANCH : null) ??
+      (input.organizationId ? InspectionTemplateScopeLevel.ORGANIZATION : null) ??
+      fallback?.scopeLevel ??
+      InspectionTemplateScopeLevel.GLOBAL;
+
+    if (scopeLevel === InspectionTemplateScopeLevel.GLOBAL) {
+      if (input.organizationId || input.branchId || input.mainheadId) {
+        throw new BadRequestException(
+          'GLOBAL templates cannot include organizationId, branchId, or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId: null,
+        branchId: null,
+        mainheadId: null,
+      };
+    }
+
+    if (scopeLevel === InspectionTemplateScopeLevel.ORGANIZATION) {
+      const organizationId =
+        input.organizationId !== undefined
+          ? input.organizationId
+          : fallback?.organizationId ?? null;
+
+      if (!organizationId) {
+        throw new BadRequestException('ORGANIZATION scoped templates require organizationId.');
+      }
+
+      if (input.branchId || input.mainheadId) {
+        throw new BadRequestException(
+          'ORGANIZATION scoped templates cannot include branchId or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId,
+        branchId: null,
+        mainheadId: null,
+      };
+    }
+
+    if (scopeLevel === InspectionTemplateScopeLevel.BRANCH) {
+      const branchId =
+        input.branchId !== undefined ? input.branchId : fallback?.branchId ?? null;
+
+      if (!branchId) {
+        throw new BadRequestException('BRANCH scoped templates require branchId.');
+      }
+
+      if (input.organizationId || input.mainheadId) {
+        throw new BadRequestException(
+          'BRANCH scoped templates cannot include organizationId or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId: null,
+        branchId,
+        mainheadId: null,
+      };
+    }
+
+    const mainheadId =
+      input.mainheadId !== undefined ? input.mainheadId : fallback?.mainheadId ?? null;
+
     if (!mainheadId) {
+      throw new BadRequestException('MAINHEAD scoped templates require mainheadId.');
+    }
+
+    if (input.organizationId || input.branchId) {
+      throw new BadRequestException(
+        'MAINHEAD scoped templates cannot include organizationId or branchId.',
+      );
+    }
+
+    return {
+      scopeLevel,
+      organizationId: null,
+      branchId: null,
+      mainheadId,
+    };
+  }
+
+  private async assertTemplateScopeExists(
+    client: PrismaClientLike,
+    scope: TemplateScopeFields,
+  ) {
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.ORGANIZATION) {
+      const organization = await client.organization.findUnique({
+        where: {
+          id: scope.organizationId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!organization) {
+        throw new NotFoundException('Organization not found.');
+      }
+
       return;
     }
 
-    const mainhead = await client.mainhead.findUnique({
-      where: {
-        id: mainheadId,
-      },
-      select: {
-        id: true,
-      },
-    });
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.BRANCH) {
+      const branch = await client.branch.findUnique({
+        where: {
+          id: scope.branchId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
 
-    if (!mainhead) {
-      throw new NotFoundException('MAINHEAD not found.');
+      if (!branch) {
+        throw new NotFoundException('Branch not found.');
+      }
+
+      return;
+    }
+
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.MAINHEAD) {
+      const mainhead = await client.mainhead.findUnique({
+        where: {
+          id: scope.mainheadId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!mainhead) {
+        throw new NotFoundException('MAINHEAD not found.');
+      }
     }
   }
 
@@ -844,13 +1288,18 @@ export class TemplatesService {
   private async ensureVersionAvailable(
     client: PrismaClientLike,
     tenantId: string,
-    assetTypeId: string,
+    scope: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
     version: number,
   ) {
     const existingTemplate = await client.inspectionTemplate.findFirst({
       where: {
         tenantId,
-        assetTypeId,
+        assetTypeId: scope.assetTypeId,
+        capabilityId: scope.capabilityId,
+        scopeLevel: scope.scopeLevel,
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+        mainheadId: scope.mainheadId,
         version,
       },
       select: {
@@ -859,14 +1308,24 @@ export class TemplatesService {
     });
 
     if (existingTemplate) {
-      throw new ConflictException('A template with that version already exists for the selected asset type.');
+      throw new ConflictException(
+        'A template with that version already exists for the selected asset type, capability, and scope.',
+      );
     }
   }
 
-  private async getNextVersion(client: PrismaClientLike, assetTypeId: string) {
+  private async getNextVersion(
+    client: PrismaClientLike,
+    scope: TemplateScopeFields & { assetTypeId: string; capabilityId: string | null },
+  ) {
     const latestTemplate = await client.inspectionTemplate.findFirst({
       where: {
-        assetTypeId,
+        assetTypeId: scope.assetTypeId,
+        capabilityId: scope.capabilityId,
+        scopeLevel: scope.scopeLevel,
+        organizationId: scope.organizationId,
+        branchId: scope.branchId,
+        mainheadId: scope.mainheadId,
       },
       orderBy: {
         version: 'desc',
@@ -1088,6 +1547,9 @@ export class TemplatesService {
         tenantId: template.tenantId,
         assetTypeId: template.assetTypeId,
         capabilityId: template.capabilityId,
+        scopeLevel: template.scopeLevel,
+        organizationId: template.organizationId,
+        branchId: template.branchId,
         mainheadId: template.mainheadId,
         operationalDomain: template.operationalDomain,
         name: template.name,
@@ -1100,6 +1562,8 @@ export class TemplatesService {
       },
       assetType: template.assetType,
       capability: template.capability ?? template.assetType.capability,
+      organization: template.organization,
+      branch: template.branch,
       mainhead: template.mainhead,
       sections: template.sections.map((section) => ({
         id: section.id,

@@ -44,6 +44,13 @@ enum InspectionTemplateStatus {
   ARCHIVED
 }
 
+enum InspectionTemplateScopeLevel {
+  GLOBAL
+  ORGANIZATION
+  BRANCH
+  MAINHEAD
+}
+
 enum InspectionItemInputType {
   TEXT
   NUMBER
@@ -415,6 +422,7 @@ model Organization {
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
+  inspectionTemplates    InspectionTemplate[]
   operationalSessions    OperationalSession[]               @relation("OperationalSessionOrganization")
   assignedSessions       OperationalSession[]               @relation("OperationalSessionAssignedCompany")
 
@@ -505,6 +513,7 @@ model Branch {
   capabilityAssignments BranchCapability[]
   projects              Project[]
   siteVisits            SiteVisit[]
+  inspectionTemplates   InspectionTemplate[]
   operationalSessions   OperationalSession[]
 
   @@index([organizationId])
@@ -969,6 +978,9 @@ model InspectionTemplate {
   tenantId          String                      @db.Uuid
   assetTypeId       String                      @db.Uuid
   capabilityId      String?                     @db.Uuid
+  scopeLevel        InspectionTemplateScopeLevel @default(GLOBAL)
+  organizationId    String?                     @db.Uuid
+  branchId          String?                     @db.Uuid
   mainheadId        String?                     @db.Uuid
   operationalDomain OperationalDomain?
   operationalScope  OperationalScope?
@@ -983,16 +995,22 @@ model InspectionTemplate {
   tenant            Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assetType         AssetType                   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   capability        Capability?                 @relation(fields: [capabilityId], references: [id], onDelete: SetNull)
+  organization      Organization?               @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  branch            Branch?                     @relation(fields: [branchId], references: [id], onDelete: SetNull)
   mainhead          Mainhead?                   @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
   sections          InspectionTemplateSection[]
   items             InspectionTemplateItem[]
   inspections       Inspection[]
 
-  @@unique([assetTypeId, version])
   @@index([tenantId])
   @@index([tenantId, isActive])
   @@index([assetTypeId, isActive])
+  @@index([assetTypeId, version])
+  @@index([assetTypeId, capabilityId, scopeLevel])
   @@index([capabilityId])
+  @@index([scopeLevel])
+  @@index([organizationId])
+  @@index([branchId])
   @@index([mainheadId])
   @@index([operationalDomain])
   @@index([operationalScope])

@@ -84,8 +84,11 @@ export function AssetDetailScreen() {
       setActionError(null);
 
       const activeTemplate = await api.resolveInspectionTemplate(token, {
+        assetId,
         assetTypeId: asset.assetTypeId,
         assetType: asset.assetType,
+        siteVisitId: visitId,
+        operationalSessionId,
       });
 
       if (activeTemplate.items.length === 0) {
