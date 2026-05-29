@@ -4,17 +4,24 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
 import { login } from "@/lib/api";
-import { normalizeAuthUser, persistSession, readStoredSession } from "@/lib/auth";
+import {
+  normalizeAuthUser,
+  persistLastLoginEmail,
+  persistSession,
+  readLastLoginEmail,
+  readStoredSession,
+} from "@/lib/auth";
 
 export function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@ascure.local");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const session = readStoredSession();
+    setEmail(readLastLoginEmail());
 
     if (session?.token) {
       router.replace("/dashboard");
@@ -27,12 +34,14 @@ export function LoginForm() {
     setIsSubmitting(true);
 
     try {
-      const payload = await login(email.trim(), password);
+      const trimmedEmail = email.trim();
+      const payload = await login(trimmedEmail, password);
 
       if (!payload.access_token) {
         throw new Error("Login succeeded but no access token was returned.");
       }
 
+      persistLastLoginEmail(trimmedEmail);
       persistSession({
         token: payload.access_token,
         user: normalizeAuthUser(payload.user),

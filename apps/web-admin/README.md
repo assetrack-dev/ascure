@@ -26,12 +26,10 @@ pnpm dev
 
 The Vite dev server proxies `/api/*` requests to `http://localhost:3000`, so local development works without backend CORS changes.
 
-## Seeded login
+## Login
 
-- Email: `admin@ascure.local`
-- Password: `Admin123!`
-
-The login form is prefilled with these credentials for quick testing.
+Sign in with an account provisioned by the backend. The login form remembers only the last
+successful email address in browser storage and never stores or pre-fills passwords.
 
 ## API base URL
 

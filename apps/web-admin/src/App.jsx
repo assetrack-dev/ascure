@@ -3,6 +3,7 @@ import { startTransition, useCallback, useEffect, useState } from 'react'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '')
 const TOKEN_STORAGE_KEY = 'ascure:web-admin:token'
 const USER_STORAGE_KEY = 'ascure:web-admin:user'
+const LAST_EMAIL_STORAGE_KEY = 'ascure_last_email'
 const APP_VIEWS = {
   LOGIN: 'login',
   TEMPLATE_LIST: 'templateList',
@@ -16,9 +17,9 @@ const TEMPLATE_INPUT_TYPE_OPTIONS = [
   { value: 'DATETIME', label: 'Date & Time' },
   { value: 'SELECT', label: 'Select' },
 ]
-const SEEDED_LOGIN = {
-  email: 'admin@ascure.local',
-  password: 'Admin123!',
+const EMPTY_LOGIN_FORM = {
+  email: '',
+  password: '',
 }
 
 function readStoredSession() {
@@ -56,6 +57,22 @@ function persistSession(token, user) {
 function clearStoredSession() {
   window.localStorage.removeItem(TOKEN_STORAGE_KEY)
   window.localStorage.removeItem(USER_STORAGE_KEY)
+}
+
+function readLastLoginEmail() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  return window.localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? ''
+}
+
+function persistLastLoginEmail(email) {
+  const trimmedEmail = email.trim()
+
+  if (trimmedEmail) {
+    window.localStorage.setItem(LAST_EMAIL_STORAGE_KEY, trimmedEmail)
+  }
 }
 
 async function readResponseBody(response) {
@@ -1717,10 +1734,6 @@ function LoginView({ authError, formValues, isSubmitting, onChange, onSubmit }) 
               <h2 className="mt-3 text-3xl font-extrabold text-[var(--ink)]">
                 Sign in to manage templates
               </h2>
-              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                The seeded admin account is prefilled so you can validate the full flow quickly.
-              </p>
-
               {authError ? (
                 <div className="mt-5 rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   {authError}
@@ -1762,16 +1775,6 @@ function LoginView({ authError, formValues, isSubmitting, onChange, onSubmit }) 
                   {isSubmitting ? 'Signing In...' : 'Login'}
                 </button>
               </form>
-
-              <div className="mt-6 rounded-[24px] border border-teal-100 bg-teal-50/90 p-4 text-sm text-teal-900">
-                <p className="font-semibold">Seeded credentials</p>
-                <p className="mt-2">
-                  <span className="font-medium">Email:</span> {SEEDED_LOGIN.email}
-                </p>
-                <p className="mt-1">
-                  <span className="font-medium">Password:</span> {SEEDED_LOGIN.password}
-                </p>
-              </div>
 
               <p className="mt-5 text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                 API target: <code>{API_BASE_URL}</code>
@@ -1844,7 +1847,7 @@ function Dashboard({
                 <p className="mt-2 text-lg font-bold text-[var(--ink)]">
                   {user?.name ?? 'ASCURE Admin'}
                 </p>
-                <p className="mt-1 text-sm text-[var(--muted)]">{user?.email ?? SEEDED_LOGIN.email}</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">{user?.email ?? 'Signed in'}</p>
                 <p className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-700">
                   {formatRole(user?.role)}
                 </p>
@@ -1930,7 +1933,10 @@ function Dashboard({
 
 function App() {
   const [storedSession] = useState(() => readStoredSession())
-  const [formValues, setFormValues] = useState(SEEDED_LOGIN)
+  const [formValues, setFormValues] = useState(() => ({
+    ...EMPTY_LOGIN_FORM,
+    email: readLastLoginEmail(),
+  }))
   const [token, setToken] = useState(storedSession.token)
   const [user, setUser] = useState(storedSession.user)
   const [currentView, setCurrentView] = useState(
@@ -2176,6 +2182,7 @@ function App() {
         throw new Error('Login succeeded but no access token was returned.')
       }
 
+      persistLastLoginEmail(formValues.email)
       persistSession(payload.access_token, payload.user ?? null)
       setTemplatesError('')
       setTemplateDetailError('')
@@ -2195,7 +2202,10 @@ function App() {
 
   const handleLogout = () => {
     resetSession('')
-    setFormValues(SEEDED_LOGIN)
+    setFormValues({
+      ...EMPTY_LOGIN_FORM,
+      email: readLastLoginEmail(),
+    })
   }
 
   const handleRetryTemplates = async () => {

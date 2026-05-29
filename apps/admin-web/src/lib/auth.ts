@@ -5,6 +5,7 @@ import { normalizeRole } from "@/lib/roles";
 
 const TOKEN_STORAGE_KEY = "ascure:admin-web:token";
 const USER_STORAGE_KEY = "ascure:admin-web:user";
+const LAST_EMAIL_STORAGE_KEY = "ascure_last_email";
 
 export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): AuthUser | null {
   if (!user) {
@@ -72,4 +73,20 @@ export function persistSession(session: AuthSession) {
 export function clearStoredSession() {
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
   window.localStorage.removeItem(USER_STORAGE_KEY);
+}
+
+export function readLastLoginEmail() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? "";
+}
+
+export function persistLastLoginEmail(email: string) {
+  const trimmedEmail = email.trim();
+
+  if (trimmedEmail) {
+    window.localStorage.setItem(LAST_EMAIL_STORAGE_KEY, trimmedEmail);
+  }
 }
