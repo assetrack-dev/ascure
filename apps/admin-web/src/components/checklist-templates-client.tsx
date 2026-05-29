@@ -347,7 +347,7 @@ function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function formatDate(value: string | undefined) {
+function formatCompactDate(value: string | undefined) {
   if (!value) {
     return "No date";
   }
@@ -361,7 +361,7 @@ function formatDate(value: string | undefined) {
   return new Intl.DateTimeFormat("en-MY", {
     day: "2-digit",
     month: "short",
-    year: "numeric",
+    year: "2-digit",
   }).format(date);
 }
 
@@ -391,6 +391,29 @@ function templateScopeLabel(template: ChecklistTemplate) {
   }
 
   return "Global";
+}
+
+function ScopeBadge({ template }: { template: ChecklistTemplate }) {
+  return (
+    <span className="inline-block max-w-full rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold leading-tight text-slate-700">
+      {templateScopeLabel(template)}
+    </span>
+  );
+}
+
+function stickyActionsCellClassName(status: ChecklistTemplateStatus) {
+  const baseClassName =
+    "sticky right-0 z-10 w-[15.75rem] min-w-[15.75rem] border-l border-slate-200 px-3 py-4 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)] sm:w-[16.5rem] sm:min-w-[16.5rem]";
+
+  if (status === "ACTIVE") {
+    return `${baseClassName} bg-teal-50 group-hover:bg-teal-50`;
+  }
+
+  if (status === "ARCHIVED") {
+    return `${baseClassName} bg-slate-50 group-hover:bg-slate-100`;
+  }
+
+  return `${baseClassName} bg-white group-hover:bg-amber-50`;
 }
 
 function sameTemplateActivationScope(left: ChecklistTemplate, right: ChecklistTemplate) {
@@ -2056,7 +2079,7 @@ function ChecklistTemplatesContent() {
                 {error}
               </div>
             ) : (
-              <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+              <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
                   {error ? (
                     <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -2123,19 +2146,30 @@ function ChecklistTemplatesContent() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
+                <div className="max-w-full overflow-x-auto pb-2">
+                  <table className="w-full min-w-[1200px] table-fixed border-separate border-spacing-0 text-left text-sm">
+                    <colgroup>
+                      <col className="w-[15rem]" />
+                      <col className="w-[8rem]" />
+                      <col className="w-[7.5rem]" />
+                      <col className="w-[8rem]" />
+                      <col className="w-[6.5rem]" />
+                      <col className="w-[4rem]" />
+                      <col className="w-[5rem]" />
+                      <col className="w-[5.25rem]" />
+                      <col className="w-[15.75rem] sm:w-[16.5rem]" />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                        <th className="min-w-64 px-5 py-3.5 font-semibold">Template</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Asset Type</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Capability</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Scope</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Items</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Inspections</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Updated</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">
+                        <th className="px-4 py-3.5 font-semibold">Template</th>
+                        <th className="px-3 py-3.5 font-semibold">Asset Type</th>
+                        <th className="px-3 py-3.5 font-semibold">Capability</th>
+                        <th className="px-3 py-3.5 font-semibold">Scope</th>
+                        <th className="px-3 py-3.5 font-semibold">Status</th>
+                        <th className="px-2 py-3.5 text-center font-semibold">Items</th>
+                        <th className="px-2 py-3.5 text-center font-semibold">Inspections</th>
+                        <th className="px-3 py-3.5 font-semibold">Updated</th>
+                        <th className="sticky right-0 z-20 w-[15.75rem] min-w-[15.75rem] border-l border-slate-200 bg-slate-50 px-3 py-3.5 text-right font-semibold shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)] sm:w-[16.5rem] sm:min-w-[16.5rem]">
                           Actions
                         </th>
                       </tr>
@@ -2151,18 +2185,18 @@ function ChecklistTemplatesContent() {
                         return (
                           <tr
                             key={template.id}
-                            className={`transition ${STATUS_META[templateStatus].rowClassName} ${
+                            className={`group transition ${STATUS_META[templateStatus].rowClassName} ${
                               isHighlighted ? "outline outline-2 outline-offset-[-2px] outline-amber-300" : ""
                             }`}
                           >
-                            <td className="px-5 py-4">
+                            <td className="px-4 py-4 align-top">
                               <div className="flex items-start gap-3">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500">
                                   <ClipboardList size={17} />
                                 </div>
                                 <div className="min-w-0">
                                   <div
-                                    className={`font-semibold ${
+                                    className={`break-words font-semibold leading-snug ${
                                       isArchived ? "text-slate-500" : "text-slate-900"
                                     }`}
                                   >
@@ -2174,36 +2208,40 @@ function ChecklistTemplatesContent() {
                                 </div>
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              {template.assetTypeCode ?? template.assetType}
-                              <div className="text-xs text-[var(--muted)]">
+                            <td className="px-3 py-4 align-top text-slate-700">
+                              <div className="break-words font-semibold leading-snug text-slate-900">
+                                {template.assetTypeCode ?? template.assetType}
+                              </div>
+                              <div className="mt-0.5 break-words text-xs leading-snug text-[var(--muted)]">
                                 {template.assetTypeName ?? "Asset type"}
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              {template.capability?.name ?? "Not assigned"}
+                            <td className="px-3 py-4 align-top text-slate-700">
+                              <div className="break-words leading-snug">
+                                {template.capability?.name ?? "Not assigned"}
+                              </div>
                               {template.capability?.code ? (
-                                <div className="text-xs text-[var(--muted)]">
+                                <div className="mt-0.5 break-words text-xs leading-snug text-[var(--muted)]">
                                   {template.capability.code}
                                 </div>
                               ) : null}
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              {templateScopeLabel(template)}
+                            <td className="px-3 py-4 align-top text-slate-700">
+                              <ScopeBadge template={template} />
                             </td>
-                            <td className="min-w-48 px-5 py-4">
-                              <StatusBadge status={templateStatus} showDescription />
+                            <td className="px-3 py-4 align-top">
+                              <StatusBadge status={templateStatus} />
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
+                            <td className="px-2 py-4 text-center align-top font-semibold text-slate-700">
                               {template.itemCount}
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
+                            <td className="px-2 py-4 text-center align-top font-semibold text-slate-700">
                               {template.inspectionCount}
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                              {formatDate(template.updatedAt)}
+                            <td className="px-3 py-4 align-top text-xs leading-snug text-slate-600">
+                              {formatCompactDate(template.updatedAt)}
                             </td>
-                            <td className="px-5 py-4">
+                            <td className={stickyActionsCellClassName(templateStatus)}>
                               <div className="flex flex-wrap justify-end gap-2">
                                 <button
                                   type="button"
