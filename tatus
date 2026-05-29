@@ -1,0 +1,33 @@
+warning: in the working copy of 'apps/api/src/inspections/dto/create-inspection.dto.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/inspections/inspections.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/master-data/dto/manage-asset-type.dto.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/master-data/master-data.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/site-visits/dto/create-site-visit.dto.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/site-visits/dto/list-site-visits-query.dto.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/site-visits/site-visits.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/android/build.gradle', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/api.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/screens/HomeScreen.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/screens/VisitDetailScreen.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/syncQueue.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/src/utils.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'prisma/schema.prisma', LF will be replaced by CRLF the next time Git touches it
+ .../src/inspections/dto/create-inspection.dto.ts   |  30 [32m+[m[31m-[m
+ apps/api/src/inspections/inspections.service.ts    |  46 [32m++[m
+ .../src/master-data/dto/manage-asset-type.dto.ts   |  10 [32m+[m
+ apps/api/src/master-data/master-data.service.ts    |   6 [32m+[m
+ .../src/site-visits/dto/create-site-visit.dto.ts   |  39 [32m+[m[31m-[m
+ .../site-visits/dto/list-site-visits-query.dto.ts  |  15 [32m+[m
+ apps/api/src/site-visits/site-visits.service.ts    | 117 [32m+++[m
+ apps/mobile/android/build.gradle                   |  28 [32m+[m
+ apps/mobile/package.json                           |  17 [32m+[m[31m-[m
+ apps/mobile/src/api.ts                             |  23 [32m+[m[31m-[m
+ apps/mobile/src/screens/HomeScreen.tsx             | 798 [32m+++++++++++++++++++[m[31m--[m
+ apps/mobile/src/screens/VisitDetailScreen.tsx      |   6 [32m+[m[31m-[m
+ apps/mobile/src/syncQueue.ts                       |   6 [32m+[m[31m-[m
+ apps/mobile/src/types.ts                           |  50 [32m+[m[31m-[m
+ apps/mobile/src/utils.ts                           |  21 [32m+[m[31m-[m
+ prisma/schema.prisma                               |  74 [32m+[m[31m-[m
+ 16 files changed, 1198 insertions(+), 88 deletions(-)

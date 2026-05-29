@@ -32,6 +32,8 @@ export type RootStackParamList = {
     initialLatitude?: number;
     initialLongitude?: number;
   };
+  OperationalSessions: undefined;
+  OperationalSessionDetail: { sessionId: string; sessionNo?: string };
   InspectionForm: { inspectionId: string; visitId: string; substationId: string };
   InspectionDetail: { inspectionId: string; assetCode?: string };
   AssetInspectionHistory: { assetId: string; assetCode?: string };

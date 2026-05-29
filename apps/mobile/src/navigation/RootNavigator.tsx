@@ -9,6 +9,8 @@ import { ImagePreviewScreen } from '../screens/ImagePreviewScreen';
 import { InspectionDetailScreen } from '../screens/InspectionDetailScreen';
 import { InspectionFormScreen } from '../screens/InspectionFormScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { OperationalSessionDetailScreen } from '../screens/OperationalSessionDetailScreen';
+import { OperationalSessionsScreen } from '../screens/OperationalSessionsScreen';
 import { VisitDetailScreen } from '../screens/VisitDetailScreen';
 import { AppDrawer } from './AppDrawer';
 import type { RootStackParamList } from './types';
@@ -29,6 +31,11 @@ export function RootNavigator() {
           <Stack.Screen name="VisitDetail" component={VisitDetailScreen} />
           <Stack.Screen name="AssetDetail" component={AssetDetailScreen} />
           <Stack.Screen name="AddAsset" component={AddAssetScreen} />
+          <Stack.Screen name="OperationalSessions" component={OperationalSessionsScreen} />
+          <Stack.Screen
+            name="OperationalSessionDetail"
+            component={OperationalSessionDetailScreen}
+          />
           <Stack.Screen name="InspectionForm" component={InspectionFormScreen} />
           <Stack.Screen name="InspectionDetail" component={InspectionDetailScreen} />
           <Stack.Screen

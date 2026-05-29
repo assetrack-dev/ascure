@@ -1,6 +1,13 @@
-import { OperationalDomain, SiteVisitType } from '@prisma/client';
+import {
+  OperationMode,
+  OperationalDomain,
+  OperationalScope,
+  SessionKind,
+  SiteVisitType,
+} from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -62,6 +69,36 @@ export class CreateSiteVisitDto {
   @IsOptional()
   @IsEnum(OperationalDomain)
   operationalDomain?: OperationalDomain;
+
+  @IsOptional()
+  @IsEnum(OperationMode)
+  operationMode?: OperationMode;
+
+  @IsOptional()
+  @IsEnum(OperationalScope)
+  operationalScope?: OperationalScope;
+
+  @IsOptional()
+  @IsEnum(SessionKind)
+  sessionKind?: SessionKind;
+
+  @IsOptional()
+  @IsUUID()
+  fromPencawangId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  toPencawangId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresQAQC?: boolean;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  reportingGroup?: string;
 
   @Transform(trimString)
   @IsOptional()

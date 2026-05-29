@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -7,6 +7,14 @@ import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import {
+  getAutoOpenWorkspace,
+  getAvailableMobileWorkspaces,
+  getInspectionQueueStatusGroup,
+  type InspectionQueueStatusGroup,
+  type MobileWorkspace,
+  type MobileWorkspaceId,
+} from '../operationalWorkspace';
+import {
   getActiveQueueCount,
   getFailedQueueCount,
   getPendingQueueCount,
@@ -14,16 +22,19 @@ import {
   SyncQueueSnapshot,
 } from '../syncQueue';
 import {
+  AppButton,
+  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
   Screen,
   SectionTitle,
   SkeletonCard,
+  StatusChip,
   WarningBanner,
   uiTheme,
 } from '../ui';
-import { SiteVisit } from '../types';
+import { InspectionSummary, OperationalScope, SiteVisit } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -34,15 +45,66 @@ type VisitThumbnailImage = {
   path?: string | null;
 };
 
+type InspectionQueueItem = {
+  id: string;
+  group: InspectionQueueStatusGroup;
+  scope: OperationalScope;
+  title: string;
+  subtitle: string;
+  visit: SiteVisit;
+  inspection?: InspectionSummary;
+};
+
+const SCOPE_ORDER: OperationalScope[] = [
+  'SAVR',
+  'SAVT',
+  'PENCAWANG',
+  'FEEDER_PILLAR',
+  'CABLE_BRIDGE',
+  'LINK_BOX',
+];
+
+const SCOPE_LABELS: Record<OperationalScope, string> = {
+  SAVR: 'SAVR',
+  SAVT: 'SAVT',
+  PENCAWANG: 'Pencawang',
+  FEEDER_PILLAR: 'Feeder Pillar',
+  CABLE_BRIDGE: 'Cable Bridge',
+  LINK_BOX: 'Link Box',
+};
+
+const QUEUE_GROUPS: Array<{
+  group: InspectionQueueStatusGroup;
+  label: string;
+  tone: 'info' | 'success' | 'danger';
+}> = [
+  { group: 'IN_PROGRESS', label: 'In Progress', tone: 'info' },
+  { group: 'COMPLETED', label: 'Completed', tone: 'success' },
+  { group: 'NEEDS_ATTENTION', label: 'Need Amendment / Rejected', tone: 'danger' },
+];
+
 export function HomeScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'Home'>['navigation']>();
-  const { token, setUser, handleUnauthorized } = useSession();
+  const { token, user, setUser, handleUnauthorized } = useSession();
   const { snapshot: syncQueueSnapshot, isSyncing: isSyncingQueue, isOffline } = useSync();
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [completedVisits, setCompletedVisits] = useState<SiteVisit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [joiningVisitId, setJoiningVisitId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] =
+    useState<MobileWorkspaceId | null>(null);
+  const [selectedScope, setSelectedScope] = useState<OperationalScope>('SAVR');
+  const workspaces = useMemo(() => getAvailableMobileWorkspaces(user), [user]);
+  const autoOpenWorkspace = useMemo(() => getAutoOpenWorkspace(user), [user]);
+  const availableScopes = useMemo(
+    () => getAvailableInspectionScopes(activeVisits, completedVisits),
+    [activeVisits, completedVisits],
+  );
+  const queueItems = useMemo(
+    () => buildInspectionQueueItems(activeVisits, completedVisits, selectedScope),
+    [activeVisits, completedVisits, selectedScope],
+  );
 
   const loadHomeData = useCallback(async () => {
     try {
@@ -74,6 +136,30 @@ export function HomeScreen() {
   useEffect(() => {
     loadHomeData();
   }, [loadHomeData]);
+
+  useEffect(() => {
+    if (autoOpenWorkspace) {
+      setSelectedWorkspaceId(autoOpenWorkspace.id);
+      return;
+    }
+
+    setSelectedWorkspaceId((currentWorkspaceId) => {
+      if (
+        currentWorkspaceId &&
+        workspaces.some((workspace) => workspace.id === currentWorkspaceId)
+      ) {
+        return currentWorkspaceId;
+      }
+
+      return null;
+    });
+  }, [autoOpenWorkspace, workspaces]);
+
+  useEffect(() => {
+    if (!availableScopes.includes(selectedScope)) {
+      setSelectedScope(availableScopes[0] ?? 'SAVR');
+    }
+  }, [availableScopes, selectedScope]);
 
   const handleOpenVisit = useCallback(
     async (visit: SiteVisit) => {
@@ -116,9 +202,33 @@ export function HomeScreen() {
     [handleUnauthorized, navigation, token],
   );
 
+  const handleOpenQueueItem = useCallback(
+    (item: InspectionQueueItem) => {
+      if (item.inspection && item.group === 'IN_PROGRESS') {
+        navigation.navigate('InspectionForm', {
+          inspectionId: item.inspection.id,
+          visitId: item.visit.id,
+          substationId: item.visit.substationId,
+        });
+        return;
+      }
+
+      if (item.inspection) {
+        navigation.navigate('InspectionDetail', {
+          inspectionId: item.inspection.id,
+          assetCode: item.inspection.asset?.assetCode ?? item.title,
+        });
+        return;
+      }
+
+      void handleOpenVisit(item.visit);
+    },
+    [handleOpenVisit, navigation],
+  );
+
   return (
     <Screen
-      title="Visits"
+      title="Workspace"
       leftAction={{
         icon: 'menu',
         onPress: () => navigation.openDrawer(),
@@ -159,69 +269,373 @@ export function HomeScreen() {
       />
 
       {!isLoading ? (
-        <Card>
-          <View style={styles.listHeader}>
-            <SectionTitle>Active Visits</SectionTitle>
-            <Text style={styles.countText}>{activeVisits.length}</Text>
-          </View>
-
-          {activeVisits.length === 0 ? (
-            <EmptyState
-              icon="inbox"
-              title="No active visits"
-              description="Create a new check-in to start work at a substation."
-            />
-          ) : (
-            <View style={styles.visitList}>
-              {activeVisits.map((visit) => (
-                <VisitRow
-                  key={visit.id}
-                  visit={visit}
-                  isJoining={joiningVisitId === visit.id}
-                  onPress={() => {
-                    void handleOpenVisit(visit);
-                  }}
-                />
-              ))}
-            </View>
-          )}
-        </Card>
+        <WorkspaceEntry
+          workspaces={workspaces}
+          selectedWorkspaceId={selectedWorkspaceId}
+          onSelectWorkspace={setSelectedWorkspaceId}
+        />
       ) : null}
 
-      {!isLoading ? (
-        <Card>
-          <View style={styles.listHeader}>
-            <SectionTitle>Completed Visits</SectionTitle>
-            <Text style={styles.countText}>{completedVisits.length}</Text>
-          </View>
+      {!isLoading && workspaces.length === 0 ? (
+        <LegacyVisitsView
+          activeVisits={activeVisits}
+          completedVisits={completedVisits}
+          joiningVisitId={joiningVisitId}
+          onOpenVisit={handleOpenVisit}
+        />
+      ) : null}
 
-          {completedVisits.length === 0 ? (
-            <EmptyState
-              icon="check-circle"
-              title="No completed visits"
-              description="Completed site visits will stay available here for recheck or correction."
-            />
-          ) : (
-            <View style={styles.visitList}>
-              {completedVisits.map((visit) => (
-                <VisitRow
-                  key={visit.id}
-                  visit={visit}
-                  isJoining={false}
-                  metaLabel={{
-                    label: 'Completed',
-                    value: formatDateTime(visit.completedAt ?? visit.endedAt ?? visit.startedAt),
-                  }}
-                  onPress={() => {
-                    void handleOpenVisit(visit);
-                  }}
-                />
-              ))}
-            </View>
-          )}
-        </Card>
+      {!isLoading && selectedWorkspaceId === 'INSPECTION' ? (
+        <InspectionWorkspaceView
+          activeVisits={activeVisits}
+          completedVisits={completedVisits}
+          availableScopes={availableScopes}
+          selectedScope={selectedScope}
+          queueItems={queueItems}
+          joiningVisitId={joiningVisitId}
+          onSelectScope={setSelectedScope}
+          onOpenQueueItem={handleOpenQueueItem}
+          onOpenVisit={handleOpenVisit}
+          onOpenSessions={() => navigation.navigate('OperationalSessions')}
+          onCreateCheckIn={() => navigation.navigate('CheckIn')}
+        />
+      ) : null}
+
+      {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
+        <MaintenanceWorkspacePlaceholder
+          onOpenDefects={() => navigation.navigate('DefectList')}
+        />
       ) : null}
     </Screen>
+  );
+}
+
+function WorkspaceEntry({
+  workspaces,
+  selectedWorkspaceId,
+  onSelectWorkspace,
+}: {
+  workspaces: MobileWorkspace[];
+  selectedWorkspaceId: MobileWorkspaceId | null;
+  onSelectWorkspace: (workspaceId: MobileWorkspaceId) => void;
+}) {
+  if (workspaces.length <= 1) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <View style={styles.listHeader}>
+        <SectionTitle>Workspaces</SectionTitle>
+        <Text style={styles.countText}>{workspaces.length}</Text>
+      </View>
+      <View style={styles.workspaceGrid}>
+        {workspaces.map((workspace) => (
+          <WorkspaceCard
+            key={workspace.id}
+            workspace={workspace}
+            selected={workspace.id === selectedWorkspaceId}
+            onPress={() => onSelectWorkspace(workspace.id)}
+          />
+        ))}
+      </View>
+    </Card>
+  );
+}
+
+function WorkspaceCard({
+  workspace,
+  selected,
+  onPress,
+}: {
+  workspace: MobileWorkspace;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const iconName = workspace.id === 'INSPECTION' ? 'clipboard' : 'tool';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.workspaceCard,
+        selected && styles.workspaceCardSelected,
+        pressed && styles.visitRowPressed,
+      ]}
+    >
+      <View style={styles.workspaceIcon}>
+        <Feather name={iconName} size={17} color={uiTheme.colors.primary} />
+      </View>
+      <View style={styles.workspaceTextWrap}>
+        <Text style={styles.workspaceTitle}>{workspace.label}</Text>
+        <Text style={styles.workspaceMeta}>
+          {workspace.id === 'INSPECTION' ? 'Operational queue' : 'Assigned tasks'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function InspectionWorkspaceView({
+  activeVisits,
+  completedVisits,
+  availableScopes,
+  selectedScope,
+  queueItems,
+  joiningVisitId,
+  onSelectScope,
+  onOpenQueueItem,
+  onOpenVisit,
+  onOpenSessions,
+  onCreateCheckIn,
+}: {
+  activeVisits: SiteVisit[];
+  completedVisits: SiteVisit[];
+  availableScopes: OperationalScope[];
+  selectedScope: OperationalScope;
+  queueItems: InspectionQueueItem[];
+  joiningVisitId: string | null;
+  onSelectScope: (scope: OperationalScope) => void;
+  onOpenQueueItem: (item: InspectionQueueItem) => void;
+  onOpenVisit: (visit: SiteVisit) => void;
+  onOpenSessions: () => void;
+  onCreateCheckIn: () => void;
+}) {
+  const activeScopeVisits = activeVisits.filter((visit) =>
+    isVisitInScope(visit, selectedScope),
+  );
+  const completedScopeVisits = completedVisits.filter((visit) =>
+    isVisitInScope(visit, selectedScope),
+  );
+
+  return (
+    <>
+      <Card>
+        <View style={styles.listHeader}>
+          <SectionTitle>Inspection Scope</SectionTitle>
+          <StatusChip label={SCOPE_LABELS[selectedScope]} tone="info" />
+        </View>
+        <View style={styles.scopeGrid}>
+          {availableScopes.map((scope) => (
+            <ScopeCard
+              key={scope}
+              scope={scope}
+              selected={scope === selectedScope}
+              onPress={() => onSelectScope(scope)}
+            />
+          ))}
+        </View>
+      </Card>
+
+      <Card>
+        <View style={styles.listHeader}>
+          <SectionTitle>Operational Sessions</SectionTitle>
+          <StatusChip label="Sessions" tone="info" />
+        </View>
+        <BodyText muted>
+          Open assigned inspection sessions without changing the current visit queue.
+        </BodyText>
+        <AppButton label="Open Sessions" variant="secondary" onPress={onOpenSessions} />
+      </Card>
+
+      <Card>
+        <View style={styles.listHeader}>
+          <SectionTitle>Inspection Queue</SectionTitle>
+          <Text style={styles.countText}>{queueItems.length}</Text>
+        </View>
+        <View style={styles.queueGrid}>
+          {QUEUE_GROUPS.map((entry) => {
+            const items = queueItems.filter((item) => item.group === entry.group);
+
+            return (
+              <QueueGroupCard
+                key={entry.group}
+                label={entry.label}
+                count={items.length}
+                tone={entry.tone}
+                firstItem={items[0]}
+                onOpenItem={onOpenQueueItem}
+              />
+            );
+          })}
+        </View>
+      </Card>
+
+      <LegacyVisitsView
+        activeVisits={activeScopeVisits}
+        completedVisits={completedScopeVisits}
+        joiningVisitId={joiningVisitId}
+        onOpenVisit={onOpenVisit}
+        onCreateCheckIn={onCreateCheckIn}
+      />
+    </>
+  );
+}
+
+function ScopeCard({
+  scope,
+  selected,
+  onPress,
+}: {
+  scope: OperationalScope;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.scopeCard,
+        selected && styles.scopeCardSelected,
+        pressed && styles.visitRowPressed,
+      ]}
+    >
+      <Text style={[styles.scopeTitle, selected && styles.scopeTitleSelected]}>
+        {SCOPE_LABELS[scope]}
+      </Text>
+    </Pressable>
+  );
+}
+
+function QueueGroupCard({
+  label,
+  count,
+  tone,
+  firstItem,
+  onOpenItem,
+}: {
+  label: string;
+  count: number;
+  tone: 'info' | 'success' | 'danger';
+  firstItem?: InspectionQueueItem;
+  onOpenItem: (item: InspectionQueueItem) => void;
+}) {
+  const isDisabled = count === 0 || !firstItem;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={isDisabled}
+      onPress={() => {
+        if (firstItem) {
+          onOpenItem(firstItem);
+        }
+      }}
+      style={({ pressed }) => [
+        styles.queueCard,
+        isDisabled && styles.queueCardDisabled,
+        pressed && !isDisabled && styles.visitRowPressed,
+      ]}
+    >
+      <View style={styles.queueCardHeader}>
+        <StatusChip label={label} tone={tone} />
+        <Text style={styles.queueCount}>{count}</Text>
+      </View>
+      <Text style={styles.queueTitle} numberOfLines={1}>
+        {firstItem?.title ?? 'No items'}
+      </Text>
+      <Text style={styles.queueSubtitle} numberOfLines={2}>
+        {firstItem?.subtitle ?? 'Nothing pending in this group.'}
+      </Text>
+    </Pressable>
+  );
+}
+
+function MaintenanceWorkspacePlaceholder({ onOpenDefects }: { onOpenDefects: () => void }) {
+  return (
+    <Card>
+      <View style={styles.listHeader}>
+        <SectionTitle>Maintenance</SectionTitle>
+        <StatusChip label="Tasks" tone="warning" />
+      </View>
+      <BodyText muted>
+        Maintenance assignments will appear here. Current defect work remains available.
+      </BodyText>
+      <AppButton label="Open Defects" variant="secondary" onPress={onOpenDefects} />
+    </Card>
+  );
+}
+
+function LegacyVisitsView({
+  activeVisits,
+  completedVisits,
+  joiningVisitId,
+  onOpenVisit,
+  onCreateCheckIn,
+}: {
+  activeVisits: SiteVisit[];
+  completedVisits: SiteVisit[];
+  joiningVisitId: string | null;
+  onOpenVisit: (visit: SiteVisit) => void;
+  onCreateCheckIn?: () => void;
+}) {
+  return (
+    <>
+      <Card>
+        <View style={styles.listHeader}>
+          <SectionTitle>Active Visits</SectionTitle>
+          <Text style={styles.countText}>{activeVisits.length}</Text>
+        </View>
+
+        {activeVisits.length === 0 ? (
+          <EmptyState
+            icon="inbox"
+            title="No active visits"
+            description="Create a new check-in to start work at a substation."
+          />
+        ) : (
+          <View style={styles.visitList}>
+            {activeVisits.map((visit) => (
+              <VisitRow
+                key={visit.id}
+                visit={visit}
+                isJoining={joiningVisitId === visit.id}
+                onPress={() => {
+                  void onOpenVisit(visit);
+                }}
+              />
+            ))}
+          </View>
+        )}
+        {onCreateCheckIn && activeVisits.length === 0 ? (
+          <AppButton label="Create Check In" onPress={onCreateCheckIn} />
+        ) : null}
+      </Card>
+
+      <Card>
+        <View style={styles.listHeader}>
+          <SectionTitle>Completed Visits</SectionTitle>
+          <Text style={styles.countText}>{completedVisits.length}</Text>
+        </View>
+
+        {completedVisits.length === 0 ? (
+          <EmptyState
+            icon="check-circle"
+            title="No completed visits"
+            description="Completed site visits will stay available here for recheck or correction."
+          />
+        ) : (
+          <View style={styles.visitList}>
+            {completedVisits.map((visit) => (
+              <VisitRow
+                key={visit.id}
+                visit={visit}
+                isJoining={false}
+                metaLabel={{
+                  label: 'Completed',
+                  value: formatDateTime(visit.completedAt ?? visit.endedAt ?? visit.startedAt),
+                }}
+                onPress={() => {
+                  void onOpenVisit(visit);
+                }}
+              />
+            ))}
+          </View>
+        )}
+      </Card>
+    </>
   );
 }
 
@@ -239,6 +653,165 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
       }
     }),
   );
+}
+
+function getAvailableInspectionScopes(
+  activeVisits: SiteVisit[],
+  completedVisits: SiteVisit[],
+): OperationalScope[] {
+  const scopes = new Set<OperationalScope>();
+
+  for (const visit of [...activeVisits, ...completedVisits]) {
+    if (visit.operationMode && visit.operationMode !== 'INSPECTION') {
+      continue;
+    }
+
+    if (isOperationalScope(visit.operationalScope)) {
+      scopes.add(visit.operationalScope);
+    }
+
+    for (const inspection of visit.inspections ?? []) {
+      if (isOperationalScope(inspection.operationalScope)) {
+        scopes.add(inspection.operationalScope);
+      }
+    }
+  }
+
+  if (scopes.size === 0) {
+    return ['SAVR'];
+  }
+
+  return SCOPE_ORDER.filter((scope) => scopes.has(scope));
+}
+
+function buildInspectionQueueItems(
+  activeVisits: SiteVisit[],
+  completedVisits: SiteVisit[],
+  selectedScope: OperationalScope,
+) {
+  const queueItems: InspectionQueueItem[] = [];
+
+  for (const visit of activeVisits) {
+    if (!isVisitInScope(visit, selectedScope)) {
+      continue;
+    }
+
+    let hasInProgressInspection = false;
+
+    for (const inspection of visit.inspections ?? []) {
+      if (!isInspectionInScope(inspection, visit, selectedScope)) {
+        continue;
+      }
+
+      const group = getInspectionQueueStatusGroup(inspection.completionStatus);
+
+      if (!group) {
+        continue;
+      }
+
+      if (group === 'IN_PROGRESS') {
+        hasInProgressInspection = true;
+      }
+
+      queueItems.push(createInspectionQueueItem(visit, inspection, group, selectedScope));
+    }
+
+    if (!hasInProgressInspection) {
+      queueItems.push(createVisitQueueItem(visit, 'IN_PROGRESS', selectedScope));
+    }
+  }
+
+  for (const visit of completedVisits) {
+    if (!isVisitInScope(visit, selectedScope)) {
+      continue;
+    }
+
+    const visibleInspections = (visit.inspections ?? [])
+      .filter((inspection) => isInspectionInScope(inspection, visit, selectedScope))
+      .map((inspection) => ({
+        inspection,
+        group: getInspectionQueueStatusGroup(inspection.completionStatus),
+      }))
+      .filter(
+        (entry): entry is {
+          inspection: InspectionSummary;
+          group: InspectionQueueStatusGroup;
+        } => Boolean(entry.group),
+      );
+
+    if (visibleInspections.length === 0) {
+      queueItems.push(createVisitQueueItem(visit, 'COMPLETED', selectedScope));
+      continue;
+    }
+
+    for (const entry of visibleInspections) {
+      queueItems.push(
+        createInspectionQueueItem(visit, entry.inspection, entry.group, selectedScope),
+      );
+    }
+  }
+
+  return queueItems;
+}
+
+function createVisitQueueItem(
+  visit: SiteVisit,
+  group: InspectionQueueStatusGroup,
+  scope: OperationalScope,
+): InspectionQueueItem {
+  return {
+    id: `${group}-visit-${visit.id}`,
+    group,
+    scope,
+    title: visit.pencawangName ?? visit.substation.name,
+    subtitle: visit.functionalLocation ?? visit.substation.location ?? visit.substation.code,
+    visit,
+  };
+}
+
+function createInspectionQueueItem(
+  visit: SiteVisit,
+  inspection: InspectionSummary,
+  group: InspectionQueueStatusGroup,
+  scope: OperationalScope,
+): InspectionQueueItem {
+  return {
+    id: `${group}-inspection-${inspection.id}`,
+    group,
+    scope,
+    title: inspection.asset?.assetCode ?? visit.pencawangName ?? visit.substation.name,
+    subtitle:
+      inspection.asset?.name ??
+      visit.functionalLocation ??
+      visit.substation.location ??
+      visit.substation.code,
+    visit,
+    inspection,
+  };
+}
+
+function isVisitInScope(visit: SiteVisit, scope: OperationalScope) {
+  if (isOperationalScope(visit.operationalScope)) {
+    return visit.operationalScope === scope;
+  }
+
+  return scope === 'SAVR';
+}
+
+function isInspectionInScope(
+  inspection: InspectionSummary,
+  visit: SiteVisit,
+  scope: OperationalScope,
+) {
+  if (isOperationalScope(inspection.operationalScope)) {
+    return inspection.operationalScope === scope;
+  }
+
+  return isVisitInScope(visit, scope);
+}
+
+function isOperationalScope(value?: string | null): value is OperationalScope {
+  return SCOPE_ORDER.includes(value as OperationalScope);
 }
 
 function VisitRow({
@@ -425,6 +998,123 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  workspaceGrid: {
+    gap: 10,
+  },
+  workspaceCard: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 12,
+  },
+  workspaceCardSelected: {
+    borderColor: uiTheme.colors.primary,
+    backgroundColor: uiTheme.colors.primarySoft,
+  },
+  workspaceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: uiTheme.colors.card,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+  },
+  workspaceTextWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  workspaceTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  workspaceMeta: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  scopeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  scopeCard: {
+    minHeight: 42,
+    minWidth: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    paddingHorizontal: 12,
+  },
+  scopeCardSelected: {
+    borderColor: uiTheme.colors.primary,
+    backgroundColor: uiTheme.colors.primarySoft,
+  },
+  scopeTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scopeTitleSelected: {
+    color: uiTheme.colors.primaryStrong,
+  },
+  queueGrid: {
+    gap: 10,
+  },
+  queueCard: {
+    minHeight: 104,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    padding: 12,
+    gap: 8,
+  },
+  queueCardDisabled: {
+    opacity: 0.72,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+  },
+  queueCardHeader: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  queueCount: {
+    minWidth: 30,
+    color: uiTheme.colors.textPrimary,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  queueTitle: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
+  queueSubtitle: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
   },
   visitList: {
     gap: 10,

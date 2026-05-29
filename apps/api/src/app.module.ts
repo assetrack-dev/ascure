@@ -12,6 +12,7 @@ import { DefectsModule } from './defects/defects.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EnterpriseModule } from './enterprise/enterprise.module';
 import { TeamsModule } from './teams/teams.module';
+import { OperationalSessionsModule } from './operational-sessions/operational-sessions.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { TeamsModule } from './teams/teams.module';
     DashboardModule,
     EnterpriseModule,
     TeamsModule,
+    OperationalSessionsModule,
   ],
 })
 export class AppModule {}

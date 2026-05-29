@@ -28,6 +28,27 @@ export interface Team {
   updatedAt?: string;
 }
 
+export type OperationMode = 'INSPECTION' | 'MAINTENANCE';
+export type OperationalScope =
+  | 'SAVR'
+  | 'SAVT'
+  | 'PENCAWANG'
+  | 'FEEDER_PILLAR'
+  | 'CABLE_BRIDGE'
+  | 'LINK_BOX';
+export type OperationalSessionScope = OperationalScope;
+export type OperationalSessionStatus =
+  | 'DRAFT'
+  | 'ASSIGNED'
+  | 'IN_PROGRESS'
+  | 'SUBMITTED'
+  | 'QA_REVIEW'
+  | 'AMENDMENT_REQUIRED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+export type SessionKind = 'PENCENTRIC' | 'ROUTE' | 'STANDALONE';
+
 export type SiteVisitType = 'DISCOVERY' | 'REINSPECTION' | 'SPECIAL' | 'AUDIT';
 
 export interface Substation {
@@ -61,6 +82,7 @@ export interface AssetType {
     code: string;
     name: string;
   } | null;
+  operationalScope?: OperationalScope | null;
   description?: string | null;
   isActive?: boolean;
   sortOrder?: number | null;
@@ -121,7 +143,14 @@ export interface AssetDetailResponse {
   latestInspection: AssetDetailInspection | null;
 }
 
-export type InspectionCompletionStatus = 'DRAFT' | 'SUBMITTED';
+export type InspectionCompletionStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'NEED_AMENDMENT'
+  | 'REJECTED'
+  | 'APPROVED';
 export type InspectionItemResultValue = 'PASS' | 'FAIL' | 'NA';
 
 export interface InspectionSummary {
@@ -133,6 +162,10 @@ export interface InspectionSummary {
   createdByUserId?: string;
   inspectionCycle: number;
   completionStatus: InspectionCompletionStatus;
+  operationMode?: OperationMode | null;
+  operationalScope?: OperationalScope | null;
+  requiresQAQC?: boolean | null;
+  reportingGroup?: string | null;
   submittedAt: string | null;
   createdAt: string;
   updatedAt?: string;
@@ -167,6 +200,15 @@ export interface SiteVisit {
   createdByUserId?: string;
   status: string;
   visitType?: SiteVisitType | null;
+  operationMode?: OperationMode | null;
+  operationalScope?: OperationalScope | null;
+  sessionKind?: SessionKind | null;
+  fromPencawangId?: string | null;
+  toPencawangId?: string | null;
+  fromPencawang?: Pick<Substation, 'id' | 'code' | 'name' | 'location'> | null;
+  toPencawang?: Pick<Substation, 'id' | 'code' | 'name' | 'location'> | null;
+  requiresQAQC?: boolean | null;
+  reportingGroup?: string | null;
   mainhead?: string | null;
   pencawangCode?: string | null;
   pencawangName?: string | null;
@@ -198,6 +240,59 @@ export interface SiteVisit {
   pendingAssets?: number;
   defectsFound?: number;
   completionPercentage?: number;
+}
+
+export interface OperationalSessionRecord {
+  id: string;
+  code?: string | null;
+  name: string;
+}
+
+export type OperationalSessionUser = Pick<SessionUser, 'id' | 'email' | 'name' | 'role'>;
+
+export interface OperationalSessionProgress {
+  totalAssets: number;
+  completedAssets: number;
+  completionPercentage: number;
+}
+
+export interface OperationalSession {
+  id: string;
+  sessionNo: string;
+  workspaceId: string;
+  organizationId: string;
+  branchId?: string | null;
+  mainheadId?: string | null;
+  assignedCompanyId: string;
+  assignedQaUserId?: string | null;
+  scope: OperationalSessionScope;
+  status: OperationalSessionStatus;
+  metadata?: Record<string, unknown> | null;
+  targetDate?: string | null;
+  dueDate?: string | null;
+  startedAt?: string | null;
+  submittedAt?: string | null;
+  approvedAt?: string | null;
+  rejectedAt?: string | null;
+  remarks?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workspace?: OperationalSessionRecord | null;
+  organization?: OperationalSessionRecord | null;
+  branch?: OperationalSessionRecord | null;
+  mainhead?: OperationalSessionRecord | null;
+  assignedCompany?: OperationalSessionRecord | null;
+  assignedQaUser?: OperationalSessionUser | null;
+  progress?: OperationalSessionProgress;
+}
+
+export interface OperationalSessionFilters {
+  workspaceId?: string;
+  scope?: OperationalSessionScope;
+  status?: OperationalSessionStatus;
+  assignedCompanyId?: string;
+  assignedQaUserId?: string;
+  mainheadId?: string;
 }
 
 export interface SiteVisitAssetLink {
@@ -265,12 +360,21 @@ export interface InspectionFormResponse {
     templateId: string;
     inspectionCycle: number;
     completionStatus: InspectionCompletionStatus;
+    operationMode?: OperationMode | null;
+    operationalScope?: OperationalScope | null;
+    requiresQAQC?: boolean | null;
+    reportingGroup?: string | null;
     submittedAt: string | null;
     createdAt: string;
     updatedAt: string;
     siteVisit: {
       id: string;
       status: string;
+      operationMode?: OperationMode | null;
+      operationalScope?: OperationalScope | null;
+      sessionKind?: SessionKind | null;
+      requiresQAQC?: boolean | null;
+      reportingGroup?: string | null;
       startedAt: string;
       team: Pick<Team, 'id' | 'code' | 'name'>;
       substation: Pick<Substation, 'id' | 'code' | 'name'>;
@@ -287,6 +391,8 @@ export interface InspectionFormResponse {
     version: number;
     assetTypeId?: string;
     capabilityId?: string | null;
+    operationalScope?: OperationalScope | null;
+    requiresQAQC?: boolean | null;
     sections: InspectionTemplateSection[];
   };
   results: Array<{
@@ -433,6 +539,10 @@ export type InspectionDetail = {
   assetId: string;
   cycleNumber: number;
   status: string;
+  operationMode?: OperationMode | null;
+  operationalScope?: OperationalScope | null;
+  requiresQAQC?: boolean | null;
+  reportingGroup?: string | null;
   submittedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -564,6 +674,8 @@ export interface ChecklistTemplate {
   } | null;
   mainheadId?: string | null;
   operationalDomain?: string | null;
+  operationalScope?: OperationalScope | null;
+  requiresQAQC?: boolean | null;
   resolutionSource?: string;
   name: string;
   version: number;

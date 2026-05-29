@@ -5,6 +5,7 @@ import {
   BarChart3,
   Bug,
   Building2,
+  CalendarClock,
   ClipboardList,
   FolderKanban,
   GitBranch,
@@ -40,6 +41,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/operations-board",
       label: "Operations Board",
       icon: ClipboardList,
+    },
+    {
+      href: "/operational-sessions",
+      label: "Operations / Sessions",
+      icon: CalendarClock,
     },
     {
       href: "/assets",

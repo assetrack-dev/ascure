@@ -22,6 +22,12 @@ import {
   isSiteVisitOverdue,
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
+import {
+  DEFAULT_OPERATION_MODE,
+  DEFAULT_OPERATIONAL_SCOPE,
+  getSessionKindForScope,
+  scopeRequiresQAQC,
+} from '../common/operational-scope';
 import { normalizeOperationalText } from '../common/operational-text';
 import {
   buildSiteVisitImagePath,
@@ -55,6 +61,22 @@ const SITE_VISIT_BASE_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
     },
   },
   substation: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      location: true,
+    },
+  },
+  fromPencawang: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      location: true,
+    },
+  },
+  toPencawang: {
     select: {
       id: true,
       code: true,
@@ -391,6 +413,7 @@ export class SiteVisitsService {
 
     const substation = await this.resolveCreateSubstation(user, dto);
     const operationalLinks = await this.resolveCreateOperationalLinks(dto);
+    const operationalSession = await this.resolveCreateOperationalSession(user, dto);
 
     const activeTeamMembers = await this.prisma.teamMember.findMany({
       where: {
@@ -423,6 +446,13 @@ export class SiteVisitsService {
           cycleNumber: dto.cycleNumber,
           visitType: dto.visitType,
           operationalDomain: operationalLinks.operationalDomain,
+          operationMode: operationalSession.operationMode,
+          operationalScope: operationalSession.operationalScope,
+          sessionKind: operationalSession.sessionKind,
+          fromPencawangId: operationalSession.fromPencawangId,
+          toPencawangId: operationalSession.toPencawangId,
+          requiresQAQC: operationalSession.requiresQAQC,
+          reportingGroup: operationalSession.reportingGroup,
           mainhead:
             this.normalizeOperationalString(dto.mainhead) ??
             operationalLinks.mainheadLabel,
@@ -997,6 +1027,63 @@ export class SiteVisitsService {
         this.normalizeOperationalString(workPackage?.mainhead) ??
         null,
     };
+  }
+
+  private async resolveCreateOperationalSession(
+    user: RequestUser,
+    dto: CreateSiteVisitDto,
+  ) {
+    const operationalScope = dto.operationalScope ?? DEFAULT_OPERATIONAL_SCOPE;
+
+    const [fromPencawangId, toPencawangId] = await Promise.all([
+      this.resolveOptionalPencawangId(
+        user,
+        dto.fromPencawangId,
+        'From Pencawang',
+      ),
+      this.resolveOptionalPencawangId(
+        user,
+        dto.toPencawangId,
+        'To Pencawang',
+      ),
+    ]);
+
+    return {
+      operationMode: dto.operationMode ?? DEFAULT_OPERATION_MODE,
+      operationalScope,
+      sessionKind: dto.sessionKind ?? getSessionKindForScope(operationalScope),
+      fromPencawangId,
+      toPencawangId,
+      requiresQAQC: dto.requiresQAQC ?? scopeRequiresQAQC(operationalScope),
+      reportingGroup: this.normalizeOperationalString(dto.reportingGroup),
+    };
+  }
+
+  private async resolveOptionalPencawangId(
+    user: RequestUser,
+    pencawangId: string | undefined,
+    label: string,
+  ) {
+    if (!pencawangId) {
+      return null;
+    }
+
+    const pencawang = await this.prisma.substation.findFirst({
+      where: {
+        id: pencawangId,
+        tenantId: user.tenantId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!pencawang) {
+      throw new NotFoundException(`${label} not found.`);
+    }
+
+    return pencawang.id;
   }
 
   private validateManualPencawangCreate(dto: CreateSiteVisitDto) {
@@ -1617,6 +1704,15 @@ export class SiteVisitsService {
       isOverdue,
       overdueThresholdHours,
       operationalMetadata: {
+        operationMode: siteVisit.operationMode,
+        operationalScope: siteVisit.operationalScope,
+        sessionKind: siteVisit.sessionKind,
+        fromPencawangId: siteVisit.fromPencawangId,
+        toPencawangId: siteVisit.toPencawangId,
+        fromPencawang: siteVisit.fromPencawang,
+        toPencawang: siteVisit.toPencawang,
+        requiresQAQC: siteVisit.requiresQAQC,
+        reportingGroup: siteVisit.reportingGroup,
         mainhead: siteVisit.mainhead,
         pencawangCode: siteVisit.pencawangCode ?? siteVisit.substation.code,
         pencawangName: siteVisit.pencawangName ?? siteVisit.substation.name,
@@ -1726,6 +1822,9 @@ export class SiteVisitsService {
       this.validationStatusFilter(query.validationStatus),
       this.visitTypeFilter(query.visitType),
       this.operationalDomainFilter(query.operationalDomain),
+      this.operationModeFilter(query.operationMode),
+      this.operationalScopeFilter(query.operationalScope),
+      this.sessionKindFilter(query.sessionKind),
       this.teamFilter(query.teamId),
       this.userFilter(query.userId),
       this.mainheadFilter(query.mainhead),
@@ -1775,6 +1874,24 @@ export class SiteVisitsService {
     operationalDomain: ListSiteVisitsQueryDto['operationalDomain'],
   ): Prisma.SiteVisitWhereInput {
     return operationalDomain ? { operationalDomain } : {};
+  }
+
+  private operationModeFilter(
+    operationMode: ListSiteVisitsQueryDto['operationMode'],
+  ): Prisma.SiteVisitWhereInput {
+    return operationMode ? { operationMode } : {};
+  }
+
+  private operationalScopeFilter(
+    operationalScope: ListSiteVisitsQueryDto['operationalScope'],
+  ): Prisma.SiteVisitWhereInput {
+    return operationalScope ? { operationalScope } : {};
+  }
+
+  private sessionKindFilter(
+    sessionKind: ListSiteVisitsQueryDto['sessionKind'],
+  ): Prisma.SiteVisitWhereInput {
+    return sessionKind ? { sessionKind } : {};
   }
 
   private teamFilter(teamId: ListSiteVisitsQueryDto['teamId']): Prisma.SiteVisitWhereInput {

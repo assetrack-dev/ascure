@@ -1,5 +1,8 @@
 import {
+  OperationMode,
   OperationalDomain,
+  OperationalScope,
+  SessionKind,
   SiteVisitType,
   SiteVisitValidationStatus,
 } from '@prisma/client';
@@ -47,6 +50,18 @@ export class ListSiteVisitsQueryDto {
   @IsOptional()
   @IsIn(Object.values(OperationalDomain))
   operationalDomain?: OperationalDomain;
+
+  @IsOptional()
+  @IsIn(Object.values(OperationMode))
+  operationMode?: OperationMode;
+
+  @IsOptional()
+  @IsIn(Object.values(OperationalScope))
+  operationalScope?: OperationalScope;
+
+  @IsOptional()
+  @IsIn(Object.values(SessionKind))
+  sessionKind?: SessionKind;
 
   @IsOptional()
   @IsIn(Object.values(SiteVisitValidationStatus))

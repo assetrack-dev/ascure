@@ -1,7 +1,9 @@
+import { OperationalScope } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsBooleanString,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -62,6 +64,10 @@ export class CreateAssetTypeDto {
   isActive?: boolean;
 
   @IsOptional()
+  @IsEnum(OperationalScope)
+  operationalScope?: OperationalScope;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   sortOrder?: number | null;
@@ -96,6 +102,10 @@ export class UpdateAssetTypeDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsEnum(OperationalScope)
+  operationalScope?: OperationalScope | null;
 
   @IsOptional()
   @IsInt()

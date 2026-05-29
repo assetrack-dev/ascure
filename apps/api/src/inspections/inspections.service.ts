@@ -18,6 +18,12 @@ import {
   UserRole,
 } from '@prisma/client';
 import {
+  DEFAULT_OPERATION_MODE,
+  DEFAULT_OPERATIONAL_SCOPE,
+  inferOperationalScopeFromAssetTypeCode,
+  scopeRequiresQAQC,
+} from '../common/operational-scope';
+import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
   buildInspectionImagesDirectory,
@@ -109,6 +115,7 @@ export class InspectionsService {
             code: true,
             name: true,
             capabilityId: true,
+            operationalScope: true,
           },
         },
       },
@@ -128,6 +135,23 @@ export class InspectionsService {
       mainheadId: siteVisit.mainheadId,
     });
     const template = templateResolution.template;
+    const operationalScope =
+      dto.operationalScope ??
+      siteVisit.operationalScope ??
+      asset.assetType.operationalScope ??
+      inferOperationalScopeFromAssetTypeCode(asset.assetType.code) ??
+      DEFAULT_OPERATIONAL_SCOPE;
+    const operationMode =
+      dto.operationMode ??
+      siteVisit.operationMode ??
+      DEFAULT_OPERATION_MODE;
+    const requiresQAQC =
+      dto.requiresQAQC ??
+      siteVisit.requiresQAQC ??
+      scopeRequiresQAQC(operationalScope);
+    const reportingGroup =
+      this.normalizeOperationalString(dto.reportingGroup) ??
+      siteVisit.reportingGroup;
 
     return this.prisma.$transaction(async (tx) => {
       const inspection = await tx.inspection.create({
@@ -138,6 +162,10 @@ export class InspectionsService {
           templateId: template.id,
           createdByUserId: user.id,
           inspectionCycle: dto.inspectionCycle ?? 1,
+          operationMode,
+          operationalScope,
+          requiresQAQC,
+          reportingGroup,
         },
         include: this.inspectionInclude(),
       });
@@ -219,6 +247,10 @@ export class InspectionsService {
       assetId: inspection.assetId,
       cycleNumber: inspection.inspectionCycle,
       status: inspection.completionStatus,
+      operationMode: inspection.operationMode,
+      operationalScope: inspection.operationalScope,
+      requiresQAQC: inspection.requiresQAQC,
+      reportingGroup: inspection.reportingGroup,
       submittedAt: inspection.submittedAt?.toISOString() ?? null,
       createdAt: inspection.createdAt.toISOString(),
       updatedAt: inspection.updatedAt.toISOString(),
@@ -650,6 +682,11 @@ export class InspectionsService {
         select: {
           id: true,
           status: true,
+          operationMode: true,
+          operationalScope: true,
+          sessionKind: true,
+          requiresQAQC: true,
+          reportingGroup: true,
           startedAt: true,
           team: {
             select: {
@@ -694,6 +731,8 @@ export class InspectionsService {
           name: true,
           version: true,
           assetTypeId: true,
+          operationalScope: true,
+          requiresQAQC: true,
         },
       },
       createdBy: {
@@ -1070,6 +1109,10 @@ export class InspectionsService {
         templateId: inspection.templateId,
         inspectionCycle: inspection.inspectionCycle,
         completionStatus: inspection.completionStatus,
+        operationMode: inspection.operationMode,
+        operationalScope: inspection.operationalScope,
+        requiresQAQC: inspection.requiresQAQC,
+        reportingGroup: inspection.reportingGroup,
         submittedAt: inspection.submittedAt,
         createdAt: inspection.createdAt,
         updatedAt: inspection.updatedAt,
@@ -1083,6 +1126,8 @@ export class InspectionsService {
         version: inspection.template.version,
         assetTypeId: inspection.template.assetTypeId,
         capabilityId: inspection.template.capabilityId,
+        operationalScope: inspection.template.operationalScope,
+        requiresQAQC: inspection.template.requiresQAQC,
         sections: inspection.template.sections.map((section) => ({
           id: section.id,
           title: section.title,

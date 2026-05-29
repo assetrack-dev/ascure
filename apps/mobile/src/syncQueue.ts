@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { api, ApiError } from './api';
+import { getInspectionQueueStatusGroup } from './operationalWorkspace';
 import {
   Asset,
   InspectionFormResponse,
@@ -770,7 +771,10 @@ function getSubmittedInspectionAssetIds(visit: SiteVisit) {
   const assetIds = new Set<string>();
 
   for (const inspection of visit.inspections ?? []) {
-    if (inspection.completionStatus === 'SUBMITTED' || inspection.submittedAt) {
+    if (
+      getInspectionQueueStatusGroup(inspection.completionStatus) === 'COMPLETED' ||
+      inspection.submittedAt
+    ) {
       assetIds.add(inspection.assetId);
     }
   }

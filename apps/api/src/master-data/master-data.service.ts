@@ -185,6 +185,7 @@ export class MasterDataService {
           code: this.normalizeCode(dto.code),
           capabilityId,
           description: this.normalizeOptionalText(dto.description),
+          operationalScope: dto.operationalScope,
           isActive: dto.isActive ?? true,
           sortOrder: dto.sortOrder ?? null,
         },
@@ -220,6 +221,10 @@ export class MasterDataService {
 
     if (dto.description !== undefined) {
       data.description = this.normalizeOptionalText(dto.description);
+    }
+
+    if (dto.operationalScope !== undefined) {
+      data.operationalScope = dto.operationalScope;
     }
 
     if (dto.isActive !== undefined) {
@@ -297,6 +302,7 @@ export class MasterDataService {
       code: assetType.code,
       capabilityId: assetType.capabilityId,
       capability: assetType.capability,
+      operationalScope: assetType.operationalScope,
       description: assetType.description,
       isActive: assetType.isActive,
       sortOrder: assetType.sortOrder,

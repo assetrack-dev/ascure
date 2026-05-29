@@ -11,6 +11,10 @@ import {
   SelectOption,
   SiteVisit,
 } from './types';
+import {
+  canShowInInspectionMobileQueue,
+  getInspectionQueueStatusGroup,
+} from './operationalWorkspace';
 
 export function formatDateTime(value?: string | null) {
   if (!value) {
@@ -565,6 +569,19 @@ export function getAssetInspections(visit: SiteVisit, assetId: string) {
     });
 }
 
+export function getDefaultOperationalQueueInspections(
+  visit: SiteVisit,
+  assetId?: string,
+) {
+  const inspections = assetId
+    ? getAssetInspections(visit, assetId)
+    : (visit.inspections ?? []);
+
+  return inspections.filter((inspection) =>
+    canShowInInspectionMobileQueue(inspection.completionStatus),
+  );
+}
+
 export function getLatestSubmittedInspection(visit: SiteVisit, assetId: string) {
   return getAssetInspections(visit, assetId).find(
     (inspection) => inspection.completionStatus === 'SUBMITTED',
@@ -586,7 +603,9 @@ export function getInspectionStatusTone(
     return 'neutral';
   }
 
-  return inspection.completionStatus === 'SUBMITTED' ? 'success' : 'warning';
+  return getInspectionQueueStatusGroup(inspection.completionStatus) === 'COMPLETED'
+    ? 'success'
+    : 'warning';
 }
 
 export function findItemById(

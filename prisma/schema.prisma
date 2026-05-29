@@ -152,6 +152,47 @@ enum OperationalDomain {
   OTHER
 }
 
+enum OperationMode {
+  INSPECTION
+  MAINTENANCE
+}
+
+enum OperationalScope {
+  SAVR
+  SAVT
+  PENCAWANG
+  FEEDER_PILLAR
+  CABLE_BRIDGE
+  LINK_BOX
+}
+
+enum SessionKind {
+  PENCENTRIC
+  ROUTE
+  STANDALONE
+}
+
+enum OperationalSessionScope {
+  SAVR
+  SAVT
+  PENCAWANG
+  FEEDER_PILLAR
+  LINK_BOX
+  CABLE_BRIDGE
+}
+
+enum OperationalSessionStatus {
+  DRAFT
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  QA_REVIEW
+  AMENDMENT_REQUIRED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum OrganizationCapabilityType {
   SURVEY
   INSPECTION
@@ -234,6 +275,7 @@ model Tenant {
   siteVisits          SiteVisit[]
   inspectionTemplates InspectionTemplate[]
   inspections         Inspection[]
+  operationalSessions OperationalSession[]
   images              Image[]
 }
 
@@ -323,6 +365,7 @@ model User {
   projectMemberships      ProjectMembership[]
   siteVisitParticipants   SiteVisitParticipant[]
   capabilityAssignments   UserCapability[]
+  assignedQaSessions      OperationalSession[]    @relation("OperationalSessionAssignedQaUser")
 
   @@index([tenantId])
   @@index([organizationId])
@@ -366,6 +409,8 @@ model Organization {
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
+  operationalSessions    OperationalSession[]               @relation("OperationalSessionOrganization")
+  assignedSessions       OperationalSession[]               @relation("OperationalSessionAssignedCompany")
 
   @@index([type])
   @@index([parentOrganizationId])
@@ -454,6 +499,7 @@ model Branch {
   capabilityAssignments BranchCapability[]
   projects              Project[]
   siteVisits            SiteVisit[]
+  operationalSessions   OperationalSession[]
 
   @@index([organizationId])
 }
@@ -492,6 +538,7 @@ model Mainhead {
   workPackages          WorkPackage[]
   siteVisits            SiteVisit[]
   inspectionTemplates   InspectionTemplate[]
+  operationalSessions   OperationalSession[]
 
   @@index([branchId])
   @@index([isActive])
@@ -629,18 +676,62 @@ model WorkPackageAssignment {
   @@unique([workPackageId, organizationId])
 }
 
+model OperationalSession {
+  id                String                   @id @default(uuid()) @db.Uuid
+  sessionNo         String
+  workspaceId       String                   @db.Uuid
+  organizationId    String                   @db.Uuid
+  branchId          String?                  @db.Uuid
+  mainheadId        String?                  @db.Uuid
+  assignedCompanyId String                   @db.Uuid
+  assignedQaUserId  String?                  @db.Uuid
+  scope             OperationalSessionScope
+  status            OperationalSessionStatus @default(ASSIGNED)
+  metadata          Json?
+  targetDate        DateTime?
+  dueDate           DateTime?
+  startedAt         DateTime?
+  submittedAt       DateTime?
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  remarks           String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  workspace         Tenant                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organization      Organization             @relation("OperationalSessionOrganization", fields: [organizationId], references: [id], onDelete: Restrict)
+  branch            Branch?                  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  mainhead          Mainhead?                @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  assignedCompany   Organization             @relation("OperationalSessionAssignedCompany", fields: [assignedCompanyId], references: [id], onDelete: Restrict)
+  assignedQaUser    User?                    @relation("OperationalSessionAssignedQaUser", fields: [assignedQaUserId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, sessionNo])
+  @@index([workspaceId])
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([mainheadId])
+  @@index([assignedCompanyId])
+  @@index([assignedQaUserId])
+  @@index([scope])
+  @@index([status])
+  @@index([targetDate])
+  @@index([dueDate])
+  @@index([createdAt])
+}
+
 model Substation {
-  id         String      @id @default(uuid()) @db.Uuid
-  tenantId   String      @db.Uuid
-  name       String
-  code       String
-  location   String?
-  isActive   Boolean     @default(true)
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assets     Asset[]
-  siteVisits SiteVisit[]
+  id                  String      @id @default(uuid()) @db.Uuid
+  tenantId            String      @db.Uuid
+  name                String
+  code                String
+  location            String?
+  isActive            Boolean     @default(true)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  tenant              Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets              Asset[]
+  siteVisits          SiteVisit[]
+  fromRouteSiteVisits SiteVisit[] @relation("SiteVisitFromPencawang")
+  toRouteSiteVisits   SiteVisit[] @relation("SiteVisitToPencawang")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -653,6 +744,7 @@ model AssetType {
   name                String
   code                String
   description         String?
+  operationalScope    OperationalScope?
   isActive            Boolean              @default(true)
   sortOrder           Int?
   createdAt           DateTime             @default(now())
@@ -665,6 +757,7 @@ model AssetType {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([capabilityId])
+  @@index([operationalScope])
   @@index([isActive, sortOrder])
 }
 
@@ -716,6 +809,13 @@ model SiteVisit {
   cycleNumber           Int?
   visitType             SiteVisitType?
   operationalDomain     OperationalDomain?
+  operationMode         OperationMode?
+  operationalScope      OperationalScope?
+  sessionKind           SessionKind?
+  fromPencawangId       String?                    @db.Uuid
+  toPencawangId         String?                    @db.Uuid
+  requiresQAQC          Boolean?
+  reportingGroup        String?
   mainhead              String?
   pencawangCode         String?
   pencawangName         String?
@@ -748,6 +848,8 @@ model SiteVisit {
   mainheadRecord        Mainhead?                  @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
   project               Project?                   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   workPackage           WorkPackage?               @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  fromPencawang         Substation?                @relation("SiteVisitFromPencawang", fields: [fromPencawangId], references: [id], onDelete: SetNull)
+  toPencawang           Substation?                @relation("SiteVisitToPencawang", fields: [toPencawangId], references: [id], onDelete: SetNull)
   users                 SiteVisitUser[]
   participants          SiteVisitParticipant[]
   createdAssets         Asset[]
@@ -767,6 +869,13 @@ model SiteVisit {
   @@index([cycleNumber])
   @@index([visitType])
   @@index([operationalDomain])
+  @@index([operationMode])
+  @@index([operationalScope])
+  @@index([sessionKind])
+  @@index([fromPencawangId])
+  @@index([toPencawangId])
+  @@index([requiresQAQC])
+  @@index([reportingGroup])
   @@index([validationStatus])
   @@index([feederId])
   @@index([feederRouteId])
@@ -829,6 +938,8 @@ model InspectionTemplate {
   capabilityId      String?                     @db.Uuid
   mainheadId        String?                     @db.Uuid
   operationalDomain OperationalDomain?
+  operationalScope  OperationalScope?
+  requiresQAQC      Boolean?
   version           Int
   name              String
   status            InspectionTemplateStatus    @default(DRAFT)
@@ -851,6 +962,8 @@ model InspectionTemplate {
   @@index([capabilityId])
   @@index([mainheadId])
   @@index([operationalDomain])
+  @@index([operationalScope])
+  @@index([requiresQAQC])
 }
 
 model InspectionTemplateSection {
@@ -900,6 +1013,10 @@ model Inspection {
   createdByUserId  String                     @db.Uuid
   inspectionCycle  Int                        @default(1)
   completionStatus InspectionCompletionStatus @default(DRAFT)
+  operationMode    OperationMode?
+  operationalScope OperationalScope?
+  requiresQAQC     Boolean?
+  reportingGroup   String?
   submittedAt      DateTime?
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
@@ -917,6 +1034,10 @@ model Inspection {
   @@index([siteVisitId])
   @@index([assetId])
   @@index([templateId])
+  @@index([operationMode])
+  @@index([operationalScope])
+  @@index([requiresQAQC])
+  @@index([reportingGroup])
 }
 
 model InspectionImage {

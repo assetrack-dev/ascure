@@ -25,6 +25,7 @@ import {
   isRetryableSyncError,
   SyncQueueSnapshot,
 } from '../syncQueue';
+import { getInspectionQueueStatusGroup } from '../operationalWorkspace';
 import { Asset, SiteVisit, SiteVisitSummary } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
@@ -739,7 +740,10 @@ function getSubmittedInspectionAssetIds(visit: SiteVisit) {
   const assetIds = new Set<string>();
 
   for (const inspection of visit.inspections ?? []) {
-    if (inspection.completionStatus === 'SUBMITTED' || inspection.submittedAt) {
+    if (
+      getInspectionQueueStatusGroup(inspection.completionStatus) === 'COMPLETED' ||
+      inspection.submittedAt
+    ) {
       assetIds.add(inspection.assetId);
     }
   }

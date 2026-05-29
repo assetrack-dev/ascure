@@ -19,8 +19,13 @@ import {
   InspectionDetail,
   InspectionFormResponse,
   LoginResponse,
+  OperationMode,
+  OperationalSession,
+  OperationalSessionFilters,
+  OperationalScope,
   SaveInspectionItemResultInput,
   SaveInspectionResultItemInput,
+  SessionKind,
   SessionUser,
   SiteVisit,
   SiteVisitImage,
@@ -231,6 +236,22 @@ function appendMissingItems(baseMessage: string, missingItems: unknown) {
   return `${baseMessage}\nMissing: ${labels.join(', ')}`;
 }
 
+function buildQueryString(
+  params: Partial<Record<keyof OperationalSessionFilters, string | undefined | null>>,
+) {
+  const query = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      query.set(key, value);
+    }
+  });
+
+  const serialized = query.toString();
+
+  return serialized ? `?${serialized}` : '';
+}
+
 export const api = {
   login(email: string, password: string) {
     return request<LoginResponse>('/auth/login', {
@@ -259,6 +280,40 @@ export const api = {
     return request<SiteVisit[]>('/site-visits?status=COMPLETED', { token });
   },
 
+  getOperationalSessions(token: string, filters: OperationalSessionFilters = {}) {
+    return request<OperationalSession[]>(
+      `/operational-sessions${buildQueryString(filters)}`,
+      { token },
+    );
+  },
+
+  getOperationalSession(token: string, sessionId: string) {
+    return request<OperationalSession>(
+      `/operational-sessions/${encodeURIComponent(sessionId)}`,
+      { token },
+    );
+  },
+
+  startOperationalSession(token: string, sessionId: string) {
+    return request<OperationalSession>(
+      `/operational-sessions/${encodeURIComponent(sessionId)}/start`,
+      {
+        method: 'POST',
+        token,
+      },
+    );
+  },
+
+  submitOperationalSession(token: string, sessionId: string) {
+    return request<OperationalSession>(
+      `/operational-sessions/${encodeURIComponent(sessionId)}/submit`,
+      {
+        method: 'POST',
+        token,
+      },
+    );
+  },
+
   createSiteVisit(
     token: string,
     input: {
@@ -266,6 +321,13 @@ export const api = {
       substationId?: string;
       notes?: string;
       visitType?: SiteVisit['visitType'];
+      operationMode?: OperationMode;
+      operationalScope?: OperationalScope;
+      sessionKind?: SessionKind;
+      fromPencawangId?: string;
+      toPencawangId?: string;
+      requiresQAQC?: boolean;
+      reportingGroup?: string;
       mainhead?: string;
       pencawangCode?: string;
       pencawangName?: string;
@@ -489,7 +551,18 @@ export const api = {
     });
   },
 
-  createInspection(token: string, input: { siteVisitId: string; assetId: string; inspectionCycle: number }) {
+  createInspection(
+    token: string,
+    input: {
+      siteVisitId: string;
+      assetId: string;
+      inspectionCycle: number;
+      operationMode?: OperationMode;
+      operationalScope?: OperationalScope;
+      requiresQAQC?: boolean;
+      reportingGroup?: string;
+    },
+  ) {
     return request<{ id: string }>('/inspections', {
       method: 'POST',
       token,
