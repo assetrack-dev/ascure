@@ -45,6 +45,7 @@ const STATUS_LABELS: Record<OperationalSessionStatus, string> = {
 
 const EMPTY_PROGRESS: OperationalSessionProgress = {
   totalAssets: 0,
+  inspectedAssets: 0,
   completedAssets: 0,
   completionPercentage: 0,
 };
@@ -159,7 +160,7 @@ export function getOperationalSessionProgress(session: OperationalSession) {
 export function getOperationalSessionProgressLabel(session: OperationalSession) {
   const progress = getOperationalSessionProgress(session);
 
-  return `${progress.completedAssets}/${progress.totalAssets} assets - ${progress.completionPercentage}%`;
+  return `${progress.inspectedAssets}/${progress.totalAssets} assets - ${progress.completionPercentage}%`;
 }
 
 export function getOperationalSessionAssignedQaLabel(session: OperationalSession) {

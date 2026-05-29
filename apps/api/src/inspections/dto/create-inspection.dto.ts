@@ -18,6 +18,10 @@ export class CreateInspectionDto {
   assetId!: string;
 
   @IsOptional()
+  @IsUUID()
+  operationalSessionId?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   inspectionCycle?: number;

@@ -43,8 +43,71 @@ export interface OperationalSessionUser {
 
 export interface OperationalSessionProgress {
   totalAssets: number;
+  inspectedAssets: number;
   completedAssets: number;
   completionPercentage: number;
+}
+
+export interface OperationalSessionAssignedAsset {
+  id: string;
+  assetCode: string;
+  name: string | null;
+  assetType: {
+    id: string;
+    code: string;
+    name: string;
+  };
+  latitude: number | null;
+  longitude: number | null;
+  status: string;
+  latestInspectionId: string | null;
+  latestInspectionStatus: string | null;
+  inspected: boolean;
+  assignment: {
+    id: string;
+    operationalSessionId: string;
+    assetId: string;
+    assignedAt: string;
+    assignedByUserId: string | null;
+    assignedBy?: OperationalSessionUser | null;
+    removedAt: string | null;
+    removedByUserId: string | null;
+    removedBy?: OperationalSessionUser | null;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+}
+
+export interface OperationalSessionAssignedAssetsSummary {
+  count: number;
+  activeCount: number;
+  recent: OperationalSessionAssignedAsset[];
+}
+
+export interface BulkAssignSessionAssetsResult {
+  assigned: Array<{
+    assetId: string;
+    assignmentId: string;
+  }>;
+  skipped: Array<{
+    assetId: string;
+    reason: string;
+  }>;
+  restored: Array<{
+    assetId: string;
+    assignmentId: string;
+  }>;
+  failed: Array<{
+    assetId: string;
+    reason: string;
+  }>;
+  summary: {
+    assigned: number;
+    skipped: number;
+    restored: number;
+    failed: number;
+  };
 }
 
 export interface OperationalSession {
@@ -79,6 +142,7 @@ export interface OperationalSession {
   mainhead?: OperationalSessionSummaryRecord | null;
   assignedCompany?: OperationalSessionSummaryRecord | null;
   assignedQaUser?: OperationalSessionUser | null;
+  assignedAssets?: OperationalSessionAssignedAssetsSummary;
 }
 
 export interface OperationalSessionFilters {

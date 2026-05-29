@@ -21,6 +21,7 @@ import {
   LoginResponse,
   OperationMode,
   OperationalSession,
+  OperationalSessionAssignedAsset,
   OperationalSessionFilters,
   OperationalScope,
   SaveInspectionItemResultInput,
@@ -294,6 +295,13 @@ export const api = {
     );
   },
 
+  getSessionAssets(token: string, sessionId: string) {
+    return request<OperationalSessionAssignedAsset[]>(
+      `/operational-sessions/${encodeURIComponent(sessionId)}/assets`,
+      { token },
+    );
+  },
+
   startOperationalSession(token: string, sessionId: string) {
     return request<OperationalSession>(
       `/operational-sessions/${encodeURIComponent(sessionId)}/start`,
@@ -556,6 +564,7 @@ export const api = {
     input: {
       siteVisitId: string;
       assetId: string;
+      operationalSessionId?: string | null;
       inspectionCycle: number;
       operationMode?: OperationMode;
       operationalScope?: OperationalScope;

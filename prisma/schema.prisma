@@ -326,46 +326,48 @@ model Team {
 }
 
 model User {
-  id                      String                   @id @default(uuid()) @db.Uuid
-  tenantId                String                   @db.Uuid
-  departmentId            String?                  @db.Uuid
-  organizationId          String?                  @db.Uuid
-  branchId                String?                  @db.Uuid
-  mainheadId              String?                  @db.Uuid
-  teamId                  String?                  @db.Uuid
-  email                   String                   @unique
+  id                      String                    @id @default(uuid()) @db.Uuid
+  tenantId                String                    @db.Uuid
+  departmentId            String?                   @db.Uuid
+  organizationId          String?                   @db.Uuid
+  branchId                String?                   @db.Uuid
+  mainheadId              String?                   @db.Uuid
+  teamId                  String?                   @db.Uuid
+  email                   String                    @unique
   name                    String
   passwordHash            String
   role                    UserRole
-  isActive                Boolean                  @default(true)
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  department              Department?              @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  organization            Organization?            @relation("UserOperationalOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
-  branch                  Branch?                  @relation("UserOperationalBranch", fields: [branchId], references: [id], onDelete: SetNull)
-  mainhead                Mainhead?                @relation("UserOperationalMainhead", fields: [mainheadId], references: [id], onDelete: SetNull)
-  team                    Team?                    @relation("UserOperationalTeam", fields: [teamId], references: [id], onDelete: SetNull)
+  isActive                Boolean                   @default(true)
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  tenant                  Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department              Department?               @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  organization            Organization?             @relation("UserOperationalOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+  branch                  Branch?                   @relation("UserOperationalBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  mainhead                Mainhead?                 @relation("UserOperationalMainhead", fields: [mainheadId], references: [id], onDelete: SetNull)
+  team                    Team?                     @relation("UserOperationalTeam", fields: [teamId], references: [id], onDelete: SetNull)
   teamMemberships         TeamMember[]
   siteVisitUsers          SiteVisitUser[]
-  createdVisits           SiteVisit[]              @relation("SiteVisitCreatedBy")
-  validatedVisits         SiteVisit[]              @relation("SiteVisitValidatedBy")
-  createdAssets           Asset[]                  @relation("AssetCreatedBy")
-  siteVisitAssetsAdded    SiteVisitAsset[]         @relation("SiteVisitAssetAddedBy")
-  createdInspects         Inspection[]             @relation("InspectionCreatedBy")
-  createdImages           Image[]                  @relation("ImageCreatedBy")
-  defectTimelineEntries   DefectTimelineEntry[]    @relation("DefectTimelineCreatedBy")
-  assignedDefects         Defect[]                 @relation("DefectAssignedUser")
-  assignedToDefects       Defect[]                 @relation("DefectAssignedToUser")
-  verifiedDefects         Defect[]                 @relation("DefectVerifiedByUser")
-  maintainedDefects       Defect[]                 @relation("DefectMaintainedByUser")
-  closureVerifiedDefects  Defect[]                 @relation("DefectClosureVerifiedByUser")
-  defectEvidenceImages    DefectEvidenceImage[]    @relation("DefectEvidenceCreatedBy")
+  createdVisits           SiteVisit[]               @relation("SiteVisitCreatedBy")
+  validatedVisits         SiteVisit[]               @relation("SiteVisitValidatedBy")
+  createdAssets           Asset[]                   @relation("AssetCreatedBy")
+  siteVisitAssetsAdded    SiteVisitAsset[]          @relation("SiteVisitAssetAddedBy")
+  createdInspects         Inspection[]              @relation("InspectionCreatedBy")
+  createdImages           Image[]                   @relation("ImageCreatedBy")
+  defectTimelineEntries   DefectTimelineEntry[]     @relation("DefectTimelineCreatedBy")
+  assignedDefects         Defect[]                  @relation("DefectAssignedUser")
+  assignedToDefects       Defect[]                  @relation("DefectAssignedToUser")
+  verifiedDefects         Defect[]                  @relation("DefectVerifiedByUser")
+  maintainedDefects       Defect[]                  @relation("DefectMaintainedByUser")
+  closureVerifiedDefects  Defect[]                  @relation("DefectClosureVerifiedByUser")
+  defectEvidenceImages    DefectEvidenceImage[]     @relation("DefectEvidenceCreatedBy")
   organizationMemberships OrganizationMembership[]
   projectMemberships      ProjectMembership[]
   siteVisitParticipants   SiteVisitParticipant[]
   capabilityAssignments   UserCapability[]
-  assignedQaSessions      OperationalSession[]    @relation("OperationalSessionAssignedQaUser")
+  assignedQaSessions      OperationalSession[]      @relation("OperationalSessionAssignedQaUser")
+  assignedSessionAssets   OperationalSessionAsset[] @relation("OperationalSessionAssetAssignedBy")
+  removedSessionAssets    OperationalSessionAsset[] @relation("OperationalSessionAssetRemovedBy")
 
   @@index([tenantId])
   @@index([organizationId])
@@ -484,18 +486,18 @@ model OrganizationMembership {
 }
 
 model Branch {
-  id                    String             @id @default(uuid()) @db.Uuid
-  organizationId        String             @db.Uuid
+  id                    String               @id @default(uuid()) @db.Uuid
+  organizationId        String               @db.Uuid
   name                  String
   code                  String?
   region                String?
-  isActive              Boolean            @default(true)
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isActive              Boolean              @default(true)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   mainheads             Mainhead[]
   teams                 Team[]
-  assignedUsers         User[]             @relation("UserOperationalBranch")
+  assignedUsers         User[]               @relation("UserOperationalBranch")
   capabilityAssignments BranchCapability[]
   projects              Project[]
   siteVisits            SiteVisit[]
@@ -677,16 +679,16 @@ model WorkPackageAssignment {
 }
 
 model OperationalSession {
-  id                String                   @id @default(uuid()) @db.Uuid
+  id                String                    @id @default(uuid()) @db.Uuid
   sessionNo         String
-  workspaceId       String                   @db.Uuid
-  organizationId    String                   @db.Uuid
-  branchId          String?                  @db.Uuid
-  mainheadId        String?                  @db.Uuid
-  assignedCompanyId String                   @db.Uuid
-  assignedQaUserId  String?                  @db.Uuid
+  workspaceId       String                    @db.Uuid
+  organizationId    String                    @db.Uuid
+  branchId          String?                   @db.Uuid
+  mainheadId        String?                   @db.Uuid
+  assignedCompanyId String                    @db.Uuid
+  assignedQaUserId  String?                   @db.Uuid
   scope             OperationalSessionScope
-  status            OperationalSessionStatus @default(ASSIGNED)
+  status            OperationalSessionStatus  @default(ASSIGNED)
   metadata          Json?
   targetDate        DateTime?
   dueDate           DateTime?
@@ -695,14 +697,16 @@ model OperationalSession {
   approvedAt        DateTime?
   rejectedAt        DateTime?
   remarks           String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  workspace         Tenant                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  organization      Organization             @relation("OperationalSessionOrganization", fields: [organizationId], references: [id], onDelete: Restrict)
-  branch            Branch?                  @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  mainhead          Mainhead?                @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
-  assignedCompany   Organization             @relation("OperationalSessionAssignedCompany", fields: [assignedCompanyId], references: [id], onDelete: Restrict)
-  assignedQaUser    User?                    @relation("OperationalSessionAssignedQaUser", fields: [assignedQaUserId], references: [id], onDelete: SetNull)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  workspace         Tenant                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organization      Organization              @relation("OperationalSessionOrganization", fields: [organizationId], references: [id], onDelete: Restrict)
+  branch            Branch?                   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  mainhead          Mainhead?                 @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  assignedCompany   Organization              @relation("OperationalSessionAssignedCompany", fields: [assignedCompanyId], references: [id], onDelete: Restrict)
+  assignedQaUser    User?                     @relation("OperationalSessionAssignedQaUser", fields: [assignedQaUserId], references: [id], onDelete: SetNull)
+  sessionAssets     OperationalSessionAsset[]
+  inspections       Inspection[]
 
   @@unique([workspaceId, sessionNo])
   @@index([workspaceId])
@@ -762,28 +766,29 @@ model AssetType {
 }
 
 model Asset {
-  id                   String           @id @default(uuid()) @db.Uuid
-  tenantId             String           @db.Uuid
-  substationId         String           @db.Uuid
-  assetTypeId          String           @db.Uuid
-  assetCode            String           @map("code")
-  name                 String?
-  latitude             Float?
-  longitude            Float?
-  metadata             Json?
-  status               AssetStatus      @default(ACTIVE)
-  createdDuringVisitId String?          @db.Uuid
-  createdByUserId      String?          @db.Uuid
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
-  tenant               Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  substation           Substation       @relation(fields: [substationId], references: [id], onDelete: Cascade)
-  assetType            AssetType        @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  createdDuringVisit   SiteVisit?       @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
-  createdBy            User?            @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  siteVisitAssets      SiteVisitAsset[]
-  inspections          Inspection[]
-  images               Image[]
+  id                       String                    @id @default(uuid()) @db.Uuid
+  tenantId                 String                    @db.Uuid
+  substationId             String                    @db.Uuid
+  assetTypeId              String                    @db.Uuid
+  assetCode                String                    @map("code")
+  name                     String?
+  latitude                 Float?
+  longitude                Float?
+  metadata                 Json?
+  status                   AssetStatus               @default(ACTIVE)
+  createdDuringVisitId     String?                   @db.Uuid
+  createdByUserId          String?                   @db.Uuid
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  substation               Substation                @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  assetType                AssetType                 @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  createdDuringVisit       SiteVisit?                @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
+  createdBy                User?                     @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  siteVisitAssets          SiteVisitAsset[]
+  operationalSessionAssets OperationalSessionAsset[]
+  inspections              Inspection[]
+  images                   Image[]
 
   @@unique([tenantId, assetCode])
   @@index([tenantId])
@@ -791,6 +796,30 @@ model Asset {
   @@index([assetTypeId])
   @@index([createdDuringVisitId])
   @@index([createdByUserId])
+}
+
+model OperationalSessionAsset {
+  id                   String             @id @default(uuid()) @db.Uuid
+  operationalSessionId String             @db.Uuid
+  assetId              String             @db.Uuid
+  assignedAt           DateTime           @default(now())
+  assignedByUserId     String?            @db.Uuid
+  removedAt            DateTime?
+  removedByUserId      String?            @db.Uuid
+  notes                String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  operationalSession   OperationalSession @relation(fields: [operationalSessionId], references: [id], onDelete: Cascade)
+  asset                Asset              @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  assignedBy           User?              @relation("OperationalSessionAssetAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  removedBy            User?              @relation("OperationalSessionAssetRemovedBy", fields: [removedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([operationalSessionId, assetId])
+  @@index([operationalSessionId])
+  @@index([assetId])
+  @@index([removedAt])
+  @@index([assignedByUserId])
+  @@index([removedByUserId])
 }
 
 model SiteVisit {
@@ -1005,35 +1034,38 @@ model InspectionTemplateItem {
 }
 
 model Inspection {
-  id               String                     @id @default(uuid()) @db.Uuid
-  tenantId         String                     @db.Uuid
-  siteVisitId      String                     @db.Uuid
-  assetId          String                     @db.Uuid
-  templateId       String                     @db.Uuid
-  createdByUserId  String                     @db.Uuid
-  inspectionCycle  Int                        @default(1)
-  completionStatus InspectionCompletionStatus @default(DRAFT)
-  operationMode    OperationMode?
-  operationalScope OperationalScope?
-  requiresQAQC     Boolean?
-  reportingGroup   String?
-  submittedAt      DateTime?
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
-  tenant           Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  siteVisit        SiteVisit                  @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
-  asset            Asset                      @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  template         InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  createdBy        User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  results          InspectionResult[]
-  itemResults      InspectionItemResult[]
-  images           Image[]
-  inspectionImages InspectionImage[]
+  id                   String                     @id @default(uuid()) @db.Uuid
+  tenantId             String                     @db.Uuid
+  siteVisitId          String                     @db.Uuid
+  assetId              String                     @db.Uuid
+  templateId           String                     @db.Uuid
+  operationalSessionId String?                    @db.Uuid
+  createdByUserId      String                     @db.Uuid
+  inspectionCycle      Int                        @default(1)
+  completionStatus     InspectionCompletionStatus @default(DRAFT)
+  operationMode        OperationMode?
+  operationalScope     OperationalScope?
+  requiresQAQC         Boolean?
+  reportingGroup       String?
+  submittedAt          DateTime?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  tenant               Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit            SiteVisit                  @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
+  asset                Asset                      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  template             InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  operationalSession   OperationalSession?        @relation(fields: [operationalSessionId], references: [id], onDelete: SetNull)
+  createdBy            User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  results              InspectionResult[]
+  itemResults          InspectionItemResult[]
+  images               Image[]
+  inspectionImages     InspectionImage[]
 
   @@index([tenantId])
   @@index([siteVisitId])
   @@index([assetId])
   @@index([templateId])
+  @@index([operationalSessionId])
   @@index([operationMode])
   @@index([operationalScope])
   @@index([requiresQAQC])

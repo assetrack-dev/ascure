@@ -23,6 +23,7 @@ export type RootStackParamList = {
     visitId?: string;
     substationId?: string;
     assetId: string;
+    operationalSessionId?: string;
     assetSnapshot?: Asset;
   };
   AddAsset: {
@@ -34,7 +35,12 @@ export type RootStackParamList = {
   };
   OperationalSessions: undefined;
   OperationalSessionDetail: { sessionId: string; sessionNo?: string };
-  InspectionForm: { inspectionId: string; visitId: string; substationId: string };
+  InspectionForm: {
+    inspectionId: string;
+    visitId: string;
+    substationId: string;
+    operationalSessionId?: string;
+  };
   InspectionDetail: { inspectionId: string; assetCode?: string };
   AssetInspectionHistory: { assetId: string; assetCode?: string };
   DefectDetail: { defectId: string };

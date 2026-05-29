@@ -1,7 +1,9 @@
 import { apiRequest } from "@/lib/api";
 import type {
+  BulkAssignSessionAssetsResult,
   CreateOperationalSessionPayload,
   OperationalSession,
+  OperationalSessionAssignedAsset,
   OperationalSessionFilters,
 } from "@/types/operational-sessions";
 
@@ -42,6 +44,13 @@ export function fetchOperationalSessionDetail(token: string, sessionId: string) 
   );
 }
 
+export function getSessionAssets(token: string, sessionId: string) {
+  return apiRequest<OperationalSessionAssignedAsset[]>(
+    `/operational-sessions/${encodeURIComponent(sessionId)}/assets`,
+    { token },
+  );
+}
+
 export function createOperationalSession(
   token: string,
   payload: CreateOperationalSessionPayload,
@@ -51,6 +60,56 @@ export function createOperationalSession(
     token,
     body: JSON.stringify(compactPayload(payload)),
   });
+}
+
+export function assignSessionAsset(
+  token: string,
+  sessionId: string,
+  assetId: string,
+  notes?: string,
+) {
+  return apiRequest<OperationalSessionAssignedAsset>(
+    `/operational-sessions/${encodeURIComponent(sessionId)}/assets`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(
+        compactPayload({
+          assetId,
+          notes,
+        }),
+      ),
+    },
+  );
+}
+
+export function bulkAssignSessionAssets(
+  token: string,
+  sessionId: string,
+  assetIds: string[],
+) {
+  return apiRequest<BulkAssignSessionAssetsResult>(
+    `/operational-sessions/${encodeURIComponent(sessionId)}/assets/bulk`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        assetIds,
+      }),
+    },
+  );
+}
+
+export function removeSessionAsset(token: string, sessionId: string, assetId: string) {
+  return apiRequest<OperationalSessionAssignedAsset>(
+    `/operational-sessions/${encodeURIComponent(sessionId)}/assets/${encodeURIComponent(
+      assetId,
+    )}`,
+    {
+      method: "DELETE",
+      token,
+    },
+  );
 }
 
 export type OperationalSessionLifecycleAction =

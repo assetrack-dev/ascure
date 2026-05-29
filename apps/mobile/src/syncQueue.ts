@@ -55,6 +55,7 @@ export type QueuedInspectionSummary = {
   inspectionId: string;
   siteVisitId: string;
   assetId: string;
+  operationalSessionId?: string | null;
   templateId: string;
   inspectionCycle: number;
   assetCode: string;
@@ -713,6 +714,7 @@ function createInspectionSummary(form: InspectionFormResponse): QueuedInspection
     inspectionId: form.inspection.id,
     siteVisitId: form.inspection.siteVisitId,
     assetId: form.inspection.assetId,
+    operationalSessionId: form.inspection.operationalSessionId ?? null,
     templateId: form.inspection.templateId,
     inspectionCycle: form.inspection.inspectionCycle,
     assetCode: form.inspection.asset.assetCode,

@@ -160,6 +160,7 @@ export interface InspectionSummary {
   assetId: string;
   templateId: string;
   createdByUserId?: string;
+  operationalSessionId?: string | null;
   inspectionCycle: number;
   completionStatus: InspectionCompletionStatus;
   operationMode?: OperationMode | null;
@@ -252,8 +253,42 @@ export type OperationalSessionUser = Pick<SessionUser, 'id' | 'email' | 'name' |
 
 export interface OperationalSessionProgress {
   totalAssets: number;
+  inspectedAssets: number;
   completedAssets: number;
   completionPercentage: number;
+}
+
+export interface OperationalSessionAssignedAsset {
+  id: string;
+  assetCode: string;
+  name: string | null;
+  assetType: Pick<AssetType, 'id' | 'code' | 'name'>;
+  latitude: number | null;
+  longitude: number | null;
+  status: AssetStatus;
+  latestInspectionId: string | null;
+  latestInspectionStatus: InspectionCompletionStatus | null;
+  inspected: boolean;
+  assignment: {
+    id: string;
+    operationalSessionId: string;
+    assetId: string;
+    assignedAt: string;
+    assignedByUserId: string | null;
+    assignedBy?: OperationalSessionUser | null;
+    removedAt: string | null;
+    removedByUserId: string | null;
+    removedBy?: OperationalSessionUser | null;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+}
+
+export interface OperationalSessionAssignedAssetsSummary {
+  count: number;
+  activeCount: number;
+  recent: OperationalSessionAssignedAsset[];
 }
 
 export interface OperationalSession {
@@ -284,6 +319,7 @@ export interface OperationalSession {
   assignedCompany?: OperationalSessionRecord | null;
   assignedQaUser?: OperationalSessionUser | null;
   progress?: OperationalSessionProgress;
+  assignedAssets?: OperationalSessionAssignedAssetsSummary;
 }
 
 export interface OperationalSessionFilters {
@@ -358,6 +394,7 @@ export interface InspectionFormResponse {
     siteVisitId: string;
     assetId: string;
     templateId: string;
+    operationalSessionId: string | null;
     inspectionCycle: number;
     completionStatus: InspectionCompletionStatus;
     operationMode?: OperationMode | null;
@@ -537,6 +574,7 @@ export type DashboardData = {
 export type InspectionDetail = {
   id: string;
   assetId: string;
+  operationalSessionId?: string | null;
   cycleNumber: number;
   status: string;
   operationMode?: OperationMode | null;

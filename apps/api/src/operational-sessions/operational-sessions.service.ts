@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
+  InspectionCompletionStatus,
   OperationalSessionScope,
   OperationalSessionStatus,
   Prisma,
@@ -13,6 +14,8 @@ import {
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { AssignOperationalSessionAssetDto } from './dto/assign-operational-session-asset.dto';
+import { BulkAssignOperationalSessionAssetsDto } from './dto/bulk-assign-operational-session-assets.dto';
 import { CreateOperationalSessionDto } from './dto/create-operational-session.dto';
 import { ListOperationalSessionsQueryDto } from './dto/list-operational-sessions-query.dto';
 import { OperationalSessionActionDto } from './dto/operational-session-action.dto';
@@ -77,14 +80,63 @@ const OPERATIONAL_SESSION_INCLUDE =
     },
   });
 
+const ASSET_SUMMARY_SELECT = Prisma.validator<Prisma.AssetSelect>()({
+  id: true,
+  assetCode: true,
+  name: true,
+  latitude: true,
+  longitude: true,
+  status: true,
+  assetType: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+    },
+  },
+});
+
+const OPERATIONAL_SESSION_ASSET_INCLUDE =
+  Prisma.validator<Prisma.OperationalSessionAssetInclude>()({
+    asset: {
+      select: ASSET_SUMMARY_SELECT,
+    },
+    assignedBy: {
+      select: USER_SUMMARY_SELECT,
+    },
+    removedBy: {
+      select: USER_SUMMARY_SELECT,
+    },
+  });
+
+// InspectionCompletionStatus currently has DRAFT and SUBMITTED; submittedAt is
+// accepted too for compatibility with any historical rows already marked final.
+const SESSION_COMPLETED_INSPECTION_STATUSES = [
+  InspectionCompletionStatus.SUBMITTED,
+] as const;
+const SESSION_COMPLETED_INSPECTION_STATUS_SET =
+  new Set<InspectionCompletionStatus>(SESSION_COMPLETED_INSPECTION_STATUSES);
+
 type OperationalSessionRecord = Prisma.OperationalSessionGetPayload<{
   include: typeof OPERATIONAL_SESSION_INCLUDE;
 }>;
 
+type OperationalSessionAssetRecord =
+  Prisma.OperationalSessionAssetGetPayload<{
+    include: typeof OPERATIONAL_SESSION_ASSET_INCLUDE;
+  }>;
+
 type OperationalSessionProgress = {
   totalAssets: number;
+  inspectedAssets: number;
   completedAssets: number;
   completionPercentage: number;
+};
+
+type SessionAssetInspectionContext = {
+  latestInspectionId: string | null;
+  latestInspectionStatus: InspectionCompletionStatus | null;
+  inspected: boolean;
 };
 
 type LifecycleActor = 'FIELD' | 'QA';
@@ -112,7 +164,13 @@ export class OperationalSessionsService {
       ],
     });
 
-    return sessions.map((session) => this.serializeSession(session));
+    const progressBySessionId = await this.getProgressBySessionIds(
+      sessions.map((session) => session.id),
+    );
+
+    return sessions.map((session) =>
+      this.serializeSession(session, progressBySessionId.get(session.id)),
+    );
   }
 
   async getDetail(user: RequestUser, id: string) {
@@ -133,7 +191,21 @@ export class OperationalSessionsService {
       throw new NotFoundException('Operational session not found.');
     }
 
-    return this.serializeSession(session);
+    const [progressBySessionId, recentAssets] = await Promise.all([
+      this.getProgressBySessionIds([session.id]),
+      this.findActiveSessionAssets(session.id, 10),
+    ]);
+    const inspectionContextByAssetId = await this.getInspectionContextByAssetId(
+      session.id,
+      recentAssets.map((assignment) => assignment.assetId),
+    );
+
+    return this.serializeSession(
+      session,
+      progressBySessionId.get(session.id),
+      recentAssets,
+      inspectionContextByAssetId,
+    );
   }
 
   async create(user: RequestUser, dto: CreateOperationalSessionDto) {
@@ -239,7 +311,262 @@ export class OperationalSessionsService {
       include: OPERATIONAL_SESSION_INCLUDE,
     });
 
-    return this.serializeSession(updated);
+    const progress = await this.getProgress(updated.id);
+
+    return this.serializeSession(updated, progress);
+  }
+
+  async listAssets(user: RequestUser, id: string) {
+    const session = await this.findReadableSession(user, id);
+    const assignments = await this.findActiveSessionAssets(session.id);
+    const inspectionContextByAssetId = await this.getInspectionContextByAssetId(
+      session.id,
+      assignments.map((assignment) => assignment.assetId),
+    );
+
+    return assignments.map((assignment) =>
+      this.serializeSessionAsset(
+        assignment,
+        inspectionContextByAssetId.get(assignment.assetId),
+      ),
+    );
+  }
+
+  async assignAsset(
+    user: RequestUser,
+    id: string,
+    dto: AssignOperationalSessionAssetDto,
+  ) {
+    const session = await this.findSessionInWorkspace(user, id);
+    await this.assertCanManageSessionAssets(user, session);
+
+    const asset = await this.findWorkspaceAsset(user, dto.assetId);
+    const existing = await this.prisma.operationalSessionAsset.findUnique({
+      where: {
+        operationalSessionId_assetId: {
+          operationalSessionId: session.id,
+          assetId: asset.id,
+        },
+      },
+    });
+
+    if (existing && !existing.removedAt) {
+      throw new BadRequestException(
+        'Asset is already assigned to this operational session.',
+      );
+    }
+
+    const notes = this.normalizeOptionalString(dto.notes);
+    const assignedAt = new Date();
+
+    try {
+      const assignment = existing
+        ? await this.prisma.operationalSessionAsset.update({
+            where: {
+              id: existing.id,
+            },
+            data: {
+              assignedAt,
+              assignedByUserId: user.id,
+              removedAt: null,
+              removedByUserId: null,
+              notes,
+            },
+            include: OPERATIONAL_SESSION_ASSET_INCLUDE,
+          })
+        : await this.prisma.operationalSessionAsset.create({
+            data: {
+              id: randomUUID(),
+              operationalSessionId: session.id,
+              assetId: asset.id,
+              assignedAt,
+              assignedByUserId: user.id,
+              notes,
+            },
+            include: OPERATIONAL_SESSION_ASSET_INCLUDE,
+          });
+
+      return this.serializeSessionAsset(assignment);
+    } catch (error) {
+      if (this.isUniqueConstraintConflict(error)) {
+        throw new BadRequestException(
+          'Asset is already assigned to this operational session.',
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  async bulkAssignAssets(
+    user: RequestUser,
+    id: string,
+    dto: BulkAssignOperationalSessionAssetsDto,
+  ) {
+    const session = await this.findSessionInWorkspace(user, id);
+    await this.assertCanManageSessionAssets(user, session);
+
+    const requestedAssetIds = dto.assetIds;
+    const uniqueAssetIds = Array.from(new Set(requestedAssetIds));
+    const duplicateAssetIds = requestedAssetIds.filter(
+      (assetId, index) => requestedAssetIds.indexOf(assetId) !== index,
+    );
+    const [assets, existingAssignments] = await Promise.all([
+      this.prisma.asset.findMany({
+        where: {
+          id: {
+            in: uniqueAssetIds,
+          },
+          tenantId: user.tenantId,
+        },
+        select: {
+          id: true,
+        },
+      }),
+      this.prisma.operationalSessionAsset.findMany({
+        where: {
+          operationalSessionId: session.id,
+          assetId: {
+            in: uniqueAssetIds,
+          },
+        },
+      }),
+    ]);
+    const assetIds = new Set(assets.map((asset) => asset.id));
+    const existingByAssetId = new Map(
+      existingAssignments.map((assignment) => [assignment.assetId, assignment]),
+    );
+    const assigned: Array<{ assetId: string; assignmentId: string }> = [];
+    const restored: Array<{ assetId: string; assignmentId: string }> = [];
+    const skipped: Array<{ assetId: string; reason: string }> =
+      duplicateAssetIds.map((assetId) => ({
+        assetId,
+        reason: 'Duplicate asset ID in request.',
+      }));
+    const failed: Array<{ assetId: string; reason: string }> = [];
+
+    for (const assetId of uniqueAssetIds) {
+      if (!assetIds.has(assetId)) {
+        failed.push({
+          assetId,
+          reason: 'Asset not found in this workspace.',
+        });
+        continue;
+      }
+
+      const existing = existingByAssetId.get(assetId);
+
+      if (existing && !existing.removedAt) {
+        skipped.push({
+          assetId,
+          reason: 'Asset is already assigned to this operational session.',
+        });
+        continue;
+      }
+
+      try {
+        if (existing) {
+          const assignment = await this.prisma.operationalSessionAsset.update({
+            where: {
+              id: existing.id,
+            },
+            data: {
+              assignedAt: new Date(),
+              assignedByUserId: user.id,
+              removedAt: null,
+              removedByUserId: null,
+            },
+            select: {
+              id: true,
+              assetId: true,
+            },
+          });
+
+          restored.push({
+            assetId: assignment.assetId,
+            assignmentId: assignment.id,
+          });
+          continue;
+        }
+
+        const assignment = await this.prisma.operationalSessionAsset.create({
+          data: {
+            id: randomUUID(),
+            operationalSessionId: session.id,
+            assetId,
+            assignedByUserId: user.id,
+          },
+          select: {
+            id: true,
+            assetId: true,
+          },
+        });
+
+        assigned.push({
+          assetId: assignment.assetId,
+          assignmentId: assignment.id,
+        });
+      } catch (error) {
+        if (this.isUniqueConstraintConflict(error)) {
+          skipped.push({
+            assetId,
+            reason: 'Asset is already assigned to this operational session.',
+          });
+          continue;
+        }
+
+        failed.push({
+          assetId,
+          reason: 'Unable to assign asset.',
+        });
+      }
+    }
+
+    return {
+      assigned,
+      skipped,
+      restored,
+      failed,
+      summary: {
+        assigned: assigned.length,
+        skipped: skipped.length,
+        restored: restored.length,
+        failed: failed.length,
+      },
+    };
+  }
+
+  async removeAsset(user: RequestUser, id: string, assetId: string) {
+    const session = await this.findSessionInWorkspace(user, id);
+    await this.assertCanManageSessionAssets(user, session);
+
+    const assignment = await this.prisma.operationalSessionAsset.findUnique({
+      where: {
+        operationalSessionId_assetId: {
+          operationalSessionId: session.id,
+          assetId,
+        },
+      },
+    });
+
+    if (!assignment || assignment.removedAt) {
+      throw new NotFoundException(
+        'Active asset assignment was not found for this operational session.',
+      );
+    }
+
+    const removed = await this.prisma.operationalSessionAsset.update({
+      where: {
+        id: assignment.id,
+      },
+      data: {
+        removedAt: new Date(),
+        removedByUserId: user.id,
+      },
+      include: OPERATIONAL_SESSION_ASSET_INCLUDE,
+    });
+
+    return this.serializeSessionAsset(removed);
   }
 
   start(user: RequestUser, id: string) {
@@ -367,7 +694,9 @@ export class OperationalSessionsService {
       include: OPERATIONAL_SESSION_INCLUDE,
     });
 
-    return this.serializeSession(updated);
+    const progress = await this.getProgress(updated.id);
+
+    return this.serializeSession(updated, progress);
   }
 
   private async buildListWhere(
@@ -421,6 +750,27 @@ export class OperationalSessionsService {
     };
   }
 
+  private async findReadableSession(user: RequestUser, id: string) {
+    const session = await this.prisma.operationalSession.findFirst({
+      where: {
+        AND: [
+          {
+            id,
+            workspaceId: user.tenantId,
+          },
+          await this.accessScope(user),
+        ],
+      },
+      include: OPERATIONAL_SESSION_INCLUDE,
+    });
+
+    if (!session) {
+      throw new NotFoundException('Operational session not found.');
+    }
+
+    return session;
+  }
+
   private async findSessionInWorkspace(user: RequestUser, id: string) {
     const session = await this.prisma.operationalSession.findFirst({
       where: {
@@ -435,6 +785,46 @@ export class OperationalSessionsService {
     }
 
     return session;
+  }
+
+  private async findWorkspaceAsset(user: RequestUser, assetId: string) {
+    const asset = await this.prisma.asset.findFirst({
+      where: {
+        id: assetId,
+        tenantId: user.tenantId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    return asset;
+  }
+
+  private async findActiveSessionAssets(
+    operationalSessionId: string,
+    take?: number,
+  ) {
+    return this.prisma.operationalSessionAsset.findMany({
+      where: {
+        operationalSessionId,
+        removedAt: null,
+      },
+      include: OPERATIONAL_SESSION_ASSET_INCLUDE,
+      orderBy: [
+        {
+          assignedAt: 'desc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
+      ...(take ? { take } : {}),
+    });
   }
 
   private async resolveCreateLinks(dto: CreateOperationalSessionDto) {
@@ -711,6 +1101,35 @@ export class OperationalSessionsService {
     );
   }
 
+  private async assertCanManageSessionAssets(
+    user: RequestUser,
+    session: OperationalSessionRecord,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+
+    if (this.isReadOnlyRole(user.role)) {
+      throw new ForbiddenException(
+        'This role is read-only for operational session asset assignments.',
+      );
+    }
+
+    if (session.assignedQaUserId === user.id) {
+      return;
+    }
+
+    const organizationIds = await this.getUserOrganizationIds(user);
+
+    if (organizationIds.includes(session.assignedCompanyId)) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'Only authorized session users can manage assigned assets.',
+    );
+  }
+
   private async getUserOrganizationIds(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -781,16 +1200,245 @@ export class OperationalSessionsService {
     return remarks === null ? undefined : remarks;
   }
 
-  private serializeSession(session: OperationalSessionRecord) {
+  private serializeSession(
+    session: OperationalSessionRecord,
+    progress = this.emptyProgress(),
+    recentAssets: OperationalSessionAssetRecord[] = [],
+    inspectionContextByAssetId = new Map<string, SessionAssetInspectionContext>(),
+  ) {
     return {
       ...session,
-      progress: this.emptyProgress(),
+      progress,
+      assignedAssets: {
+        count: progress.totalAssets,
+        activeCount: progress.totalAssets,
+        recent: recentAssets.map((assignment) =>
+          this.serializeSessionAsset(
+            assignment,
+            inspectionContextByAssetId.get(assignment.assetId),
+          ),
+        ),
+      },
+    };
+  }
+
+  private async getProgress(sessionId: string) {
+    const progressBySessionId = await this.getProgressBySessionIds([sessionId]);
+
+    return progressBySessionId.get(sessionId) ?? this.emptyProgress();
+  }
+
+  private async getProgressBySessionIds(sessionIds: string[]) {
+    const progressBySessionId = new Map<string, OperationalSessionProgress>();
+
+    for (const sessionId of sessionIds) {
+      progressBySessionId.set(sessionId, this.emptyProgress());
+    }
+
+    if (sessionIds.length === 0) {
+      return progressBySessionId;
+    }
+
+    const activeAssignments = await this.prisma.operationalSessionAsset.findMany({
+      where: {
+        operationalSessionId: {
+          in: sessionIds,
+        },
+        removedAt: null,
+      },
+      select: {
+        operationalSessionId: true,
+        assetId: true,
+      },
+    });
+    const assignedAssetIdsBySessionId = new Map<string, Set<string>>();
+
+    for (const assignment of activeAssignments) {
+      const assetIds =
+        assignedAssetIdsBySessionId.get(assignment.operationalSessionId) ??
+        new Set<string>();
+
+      assetIds.add(assignment.assetId);
+      assignedAssetIdsBySessionId.set(
+        assignment.operationalSessionId,
+        assetIds,
+      );
+    }
+
+    const linkedInspections = await this.prisma.inspection.findMany({
+      where: {
+        operationalSessionId: {
+          in: sessionIds,
+        },
+        OR: [
+          {
+            completionStatus: {
+              in: [...SESSION_COMPLETED_INSPECTION_STATUSES],
+            },
+          },
+          {
+            submittedAt: {
+              not: null,
+            },
+          },
+        ],
+      },
+      select: {
+        operationalSessionId: true,
+        assetId: true,
+      },
+    });
+    const inspectedAssetIdsBySessionId = new Map<string, Set<string>>();
+
+    for (const inspection of linkedInspections) {
+      if (!inspection.operationalSessionId) {
+        continue;
+      }
+
+      const assignedAssetIds = assignedAssetIdsBySessionId.get(
+        inspection.operationalSessionId,
+      );
+
+      if (!assignedAssetIds?.has(inspection.assetId)) {
+        continue;
+      }
+
+      const inspectedAssetIds =
+        inspectedAssetIdsBySessionId.get(inspection.operationalSessionId) ??
+        new Set<string>();
+
+      inspectedAssetIds.add(inspection.assetId);
+      inspectedAssetIdsBySessionId.set(
+        inspection.operationalSessionId,
+        inspectedAssetIds,
+      );
+    }
+
+    for (const sessionId of sessionIds) {
+      const totalAssets = assignedAssetIdsBySessionId.get(sessionId)?.size ?? 0;
+      const inspectedAssets =
+        inspectedAssetIdsBySessionId.get(sessionId)?.size ?? 0;
+
+      progressBySessionId.set(sessionId, {
+        totalAssets,
+        inspectedAssets,
+        completedAssets: inspectedAssets,
+        completionPercentage:
+          totalAssets === 0
+            ? 0
+            : Math.round((inspectedAssets / totalAssets) * 100),
+      });
+    }
+
+    return progressBySessionId;
+  }
+
+  private async getInspectionContextByAssetId(
+    operationalSessionId: string,
+    assetIds: string[],
+  ) {
+    const contextByAssetId = new Map<string, SessionAssetInspectionContext>();
+    const uniqueAssetIds = Array.from(new Set(assetIds));
+
+    for (const assetId of uniqueAssetIds) {
+      contextByAssetId.set(assetId, {
+        latestInspectionId: null,
+        latestInspectionStatus: null,
+        inspected: false,
+      });
+    }
+
+    if (uniqueAssetIds.length === 0) {
+      return contextByAssetId;
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        operationalSessionId,
+        assetId: {
+          in: uniqueAssetIds,
+        },
+      },
+      select: {
+        id: true,
+        assetId: true,
+        completionStatus: true,
+        submittedAt: true,
+        createdAt: true,
+      },
+      orderBy: [
+        {
+          createdAt: 'desc',
+        },
+      ],
+    });
+
+    for (const inspection of inspections) {
+      const context = contextByAssetId.get(inspection.assetId);
+
+      if (!context) {
+        continue;
+      }
+
+      if (!context.latestInspectionId) {
+        context.latestInspectionId = inspection.id;
+        context.latestInspectionStatus = inspection.completionStatus;
+      }
+
+      if (this.isCompletedSessionInspection(inspection)) {
+        context.inspected = true;
+      }
+    }
+
+    return contextByAssetId;
+  }
+
+  private isCompletedSessionInspection(inspection: {
+    completionStatus: InspectionCompletionStatus;
+    submittedAt: Date | null;
+  }) {
+    return (
+      SESSION_COMPLETED_INSPECTION_STATUS_SET.has(inspection.completionStatus) ||
+      Boolean(inspection.submittedAt)
+    );
+  }
+
+  private serializeSessionAsset(
+    assignment: OperationalSessionAssetRecord,
+    inspectionContext?: SessionAssetInspectionContext,
+  ) {
+    return {
+      id: assignment.asset.id,
+      assetCode: assignment.asset.assetCode,
+      name: assignment.asset.name,
+      assetType: assignment.asset.assetType,
+      latitude: assignment.asset.latitude,
+      longitude: assignment.asset.longitude,
+      status: assignment.asset.status,
+      latestInspectionId: inspectionContext?.latestInspectionId ?? null,
+      latestInspectionStatus: inspectionContext?.latestInspectionStatus ?? null,
+      inspected: inspectionContext?.inspected ?? false,
+      assignment: {
+        id: assignment.id,
+        operationalSessionId: assignment.operationalSessionId,
+        assetId: assignment.assetId,
+        assignedAt: assignment.assignedAt,
+        assignedByUserId: assignment.assignedByUserId,
+        assignedBy: assignment.assignedBy,
+        removedAt: assignment.removedAt,
+        removedByUserId: assignment.removedByUserId,
+        removedBy: assignment.removedBy,
+        notes: assignment.notes,
+        createdAt: assignment.createdAt,
+        updatedAt: assignment.updatedAt,
+      },
     };
   }
 
   private emptyProgress(): OperationalSessionProgress {
     return {
       totalAssets: 0,
+      inspectedAssets: 0,
       completedAssets: 0,
       completionPercentage: 0,
     };
@@ -853,6 +1501,10 @@ export class OperationalSessionsService {
   }
 
   private isUniqueSessionNoConflict(error: unknown) {
+    return this.isUniqueConstraintConflict(error);
+  }
+
+  private isUniqueConstraintConflict(error: unknown) {
     return (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'

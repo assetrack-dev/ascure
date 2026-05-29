@@ -28,7 +28,7 @@ const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, ''
 export function AssetDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'AssetDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
-  const { visitId, substationId, assetId, assetSnapshot } = route.params;
+  const { visitId, substationId, assetId, assetSnapshot, operationalSessionId } = route.params;
   const { token, handleUnauthorized } = useSession();
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
   const [editableAsset, setEditableAsset] = useState<Asset | null>(assetSnapshot ?? null);
@@ -98,6 +98,7 @@ export function AssetDetailScreen() {
       const inspection = await api.createInspection(token, {
         siteVisitId: visitId,
         assetId,
+        operationalSessionId,
         inspectionCycle: asset.latestInspection ? asset.latestInspection.cycleNumber + 1 : 1,
       });
 
@@ -106,6 +107,7 @@ export function AssetDetailScreen() {
           inspectionId: inspection.id,
           visitId,
           substationId: substationId ?? '',
+          operationalSessionId,
         });
       }
     } catch (error) {

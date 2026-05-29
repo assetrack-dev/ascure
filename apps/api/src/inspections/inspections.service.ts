@@ -129,6 +129,10 @@ export class InspectionsService {
       throw new BadRequestException('Asset does not belong to the substation for the selected site visit.');
     }
 
+    const operationalSession = dto.operationalSessionId
+      ? await this.resolveOperationalSessionContext(user, dto.operationalSessionId, asset.id)
+      : null;
+
     const templateResolution = await this.templatesService.resolveActiveTemplate(user, {
       assetTypeId: asset.assetTypeId,
       capabilityId: asset.assetType.capabilityId,
@@ -160,6 +164,7 @@ export class InspectionsService {
           siteVisitId: siteVisit.id,
           assetId: asset.id,
           templateId: template.id,
+          operationalSessionId: operationalSession?.id ?? null,
           createdByUserId: user.id,
           inspectionCycle: dto.inspectionCycle ?? 1,
           operationMode,
@@ -245,6 +250,7 @@ export class InspectionsService {
     return {
       id: inspection.id,
       assetId: inspection.assetId,
+      operationalSessionId: inspection.operationalSessionId,
       cycleNumber: inspection.inspectionCycle,
       status: inspection.completionStatus,
       operationMode: inspection.operationMode,
@@ -674,6 +680,115 @@ export class InspectionsService {
         },
       },
     };
+  }
+
+  private async resolveOperationalSessionContext(
+    user: RequestUser,
+    operationalSessionId: string,
+    assetId: string,
+  ) {
+    const session = await this.prisma.operationalSession.findFirst({
+      where: {
+        AND: [
+          {
+            id: operationalSessionId,
+            workspaceId: user.tenantId,
+          },
+          await this.operationalSessionAccessScope(user),
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Operational session not found.');
+    }
+
+    const assignment = await this.prisma.operationalSessionAsset.findFirst({
+      where: {
+        operationalSessionId: session.id,
+        assetId,
+        removedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!assignment) {
+      throw new BadRequestException(
+        'Asset is not assigned to this operational session.',
+      );
+    }
+
+    return session;
+  }
+
+  private async operationalSessionAccessScope(
+    user: RequestUser,
+  ): Promise<Prisma.OperationalSessionWhereInput> {
+    if (user.role === UserRole.ADMIN) {
+      return {};
+    }
+
+    const organizationIds = await this.getUserOrganizationIds(user);
+    const accessFilters: Prisma.OperationalSessionWhereInput[] = [
+      {
+        assignedQaUserId: user.id,
+      },
+    ];
+
+    if (organizationIds.length > 0) {
+      accessFilters.push({
+        assignedCompanyId: {
+          in: organizationIds,
+        },
+      });
+    }
+
+    return {
+      OR: accessFilters,
+    };
+  }
+
+  private async getUserOrganizationIds(user: RequestUser) {
+    const currentUser = await this.prisma.user.findFirst({
+      where: {
+        id: user.id,
+        tenantId: user.tenantId,
+        isActive: true,
+      },
+      select: {
+        organizationId: true,
+        organizationMemberships: {
+          where: {
+            isActive: true,
+          },
+          select: {
+            organizationId: true,
+          },
+        },
+      },
+    });
+
+    if (!currentUser) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        [
+          currentUser.organizationId,
+          ...currentUser.organizationMemberships.map(
+            (membership) => membership.organizationId,
+          ),
+        ].filter((organizationId): organizationId is string =>
+          Boolean(organizationId),
+        ),
+      ),
+    );
   }
 
   private inspectionInclude() {
@@ -1107,6 +1222,7 @@ export class InspectionsService {
         siteVisitId: inspection.siteVisitId,
         assetId: inspection.assetId,
         templateId: inspection.templateId,
+        operationalSessionId: inspection.operationalSessionId,
         inspectionCycle: inspection.inspectionCycle,
         completionStatus: inspection.completionStatus,
         operationMode: inspection.operationMode,

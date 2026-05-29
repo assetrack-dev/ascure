@@ -1,10 +1,23 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { AssignOperationalSessionAssetDto } from './dto/assign-operational-session-asset.dto';
+import { BulkAssignOperationalSessionAssetsDto } from './dto/bulk-assign-operational-session-assets.dto';
 import { CreateOperationalSessionDto } from './dto/create-operational-session.dto';
 import { ListOperationalSessionsQueryDto } from './dto/list-operational-sessions-query.dto';
 import { OperationalSessionActionDto } from './dto/operational-session-action.dto';
+import { OperationalSessionAssetParamDto } from './dto/operational-session-asset-param.dto';
 import { OperationalSessionIdParamDto } from './dto/operational-session-id-param.dto';
 import { UpdateOperationalSessionDto } from './dto/update-operational-session.dto';
 import { OperationalSessionsService } from './operational-sessions.service';
@@ -22,6 +35,14 @@ export class OperationalSessionsController {
     @Query() query: ListOperationalSessionsQueryDto,
   ) {
     return this.operationalSessionsService.list(user, query);
+  }
+
+  @Get(':id/assets')
+  listAssets(
+    @CurrentUser() user: RequestUser,
+    @Param() params: OperationalSessionIdParamDto,
+  ) {
+    return this.operationalSessionsService.listAssets(user, params.id);
   }
 
   @Get(':id')
@@ -47,6 +68,40 @@ export class OperationalSessionsController {
     @Body() dto: UpdateOperationalSessionDto,
   ) {
     return this.operationalSessionsService.update(user, params.id, dto);
+  }
+
+  @Post(':id/assets/bulk')
+  bulkAssignAssets(
+    @CurrentUser() user: RequestUser,
+    @Param() params: OperationalSessionIdParamDto,
+    @Body() dto: BulkAssignOperationalSessionAssetsDto,
+  ) {
+    return this.operationalSessionsService.bulkAssignAssets(
+      user,
+      params.id,
+      dto,
+    );
+  }
+
+  @Post(':id/assets')
+  assignAsset(
+    @CurrentUser() user: RequestUser,
+    @Param() params: OperationalSessionIdParamDto,
+    @Body() dto: AssignOperationalSessionAssetDto,
+  ) {
+    return this.operationalSessionsService.assignAsset(user, params.id, dto);
+  }
+
+  @Delete(':id/assets/:assetId')
+  removeAsset(
+    @CurrentUser() user: RequestUser,
+    @Param() params: OperationalSessionAssetParamDto,
+  ) {
+    return this.operationalSessionsService.removeAsset(
+      user,
+      params.id,
+      params.assetId,
+    );
   }
 
   @Post(':id/start')

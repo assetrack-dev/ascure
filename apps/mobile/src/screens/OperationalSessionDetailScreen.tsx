@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
@@ -13,7 +13,7 @@ import {
   getOperationalSessionProgress,
   getOperationalSessionStatusTone,
 } from '../operationalSessions';
-import type { OperationalSession } from '../types';
+import type { OperationalSession, OperationalSessionAssignedAsset } from '../types';
 import {
   AppButton,
   BodyText,
@@ -32,24 +32,94 @@ import { formatDateTime } from '../utils';
 
 type LifecycleAction = 'start' | 'submit';
 
+function formatCompactEnum(value: string | null | undefined) {
+  if (!value) {
+    return 'Not recorded';
+  }
+
+  return value
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatAssetType(asset: OperationalSessionAssignedAsset) {
+  const code = asset.assetType.code?.trim();
+  const name = asset.assetType.name?.trim();
+
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+
+  return name || code || 'Not recorded';
+}
+
+function formatCoordinates(latitude: number | null, longitude: number | null) {
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+
+  return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+}
+
+function assetStatusTone(
+  status: OperationalSessionAssignedAsset['status'],
+): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'ACTIVE') {
+    return 'success';
+  }
+
+  if (status === 'NOT_FOUND' || status === 'REMOVED') {
+    return 'danger';
+  }
+
+  if (status === 'DUPLICATE') {
+    return 'warning';
+  }
+
+  return 'neutral';
+}
+
 export function OperationalSessionDetailScreen({
   route,
   navigation,
 }: RootStackScreenProps<'OperationalSessionDetail'>) {
   const { token, handleUnauthorized } = useSession();
   const [session, setSession] = useState<OperationalSession | null>(null);
+  const [assignedAssets, setAssignedAssets] = useState<OperationalSessionAssignedAsset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAssetsLoading, setIsAssetsLoading] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<LifecycleAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const loadSession = useCallback(async () => {
     try {
       setError(null);
+      setAssetError(null);
       setIsLoading(true);
+      setIsAssetsLoading(true);
 
       const nextSession = await api.getOperationalSession(token, route.params.sessionId);
       setSession(nextSession);
+
+      try {
+        setAssignedAssets(await api.getSessionAssets(token, route.params.sessionId));
+      } catch (assetLoadError) {
+        if (assetLoadError instanceof ApiError && assetLoadError.status === 401) {
+          await handleUnauthorized(assetLoadError);
+          return;
+        }
+
+        setAssetError(
+          assetLoadError instanceof Error
+            ? assetLoadError.message
+            : 'Unable to load assigned assets.',
+        );
+        setAssignedAssets([]);
+      }
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -63,6 +133,7 @@ export function OperationalSessionDetailScreen({
       );
     } finally {
       setIsLoading(false);
+      setIsAssetsLoading(false);
     }
   }, [handleUnauthorized, route.params.sessionId, token]);
 
@@ -87,6 +158,24 @@ export function OperationalSessionDetailScreen({
             : await api.submitOperationalSession(token, session.id);
 
         setSession(nextSession);
+        try {
+          setIsAssetsLoading(true);
+          setAssetError(null);
+          setAssignedAssets(await api.getSessionAssets(token, session.id));
+        } catch (assetLoadError) {
+          if (assetLoadError instanceof ApiError && assetLoadError.status === 401) {
+            await handleUnauthorized(assetLoadError);
+            return;
+          }
+
+          setAssetError(
+            assetLoadError instanceof Error
+              ? assetLoadError.message
+              : 'Unable to load assigned assets.',
+          );
+        } finally {
+          setIsAssetsLoading(false);
+        }
         setNotice(action === 'start' ? 'Session started.' : 'Session submitted.');
       } catch (actionError) {
         if (actionError instanceof ApiError && actionError.status === 401) {
@@ -108,6 +197,13 @@ export function OperationalSessionDetailScreen({
 
   const canStart = session?.status === 'DRAFT' || session?.status === 'ASSIGNED';
   const canSubmit = session?.status === 'IN_PROGRESS' || session?.status === 'AMENDMENT_REQUIRED';
+
+  function handleViewAssignedAsset(asset: OperationalSessionAssignedAsset) {
+    navigation.navigate('AssetDetail', {
+      assetId: asset.id,
+      operationalSessionId: session?.id,
+    });
+  }
 
   return (
     <Screen
@@ -176,12 +272,13 @@ export function OperationalSessionDetailScreen({
 
           <ProgressCard session={session} />
 
-          <Card>
-            <SectionTitle>Inspections</SectionTitle>
-            <BodyText muted>
-              Inspections and assigned assets will be connected in the next sprint.
-            </BodyText>
-          </Card>
+          <AssignedAssetsCard
+            session={session}
+            assets={assignedAssets}
+            isLoading={isAssetsLoading}
+            error={assetError}
+            onViewAsset={handleViewAssignedAsset}
+          />
 
           <Card>
             <View style={styles.actionHeader}>
@@ -240,9 +337,129 @@ function ProgressCard({ session }: { session: OperationalSession }) {
       </View>
       <View style={styles.detailRows}>
         <KeyValueRow label="Total Assets" value={String(progress.totalAssets)} />
-        <KeyValueRow label="Completed Assets" value={String(progress.completedAssets)} />
+        <KeyValueRow label="Inspected Assets" value={String(progress.inspectedAssets)} />
       </View>
     </Card>
+  );
+}
+
+function AssignedAssetsCard({
+  session,
+  assets,
+  isLoading,
+  error,
+  onViewAsset,
+}: {
+  session: OperationalSession;
+  assets: OperationalSessionAssignedAsset[];
+  isLoading: boolean;
+  error: string | null;
+  onViewAsset: (asset: OperationalSessionAssignedAsset) => void;
+}) {
+  const progress = getOperationalSessionProgress(session);
+
+  return (
+    <Card>
+      <View style={styles.actionHeader}>
+        <SectionTitle>Assigned Assets</SectionTitle>
+        <StatusChip label={`${progress.completionPercentage}%`} tone="info" />
+      </View>
+
+      <View style={styles.assetProgressGrid}>
+        <View style={styles.assetProgressItem}>
+          <Text style={styles.metricLabel}>Total Assigned</Text>
+          <Text style={styles.metricValue}>{progress.totalAssets}</Text>
+        </View>
+        <View style={styles.assetProgressItem}>
+          <Text style={styles.metricLabel}>Inspected</Text>
+          <Text style={styles.metricValue}>{progress.inspectedAssets}</Text>
+        </View>
+        <View style={styles.assetProgressItem}>
+          <Text style={styles.metricLabel}>Completion</Text>
+          <Text style={styles.metricValue}>{progress.completionPercentage}%</Text>
+        </View>
+      </View>
+
+      <View style={styles.progressTrack}>
+        <View
+          style={[
+            styles.progressFill,
+            { width: `${Math.min(Math.max(progress.completionPercentage, 0), 100)}%` },
+          ]}
+        />
+      </View>
+
+      {error ? (
+        <View style={styles.assetErrorBox}>
+          <Text style={styles.assetErrorText}>{error}</Text>
+        </View>
+      ) : null}
+
+      {isLoading ? (
+        <View style={styles.assetLoadingRow}>
+          <ActivityIndicator color={uiTheme.colors.primary} />
+          <Text style={styles.assetLoadingText}>Loading assigned assets...</Text>
+        </View>
+      ) : null}
+
+      {!isLoading && !error && assets.length === 0 ? (
+        <BodyText muted>No assets assigned to this session yet.</BodyText>
+      ) : null}
+
+      {!isLoading && assets.length > 0 ? (
+        <View style={styles.assetList}>
+          {assets.map((asset) => (
+            <AssignedAssetCard
+              key={asset.assignment.id}
+              asset={asset}
+              onViewAsset={() => onViewAsset(asset)}
+            />
+          ))}
+        </View>
+      ) : null}
+    </Card>
+  );
+}
+
+function AssignedAssetCard({
+  asset,
+  onViewAsset,
+}: {
+  asset: OperationalSessionAssignedAsset;
+  onViewAsset: () => void;
+}) {
+  const coordinates = formatCoordinates(asset.latitude, asset.longitude);
+  const notes = asset.assignment.notes?.trim();
+
+  return (
+    <View style={styles.assignedAssetCard}>
+      <View style={styles.assignedAssetHeader}>
+        <View style={styles.assignedAssetTitleWrap}>
+          <Text style={styles.assignedAssetCode} numberOfLines={1}>
+            {asset.assetCode}
+          </Text>
+          <Text style={styles.assignedAssetName} numberOfLines={2}>
+            {asset.name?.trim() || 'Not recorded'}
+          </Text>
+        </View>
+        <StatusChip label={formatCompactEnum(asset.status)} tone={assetStatusTone(asset.status)} />
+      </View>
+
+      <View style={styles.detailRows}>
+        <KeyValueRow label="Asset Type" value={formatAssetType(asset)} />
+        <KeyValueRow label="Inspection" value={asset.inspected ? 'Inspected' : 'Pending'} />
+        {asset.latestInspectionStatus ? (
+          <KeyValueRow
+            label="Latest Status"
+            value={formatCompactEnum(asset.latestInspectionStatus)}
+          />
+        ) : null}
+        {coordinates ? <KeyValueRow label="Coordinates" value={coordinates} /> : null}
+        {notes ? <KeyValueRow label="Notes" value={notes} /> : null}
+      </View>
+
+      <AppButton label="View Asset / Inspect" variant="secondary" onPress={onViewAsset} />
+    </View>
   );
 }
 
@@ -290,6 +507,94 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.textSecondary,
     fontSize: 12,
     lineHeight: 16,
+    fontWeight: '600',
+  },
+  assetProgressGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  assetProgressItem: {
+    flex: 1,
+    minHeight: 62,
+    borderRadius: uiTheme.radius.control,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  metricLabel: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '800',
+  },
+  assetErrorBox: {
+    borderWidth: 1,
+    borderColor: uiTheme.colors.dangerBorder,
+    borderRadius: uiTheme.radius.control,
+    backgroundColor: uiTheme.colors.dangerSoft,
+    padding: 10,
+  },
+  assetErrorText: {
+    color: uiTheme.colors.danger,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+  },
+  assetLoadingRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  assetLoadingText: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  assetList: {
+    gap: 10,
+  },
+  assignedAssetCard: {
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    borderRadius: uiTheme.radius.card,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+    padding: 12,
+    gap: 10,
+  },
+  assignedAssetHeader: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  assignedAssetTitleWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  assignedAssetCode: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  assignedAssetName: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '600',
   },
   progressTrack: {
