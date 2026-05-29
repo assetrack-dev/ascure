@@ -19,7 +19,10 @@ import {
   ResolveInspectionTemplateQueryDto,
   UpdateChecklistTemplateDto,
 } from './dto/checklist-template.dto';
-import { normalizeTemplateSelectOptions } from './template-builder.constants';
+import {
+  TemplateSelectOption,
+  normalizeTemplateSelectOptions,
+} from './template-builder.constants';
 
 const checklistTemplateInclude = {
   assetType: {
@@ -97,7 +100,7 @@ type DesiredChecklistItem = {
   key?: string;
   label: string;
   inputType: InspectionItemInputType;
-  optionsJson: Array<{ label: string; value: string }> | null;
+  optionsJson: Prisma.InputJsonValue | null;
   sortOrder: number;
   isRequired: boolean;
   isActive: boolean;
@@ -105,6 +108,44 @@ type DesiredChecklistItem = {
   severity: DefectSeverity;
   sectionId?: string;
 };
+
+type ChecklistShowIfConfig = {
+  dependsOn: string;
+  operator:
+    | 'equals'
+    | 'not_equals'
+    | 'contains'
+    | 'greater_than'
+    | 'less_than'
+    | 'is_empty'
+    | 'is_not_empty';
+  value?: string | null;
+};
+
+type ChecklistImageConfig = {
+  requiredPhoto: boolean;
+  allowMultiplePhotos: boolean;
+  cameraOnly: boolean;
+  galleryAllowed: boolean;
+  timestampOverlayRequired: boolean;
+};
+
+type ChecklistMeasurementConfig = {
+  unit: string | null;
+  source: 'manual' | 'photo_ocr_future';
+  requiresImage: boolean;
+};
+
+type ChecklistItemV2Config = {
+  version: 2;
+  fieldType: string;
+  options?: TemplateSelectOption[];
+  showIf?: ChecklistShowIfConfig;
+  image?: ChecklistImageConfig;
+  measurement?: ChecklistMeasurementConfig;
+};
+
+const CHECKLIST_ITEM_CONFIG_VERSION = 2;
 
 @Injectable()
 export class ChecklistTemplatesService {
@@ -577,6 +618,7 @@ export class ChecklistTemplatesService {
             id: item.id,
           },
           data: {
+            key: item.key ?? existingById.get(item.id)?.key,
             label: item.label,
             inputType: item.inputType,
             optionsJson:
@@ -644,8 +686,12 @@ export class ChecklistTemplatesService {
   ): DesiredChecklistItem[] {
     const existingById = new Map(existingItems.map((item) => [item.id, item]));
     const referencedExistingIds = new Set<string>();
+    const usedKeys = new Set<string>();
     const desiredItems: DesiredChecklistItem[] = incomingItems.map((item, index) => {
       const existingItem = item.id ? existingById.get(item.id) : undefined;
+      const inputType = this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType);
+      const label = this.normalizeRequiredText(item.label, 'Item label');
+      const key = this.normalizeIncomingItemKey(item.key, existingItem?.key, label, usedKeys);
 
       if (existingItem) {
         referencedExistingIds.add(existingItem.id);
@@ -653,14 +699,11 @@ export class ChecklistTemplatesService {
 
       return {
         id: existingItem?.id,
-        key: existingItem?.key,
+        key,
         sectionId: existingItem?.sectionId,
-        label: this.normalizeRequiredText(item.label, 'Item label'),
-        inputType: this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType),
-        optionsJson: this.normalizeOptionsJson(
-          this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType),
-          item.options ?? item.optionsJson ?? existingItem?.optionsJson ?? null,
-        ),
+        label,
+        inputType,
+        optionsJson: this.normalizeOptionsJson(inputType, item, existingItem),
         sortOrder: item.sortOrder ?? index + 1,
         isRequired: item.isRequired ?? existingItem?.isRequired ?? true,
         isActive: item.isActive ?? existingItem?.isActive ?? true,
@@ -676,6 +719,7 @@ export class ChecklistTemplatesService {
 
       desiredItems.push({
         ...this.fromExistingItem(item),
+        key: this.normalizeIncomingItemKey(undefined, item.key, item.label, usedKeys),
         isActive: false,
       });
     }
@@ -690,7 +734,7 @@ export class ChecklistTemplatesService {
       sectionId: item.sectionId,
       label: item.label,
       inputType: item.inputType,
-      optionsJson: this.normalizeOptionsJson(item.inputType, item.optionsJson),
+      optionsJson: this.normalizeExistingOptionsJson(item.inputType, item.optionsJson),
       sortOrder: item.sortOrder,
       isRequired: item.isRequired,
       isActive: item.isActive,
@@ -759,11 +803,30 @@ export class ChecklistTemplatesService {
       return InspectionItemInputType.SELECT;
     }
 
+    if (normalizedInputType === 'MULTISELECT' || normalizedInputType === 'MULTI_SELECT') {
+      return InspectionItemInputType.MULTI_SELECT;
+    }
+
+    if (normalizedInputType === 'DATE_TIME') {
+      return InspectionItemInputType.DATETIME;
+    }
+
+    if (
+      normalizedInputType === 'READING_MEASUREMENT' ||
+      normalizedInputType === 'MEASUREMENT' ||
+      normalizedInputType === 'READING'
+    ) {
+      return InspectionItemInputType.READING;
+    }
+
     if (
       normalizedInputType === InspectionItemInputType.TEXT ||
       normalizedInputType === InspectionItemInputType.NUMBER ||
       normalizedInputType === InspectionItemInputType.DATE ||
-      normalizedInputType === InspectionItemInputType.DATETIME
+      normalizedInputType === InspectionItemInputType.DATETIME ||
+      normalizedInputType === InspectionItemInputType.IMAGE ||
+      normalizedInputType === InspectionItemInputType.GPS ||
+      normalizedInputType === InspectionItemInputType.READING
     ) {
       return normalizedInputType as InspectionItemInputType;
     }
@@ -771,30 +834,283 @@ export class ChecklistTemplatesService {
     throw new BadRequestException(`Unsupported checklist item field type: ${requestedInputType}.`);
   }
 
-  private normalizeOptionsJson(inputType: InspectionItemInputType, optionsJson: unknown) {
-    if (inputType !== InspectionItemInputType.SELECT) {
+  private normalizeOptionsJson(
+    inputType: InspectionItemInputType,
+    item: ChecklistTemplateItemInputDto,
+    existingItem?: ChecklistTemplateItemRecord,
+  ): Prisma.InputJsonValue | null {
+    const existingOptionsJson =
+      existingItem?.inputType === inputType ? existingItem.optionsJson : null;
+    const rawOptionsJson = item.optionsJson === undefined ? existingOptionsJson : item.optionsJson;
+    const optionsSource = item.options ?? rawOptionsJson;
+    const showIf = this.normalizeShowIfConfig(item.showIf, rawOptionsJson);
+    const image = this.normalizeImageConfig(item.imageConfig, rawOptionsJson);
+    const measurement = this.normalizeMeasurementConfig(item.measurementConfig, rawOptionsJson);
+    const config: ChecklistItemV2Config = {
+      version: CHECKLIST_ITEM_CONFIG_VERSION,
+      fieldType: this.serializeFieldType(inputType),
+    };
+
+    if (
+      inputType === InspectionItemInputType.SELECT ||
+      inputType === InspectionItemInputType.MULTI_SELECT
+    ) {
+      const normalizedOptions = normalizeTemplateSelectOptions(optionsSource);
+
+      if (!normalizedOptions) {
+        throw new BadRequestException(
+          'Dropdown and multi select items require a non-empty options array of unique { label, value } entries.',
+        );
+      }
+
+      config.options = normalizedOptions;
+    }
+
+    if (inputType === InspectionItemInputType.IMAGE) {
+      config.image = image;
+    }
+
+    if (inputType === InspectionItemInputType.READING) {
+      // TODO(Mobile AI/OCR sprint): wire photo_ocr_future readings to the mobile OCR capture flow.
+      config.measurement = measurement;
+    }
+
+    if (showIf) {
+      config.showIf = showIf;
+    }
+
+    if (!config.options && !config.image && !config.measurement && !config.showIf) {
       return null;
     }
 
-    const normalizedOptions = normalizeTemplateSelectOptions(optionsJson);
+    return config as unknown as Prisma.InputJsonObject;
+  }
 
-    if (!normalizedOptions) {
+  private normalizeExistingOptionsJson(
+    inputType: InspectionItemInputType,
+    optionsJson: Prisma.JsonValue | null,
+  ): Prisma.InputJsonValue | null {
+    if (optionsJson === null) {
+      return null;
+    }
+
+    if (
+      inputType !== InspectionItemInputType.SELECT &&
+      inputType !== InspectionItemInputType.MULTI_SELECT &&
+      !this.readChecklistConfig(optionsJson)
+    ) {
+      return null;
+    }
+
+    if (
+      inputType === InspectionItemInputType.SELECT ||
+      inputType === InspectionItemInputType.MULTI_SELECT
+    ) {
+      const normalizedOptions = normalizeTemplateSelectOptions(optionsJson);
+
+      if (!normalizedOptions) {
+        throw new BadRequestException(
+          'Dropdown and multi select items require a non-empty options array of unique { label, value } entries.',
+        );
+      }
+
+      const existingConfig = this.readChecklistConfig(optionsJson);
+
+      if (existingConfig) {
+        return {
+          ...existingConfig,
+          options: normalizedOptions,
+        } as unknown as Prisma.InputJsonObject;
+      }
+
+      return normalizedOptions as unknown as Prisma.InputJsonArray;
+    }
+
+    return optionsJson as Prisma.InputJsonValue;
+  }
+
+  private normalizeIncomingItemKey(
+    requestedKey: string | undefined,
+    fallbackKey: string | undefined,
+    label: string,
+    usedKeys: Set<string>,
+  ) {
+    const keySource = requestedKey ?? fallbackKey;
+    const baseKey = keySource
+      ? this.normalizeItemKey(keySource)
+      : this.buildItemKeyBase(label);
+
+    if (usedKeys.has(baseKey)) {
+      throw new BadRequestException(`Checklist item key "${baseKey}" is duplicated.`);
+    }
+
+    usedKeys.add(baseKey);
+
+    return baseKey;
+  }
+
+  private normalizeItemKey(key: string) {
+    const normalizedKey = key
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_')
+      .replace(/^[_-]+|[_-]+$/g, '')
+      .slice(0, 100);
+
+    if (!normalizedKey) {
+      throw new BadRequestException('Checklist item key cannot be empty.');
+    }
+
+    if (!/^[a-z0-9_][a-z0-9_-]*$/.test(normalizedKey)) {
       throw new BadRequestException(
-        'Dropdown items require a non-empty options array of unique { label, value } entries.',
+        'Checklist item key must start with a letter, number, or underscore and use only letters, numbers, underscores, or hyphens.',
       );
     }
 
-    return normalizedOptions;
+    return normalizedKey;
   }
 
-  private buildUniqueItemKey(label: string, usedKeys: Set<string>) {
-    const baseKey =
+  private buildItemKeyBase(label: string) {
+    return (
       label
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '')
-        .slice(0, 80) || 'checklist_item';
+        .slice(0, 80) || 'checklist_item'
+    );
+  }
+
+  private normalizeShowIfConfig(
+    requestedShowIf: ChecklistTemplateItemInputDto['showIf'] | undefined,
+    optionsJson: unknown,
+  ): ChecklistShowIfConfig | undefined {
+    const rawShowIf =
+      requestedShowIf === undefined
+        ? this.readChecklistConfig(optionsJson)?.showIf
+        : requestedShowIf;
+
+    if (!rawShowIf || typeof rawShowIf !== 'object' || Array.isArray(rawShowIf)) {
+      return undefined;
+    }
+
+    const dependsOn =
+      'dependsOn' in rawShowIf && typeof rawShowIf.dependsOn === 'string'
+        ? rawShowIf.dependsOn.trim()
+        : '';
+    const operator =
+      'operator' in rawShowIf && typeof rawShowIf.operator === 'string'
+        ? rawShowIf.operator
+        : '';
+
+    if (!dependsOn || !this.isShowIfOperator(operator)) {
+      return undefined;
+    }
+
+    const rawValue = 'value' in rawShowIf ? rawShowIf.value : undefined;
+    const value = typeof rawValue === 'string' ? rawValue.trim() : null;
+
+    if (operator === 'is_empty' || operator === 'is_not_empty') {
+      return {
+        dependsOn,
+        operator,
+        value: null,
+      };
+    }
+
+    return {
+      dependsOn,
+      operator,
+      value,
+    };
+  }
+
+  private normalizeImageConfig(
+    requestedConfig: ChecklistTemplateItemInputDto['imageConfig'] | undefined,
+    optionsJson: unknown,
+  ): ChecklistImageConfig {
+    const rawConfig =
+      requestedConfig === undefined
+        ? this.readChecklistConfig(optionsJson)?.image
+        : requestedConfig;
+
+    return {
+      requiredPhoto: this.readBoolean(rawConfig, 'requiredPhoto'),
+      allowMultiplePhotos: this.readBoolean(rawConfig, 'allowMultiplePhotos'),
+      cameraOnly: this.readBoolean(rawConfig, 'cameraOnly'),
+      galleryAllowed: this.readBoolean(rawConfig, 'galleryAllowed'),
+      timestampOverlayRequired: this.readBoolean(rawConfig, 'timestampOverlayRequired'),
+    };
+  }
+
+  private normalizeMeasurementConfig(
+    requestedConfig: ChecklistTemplateItemInputDto['measurementConfig'] | undefined,
+    optionsJson: unknown,
+  ): ChecklistMeasurementConfig {
+    const rawConfig =
+      requestedConfig === undefined
+        ? this.readChecklistConfig(optionsJson)?.measurement
+        : requestedConfig;
+    const unit =
+      rawConfig &&
+      typeof rawConfig === 'object' &&
+      !Array.isArray(rawConfig) &&
+      'unit' in rawConfig &&
+      typeof rawConfig.unit === 'string'
+        ? rawConfig.unit.trim()
+        : '';
+    const source =
+      rawConfig &&
+      typeof rawConfig === 'object' &&
+      !Array.isArray(rawConfig) &&
+      'source' in rawConfig &&
+      rawConfig.source === 'photo_ocr_future'
+        ? 'photo_ocr_future'
+        : 'manual';
+
+    return {
+      unit: unit || null,
+      source,
+      requiresImage: this.readBoolean(rawConfig, 'requiresImage'),
+    };
+  }
+
+  private readChecklistConfig(optionsJson: unknown): Partial<ChecklistItemV2Config> | null {
+    if (!optionsJson || typeof optionsJson !== 'object' || Array.isArray(optionsJson)) {
+      return null;
+    }
+
+    const version = 'version' in optionsJson ? optionsJson.version : undefined;
+
+    if (version !== CHECKLIST_ITEM_CONFIG_VERSION) {
+      return null;
+    }
+
+    return optionsJson as Partial<ChecklistItemV2Config>;
+  }
+
+  private isShowIfOperator(value: string): value is ChecklistShowIfConfig['operator'] {
+    return [
+      'equals',
+      'not_equals',
+      'contains',
+      'greater_than',
+      'less_than',
+      'is_empty',
+      'is_not_empty',
+    ].includes(value);
+  }
+
+  private readBoolean(source: unknown, key: string) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return false;
+    }
+
+    return (source as Record<string, unknown>)[key] === true;
+  }
+
+  private buildUniqueItemKey(label: string, usedKeys: Set<string>) {
+    const baseKey = this.buildItemKeyBase(label);
     let key = baseKey;
     let suffix = 2;
 
@@ -1037,23 +1353,31 @@ export class ChecklistTemplatesService {
       itemCount: items.filter((item) => item.isActive).length,
       inspectionCount: template._count.inspections,
       resolutionSource: options.resolutionSource,
-      items: items.map((item) => ({
-        id: item.id,
-        templateId: item.templateId,
-        key: item.key,
-        label: item.label,
-        fieldType: this.serializeFieldType(item.inputType),
-        inputType: item.inputType,
-        options: this.serializeOptions(item.inputType, item.optionsJson),
-        optionsJson: item.optionsJson,
-        sortOrder: item.sortOrder,
-        isRequired: item.isRequired,
-        isActive: item.isActive,
-        isDefectTrigger: item.isDefectTrigger,
-        severity: item.severity,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-      })),
+      items: items.map((item) => {
+        const config = this.readChecklistConfig(item.optionsJson);
+
+        return {
+          id: item.id,
+          templateId: item.templateId,
+          key: item.key,
+          label: item.label,
+          fieldType: this.serializeFieldType(item.inputType),
+          inputType: item.inputType,
+          options: this.serializeOptions(item.inputType, item.optionsJson),
+          optionsJson: item.optionsJson,
+          config,
+          showIf: config?.showIf ?? null,
+          imageConfig: config?.image ?? null,
+          measurementConfig: config?.measurement ?? null,
+          sortOrder: item.sortOrder,
+          isRequired: item.isRequired,
+          isActive: item.isActive,
+          isDefectTrigger: item.isDefectTrigger,
+          severity: item.severity,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        };
+      }),
     };
   }
 
@@ -1070,7 +1394,10 @@ export class ChecklistTemplatesService {
   }
 
   private serializeOptions(inputType: InspectionItemInputType, optionsJson: Prisma.JsonValue | null) {
-    if (inputType !== InspectionItemInputType.SELECT) {
+    if (
+      inputType !== InspectionItemInputType.SELECT &&
+      inputType !== InspectionItemInputType.MULTI_SELECT
+    ) {
       return [];
     }
 

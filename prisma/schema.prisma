@@ -52,6 +52,10 @@ enum InspectionItemInputType {
   DATETIME
   JSON
   SELECT
+  MULTI_SELECT
+  IMAGE
+  GPS
+  READING
 }
 
 enum InspectionCompletionStatus {

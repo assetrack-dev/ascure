@@ -1129,6 +1129,77 @@ export class InspectionsService {
         };
       }
 
+      case InspectionItemInputType.MULTI_SELECT: {
+        const selectedValues = this.normalizeMultiSelectValue(templateItem, input);
+
+        return {
+          ...baseValueData,
+          valueJson:
+            selectedValues === null
+              ? Prisma.DbNull
+              : (selectedValues as Prisma.InputJsonArray),
+        };
+      }
+
+      case InspectionItemInputType.IMAGE:
+        return {
+          ...baseValueData,
+          valueJson:
+            input.valueJson === undefined || input.valueJson === null
+              ? Prisma.DbNull
+              : (input.valueJson as Prisma.InputJsonValue),
+        };
+
+      case InspectionItemInputType.GPS:
+        if (input.valueJson !== undefined) {
+          return {
+            ...baseValueData,
+            valueJson:
+              input.valueJson === null
+                ? Prisma.DbNull
+                : (input.valueJson as Prisma.InputJsonValue),
+          };
+        }
+
+        if (input.valueText === undefined) {
+          throw new BadRequestException(`valueText or valueJson is required for template item ${input.templateItemId}.`);
+        }
+
+        return {
+          ...baseValueData,
+          valueText: input.valueText === null ? null : input.valueText.trim() || null,
+          valueJson: Prisma.DbNull,
+        };
+
+      case InspectionItemInputType.READING:
+        if (input.valueNumber !== undefined) {
+          return {
+            ...baseValueData,
+            valueNumber: input.valueNumber,
+            valueJson: Prisma.DbNull,
+          };
+        }
+
+        if (input.valueText !== undefined) {
+          return {
+            ...baseValueData,
+            valueText: input.valueText === null ? null : input.valueText.trim() || null,
+            valueJson: Prisma.DbNull,
+          };
+        }
+
+        if (input.valueJson !== undefined) {
+          return {
+            ...baseValueData,
+            valueJson:
+              input.valueJson === null
+                ? Prisma.DbNull
+                : (input.valueJson as Prisma.InputJsonValue),
+          };
+        }
+
+        throw new BadRequestException(`valueNumber or valueText is required for template item ${input.templateItemId}.`);
+
       case InspectionItemInputType.JSON:
         if (input.valueJson === undefined) {
           throw new BadRequestException(`valueJson is required for template item ${input.templateItemId}.`);
@@ -1145,6 +1216,53 @@ export class InspectionsService {
       default:
         throw new ForbiddenException(`Unsupported input type ${templateItem.inputType}.`);
     }
+  }
+
+  private normalizeMultiSelectValue(
+    templateItem: {
+      id: string;
+      optionsJson: Prisma.JsonValue | null;
+    },
+    input: SaveInspectionResultItemDto,
+  ) {
+    const rawValues = input.valueJson ?? input.valueText;
+
+    if (rawValues === undefined || rawValues === null || rawValues === '') {
+      return null;
+    }
+
+    const selectedValues = Array.isArray(rawValues)
+      ? rawValues
+      : String(rawValues)
+          .split(',')
+          .map((value) => value.trim());
+    const normalizedValues = selectedValues.filter(
+      (value): value is string => typeof value === 'string' && value.trim() !== '',
+    );
+
+    if (normalizedValues.length === 0) {
+      return null;
+    }
+
+    const allowedOptions = normalizeTemplateSelectOptions(templateItem.optionsJson);
+
+    if (!allowedOptions) {
+      throw new BadRequestException(
+        `Template item ${templateItem.id} has invalid MULTI_SELECT options configuration.`,
+      );
+    }
+
+    const allowedValues = new Set(allowedOptions.map((option) => option.value));
+    const uniqueValues = Array.from(new Set(normalizedValues));
+    const invalidValue = uniqueValues.find((value) => !allowedValues.has(value));
+
+    if (invalidValue) {
+      throw new BadRequestException(
+        `valueJson contains an option that is not configured for template item ${templateItem.id}: ${invalidValue}.`,
+      );
+    }
+
+    return uniqueValues;
   }
 
   private hasStoredValue(

@@ -129,8 +129,41 @@ export function createInitialDraftValues(form: InspectionFormResponse): DraftVal
         continue;
       }
 
+      if (inputType === 'READING') {
+        values[item.id] =
+          item.value?.valueNumber === null || item.value?.valueNumber === undefined
+            ? item.value?.valueText ?? ''
+            : String(item.value.valueNumber);
+        continue;
+      }
+
       if (inputType === 'SELECT') {
         values[item.id] = item.value?.valueText ?? '';
+        continue;
+      }
+
+      if (inputType === 'MULTI_SELECT') {
+        values[item.id] = normalizeStoredMultiSelectValue(item.value?.valueJson);
+        continue;
+      }
+
+      if (inputType === 'DATE') {
+        values[item.id] = formatDateInputValue(item.value?.valueDate);
+        continue;
+      }
+
+      if (inputType === 'DATETIME') {
+        values[item.id] = formatDateTimeInputValue(item.value?.valueDateTime);
+        continue;
+      }
+
+      if (inputType === 'GPS') {
+        values[item.id] = item.value?.valueText ?? formatJsonValue(item.value?.valueJson);
+        continue;
+      }
+
+      if (inputType === 'IMAGE') {
+        values[item.id] = '';
         continue;
       }
 
@@ -146,13 +179,19 @@ export function getDraftValue(itemId: string, draftValues: DraftValues) {
 }
 
 export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
-  if (!Array.isArray(optionsJson)) {
+  const rawOptions = Array.isArray(optionsJson)
+    ? optionsJson
+    : optionsJson && typeof optionsJson === 'object' && !Array.isArray(optionsJson) && 'options' in optionsJson && Array.isArray(optionsJson.options)
+      ? optionsJson.options
+      : null;
+
+  if (!rawOptions) {
     return [];
   }
 
   const options: SelectOption[] = [];
 
-  for (const option of optionsJson) {
+  for (const option of rawOptions) {
     if (typeof option === 'string') {
       const value = option.trim();
 
@@ -169,9 +208,10 @@ export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
 
     const label = 'label' in option && typeof option.label === 'string' ? option.label.trim() : '';
     const value = 'value' in option && typeof option.value === 'string' ? option.value.trim() : '';
+    const prefix = 'prefix' in option && typeof option.prefix === 'string' ? option.prefix.trim() : '';
 
     if (label && value) {
-      options.push({ label, value });
+      options.push(prefix ? { label, value, prefix } : { label, value });
     }
   }
 
@@ -264,26 +304,236 @@ function normalizeLabelKey(value: string) {
   return value.trim().toLowerCase();
 }
 
-export function validateInspectionDraft(form: InspectionFormResponse, draftValues: DraftValues) {
-  const missingRequiredItems: string[] = [];
-  const invalidNumbers: string[] = [];
-  const unsupportedRequiredItems: string[] = [];
+function normalizeStoredMultiSelectValue(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+}
+
+function formatDateInputValue(value: unknown) {
+  if (!value) {
+    return '';
+  }
+
+  const text = String(value);
+
+  return text.includes('T') ? text.slice(0, 10) : text;
+}
+
+function formatDateTimeInputValue(value: unknown) {
+  if (!value) {
+    return '';
+  }
+
+  const text = String(value);
+
+  return text.endsWith('Z') ? text.slice(0, 16) : text;
+}
+
+function formatJsonValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  return JSON.stringify(value);
+}
+
+export function getVisibleInspectionSections(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+): InspectionTemplateSection[] {
+  return form.template.sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => isInspectionItemVisible(form, draftValues, item)),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
+function isInspectionItemVisible(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+  item: InspectionTemplateItem,
+) {
+  const showIf = readShowIfConfig(item.optionsJson);
+
+  if (!showIf) {
+    return true;
+  }
+
+  const dependency = findDependencyItem(form, showIf.dependsOn);
+
+  if (!dependency) {
+    return true;
+  }
+
+  const rawValue = getDraftValue(dependency.id, draftValues);
+
+  return evaluateShowIf(rawValue, showIf);
+}
+
+function findDependencyItem(form: InspectionFormResponse, dependsOn: string) {
+  const normalizedDependsOn = normalizeLabelKey(dependsOn);
 
   for (const section of form.template.sections) {
     for (const item of section.items) {
+      if (
+        normalizeLabelKey(item.key) === normalizedDependsOn ||
+        normalizeLabelKey(item.label) === normalizedDependsOn
+      ) {
+        return item;
+      }
+    }
+  }
+
+  return null;
+}
+
+type ShowIfOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'contains'
+  | 'greater_than'
+  | 'less_than'
+  | 'is_empty'
+  | 'is_not_empty';
+
+type ShowIfConfig = {
+  dependsOn: string;
+  operator: ShowIfOperator;
+  value: string;
+};
+
+function readShowIfConfig(optionsJson: unknown): ShowIfConfig | null {
+  if (!optionsJson || typeof optionsJson !== 'object' || Array.isArray(optionsJson)) {
+    return null;
+  }
+
+  const config = optionsJson as {
+    version?: unknown;
+    showIf?: {
+      dependsOn?: unknown;
+      operator?: unknown;
+      value?: unknown;
+    };
+  };
+
+  if (config.version !== 2 || !config.showIf) {
+    return null;
+  }
+
+  const dependsOn = typeof config.showIf.dependsOn === 'string' ? config.showIf.dependsOn.trim() : '';
+  const operator = typeof config.showIf.operator === 'string' ? config.showIf.operator : '';
+
+  if (!dependsOn || !isShowIfOperator(operator)) {
+    return null;
+  }
+
+  return {
+    dependsOn,
+    operator,
+    value: typeof config.showIf.value === 'string' ? config.showIf.value.trim() : '',
+  };
+}
+
+function isShowIfOperator(value: string): value is ShowIfOperator {
+  return [
+    'equals',
+    'not_equals',
+    'contains',
+    'greater_than',
+    'less_than',
+    'is_empty',
+    'is_not_empty',
+  ].includes(value);
+}
+
+function evaluateShowIf(
+  rawValue: DraftValues[string],
+  showIf: NonNullable<ReturnType<typeof readShowIfConfig>>,
+) {
+  const isEmpty = isDraftValueEmpty(rawValue);
+  const actualText = normalizeComparableText(rawValue);
+  const expectedText = showIf.value.trim().toLowerCase();
+
+  if (showIf.operator === 'is_empty') {
+    return isEmpty;
+  }
+
+  if (showIf.operator === 'is_not_empty') {
+    return !isEmpty;
+  }
+
+  if (showIf.operator === 'equals') {
+    return comparableTextCandidates(rawValue).includes(expectedText);
+  }
+
+  if (showIf.operator === 'not_equals') {
+    return !comparableTextCandidates(rawValue).includes(expectedText);
+  }
+
+  if (showIf.operator === 'contains') {
+    return actualText.includes(expectedText);
+  }
+
+  const actualNumber = Number(actualText);
+  const expectedNumber = Number(expectedText);
+
+  if (!Number.isFinite(actualNumber) || !Number.isFinite(expectedNumber)) {
+    return false;
+  }
+
+  return showIf.operator === 'greater_than'
+    ? actualNumber > expectedNumber
+    : actualNumber < expectedNumber;
+}
+
+function isDraftValueEmpty(value: DraftValues[string]) {
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+
+  if (typeof value === 'boolean') {
+    return false;
+  }
+
+  return value === null || value.trim() === '';
+}
+
+function normalizeComparableText(value: DraftValues[string]) {
+  if (Array.isArray(value)) {
+    return value.join(',').toLowerCase();
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'yes' : 'no';
+  }
+
+  return (value ?? '').trim().toLowerCase();
+}
+
+function comparableTextCandidates(value: DraftValues[string]) {
+  if (typeof value === 'boolean') {
+    return value ? ['yes', 'true', 'pass'] : ['no', 'false', 'fail'];
+  }
+
+  return [normalizeComparableText(value)];
+}
+
+export function validateInspectionDraft(form: InspectionFormResponse, draftValues: DraftValues) {
+  const missingRequiredItems: string[] = [];
+  const invalidNumbers: string[] = [];
+
+  for (const section of getVisibleInspectionSections(form, draftValues)) {
+    for (const item of section.items) {
       const inputType = normalizeInspectionInputType(item.inputType);
       const rawValue = getDraftValue(item.id, draftValues);
-
-      if (
-        item.isRequired &&
-        inputType !== 'TEXT' &&
-        inputType !== 'BOOLEAN' &&
-        inputType !== 'NUMBER' &&
-        inputType !== 'SELECT'
-      ) {
-        unsupportedRequiredItems.push(item.label);
-        continue;
-      }
 
       if (item.isRequired) {
         if (inputType === 'BOOLEAN') {
@@ -293,7 +543,7 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
           }
         }
 
-        if (inputType === 'NUMBER') {
+        if (inputType === 'NUMBER' || inputType === 'READING') {
           const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
           if (!normalized) {
@@ -302,17 +552,28 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
           }
         }
 
-        if (inputType === 'TEXT' || inputType === 'SELECT') {
+        if (
+          inputType === 'TEXT' ||
+          inputType === 'SELECT' ||
+          inputType === 'DATE' ||
+          inputType === 'DATETIME' ||
+          inputType === 'GPS'
+        ) {
           const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
           if (!normalized) {
             missingRequiredItems.push(item.label);
             continue;
           }
+        }
+
+        if (inputType === 'MULTI_SELECT' && (!Array.isArray(rawValue) || rawValue.length === 0)) {
+          missingRequiredItems.push(item.label);
+          continue;
         }
       }
 
-      if (inputType !== 'NUMBER') {
+      if (inputType !== 'NUMBER' && inputType !== 'READING') {
         continue;
       }
 
@@ -326,10 +587,6 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
         invalidNumbers.push(item.label);
       }
     }
-  }
-
-  if (unsupportedRequiredItems.length > 0) {
-    return `This inspection contains unsupported required items: ${unsupportedRequiredItems.join(', ')}`;
   }
 
   if (missingRequiredItems.length > 0) {
@@ -349,9 +606,11 @@ export function validateInspectionDraftForSave(
 ) {
   const invalidNumbers: string[] = [];
 
-  for (const section of form.template.sections) {
+  for (const section of getVisibleInspectionSections(form, draftValues)) {
     for (const item of section.items) {
-      if (normalizeInspectionInputType(item.inputType) !== 'NUMBER') {
+      const inputType = normalizeInspectionInputType(item.inputType);
+
+      if (inputType !== 'NUMBER' && inputType !== 'READING') {
         continue;
       }
 
@@ -375,7 +634,7 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
   const supportedResults: SaveInspectionResultItemInput[] = [];
   const unsupportedLabels: string[] = [];
 
-  for (const section of form.template.sections) {
+  for (const section of getVisibleInspectionSections(form, draftValues)) {
     for (const item of section.items) {
       const inputType = normalizeInspectionInputType(item.inputType);
       const rawValue = getDraftValue(item.id, draftValues);
@@ -405,6 +664,15 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
+      if (inputType === 'READING') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+        supportedResults.push({
+          templateItemId: item.id,
+          valueNumber: normalized === '' ? null : Number(normalized),
+        });
+        continue;
+      }
+
       if (inputType === 'BOOLEAN') {
         supportedResults.push({
           templateItemId: item.id,
@@ -422,6 +690,49 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
+      if (inputType === 'MULTI_SELECT') {
+        supportedResults.push({
+          templateItemId: item.id,
+          valueJson: Array.isArray(rawValue) && rawValue.length > 0 ? rawValue : null,
+        });
+        continue;
+      }
+
+      if (inputType === 'DATE') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+        supportedResults.push({
+          templateItemId: item.id,
+          valueDate: normalized === '' ? null : normalized,
+        });
+        continue;
+      }
+
+      if (inputType === 'DATETIME') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+        supportedResults.push({
+          templateItemId: item.id,
+          valueDateTime: normalized === '' ? null : normalized,
+        });
+        continue;
+      }
+
+      if (inputType === 'GPS') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+        supportedResults.push({
+          templateItemId: item.id,
+          valueText: normalized === '' ? null : normalized,
+        });
+        continue;
+      }
+
+      if (inputType === 'IMAGE') {
+        supportedResults.push({
+          templateItemId: item.id,
+          valueJson: null,
+        });
+        continue;
+      }
+
       unsupportedLabels.push(item.label);
     }
   }
@@ -435,8 +746,11 @@ export function buildChecklistItemsPayloadFromDraft(
   options: { includeEmpty?: boolean } = {},
 ) {
   const items: SaveInspectionItemResultInput[] = [];
+  const sections = options.includeEmpty
+    ? form.template.sections
+    : getVisibleInspectionSections(form, draftValues);
 
-  for (const section of form.template.sections) {
+  for (const section of sections) {
     for (const item of section.items) {
       if (!normalizeInspectionInputType(item.inputType)) {
         continue;
@@ -466,7 +780,7 @@ export function hasAnyInspectionDraftValue(
   form: InspectionFormResponse,
   draftValues: DraftValues,
 ) {
-  for (const section of form.template.sections) {
+  for (const section of getVisibleInspectionSections(form, draftValues)) {
     for (const item of section.items) {
       if (hasInspectionDraftValue(item, getDraftValue(item.id, draftValues))) {
         return true;
@@ -503,6 +817,20 @@ export function getInspectionDraftDisplayValue(
     return getSelectOptionLabel(item, rawValue) ?? rawValue.trim();
   }
 
+  if (inputType === 'MULTI_SELECT') {
+    if (!Array.isArray(rawValue) || rawValue.length === 0) {
+      return null;
+    }
+
+    return rawValue
+      .map((value) => getSelectOptionLabel(item, value) ?? value)
+      .join(', ');
+  }
+
+  if (inputType === 'IMAGE') {
+    return null;
+  }
+
   if (typeof rawValue !== 'string') {
     return null;
   }
@@ -525,8 +853,20 @@ export function hasInspectionDraftValue(
     return typeof rawValue === 'boolean';
   }
 
-  if (inputType === 'TEXT' || inputType === 'NUMBER' || inputType === 'SELECT') {
+  if (
+    inputType === 'TEXT' ||
+    inputType === 'NUMBER' ||
+    inputType === 'SELECT' ||
+    inputType === 'DATE' ||
+    inputType === 'DATETIME' ||
+    inputType === 'GPS' ||
+    inputType === 'READING'
+  ) {
     return typeof rawValue === 'string' && rawValue.trim() !== '';
+  }
+
+  if (inputType === 'MULTI_SELECT') {
+    return Array.isArray(rawValue) && rawValue.length > 0;
   }
 
   return false;
@@ -543,11 +883,25 @@ export function normalizeInspectionInputType(inputType: string) {
     return 'SELECT';
   }
 
+  if (normalizedInputType === 'DATE_TIME') {
+    return 'DATETIME';
+  }
+
+  if (normalizedInputType === 'READING_MEASUREMENT' || normalizedInputType === 'MEASUREMENT') {
+    return 'READING';
+  }
+
   if (
     normalizedInputType === 'TEXT' ||
     normalizedInputType === 'NUMBER' ||
     normalizedInputType === 'BOOLEAN' ||
-    normalizedInputType === 'SELECT'
+    normalizedInputType === 'SELECT' ||
+    normalizedInputType === 'MULTI_SELECT' ||
+    normalizedInputType === 'IMAGE' ||
+    normalizedInputType === 'DATE' ||
+    normalizedInputType === 'DATETIME' ||
+    normalizedInputType === 'GPS' ||
+    normalizedInputType === 'READING'
   ) {
     return normalizedInputType;
   }
@@ -647,6 +1001,20 @@ function getInspectionItemResultValue(
     }
 
     return inferSelectInspectionResult(item, rawValue);
+  }
+
+  if (inputType === 'MULTI_SELECT') {
+    if (!Array.isArray(rawValue) || rawValue.length === 0) {
+      return 'NA';
+    }
+
+    return rawValue.some((value) => inferSelectInspectionResult(item, value) === 'FAIL')
+      ? 'FAIL'
+      : 'PASS';
+  }
+
+  if (inputType === 'IMAGE') {
+    return 'NA';
   }
 
   return hasInspectionDraftValue(item, rawValue) ? 'PASS' : 'NA';

@@ -1,6 +1,16 @@
 export type ChecklistTemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
-export type ChecklistFieldType = "YES_NO" | "DROPDOWN" | "TEXT" | "NUMBER" | "DATE" | "DATETIME";
+export type ChecklistFieldType =
+  | "TEXT"
+  | "NUMBER"
+  | "YES_NO"
+  | "DROPDOWN"
+  | "MULTI_SELECT"
+  | "IMAGE"
+  | "DATE"
+  | "DATETIME"
+  | "GPS"
+  | "READING";
 
 export type DefectSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -31,6 +41,45 @@ export interface TemplateMainhead {
 export interface ChecklistTemplateOption {
   label: string;
   value: string;
+  prefix?: string;
+}
+
+export type ChecklistShowIfOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "greater_than"
+  | "less_than"
+  | "is_empty"
+  | "is_not_empty";
+
+export interface ChecklistShowIfConfig {
+  dependsOn: string;
+  operator: ChecklistShowIfOperator;
+  value?: string | null;
+}
+
+export interface ChecklistImageConfig {
+  requiredPhoto: boolean;
+  allowMultiplePhotos: boolean;
+  cameraOnly: boolean;
+  galleryAllowed: boolean;
+  timestampOverlayRequired: boolean;
+}
+
+export interface ChecklistMeasurementConfig {
+  unit: string | null;
+  source: "manual" | "photo_ocr_future";
+  requiresImage: boolean;
+}
+
+export interface ChecklistItemConfig {
+  version: 2;
+  fieldType: ChecklistFieldType;
+  options?: ChecklistTemplateOption[];
+  showIf?: ChecklistShowIfConfig;
+  image?: ChecklistImageConfig;
+  measurement?: ChecklistMeasurementConfig;
 }
 
 export interface ChecklistTemplateItem {
@@ -42,6 +91,10 @@ export interface ChecklistTemplateItem {
   inputType?: string;
   options: ChecklistTemplateOption[];
   optionsJson?: unknown;
+  config?: ChecklistItemConfig | null;
+  showIf?: ChecklistShowIfConfig | null;
+  imageConfig?: ChecklistImageConfig | null;
+  measurementConfig?: ChecklistMeasurementConfig | null;
   sortOrder: number;
   isRequired: boolean;
   isActive: boolean;
@@ -76,6 +129,7 @@ export interface ChecklistTemplate {
 
 export interface ChecklistTemplateItemPayload {
   id?: string;
+  key?: string;
   label: string;
   fieldType: ChecklistFieldType;
   sortOrder: number;
@@ -84,6 +138,10 @@ export interface ChecklistTemplateItemPayload {
   isDefectTrigger: boolean;
   severity?: DefectSeverity;
   options?: ChecklistTemplateOption[];
+  optionsJson?: unknown;
+  showIf?: ChecklistShowIfConfig | null;
+  imageConfig?: ChecklistImageConfig | null;
+  measurementConfig?: ChecklistMeasurementConfig | null;
 }
 
 export interface CreateChecklistTemplatePayload {

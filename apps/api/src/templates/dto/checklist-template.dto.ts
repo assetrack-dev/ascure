@@ -21,8 +21,14 @@ export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'YES_NO',
   'SELECT',
   'DROPDOWN',
+  'MULTI_SELECT',
+  'IMAGE',
   'DATE',
   'DATETIME',
+  'DATE_TIME',
+  'GPS',
+  'READING',
+  'READING_MEASUREMENT',
 ] as const;
 
 export type ChecklistTemplateFieldType = (typeof CHECKLIST_TEMPLATE_FIELD_TYPES)[number];
@@ -42,12 +48,88 @@ export class ChecklistTemplateOptionInputDto {
   @IsString()
   @MaxLength(255)
   value!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  prefix?: string;
+}
+
+export const CHECKLIST_TEMPLATE_SHOW_IF_OPERATORS = [
+  'equals',
+  'not_equals',
+  'contains',
+  'greater_than',
+  'less_than',
+  'is_empty',
+  'is_not_empty',
+] as const;
+
+export const CHECKLIST_TEMPLATE_READING_SOURCES = [
+  'manual',
+  'photo_ocr_future',
+] as const;
+
+export class ChecklistTemplateShowIfInputDto {
+  @IsString()
+  @MaxLength(255)
+  dependsOn!: string;
+
+  @IsIn(CHECKLIST_TEMPLATE_SHOW_IF_OPERATORS)
+  operator!: (typeof CHECKLIST_TEMPLATE_SHOW_IF_OPERATORS)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  value?: string | null;
+}
+
+export class ChecklistTemplateImageConfigInputDto {
+  @IsOptional()
+  @IsBoolean()
+  requiredPhoto?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowMultiplePhotos?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cameraOnly?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  galleryAllowed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  timestampOverlayRequired?: boolean;
+}
+
+export class ChecklistTemplateMeasurementConfigInputDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  unit?: string | null;
+
+  @IsOptional()
+  @IsIn(CHECKLIST_TEMPLATE_READING_SOURCES)
+  source?: (typeof CHECKLIST_TEMPLATE_READING_SOURCES)[number];
+
+  @IsOptional()
+  @IsBoolean()
+  requiresImage?: boolean;
 }
 
 export class ChecklistTemplateItemInputDto {
   @IsOptional()
   @IsUUID()
   id?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  key?: string;
 
   @IsString()
   @MaxLength(255)
@@ -87,6 +169,21 @@ export class ChecklistTemplateItemInputDto {
   @ValidateNested({ each: true })
   @Type(() => ChecklistTemplateOptionInputDto)
   options?: ChecklistTemplateOptionInputDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChecklistTemplateShowIfInputDto)
+  showIf?: ChecklistTemplateShowIfInputDto | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChecklistTemplateImageConfigInputDto)
+  imageConfig?: ChecklistTemplateImageConfigInputDto | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChecklistTemplateMeasurementConfigInputDto)
+  measurementConfig?: ChecklistTemplateMeasurementConfigInputDto | null;
 
   @IsOptional()
   optionsJson?: unknown;

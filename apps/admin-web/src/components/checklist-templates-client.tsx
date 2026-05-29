@@ -52,6 +52,10 @@ import type { EnterpriseOptionRecord } from "@/types/enterprise";
 import type {
   AssetType,
   ChecklistFieldType,
+  ChecklistImageConfig,
+  ChecklistMeasurementConfig,
+  ChecklistShowIfConfig,
+  ChecklistShowIfOperator,
   ChecklistTemplate,
   ChecklistTemplateItem,
   ChecklistTemplateItemPayload,
@@ -66,6 +70,8 @@ type ModalMode = "create" | "edit";
 interface TemplateFormItem {
   localId: string;
   id?: string;
+  key: string;
+  keyTouched: boolean;
   label: string;
   fieldType: ChecklistFieldType;
   isRequired: boolean;
@@ -73,6 +79,9 @@ interface TemplateFormItem {
   isDefectTrigger: boolean;
   severity: DefectSeverity;
   optionsText: string;
+  imageConfig: ChecklistImageConfig;
+  measurementConfig: ChecklistMeasurementConfig;
+  showIf: ChecklistShowIfConfig | null;
 }
 
 interface TemplateFormState {
@@ -83,12 +92,25 @@ interface TemplateFormState {
 }
 
 const FIELD_TYPES: Array<{ label: string; value: ChecklistFieldType }> = [
-  { label: "Yes / No", value: "YES_NO" },
-  { label: "Dropdown", value: "DROPDOWN" },
   { label: "Text", value: "TEXT" },
   { label: "Number", value: "NUMBER" },
+  { label: "Yes / No", value: "YES_NO" },
+  { label: "Dropdown", value: "DROPDOWN" },
+  { label: "Multi Select", value: "MULTI_SELECT" },
+  { label: "Image", value: "IMAGE" },
   { label: "Date", value: "DATE" },
-  { label: "Date & Time", value: "DATETIME" },
+  { label: "Date Time", value: "DATETIME" },
+  { label: "GPS", value: "GPS" },
+  { label: "Reading / Measurement", value: "READING" },
+];
+const SHOW_IF_OPERATORS: Array<{ label: string; value: ChecklistShowIfOperator }> = [
+  { label: "Equals", value: "equals" },
+  { label: "Not equals", value: "not_equals" },
+  { label: "Contains", value: "contains" },
+  { label: "Greater than", value: "greater_than" },
+  { label: "Less than", value: "less_than" },
+  { label: "Is empty", value: "is_empty" },
+  { label: "Is not empty", value: "is_not_empty" },
 ];
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
@@ -147,9 +169,29 @@ function createLocalId() {
   return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function defaultImageConfig(): ChecklistImageConfig {
+  return {
+    requiredPhoto: false,
+    allowMultiplePhotos: false,
+    cameraOnly: true,
+    galleryAllowed: false,
+    timestampOverlayRequired: false,
+  };
+}
+
+function defaultMeasurementConfig(): ChecklistMeasurementConfig {
+  return {
+    unit: "m",
+    source: "manual",
+    requiresImage: false,
+  };
+}
+
 function createBlankItem(): TemplateFormItem {
   return {
     localId: createLocalId(),
+    key: "",
+    keyTouched: false,
     label: "",
     fieldType: "YES_NO",
     isRequired: true,
@@ -157,6 +199,9 @@ function createBlankItem(): TemplateFormItem {
     isDefectTrigger: true,
     severity: "MEDIUM",
     optionsText: "",
+    imageConfig: defaultImageConfig(),
+    measurementConfig: defaultMeasurementConfig(),
+    showIf: null,
   };
 }
 
@@ -177,13 +222,25 @@ function normalizeFieldType(value: string | undefined): ChecklistFieldType {
     return "DROPDOWN";
   }
 
+  if (value === "DATE_TIME") {
+    return "DATETIME";
+  }
+
+  if (value === "READING_MEASUREMENT" || value === "MEASUREMENT") {
+    return "READING";
+  }
+
   if (
     value === "YES_NO" ||
     value === "DROPDOWN" ||
+    value === "MULTI_SELECT" ||
+    value === "IMAGE" ||
     value === "TEXT" ||
     value === "NUMBER" ||
     value === "DATE" ||
-    value === "DATETIME"
+    value === "DATETIME" ||
+    value === "GPS" ||
+    value === "READING"
   ) {
     return value;
   }
@@ -193,14 +250,58 @@ function normalizeFieldType(value: string | undefined): ChecklistFieldType {
 
 function optionLines(options: ChecklistTemplateOption[] | undefined) {
   return (options ?? [])
-    .map((option) => (option.label === option.value ? option.label : `${option.label} | ${option.value}`))
+    .map((option) => {
+      const baseLine = option.label === option.value ? option.label : `${option.label} | ${option.value}`;
+
+      return option.prefix ? `${baseLine} | ${option.prefix}` : baseLine;
+    })
     .join("\n");
 }
 
+function itemKeyFromLabel(label: string) {
+  return (
+    label
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || "checklist_item"
+  );
+}
+
+function normalizeEditableItemKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^[_-]+|[_-]+$/g, "")
+    .slice(0, 100);
+}
+
+function readItemConfig(item: ChecklistTemplateItem) {
+  if (item.config) {
+    return item.config;
+  }
+
+  const optionsJson = item.optionsJson;
+
+  if (!optionsJson || typeof optionsJson !== "object" || Array.isArray(optionsJson)) {
+    return null;
+  }
+
+  const maybeConfig = optionsJson as { version?: unknown };
+
+  return maybeConfig.version === 2 ? item.optionsJson as ChecklistTemplateItem["config"] : null;
+}
+
 function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem {
+  const config = readItemConfig(item);
+
   return {
     localId: item.id,
     id: item.id,
+    key: item.key ?? itemKeyFromLabel(item.label),
+    keyTouched: true,
     label: item.label,
     fieldType: normalizeFieldType(item.fieldType ?? item.inputType),
     isRequired: item.isRequired,
@@ -208,6 +309,9 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     isDefectTrigger: item.isDefectTrigger,
     severity: item.severity ?? "MEDIUM",
     optionsText: optionLines(item.options),
+    imageConfig: item.imageConfig ?? config?.image ?? defaultImageConfig(),
+    measurementConfig: item.measurementConfig ?? config?.measurement ?? defaultMeasurementConfig(),
+    showIf: item.showIf ?? config?.showIf ?? null,
   };
 }
 
@@ -360,9 +464,10 @@ function parseOptions(optionsText: string) {
       continue;
     }
 
-    const [rawLabel, rawValue] = normalizedLine.split("|");
+    const [rawLabel, rawValue, rawPrefix] = normalizedLine.split("|");
     const label = rawLabel.trim();
     const value = (rawValue ?? rawLabel).trim();
+    const prefix = rawPrefix?.trim();
 
     if (!label || !value) {
       throw new Error("Dropdown options need a label and value.");
@@ -372,7 +477,7 @@ function parseOptions(optionsText: string) {
       throw new Error(`Dropdown option value "${value}" is duplicated.`);
     }
 
-    options.push({ label, value });
+    options.push(prefix ? { label, value, prefix } : { label, value });
     seenValues.add(value);
   }
 
@@ -381,6 +486,7 @@ function parseOptions(optionsText: string) {
 
 function buildPayloadItems(items: TemplateFormItem[]) {
   const payloadItems: ChecklistTemplateItemPayload[] = [];
+  const seenKeys = new Set<string>();
 
   items.forEach((item) => {
     const itemIsActive = isFormItemActive(item);
@@ -395,14 +501,28 @@ function buildPayloadItems(items: TemplateFormItem[]) {
       throw new Error("Every checklist item needs a label.");
     }
 
-    const options = item.fieldType === "DROPDOWN" ? parseOptions(item.optionsText) : [];
+    const key = normalizeEditableItemKey(item.key || itemKeyFromLabel(label));
+    const hasSelectableOptions =
+      item.fieldType === "DROPDOWN" || item.fieldType === "MULTI_SELECT";
+    const options = hasSelectableOptions ? parseOptions(item.optionsText) : [];
 
-    if (item.fieldType === "DROPDOWN" && options.length === 0) {
-      throw new Error(`Dropdown item "${label}" needs at least one option.`);
+    if (!key) {
+      throw new Error(`Checklist item "${label}" needs an item key.`);
+    }
+
+    if (seenKeys.has(key)) {
+      throw new Error(`Checklist item key "${key}" is duplicated.`);
+    }
+
+    seenKeys.add(key);
+
+    if (hasSelectableOptions && options.length === 0) {
+      throw new Error(`${fieldTypeLabel(item.fieldType)} item "${label}" needs at least one option.`);
     }
 
     payloadItems.push({
       id: item.id,
+      key,
       label,
       fieldType: item.fieldType,
       sortOrder: payloadItems.length + 1,
@@ -411,6 +531,10 @@ function buildPayloadItems(items: TemplateFormItem[]) {
       isDefectTrigger: item.isDefectTrigger,
       severity: item.severity,
       options,
+      optionsJson: buildItemOptionsJson(item, options),
+      showIf: item.showIf,
+      imageConfig: item.fieldType === "IMAGE" ? item.imageConfig : null,
+      measurementConfig: item.fieldType === "READING" ? item.measurementConfig : null,
     });
   });
 
@@ -419,6 +543,56 @@ function buildPayloadItems(items: TemplateFormItem[]) {
   }
 
   return payloadItems;
+}
+
+function fieldTypeLabel(fieldType: ChecklistFieldType) {
+  return FIELD_TYPES.find((option) => option.value === fieldType)?.label ?? fieldType;
+}
+
+function buildItemOptionsJson(
+  item: TemplateFormItem,
+  options: ChecklistTemplateOption[],
+) {
+  const config: {
+    version: 2;
+    fieldType: ChecklistFieldType;
+    options?: ChecklistTemplateOption[];
+    showIf?: ChecklistShowIfConfig;
+    image?: ChecklistImageConfig;
+    measurement?: ChecklistMeasurementConfig;
+  } = {
+    version: 2,
+    fieldType: item.fieldType,
+  };
+
+  if (options.length > 0) {
+    config.options = options;
+  }
+
+  if (item.showIf?.dependsOn.trim()) {
+    config.showIf = {
+      dependsOn: item.showIf.dependsOn.trim(),
+      operator: item.showIf.operator,
+      value:
+        item.showIf.operator === "is_empty" || item.showIf.operator === "is_not_empty"
+          ? null
+          : item.showIf.value?.trim() ?? "",
+    };
+  }
+
+  if (item.fieldType === "IMAGE") {
+    config.image = item.imageConfig;
+  }
+
+  if (item.fieldType === "READING") {
+    config.measurement = item.measurementConfig;
+  }
+
+  if (!config.options && !config.showIf && !config.image && !config.measurement) {
+    return null;
+  }
+
+  return config;
 }
 
 function upsertTemplate(templates: ChecklistTemplate[], updatedTemplate: ChecklistTemplate) {
@@ -521,9 +695,32 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
           <input
             type="text"
             value={item.label}
-            onChange={(event) => onUpdateItem(item.localId, { label: event.target.value })}
+            onChange={(event) => {
+              const nextLabel = event.target.value;
+              onUpdateItem(item.localId, {
+                label: nextLabel,
+                ...(item.keyTouched ? {} : { key: itemKeyFromLabel(nextLabel) }),
+              });
+            }}
             className={`${inputClassName} mt-1.5`}
             maxLength={255}
+            required={isFormItemActive(item)}
+          />
+        </label>
+
+        <label className="col-span-12 block min-w-0 sm:col-span-6 md:col-span-3 xl:col-span-3">
+          <span className="text-sm font-semibold text-slate-700">Item Key</span>
+          <input
+            type="text"
+            value={item.key}
+            onChange={(event) =>
+              onUpdateItem(item.localId, {
+                key: normalizeEditableItemKey(event.target.value),
+                keyTouched: true,
+              })
+            }
+            className={`${inputClassName} mt-1.5 font-mono`}
+            maxLength={100}
             required={isFormItemActive(item)}
           />
         </label>
@@ -547,7 +744,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
           </select>
         </label>
 
-        <div className="col-span-12 grid min-w-0 grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:col-span-4 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(7.5rem,auto)]">
+        <div className="col-span-12 grid min-w-0 grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:col-span-4 xl:grid-cols-[repeat(3,minmax(8.25rem,1fr))_minmax(7.5rem,auto)]">
           <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
             <input
               type="checkbox"
@@ -555,7 +752,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
               onChange={(event) => onUpdateItem(item.localId, { isRequired: event.target.checked })}
               className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
             />
-            <span className="truncate">Required</span>
+            <span className="whitespace-nowrap">Required</span>
           </label>
 
           <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
@@ -570,7 +767,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
               }
               className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
             />
-            <span className="truncate">Defect</span>
+            <span className="whitespace-nowrap">Defect Trigger</span>
           </label>
 
           <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
@@ -580,7 +777,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
               onChange={(event) => onUpdateItem(item.localId, { isActive: event.target.checked })}
               className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
             />
-            <span className="truncate">Active</span>
+            <span className="whitespace-nowrap">Active</span>
           </label>
 
           <button
@@ -620,17 +817,188 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
         </div>
       ) : null}
 
-      {item.fieldType === "DROPDOWN" ? (
+      {item.fieldType === "DROPDOWN" || item.fieldType === "MULTI_SELECT" ? (
         <label className="mt-3 block min-w-0">
-          <span className="text-sm font-semibold text-slate-700">Dropdown Options</span>
+          <span className="text-sm font-semibold text-slate-700">
+            {item.fieldType === "MULTI_SELECT" ? "Multi Select Options" : "Dropdown Options"}
+          </span>
           <textarea
             value={item.optionsText}
             onChange={(event) => onUpdateItem(item.localId, { optionsText: event.target.value })}
             className={`${textareaClassName} mt-1.5`}
-            placeholder="One per line. Use Label | value when the stored value differs."
+            placeholder="REPOT/RETAK | REPOT_RETAK | T"
           />
         </label>
       ) : null}
+
+      {item.fieldType === "IMAGE" ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          {(
+            [
+              ["requiredPhoto", "Required photo"],
+              ["allowMultiplePhotos", "Allow multiple photos"],
+              ["cameraOnly", "Camera only"],
+              ["galleryAllowed", "Gallery allowed"],
+              ["timestampOverlayRequired", "Timestamp overlay required"],
+            ] as const
+          ).map(([key, label]) => (
+            <label
+              key={key}
+              className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700"
+            >
+              <input
+                type="checkbox"
+                checked={item.imageConfig[key]}
+                onChange={(event) =>
+                  onUpdateItem(item.localId, {
+                    imageConfig: {
+                      ...item.imageConfig,
+                      [key]: event.target.checked,
+                    },
+                  })
+                }
+                className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+              />
+              <span className="whitespace-normal leading-snug">{label}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+
+      {item.fieldType === "READING" ? (
+        <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(8rem,0.45fr)_minmax(12rem,0.65fr)_minmax(10rem,0.45fr)]">
+          <label className="block min-w-0">
+            <span className="text-sm font-semibold text-slate-700">Unit</span>
+            <input
+              type="text"
+              value={item.measurementConfig.unit ?? ""}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  measurementConfig: {
+                    ...item.measurementConfig,
+                    unit: event.target.value,
+                  },
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+              maxLength={50}
+              placeholder="m"
+            />
+          </label>
+          <label className="block min-w-0">
+            <span className="text-sm font-semibold text-slate-700">Source</span>
+            <select
+              value={item.measurementConfig.source}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  measurementConfig: {
+                    ...item.measurementConfig,
+                    source: event.target.value as ChecklistMeasurementConfig["source"],
+                  },
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+            >
+              <option value="manual">Manual</option>
+              <option value="photo_ocr_future">Photo OCR future</option>
+            </select>
+          </label>
+          <label className="mt-6 inline-flex h-10 min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 sm:mt-7">
+            <input
+              type="checkbox"
+              checked={item.measurementConfig.requiresImage}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  measurementConfig: {
+                    ...item.measurementConfig,
+                    requiresImage: event.target.checked,
+                  },
+                })
+              }
+              className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="whitespace-nowrap">Requires image</span>
+          </label>
+        </div>
+      ) : null}
+
+      <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="grid gap-3 md:grid-cols-[minmax(12rem,1fr)_minmax(11rem,0.75fr)_minmax(12rem,1fr)_auto] md:items-end">
+          <label className="block min-w-0">
+            <span className="text-sm font-semibold text-slate-700">Show If Depends On</span>
+            <input
+              type="text"
+              value={item.showIf?.dependsOn ?? ""}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  showIf: {
+                    dependsOn: event.target.value,
+                    operator: item.showIf?.operator ?? "equals",
+                    value: item.showIf?.value ?? "",
+                  },
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+              placeholder="tiang_reput_retak"
+            />
+          </label>
+          <label className="block min-w-0">
+            <span className="text-sm font-semibold text-slate-700">Operator</span>
+            <select
+              value={item.showIf?.operator ?? "equals"}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  showIf: {
+                    dependsOn: item.showIf?.dependsOn ?? "",
+                    operator: event.target.value as ChecklistShowIfOperator,
+                    value:
+                      event.target.value === "is_empty" || event.target.value === "is_not_empty"
+                        ? null
+                        : item.showIf?.value ?? "",
+                  },
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+            >
+              {SHOW_IF_OPERATORS.map((operator) => (
+                <option key={operator.value} value={operator.value}>
+                  {operator.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block min-w-0">
+            <span className="text-sm font-semibold text-slate-700">Value</span>
+            <input
+              type="text"
+              value={item.showIf?.value ?? ""}
+              onChange={(event) =>
+                onUpdateItem(item.localId, {
+                  showIf: {
+                    dependsOn: item.showIf?.dependsOn ?? "",
+                    operator: item.showIf?.operator ?? "equals",
+                    value: event.target.value,
+                  },
+                })
+              }
+              className={`${inputClassName} mt-1.5`}
+              disabled={
+                item.showIf?.operator === "is_empty" ||
+                item.showIf?.operator === "is_not_empty"
+              }
+              placeholder="YES"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => onUpdateItem(item.localId, { showIf: null })}
+            className={`${rowActionButtonClassName} md:mb-0`}
+          >
+            <X size={14} />
+            Clear
+          </button>
+        </div>
+      </div>
     </div>
   );
 });

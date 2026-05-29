@@ -19,6 +19,7 @@ import {
   buildResultsPayload,
   createInitialDraftValues,
   formatDateTime,
+  getVisibleInspectionSections,
   hasAnyInspectionDraftValue,
   isOperationalTemplateTextItem,
   normalizeInspectionInputType,
@@ -101,7 +102,7 @@ export function InspectionFormScreen() {
   } | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
-  const checklistSections = form?.template.sections.filter((section) => section.items.length > 0) ?? [];
+  const checklistSections = form ? getVisibleInspectionSections(form, draftValues) : [];
   const checklistItemCount = checklistSections.reduce(
     (total, section) => total + section.items.length,
     0,
@@ -943,6 +944,43 @@ function ChecklistItemCard({
           editable={!disabled}
         />
       ) : null}
+      {inputType === 'READING' ? (
+        <TextField
+          label="Reading"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="Enter reading"
+          keyboardType="decimal-pad"
+          editable={!disabled}
+        />
+      ) : null}
+      {inputType === 'DATE' ? (
+        <TextField
+          label="Date"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="YYYY-MM-DD"
+          editable={!disabled}
+        />
+      ) : null}
+      {inputType === 'DATETIME' ? (
+        <TextField
+          label="Date Time"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="YYYY-MM-DDTHH:mm"
+          editable={!disabled}
+        />
+      ) : null}
+      {inputType === 'GPS' ? (
+        <TextField
+          label="GPS"
+          value={typeof value === 'string' ? value : ''}
+          onChangeText={onChange}
+          placeholder="Latitude, longitude"
+          editable={!disabled}
+        />
+      ) : null}
       {inputType === 'BOOLEAN' ? (
         <BooleanField
           value={typeof value === 'boolean' ? value : null}
@@ -959,6 +997,15 @@ function ChecklistItemCard({
           onChange={onChange}
         />
       ) : null}
+      {inputType === 'MULTI_SELECT' ? (
+        <MultiSelectField
+          item={item}
+          value={Array.isArray(value) ? value : []}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : null}
+      {inputType === 'IMAGE' ? <ImageFieldPlaceholder /> : null}
       {!inputType ? (
         <View style={styles.unsupportedFieldPanel}>
           <Text style={styles.unsupportedFieldText}>
@@ -1056,6 +1103,75 @@ function DropdownField({
           />
         ) : null}
       </View>
+    </View>
+  );
+}
+
+function MultiSelectField({
+  item,
+  value,
+  disabled,
+  onChange,
+}: {
+  item: InspectionTemplateItem;
+  value: string[];
+  disabled: boolean;
+  onChange: (value: string[]) => void;
+}) {
+  const options = normalizeSelectOptions(item.optionsJson);
+  const selectedValues = new Set(value);
+
+  if (options.length === 0) {
+    return (
+      <View style={styles.unsupportedFieldPanel}>
+        <Text style={styles.unsupportedFieldText}>No multi select options configured.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.resultControl}>
+      <Text style={styles.controlLabel}>Response</Text>
+      <View style={styles.optionStack}>
+        {options.map((option) => {
+          const selected = selectedValues.has(option.value);
+
+          return (
+            <DropdownOptionButton
+              key={option.value}
+              label={option.label}
+              selected={selected}
+              disabled={disabled}
+              onPress={() => {
+                const nextValues = selected
+                  ? value.filter((entry) => entry !== option.value)
+                  : [...value, option.value];
+
+                onChange(nextValues);
+              }}
+            />
+          );
+        })}
+        {!item.isRequired ? (
+          <DropdownOptionButton
+            label="Clear"
+            selected={value.length === 0}
+            disabled={disabled}
+            onPress={() => onChange([])}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function ImageFieldPlaceholder() {
+  return (
+    <View style={styles.imageFieldPlaceholder}>
+      <Text style={styles.imageFieldTitle}>Image capture</Text>
+      <Text style={styles.imageFieldText}>
+        Attach photos from the inspection photos section.
+      </Text>
     </View>
   );
 }
@@ -1206,6 +1322,18 @@ function formatFieldType(value: string) {
 
   if (normalized === 'SELECT') {
     return 'DROPDOWN';
+  }
+
+  if (normalized === 'MULTI_SELECT') {
+    return 'MULTI SELECT';
+  }
+
+  if (normalized === 'DATETIME' || normalized === 'DATE_TIME') {
+    return 'DATE TIME';
+  }
+
+  if (normalized === 'READING') {
+    return 'READING / MEASUREMENT';
   }
 
   return normalized || 'UNKNOWN';
@@ -1839,6 +1967,25 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '600',
     color: '#991b1b',
+  },
+  imageFieldPlaceholder: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    padding: 12,
+    gap: 3,
+  },
+  imageFieldTitle: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  imageFieldText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#64748b',
   },
   choiceButton: {
     flex: 1,

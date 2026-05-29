@@ -7,6 +7,10 @@ export const TEMPLATE_BUILDER_INPUT_TYPES = [
   InspectionItemInputType.DATE,
   InspectionItemInputType.DATETIME,
   InspectionItemInputType.SELECT,
+  InspectionItemInputType.MULTI_SELECT,
+  InspectionItemInputType.IMAGE,
+  InspectionItemInputType.GPS,
+  InspectionItemInputType.READING,
 ] as const;
 
 export type TemplateBuilderInputType = (typeof TEMPLATE_BUILDER_INPUT_TYPES)[number];
@@ -14,6 +18,7 @@ export type TemplateBuilderInputType = (typeof TEMPLATE_BUILDER_INPUT_TYPES)[num
 export interface TemplateSelectOption {
   label: string;
   value: string;
+  prefix?: string;
 }
 
 export function isTemplateBuilderInputType(
@@ -23,14 +28,16 @@ export function isTemplateBuilderInputType(
 }
 
 export function normalizeTemplateSelectOptions(optionsJson: unknown): TemplateSelectOption[] | null {
-  if (!Array.isArray(optionsJson) || optionsJson.length === 0) {
+  const rawOptions = readOptionsArray(optionsJson);
+
+  if (!rawOptions || rawOptions.length === 0) {
     return null;
   }
 
   const normalizedOptions: TemplateSelectOption[] = [];
   const seenValues = new Set<string>();
 
-  for (const option of optionsJson) {
+  for (const option of rawOptions) {
     if (typeof option === 'string') {
       const trimmedValue = option.trim();
 
@@ -52,16 +59,32 @@ export function normalizeTemplateSelectOptions(optionsJson: unknown): TemplateSe
 
     const maybeLabel = 'label' in option ? option.label : undefined;
     const maybeValue = 'value' in option ? option.value : undefined;
+    const maybePrefix = 'prefix' in option ? option.prefix : undefined;
     const label = typeof maybeLabel === 'string' ? maybeLabel.trim() : '';
     const value = typeof maybeValue === 'string' ? maybeValue.trim() : '';
+    const prefix = typeof maybePrefix === 'string' ? maybePrefix.trim() : '';
 
     if (!label || !value || seenValues.has(value)) {
       return null;
     }
 
-    normalizedOptions.push({ label, value });
+    normalizedOptions.push(prefix ? { label, value, prefix } : { label, value });
     seenValues.add(value);
   }
 
   return normalizedOptions;
+}
+
+function readOptionsArray(optionsJson: unknown) {
+  if (Array.isArray(optionsJson)) {
+    return optionsJson;
+  }
+
+  if (!optionsJson || typeof optionsJson !== 'object' || Array.isArray(optionsJson)) {
+    return null;
+  }
+
+  const options = 'options' in optionsJson ? optionsJson.options : undefined;
+
+  return Array.isArray(options) ? options : null;
 }

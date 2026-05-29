@@ -1039,7 +1039,10 @@ export class TemplatesService {
     inputType: InspectionItemInputType,
     optionsJson: unknown,
   ): Array<{ label: string; value: string }> | null {
-    if (inputType !== InspectionItemInputType.SELECT) {
+    if (
+      inputType !== InspectionItemInputType.SELECT &&
+      inputType !== InspectionItemInputType.MULTI_SELECT
+    ) {
       return null;
     }
 
@@ -1047,7 +1050,7 @@ export class TemplatesService {
 
     if (!normalizedOptions) {
       throw new BadRequestException(
-        'SELECT items require a non-empty optionsJson array of unique string values or { label, value } objects.',
+        'SELECT and MULTI_SELECT items require a non-empty optionsJson array of unique string values or { label, value } objects.',
       );
     }
 

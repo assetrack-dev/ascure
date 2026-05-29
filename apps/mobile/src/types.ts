@@ -352,8 +352,12 @@ export type InspectionItemInputType =
   | 'BOOLEAN'
   | 'NUMBER'
   | 'SELECT'
+  | 'MULTI_SELECT'
+  | 'IMAGE'
   | 'DATE'
   | 'DATETIME'
+  | 'GPS'
+  | 'READING'
   | 'JSON';
 
 export interface InspectionValue {
@@ -376,6 +380,7 @@ export interface InspectionTemplateItem {
   severity?: DefectSeverity | null;
   sortOrder: number;
   optionsJson: unknown;
+  fieldType?: string;
   value: InspectionValue | null;
 }
 
@@ -678,6 +683,7 @@ export interface InspectionItemResult {
 export interface SelectOption {
   label: string;
   value: string;
+  prefix?: string;
 }
 
 export interface ChecklistTemplateItem {
@@ -779,7 +785,7 @@ export interface UpdateAssetInput {
   metadata?: Record<string, unknown> | null;
 }
 
-export type DraftValue = string | boolean | null;
+export type DraftValue = string | string[] | boolean | null;
 export type DraftValues = Record<string, DraftValue>;
 export type ChecklistItemDraftValue = {
   result: InspectionItemResultValue | null;
