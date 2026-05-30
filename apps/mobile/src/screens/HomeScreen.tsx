@@ -34,7 +34,7 @@ import {
   WarningBanner,
   uiTheme,
 } from '../ui';
-import { InspectionSummary, OperationalScope, SiteVisit } from '../types';
+import { InspectionSummary, OperationalScope, SiteVisit, UserRole } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -105,6 +105,7 @@ export function HomeScreen() {
     () => buildInspectionQueueItems(activeVisits, completedVisits, selectedScope),
     [activeVisits, completedVisits, selectedScope],
   );
+  const showOperationalSessionsCard = canShowOperationalSessionsInWorkspace(user.role);
 
   const loadHomeData = useCallback(async () => {
     try {
@@ -204,26 +205,9 @@ export function HomeScreen() {
 
   const handleOpenQueueItem = useCallback(
     (item: InspectionQueueItem) => {
-      if (item.inspection && item.group === 'IN_PROGRESS') {
-        navigation.navigate('InspectionForm', {
-          inspectionId: item.inspection.id,
-          visitId: item.visit.id,
-          substationId: item.visit.substationId,
-        });
-        return;
-      }
-
-      if (item.inspection) {
-        navigation.navigate('InspectionDetail', {
-          inspectionId: item.inspection.id,
-          assetCode: item.inspection.asset?.assetCode ?? item.title,
-        });
-        return;
-      }
-
       void handleOpenVisit(item.visit);
     },
-    [handleOpenVisit, navigation],
+    [handleOpenVisit],
   );
 
   return (
@@ -296,6 +280,7 @@ export function HomeScreen() {
           onSelectScope={setSelectedScope}
           onOpenQueueItem={handleOpenQueueItem}
           onOpenVisit={handleOpenVisit}
+          showOperationalSessions={showOperationalSessionsCard}
           onOpenSessions={() => navigation.navigate('OperationalSessions')}
           onCreateCheckIn={() => navigation.navigate('CheckIn')}
         />
@@ -387,6 +372,7 @@ function InspectionWorkspaceView({
   onSelectScope,
   onOpenQueueItem,
   onOpenVisit,
+  showOperationalSessions,
   onOpenSessions,
   onCreateCheckIn,
 }: {
@@ -399,6 +385,7 @@ function InspectionWorkspaceView({
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
   onOpenVisit: (visit: SiteVisit) => void;
+  showOperationalSessions: boolean;
   onOpenSessions: () => void;
   onCreateCheckIn: () => void;
 }) {
@@ -428,38 +415,59 @@ function InspectionWorkspaceView({
         </View>
       </Card>
 
-      <Card>
-        <View style={styles.listHeader}>
-          <SectionTitle>Operational Sessions</SectionTitle>
-          <StatusChip label="Sessions" tone="info" />
-        </View>
-        <BodyText muted>
-          Open assigned inspection sessions without changing the current visit queue.
-        </BodyText>
-        <AppButton label="Open Sessions" variant="secondary" onPress={onOpenSessions} />
-      </Card>
+      {showOperationalSessions ? (
+        <Card>
+          <View style={styles.listHeader}>
+            <SectionTitle>Operational Sessions</SectionTitle>
+            <StatusChip label="Sessions" tone="info" />
+          </View>
+          <BodyText muted>
+            Open assigned inspection sessions without changing the current visit queue.
+          </BodyText>
+          <AppButton label="Open Sessions" variant="secondary" onPress={onOpenSessions} />
+        </Card>
+      ) : null}
 
       <Card>
         <View style={styles.listHeader}>
           <SectionTitle>Inspection Queue</SectionTitle>
           <Text style={styles.countText}>{queueItems.length}</Text>
         </View>
-        <View style={styles.queueGrid}>
-          {QUEUE_GROUPS.map((entry) => {
-            const items = queueItems.filter((item) => item.group === entry.group);
+        {queueItems.length === 0 ? (
+          <EmptyState
+            icon="clipboard"
+            title="No inspection queue"
+            description="Create or join a site visit to begin SAVR inspection work."
+          />
+        ) : (
+          <View style={styles.queueGrid}>
+            {QUEUE_GROUPS.map((entry) => {
+              const items = queueItems.filter((item) => item.group === entry.group);
 
-            return (
-              <QueueGroupCard
-                key={entry.group}
-                label={entry.label}
-                count={items.length}
-                tone={entry.tone}
-                firstItem={items[0]}
-                onOpenItem={onOpenQueueItem}
-              />
-            );
-          })}
-        </View>
+              if (items.length === 0) {
+                return null;
+              }
+
+              return (
+                <View key={entry.group} style={styles.queueGroup}>
+                  <View style={styles.queueGroupHeader}>
+                    <StatusChip label={entry.label} tone={entry.tone} />
+                    <Text style={styles.countText}>{items.length}</Text>
+                  </View>
+                  {items.map((item) => (
+                    <InspectionQueueCard
+                      key={item.id}
+                      item={item}
+                      label={entry.label}
+                      tone={entry.tone}
+                      onOpenItem={onOpenQueueItem}
+                    />
+                  ))}
+                </View>
+              );
+            })}
+          </View>
+        )}
       </Card>
 
       <LegacyVisitsView
@@ -499,45 +507,37 @@ function ScopeCard({
   );
 }
 
-function QueueGroupCard({
+function InspectionQueueCard({
+  item,
   label,
-  count,
   tone,
-  firstItem,
   onOpenItem,
 }: {
+  item: InspectionQueueItem;
   label: string;
-  count: number;
   tone: 'info' | 'success' | 'danger';
-  firstItem?: InspectionQueueItem;
   onOpenItem: (item: InspectionQueueItem) => void;
 }) {
-  const isDisabled = count === 0 || !firstItem;
-
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={isDisabled}
       onPress={() => {
-        if (firstItem) {
-          onOpenItem(firstItem);
-        }
+        onOpenItem(item);
       }}
       style={({ pressed }) => [
         styles.queueCard,
-        isDisabled && styles.queueCardDisabled,
-        pressed && !isDisabled && styles.visitRowPressed,
+        pressed && styles.visitRowPressed,
       ]}
     >
       <View style={styles.queueCardHeader}>
         <StatusChip label={label} tone={tone} />
-        <Text style={styles.queueCount}>{count}</Text>
+        <Feather name="chevron-right" size={18} color={uiTheme.colors.textMuted} />
       </View>
       <Text style={styles.queueTitle} numberOfLines={1}>
-        {firstItem?.title ?? 'No items'}
+        {item.title}
       </Text>
       <Text style={styles.queueSubtitle} numberOfLines={2}>
-        {firstItem?.subtitle ?? 'Nothing pending in this group.'}
+        {item.subtitle}
       </Text>
     </Pressable>
   );
@@ -696,29 +696,7 @@ function buildInspectionQueueItems(
       continue;
     }
 
-    let hasInProgressInspection = false;
-
-    for (const inspection of visit.inspections ?? []) {
-      if (!isInspectionInScope(inspection, visit, selectedScope)) {
-        continue;
-      }
-
-      const group = getInspectionQueueStatusGroup(inspection.completionStatus);
-
-      if (!group) {
-        continue;
-      }
-
-      if (group === 'IN_PROGRESS') {
-        hasInProgressInspection = true;
-      }
-
-      queueItems.push(createInspectionQueueItem(visit, inspection, group, selectedScope));
-    }
-
-    if (!hasInProgressInspection) {
-      queueItems.push(createVisitQueueItem(visit, 'IN_PROGRESS', selectedScope));
-    }
+    queueItems.push(createVisitQueueItem(visit, getVisitQueueGroup(visit, selectedScope), selectedScope));
   }
 
   for (const visit of completedVisits) {
@@ -726,32 +704,30 @@ function buildInspectionQueueItems(
       continue;
     }
 
-    const visibleInspections = (visit.inspections ?? [])
-      .filter((inspection) => isInspectionInScope(inspection, visit, selectedScope))
-      .map((inspection) => ({
-        inspection,
-        group: getInspectionQueueStatusGroup(inspection.completionStatus),
-      }))
-      .filter(
-        (entry): entry is {
-          inspection: InspectionSummary;
-          group: InspectionQueueStatusGroup;
-        } => Boolean(entry.group),
-      );
-
-    if (visibleInspections.length === 0) {
-      queueItems.push(createVisitQueueItem(visit, 'COMPLETED', selectedScope));
-      continue;
-    }
-
-    for (const entry of visibleInspections) {
-      queueItems.push(
-        createInspectionQueueItem(visit, entry.inspection, entry.group, selectedScope),
-      );
-    }
+    queueItems.push(createVisitQueueItem(visit, getVisitQueueGroup(visit, selectedScope), selectedScope));
   }
 
   return queueItems;
+}
+
+function getVisitQueueGroup(
+  visit: SiteVisit,
+  selectedScope: OperationalScope,
+): InspectionQueueStatusGroup {
+  const inspectionGroups = (visit.inspections ?? [])
+    .filter((inspection) => isInspectionInScope(inspection, visit, selectedScope))
+    .map((inspection) => getInspectionQueueStatusGroup(inspection.completionStatus))
+    .filter(Boolean);
+
+  if (inspectionGroups.includes('NEEDS_ATTENTION')) {
+    return 'NEEDS_ATTENTION';
+  }
+
+  if (isCompletedVisit(visit)) {
+    return 'COMPLETED';
+  }
+
+  return 'IN_PROGRESS';
 }
 
 function createVisitQueueItem(
@@ -764,29 +740,8 @@ function createVisitQueueItem(
     group,
     scope,
     title: visit.pencawangName ?? visit.substation.name,
-    subtitle: visit.functionalLocation ?? visit.substation.location ?? visit.substation.code,
+    subtitle: formatVisitQueueSubtitle(visit),
     visit,
-  };
-}
-
-function createInspectionQueueItem(
-  visit: SiteVisit,
-  inspection: InspectionSummary,
-  group: InspectionQueueStatusGroup,
-  scope: OperationalScope,
-): InspectionQueueItem {
-  return {
-    id: `${group}-inspection-${inspection.id}`,
-    group,
-    scope,
-    title: inspection.asset?.assetCode ?? visit.pencawangName ?? visit.substation.name,
-    subtitle:
-      inspection.asset?.name ??
-      visit.functionalLocation ??
-      visit.substation.location ??
-      visit.substation.code,
-    visit,
-    inspection,
   };
 }
 
@@ -812,6 +767,36 @@ function isInspectionInScope(
 
 function isOperationalScope(value?: string | null): value is OperationalScope {
   return SCOPE_ORDER.includes(value as OperationalScope);
+}
+
+function formatVisitQueueSubtitle(visit: SiteVisit) {
+  const code = visit.pencawangCode ?? visit.substation.code;
+  const location = visit.functionalLocation ?? visit.substation.location;
+  const progress = formatVisitProgress(visit);
+  const parts = [code, location, progress]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  return parts.length > 0 ? parts.join(' - ') : 'Site visit';
+}
+
+function formatVisitProgress(visit: SiteVisit) {
+  const totalAssets = visit.summary?.totalAssets ?? visit.totalAssets;
+  const inspectedAssets = visit.summary?.inspectedAssets ?? visit.inspectedAssets;
+
+  if (
+    typeof totalAssets !== 'number' ||
+    typeof inspectedAssets !== 'number' ||
+    totalAssets <= 0
+  ) {
+    return null;
+  }
+
+  return `${inspectedAssets} / ${totalAssets} assets inspected`;
+}
+
+function canShowOperationalSessionsInWorkspace(role: UserRole) {
+  return role === 'ADMIN' || role === 'MANAGER' || role === 'SUPERVISOR';
 }
 
 function VisitRow({
@@ -1074,6 +1059,16 @@ const styles = StyleSheet.create({
     color: uiTheme.colors.primaryStrong,
   },
   queueGrid: {
+    gap: 10,
+  },
+  queueGroup: {
+    gap: 8,
+  },
+  queueGroupHeader: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
   },
   queueCard: {

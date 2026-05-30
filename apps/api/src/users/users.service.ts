@@ -339,6 +339,141 @@ export class UsersService {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async getCurrentUserMainheads(user: RequestUser) {
+    const include = {
+      branch: {
+        select: {
+          id: true,
+          organizationId: true,
+          name: true,
+          code: true,
+          region: true,
+          isActive: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              type: true,
+              isActive: true,
+            },
+          },
+        },
+      },
+    } satisfies Prisma.MainheadInclude;
+    const activeMainheadWhere = {
+      isActive: true,
+      branch: {
+        isActive: true,
+        organization: {
+          isActive: true,
+        },
+      },
+    } satisfies Prisma.MainheadWhereInput;
+
+    if (user.role === UserRole.ADMIN) {
+      const mainheads = await this.prisma.mainhead.findMany({
+        where: activeMainheadWhere,
+        include,
+        orderBy: this.mainheadOrderBy(),
+      });
+
+      return mainheads.map((mainhead) => this.serializeMainheadOption(mainhead));
+    }
+
+    const currentUser = await this.prisma.user.findFirst({
+      where: {
+        id: user.id,
+        tenantId: user.tenantId,
+        isActive: true,
+      },
+      select: {
+        organizationId: true,
+        branchId: true,
+        mainheadId: true,
+        teamMemberships: {
+          where: {
+            isActive: true,
+            team: {
+              tenantId: user.tenantId,
+              isActive: true,
+            },
+          },
+          select: {
+            team: {
+              select: {
+                organizationId: true,
+                branchId: true,
+                mainheadId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!currentUser) {
+      return [];
+    }
+
+    const mainheadIds = new Set<string>();
+    const branchIds = new Set<string>();
+    const organizationIds = new Set<string>();
+
+    this.addOptionalId(mainheadIds, currentUser.mainheadId);
+    this.addOptionalId(branchIds, currentUser.branchId);
+    this.addOptionalId(organizationIds, currentUser.organizationId);
+
+    for (const membership of currentUser.teamMemberships) {
+      this.addOptionalId(mainheadIds, membership.team.mainheadId);
+      this.addOptionalId(branchIds, membership.team.branchId);
+      this.addOptionalId(organizationIds, membership.team.organizationId);
+    }
+
+    const accessFilters: Prisma.MainheadWhereInput[] = [];
+
+    if (mainheadIds.size > 0) {
+      accessFilters.push({
+        id: {
+          in: Array.from(mainheadIds),
+        },
+      });
+    }
+
+    if (branchIds.size > 0) {
+      accessFilters.push({
+        branchId: {
+          in: Array.from(branchIds),
+        },
+      });
+    }
+
+    if (organizationIds.size > 0) {
+      accessFilters.push({
+        branch: {
+          organizationId: {
+            in: Array.from(organizationIds),
+          },
+        },
+      });
+    }
+
+    if (accessFilters.length === 0) {
+      return [];
+    }
+
+    const mainheads = await this.prisma.mainhead.findMany({
+      where: {
+        ...activeMainheadWhere,
+        OR: accessFilters,
+      },
+      include,
+      orderBy: this.mainheadOrderBy(),
+    });
+
+    return mainheads.map((mainhead) => this.serializeMainheadOption(mainhead));
+  }
+
   private userSelect() {
     return {
       id: true,
@@ -418,6 +553,62 @@ export class UsersService {
         ],
       },
     } satisfies Prisma.UserSelect;
+  }
+
+  private addOptionalId(target: Set<string>, value?: string | null) {
+    if (value) {
+      target.add(value);
+    }
+  }
+
+  private mainheadOrderBy(): Prisma.MainheadOrderByWithRelationInput[] {
+    return [
+      {
+        branch: {
+          name: 'asc',
+        },
+      },
+      {
+        name: 'asc',
+      },
+    ];
+  }
+
+  private serializeMainheadOption(
+    mainhead: Prisma.MainheadGetPayload<{
+      include: {
+        branch: {
+          select: {
+            id: true;
+            organizationId: true;
+            name: true;
+            code: true;
+            region: true;
+            isActive: true;
+            organization: {
+              select: {
+                id: true;
+                name: true;
+                code: true;
+                type: true;
+                isActive: true;
+              };
+            };
+          };
+        };
+      };
+    }>,
+  ) {
+    return {
+      id: mainhead.id,
+      name: mainhead.name,
+      code: mainhead.code,
+      branchId: mainhead.branchId,
+      organizationId: mainhead.branch.organizationId,
+      description: mainhead.description,
+      isActive: mainhead.isActive,
+      branch: mainhead.branch,
+    };
   }
 
   private async resolveOperationalLinks(

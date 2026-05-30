@@ -33,7 +33,7 @@ import {
   TextField,
   uiTheme,
 } from '../ui';
-import { SiteVisit, SiteVisitType, Substation, Team } from '../types';
+import { Mainhead, SiteVisit, SiteVisitType, Substation, Team } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 
 type CapturedSitePhoto = {
@@ -105,6 +105,7 @@ export function CheckInScreen() {
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [substations, setSubstations] = useState<Substation[]>([]);
+  const [mainheads, setMainheads] = useState<Mainhead[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [pencawangMode, setPencawangMode] = useState<PencawangMode>('NEW');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
@@ -113,7 +114,7 @@ export function CheckInScreen() {
   const [pencawangName, setPencawangName] = useState('');
   const [functionalLocation, setFunctionalLocation] = useState('');
   const [pencawangCode, setPencawangCode] = useState('');
-  const [mainhead, setMainhead] = useState('');
+  const [selectedMainheadId, setSelectedMainheadId] = useState('');
   const [checkInLatitude, setCheckInLatitude] = useState('');
   const [checkInLongitude, setCheckInLongitude] = useState('');
   const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(null);
@@ -135,6 +136,11 @@ export function CheckInScreen() {
     [selectedTeamId, teams],
   );
 
+  const selectedMainhead = useMemo(
+    () => mainheads.find((mainhead) => mainhead.id === selectedMainheadId) ?? null,
+    [mainheads, selectedMainheadId],
+  );
+
   const selectedSubstation = useMemo(
     () =>
       pencawangMode === 'EXISTING'
@@ -154,8 +160,26 @@ export function CheckInScreen() {
     [activeVisits, pencawangMode, selectedSubstationId],
   );
 
+  useEffect(() => {
+    setSelectedMainheadId((currentValue) => {
+      if (mainheads.some((mainhead) => mainhead.id === currentValue)) {
+        return currentValue;
+      }
+
+      const teamMainhead = selectedTeam?.mainheadId
+        ? mainheads.find((mainhead) => mainhead.id === selectedTeam.mainheadId)
+        : null;
+      const teamBranchMainhead = selectedTeam?.branchId
+        ? mainheads.find((mainhead) => mainhead.branchId === selectedTeam.branchId)
+        : null;
+
+      return teamMainhead?.id ?? teamBranchMainhead?.id ?? mainheads[0]?.id ?? '';
+    });
+  }, [mainheads, selectedTeam]);
+
   const canCreateCheckIn =
     Boolean(selectedTeamId) &&
+    Boolean(selectedMainheadId) &&
     !isLoading &&
     (pencawangMode === 'EXISTING'
       ? Boolean(selectedSubstationId)
@@ -163,7 +187,6 @@ export function CheckInScreen() {
           pencawangName.trim() &&
             functionalLocation.trim() &&
             pencawangCode.trim() &&
-            mainhead.trim() &&
             checkInLatitude.trim() &&
             checkInLongitude.trim(),
         ) && gpsAccuracyMeters !== null);
@@ -173,14 +196,16 @@ export function CheckInScreen() {
       setError(null);
       setIsLoading(true);
 
-      const [teamList, substationList, activeVisitList] = await Promise.all([
+      const [teamList, substationList, mainheadList, activeVisitList] = await Promise.all([
         api.getTeams(token),
         api.getSubstations(token),
+        api.getMainheads(token),
         loadActiveVisitsForWarning(token),
       ]);
 
       setTeams(teamList);
       setSubstations(substationList);
+      setMainheads(mainheadList);
       setActiveVisits(activeVisitList);
 
       if (teamList.length > 0) {
@@ -237,7 +262,6 @@ export function CheckInScreen() {
       setPencawangName('');
       setPencawangCode('');
       setFunctionalLocation('');
-      setMainhead('');
       return;
     }
 
@@ -253,7 +277,6 @@ export function CheckInScreen() {
     setPencawangName(normalizeOperationalText(substation.name));
     setPencawangCode(normalizeOperationalText(substation.code));
     setFunctionalLocation(normalizeOperationalText(substation.location ?? substation.code));
-    setMainhead('');
   }
 
   async function prefillCurrentLocation() {
@@ -463,7 +486,6 @@ export function CheckInScreen() {
     const normalizedPencawangName = normalizeOperationalPayloadText(pencawangName);
     const normalizedPencawangCode = normalizeOperationalPayloadText(pencawangCode);
     const normalizedFunctionalLocation = normalizeOperationalPayloadText(functionalLocation);
-    const normalizedMainhead = normalizeOperationalPayloadText(mainhead);
     const normalizedNotes = normalizeOperationalPayloadText(notes);
     const parsedLatitude = parseCoordinate(checkInLatitude, -90, 90);
 
@@ -489,6 +511,16 @@ export function CheckInScreen() {
       return null;
     }
 
+    if (mainheads.length === 0) {
+      setError('No MAINHEAD available. Please contact admin.');
+      return null;
+    }
+
+    if (!selectedMainheadId || !selectedMainhead) {
+      setError('Please select a MAINHEAD.');
+      return null;
+    }
+
     if (pencawangMode === 'NEW') {
       if (!normalizedPencawangName) {
         setError('Nama Pencawang is required for a new Pencawang.');
@@ -502,11 +534,6 @@ export function CheckInScreen() {
 
       if (!normalizedPencawangCode) {
         setError('Kod Pencawang is required for a new Pencawang.');
-        return null;
-      }
-
-      if (!normalizedMainhead) {
-        setError('MAINHEAD is required for a new Pencawang.');
         return null;
       }
 
@@ -528,7 +555,7 @@ export function CheckInScreen() {
       pencawangName: normalizedPencawangName,
       pencawangCode: normalizedPencawangCode,
       functionalLocation: normalizedFunctionalLocation,
-      mainhead: normalizedMainhead,
+      mainheadId: selectedMainheadId,
       checkInLatitude: parsedLatitude,
       checkInLongitude: parsedLongitude,
       checkInAccuracyMeters: gpsAccuracyMeters ?? undefined,
@@ -627,7 +654,7 @@ export function CheckInScreen() {
       keyboardAware
     >
       <ErrorBanner message={error} />
-      {isLoading ? <LoadingBlock label="Loading teams, pencawang, and GPS..." /> : null}
+      {isLoading ? <LoadingBlock label="Loading teams, MAINHEADs, pencawang, and GPS..." /> : null}
 
       {!isLoading ? (
         <>
@@ -748,13 +775,25 @@ export function CheckInScreen() {
               placeholder="Kod pencawang"
               autoCapitalize="characters"
             />
-            <TextField
-              label={pencawangMode === 'NEW' ? 'MAINHEAD *' : 'MAINHEAD'}
-              value={mainhead}
-              onChangeText={(nextValue) => setMainhead(normalizeOperationalText(nextValue))}
-              placeholder="Masukkan MAINHEAD jika ada"
-              autoCapitalize="characters"
-            />
+            {mainheads.length === 0 ? (
+              <EmptyState
+                icon="database"
+                title="No MAINHEAD available"
+                description="No MAINHEAD available. Please contact admin."
+              />
+            ) : (
+              <Dropdown
+                label="MAINHEAD *"
+                value={selectedMainheadId}
+                placeholder="Choose MAINHEAD"
+                options={mainheads.map((mainhead) => ({
+                  label: formatMainheadLabel(mainhead),
+                  value: mainhead.id,
+                  description: formatMainheadDescription(mainhead),
+                }))}
+                onSelect={setSelectedMainheadId}
+              />
+            )}
           </Card>
 
           <Card>
@@ -1002,6 +1041,25 @@ function FieldSummary({ label, value }: { label: string; value: string }) {
 
 function formatTeam(team: Team | null) {
   return team ? `${team.code} - ${team.name}` : 'No team selected';
+}
+
+function formatMainheadLabel(mainhead: Mainhead) {
+  return mainhead.code ? `${mainhead.code} - ${mainhead.name}` : mainhead.name;
+}
+
+function formatMainheadDescription(mainhead: Mainhead) {
+  const branchLabel = mainhead.branch
+    ? mainhead.branch.code
+      ? `${mainhead.branch.code} - ${mainhead.branch.name}`
+      : mainhead.branch.name
+    : null;
+  const organizationLabel = mainhead.branch?.organization
+    ? mainhead.branch.organization.code
+      ? `${mainhead.branch.organization.code} - ${mainhead.branch.organization.name}`
+      : mainhead.branch.organization.name
+    : null;
+
+  return [branchLabel, organizationLabel].filter(Boolean).join(' / ') || null;
 }
 
 async function loadActiveVisitsForWarning(token: string) {

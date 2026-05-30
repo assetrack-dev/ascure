@@ -19,6 +19,7 @@ import {
   InspectionDetail,
   InspectionFormResponse,
   LoginResponse,
+  Mainhead,
   OperationMode,
   OperationalSession,
   OperationalSessionAssignedAsset,
@@ -273,6 +274,18 @@ export const api = {
     return request<Substation[]>('/substations', { token });
   },
 
+  async getMainheads(token: string) {
+    try {
+      return await request<Mainhead[]>('/users/me/mainheads', { token });
+    } catch (error) {
+      if (isEndpointUnavailableError(error)) {
+        return request<Mainhead[]>('/enterprise/mainheads?isActive=true', { token });
+      }
+
+      throw error;
+    }
+  },
+
   getActiveSiteVisits(token: string) {
     return request<SiteVisit[]>('/site-visits?status=ACTIVE', { token });
   },
@@ -336,6 +349,7 @@ export const api = {
       toPencawangId?: string;
       requiresQAQC?: boolean;
       reportingGroup?: string;
+      mainheadId?: string;
       mainhead?: string;
       pencawangCode?: string;
       pencawangName?: string;

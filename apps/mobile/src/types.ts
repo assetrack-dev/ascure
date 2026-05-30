@@ -21,11 +21,39 @@ export interface Team {
   id: string;
   tenantId?: string;
   departmentId?: string;
+  organizationId?: string | null;
+  branchId?: string | null;
+  mainheadId?: string | null;
   code: string;
   name: string;
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface Mainhead {
+  id: string;
+  name: string;
+  code?: string | null;
+  branchId: string;
+  organizationId?: string | null;
+  description?: string | null;
+  isActive?: boolean;
+  branch?: {
+    id: string;
+    organizationId?: string | null;
+    name: string;
+    code?: string | null;
+    region?: string | null;
+    isActive?: boolean;
+    organization?: {
+      id: string;
+      name: string;
+      code?: string | null;
+      type?: string | null;
+      isActive?: boolean;
+    } | null;
+  } | null;
 }
 
 export type OperationMode = 'INSPECTION' | 'MAINTENANCE';

@@ -22,6 +22,11 @@ export class UsersController {
     return this.usersService.getCurrentUserTeams(user);
   }
 
+  @Get('me/mainheads')
+  getCurrentUserMainheads(@CurrentUser() user: RequestUser) {
+    return this.usersService.getCurrentUserMainheads(user);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN)
   list(@CurrentUser() user: RequestUser) {

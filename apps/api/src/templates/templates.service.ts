@@ -262,6 +262,13 @@ export class TemplatesService {
           organizationId: true,
           branchId: true,
           mainheadId: true,
+          team: {
+            select: {
+              organizationId: true,
+              branchId: true,
+              mainheadId: true,
+            },
+          },
           project: {
             select: {
               branchId: true,
@@ -304,12 +311,14 @@ export class TemplatesService {
         siteVisit.organizationId ??
         siteVisit.project?.branch.organizationId ??
         siteVisit.workPackage?.project.branch.organizationId ??
+        siteVisit.team.organizationId ??
         null;
       branchId =
         branchId ??
         siteVisit.branchId ??
         siteVisit.project?.branchId ??
         siteVisit.workPackage?.project.branchId ??
+        siteVisit.team.branchId ??
         null;
       mainheadId =
         mainheadId ??
@@ -317,6 +326,7 @@ export class TemplatesService {
         siteVisit.workPackage?.mainheadId ??
         siteVisit.project?.mainheadId ??
         siteVisit.workPackage?.project.mainheadId ??
+        siteVisit.team.mainheadId ??
         null;
     }
 

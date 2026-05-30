@@ -93,7 +93,7 @@ export function AssetDetailScreen() {
 
       if (activeTemplate.items.length === 0) {
         setActionError(
-          'No active checklist template is available for this asset type. Ask an admin to activate one before starting an inspection.',
+          'No active SAVR checklist template found for this MAINHEAD/Branch.',
         );
         return;
       }
@@ -123,7 +123,7 @@ export function AssetDetailScreen() {
 
       setActionError(
         error instanceof ApiError && error.status === 404
-          ? 'No active checklist template is available for this asset type. Ask an admin to activate one before starting an inspection.'
+          ? 'No active SAVR checklist template found for this MAINHEAD/Branch.'
           : error instanceof Error
             ? error.message
             : 'Unable to start inspection.',
