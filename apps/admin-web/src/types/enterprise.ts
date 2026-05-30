@@ -1,6 +1,7 @@
 export type EnterpriseEntityKind =
   | "organizations"
   | "branches"
+  | "operational-regions"
   | "capabilities"
   | "mainheads"
   | "projects"
@@ -54,11 +55,13 @@ export interface EnterpriseOptionRecord {
   isActive?: boolean | null;
   organizationId?: string | null;
   branchId?: string | null;
+  operationalRegionId?: string | null;
   mainheadId?: string | null;
   projectId?: string | null;
   clientOrganizationId?: string | null;
   operationalDomain?: string | null;
   region?: string | null;
+  state?: string | null;
   description?: string | null;
 }
 
@@ -69,6 +72,7 @@ export interface EnterpriseOptions {
   workPackageStatuses: string[];
   organizations: EnterpriseOptionRecord[];
   branches: EnterpriseOptionRecord[];
+  operationalRegions: EnterpriseOptionRecord[];
   mainheads: EnterpriseOptionRecord[];
   capabilities: EnterpriseOptionRecord[];
   projects: EnterpriseOptionRecord[];

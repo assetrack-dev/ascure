@@ -49,6 +49,8 @@ interface UserFormState {
   mainheadId: string;
   teamId: string;
   capabilityIds: string[];
+  mainheadAccessIds: string[];
+  operationalRegionAccessIds: string[];
 }
 
 const DEFAULT_USER_FORM: UserFormState = {
@@ -62,6 +64,8 @@ const DEFAULT_USER_FORM: UserFormState = {
   mainheadId: "",
   teamId: "",
   capabilityIds: [],
+  mainheadAccessIds: [],
+  operationalRegionAccessIds: [],
 };
 
 function createDefaultUserForm(): UserFormState {
@@ -70,6 +74,8 @@ function createDefaultUserForm(): UserFormState {
     email: "",
     password: "",
     capabilityIds: [],
+    mainheadAccessIds: [],
+    operationalRegionAccessIds: [],
   };
 }
 
@@ -129,10 +135,56 @@ function readUserCapabilityIds(user: ManagedUser | null) {
   );
 }
 
+function readUserMainheadAccessIds(user: ManagedUser | null) {
+  const accessIds =
+    user?.mainheadAccesses
+      ?.map((access) => access.mainhead?.id || access.mainheadId)
+      .filter((id): id is string => Boolean(id)) ?? [];
+
+  if (accessIds.length > 0) {
+    return accessIds;
+  }
+
+  return user?.mainheadId ? [user.mainheadId] : [];
+}
+
+function readUserOperationalRegionAccessIds(user: ManagedUser | null) {
+  return (
+    user?.operationalRegionAccesses
+      ?.map((access) => access.operationalRegion?.id || access.operationalRegionId)
+      .filter((id): id is string => Boolean(id)) ?? []
+  );
+}
+
 function capabilityNames(user: ManagedUser) {
   return (
     user.capabilityAssignments
       ?.map((assignment) => assignment.capability?.name || assignment.capability?.code)
+      .filter((name): name is string => Boolean(name))
+      .join(", ") || null
+  );
+}
+
+function mainheadAccessNames(user: ManagedUser) {
+  const names =
+    user.mainheadAccesses
+      ?.map((access) => access.mainhead?.name || access.mainhead?.code)
+      .filter((name): name is string => Boolean(name)) ?? [];
+
+  if (names.length > 0) {
+    return names.join(", ");
+  }
+
+  return user.mainhead?.name || user.mainhead?.code || null;
+}
+
+function operationalRegionAccessNames(user: ManagedUser) {
+  return (
+    user.operationalRegionAccesses
+      ?.map(
+        (access) =>
+          access.operationalRegion?.name || access.operationalRegion?.code,
+      )
       .filter((name): name is string => Boolean(name))
       .join(", ") || null
   );
@@ -223,6 +275,57 @@ function UserCapabilityPicker({
   );
 }
 
+function UserAccessPicker({
+  title,
+  values,
+  options,
+  onChange,
+}: {
+  title: string;
+  values: string[];
+  options: Array<{ id: string; name: string; code?: string | null; isActive?: boolean | null }>;
+  onChange: (nextValues: string[]) => void;
+}) {
+  if (options.length === 0) {
+    return null;
+  }
+
+  function toggleOption(optionId: string, checked: boolean) {
+    onChange(
+      checked
+        ? Array.from(new Set([...values, optionId]))
+        : values.filter((id) => id !== optionId),
+    );
+  }
+
+  return (
+    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      <legend className="px-1 text-sm font-semibold text-slate-700">
+        {title}
+      </legend>
+      <div className="mt-2 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+        {options.map((option) => (
+          <label
+            key={option.id}
+            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+          >
+            <input
+              type="checkbox"
+              checked={values.includes(option.id)}
+              onChange={(event) => toggleOption(option.id, event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+            />
+            <span className="truncate">
+              {optionLabel(option)}
+              {option.isActive === false ? " (Inactive)" : ""}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function UserFormModal({
   mode,
   values,
@@ -245,6 +348,8 @@ function UserFormModal({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isCreateMode = mode === "create";
+  const activeMainheads = enterpriseOptions?.mainheads ?? [];
+  const activeOperationalRegions = enterpriseOptions?.operationalRegions ?? [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
@@ -347,21 +452,6 @@ function UserFormModal({
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
-              <select
-                value={values.mainheadId}
-                onChange={(event) => onChange("mainheadId", event.target.value)}
-                className={`${inputClassName} mt-1.5`}
-              >
-                <option value="">No MAINHEAD</option>
-                {enterpriseOptions?.mainheads.map((mainhead) => (
-                  <option key={mainhead.id} value={mainhead.id}>
-                    {optionLabel(mainhead)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
               <span className="text-sm font-semibold text-slate-700">Team</span>
               <select
                 value={values.teamId}
@@ -377,6 +467,23 @@ function UserFormModal({
               </select>
             </label>
           </div>
+
+          <UserAccessPicker
+            title="MAINHEAD Access"
+            values={values.mainheadAccessIds}
+            options={activeMainheads}
+            onChange={(nextValues) => {
+              onChange("mainheadAccessIds", nextValues);
+              onChange("mainheadId", nextValues[0] ?? "");
+            }}
+          />
+
+          <UserAccessPicker
+            title="Region Access"
+            values={values.operationalRegionAccessIds}
+            options={activeOperationalRegions}
+            onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
+          />
 
           <UserCapabilityPicker
             values={values.capabilityIds}
@@ -601,6 +708,8 @@ function UsersContent() {
             user.branch?.code,
             user.mainhead?.name,
             user.mainhead?.code,
+            mainheadAccessNames(user),
+            operationalRegionAccessNames(user),
             user.team?.name,
             user.team?.code,
             capabilityNames(user),
@@ -651,6 +760,8 @@ function UsersContent() {
       mainheadId: user.mainheadId ?? "",
       teamId: user.teamId ?? "",
       capabilityIds: readUserCapabilityIds(user),
+      mainheadAccessIds: readUserMainheadAccessIds(user),
+      operationalRegionAccessIds: readUserOperationalRegionAccessIds(user),
     });
     setModalError("");
     setModalMode("edit");
@@ -717,9 +828,11 @@ function UsersContent() {
               isActive: userForm.isActive,
               organizationId: userForm.organizationId,
               branchId: userForm.branchId,
-              mainheadId: userForm.mainheadId,
+              mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
               teamId: userForm.teamId,
               capabilityIds: userForm.capabilityIds,
+              mainheadAccessIds: userForm.mainheadAccessIds,
+              operationalRegionAccessIds: userForm.operationalRegionAccessIds,
             })
           : selectedUser
             ? await updateUser(session.token, selectedUser.id, {
@@ -728,9 +841,11 @@ function UsersContent() {
                 role: userForm.role,
                 organizationId: userForm.organizationId,
                 branchId: userForm.branchId,
-                mainheadId: userForm.mainheadId,
+                mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
                 teamId: userForm.teamId,
                 capabilityIds: userForm.capabilityIds,
+                mainheadAccessIds: userForm.mainheadAccessIds,
+                operationalRegionAccessIds: userForm.operationalRegionAccessIds,
               })
             : null;
 
@@ -950,11 +1065,12 @@ function UsersContent() {
                           [
                             user.organization?.code || user.organization?.name,
                             user.branch?.code || user.branch?.name,
-                            user.mainhead?.code || user.mainhead?.name,
+                            mainheadAccessNames(user),
                             user.team?.code || user.team?.name,
                           ]
                             .filter(Boolean)
                             .join(" / ") || "Not assigned";
+                        const regionAccess = operationalRegionAccessNames(user);
                         const userCapabilities = capabilityNames(user);
 
                         return (
@@ -989,6 +1105,11 @@ function UsersContent() {
                               {userCapabilities ? (
                                 <div className="mt-1 max-w-72 truncate text-xs text-[var(--muted)]">
                                   {userCapabilities}
+                                </div>
+                              ) : null}
+                              {regionAccess ? (
+                                <div className="mt-1 max-w-72 truncate text-xs text-[var(--muted)]">
+                                  Regions: {regionAccess}
                                 </div>
                               ) : null}
                             </td>

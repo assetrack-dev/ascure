@@ -7,6 +7,7 @@ import {
   Building2,
   FolderKanban,
   GitBranch,
+  MapPinned,
   Network,
   PackageCheck,
   RefreshCw,
@@ -43,6 +44,11 @@ const PAGE_CONFIG: Record<
     label: "Branches",
     basePath: "/branches",
     icon: GitBranch,
+  },
+  "operational-regions": {
+    label: "Operational Regions",
+    basePath: "/operational-regions",
+    icon: MapPinned,
   },
   capabilities: {
     label: "Capabilities",

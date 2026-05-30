@@ -20,6 +20,10 @@ export class ListTemplatesQueryDto {
 
   @IsOptional()
   @IsUUID()
+  operationalRegionId?: string;
+
+  @IsOptional()
+  @IsUUID()
   branchId?: string;
 
   @IsOptional()

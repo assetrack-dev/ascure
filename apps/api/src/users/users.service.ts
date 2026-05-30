@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { OrganizationType, Prisma, UserRole } from '@prisma/client';
+import { MainheadAccessRole, OrganizationType, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -48,10 +48,18 @@ export class UsersService {
           dto.departmentId,
         );
         await this.assertEmailAvailable(tx, dto.email);
+        const requestedMainheadAccessIds = this.normalizeIdList(
+          dto.mainheadAccessIds,
+        );
+        const requestedOperationalRegionAccessIds = this.normalizeIdList(
+          dto.operationalRegionAccessIds,
+        );
+        const legacyMainheadId =
+          dto.mainheadId ?? requestedMainheadAccessIds[0] ?? null;
         const operationalLinks = await this.resolveOperationalLinks(tx, user.tenantId, {
           organizationId: dto.organizationId,
           branchId: dto.branchId,
-          mainheadId: dto.mainheadId,
+          mainheadId: legacyMainheadId,
           teamId: dto.teamId,
         });
 
@@ -81,9 +89,47 @@ export class UsersService {
           );
         }
 
+        if (
+          dto.mainheadAccessIds !== undefined ||
+          operationalLinks.mainheadId
+        ) {
+          await this.syncUserMainheadAccesses(
+            tx,
+            createdUser.id,
+            dto.mainheadAccessIds === undefined
+              ? operationalLinks.mainheadId
+                ? [operationalLinks.mainheadId]
+                : []
+              : requestedMainheadAccessIds,
+            dto.accessRole,
+          );
+        }
+
+        if (dto.operationalRegionAccessIds !== undefined) {
+          await this.syncUserOperationalRegionAccesses(
+            tx,
+            createdUser.id,
+            requestedOperationalRegionAccessIds,
+            dto.accessRole,
+          );
+        }
+
         if (dto.capabilityIds !== undefined) {
           await this.syncUserCapabilities(tx, createdUser.id, dto.capabilityIds);
 
+          return tx.user.findUniqueOrThrow({
+            where: {
+              id: createdUser.id,
+            },
+            select: this.userSelect(),
+          });
+        }
+
+        if (
+          dto.mainheadAccessIds !== undefined ||
+          dto.operationalRegionAccessIds !== undefined ||
+          operationalLinks.mainheadId
+        ) {
           return tx.user.findUniqueOrThrow({
             where: {
               id: createdUser.id,
@@ -128,11 +174,20 @@ export class UsersService {
           user.tenantId,
           dto.departmentId,
         );
+        const requestedMainheadAccessIds =
+          dto.mainheadAccessIds === undefined
+            ? undefined
+            : this.normalizeIdList(dto.mainheadAccessIds);
+        const requestedOperationalRegionAccessIds =
+          dto.operationalRegionAccessIds === undefined
+            ? undefined
+            : this.normalizeIdList(dto.operationalRegionAccessIds);
         const shouldResolveOperationalLinks =
           dto.organizationId !== undefined ||
           dto.branchId !== undefined ||
           dto.mainheadId !== undefined ||
-          dto.teamId !== undefined;
+          dto.teamId !== undefined ||
+          requestedMainheadAccessIds !== undefined;
         const operationalLinks = shouldResolveOperationalLinks
           ? await this.resolveOperationalLinks(tx, user.tenantId, {
               organizationId:
@@ -143,7 +198,9 @@ export class UsersService {
                 dto.branchId === undefined ? existingUser.branchId : dto.branchId,
               mainheadId:
                 dto.mainheadId === undefined
-                  ? existingUser.mainheadId
+                  ? requestedMainheadAccessIds === undefined
+                    ? existingUser.mainheadId
+                    : requestedMainheadAccessIds[0] ?? null
                   : dto.mainheadId,
               teamId: dto.teamId === undefined ? existingUser.teamId : dto.teamId,
             })
@@ -185,7 +242,9 @@ export class UsersService {
 
         if (
           Object.keys(data).length === 0 &&
-          dto.capabilityIds === undefined
+          dto.capabilityIds === undefined &&
+          requestedMainheadAccessIds === undefined &&
+          requestedOperationalRegionAccessIds === undefined
         ) {
           throw new BadRequestException(
             'At least one editable user field must be provided.',
@@ -212,6 +271,24 @@ export class UsersService {
 
         if (dto.capabilityIds !== undefined) {
           await this.syncUserCapabilities(tx, id, dto.capabilityIds);
+        }
+
+        if (requestedMainheadAccessIds !== undefined) {
+          await this.syncUserMainheadAccesses(
+            tx,
+            id,
+            requestedMainheadAccessIds,
+            dto.accessRole,
+          );
+        }
+
+        if (requestedOperationalRegionAccessIds !== undefined) {
+          await this.syncUserOperationalRegionAccesses(
+            tx,
+            id,
+            requestedOperationalRegionAccessIds,
+            dto.accessRole,
+          );
         }
 
         return tx.user.findUniqueOrThrow({
@@ -360,15 +437,19 @@ export class UsersService {
           },
         },
       },
-    } satisfies Prisma.MainheadInclude;
-    const activeMainheadWhere = {
-      isActive: true,
-      branch: {
-        isActive: true,
-        organization: {
+      operationalRegion: {
+        select: {
+          id: true,
+          tenantId: true,
+          name: true,
+          code: true,
+          state: true,
           isActive: true,
         },
       },
+    } satisfies Prisma.MainheadInclude;
+    const activeMainheadWhere = {
+      isActive: true,
     } satisfies Prisma.MainheadWhereInput;
 
     if (user.role === UserRole.ADMIN) {
@@ -409,6 +490,16 @@ export class UsersService {
             id: true,
           },
         },
+        mainheadAccesses: {
+          select: {
+            mainheadId: true,
+          },
+        },
+        operationalRegionAccesses: {
+          select: {
+            operationalRegionId: true,
+          },
+        },
         teamMemberships: {
           where: {
             isActive: true,
@@ -446,9 +537,18 @@ export class UsersService {
 
     const mainheadIds = new Set<string>();
     const branchIds = new Set<string>();
+    const operationalRegionIds = new Set<string>();
 
     this.addOptionalId(mainheadIds, currentUser.mainheadId);
     this.addOptionalId(branchIds, currentUser.branchId);
+
+    for (const access of currentUser.mainheadAccesses) {
+      this.addOptionalId(mainheadIds, access.mainheadId);
+    }
+
+    for (const access of currentUser.operationalRegionAccesses) {
+      this.addOptionalId(operationalRegionIds, access.operationalRegionId);
+    }
 
     for (const membership of currentUser.teamMemberships) {
       this.addOptionalId(mainheadIds, membership.team.mainheadId);
@@ -469,6 +569,14 @@ export class UsersService {
       accessFilters.push({
         branchId: {
           in: Array.from(branchIds),
+        },
+      });
+    }
+
+    if (operationalRegionIds.size > 0) {
+      accessFilters.push({
+        operationalRegionId: {
+          in: Array.from(operationalRegionIds),
         },
       });
     }
@@ -534,10 +642,21 @@ export class UsersService {
         select: {
           id: true,
           branchId: true,
+          operationalRegionId: true,
           name: true,
           code: true,
           description: true,
           isActive: true,
+          operationalRegion: {
+            select: {
+              id: true,
+              tenantId: true,
+              name: true,
+              code: true,
+              state: true,
+              isActive: true,
+            },
+          },
         },
       },
       team: {
@@ -562,6 +681,50 @@ export class UsersService {
         orderBy: [
           {
             capability: {
+              name: 'asc',
+            },
+          },
+        ],
+      },
+      mainheadAccesses: {
+        include: {
+          mainhead: {
+            select: {
+              id: true,
+              branchId: true,
+              operationalRegionId: true,
+              name: true,
+              code: true,
+              description: true,
+              isActive: true,
+              operationalRegion: {
+                select: {
+                  id: true,
+                  tenantId: true,
+                  name: true,
+                  code: true,
+                  state: true,
+                  isActive: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [
+          {
+            mainhead: {
+              name: 'asc',
+            },
+          },
+        ],
+      },
+      operationalRegionAccesses: {
+        include: {
+          operationalRegion: true,
+        },
+        orderBy: [
+          {
+            operationalRegion: {
               name: 'asc',
             },
           },
@@ -611,6 +774,16 @@ export class UsersService {
             };
           };
         };
+        operationalRegion: {
+          select: {
+            id: true;
+            tenantId: true;
+            name: true;
+            code: true;
+            state: true;
+            isActive: true;
+          };
+        };
       };
     }>,
   ) {
@@ -619,10 +792,12 @@ export class UsersService {
       name: mainhead.name,
       code: mainhead.code,
       branchId: mainhead.branchId,
-      organizationId: mainhead.branch.organizationId,
+      operationalRegionId: mainhead.operationalRegionId,
+      organizationId: mainhead.branch?.organizationId ?? null,
       description: mainhead.description,
       isActive: mainhead.isActive,
       branch: mainhead.branch,
+      operationalRegion: mainhead.operationalRegion,
     };
   }
 
@@ -879,6 +1054,141 @@ export class UsersService {
         },
         update: {
           isActive: true,
+        },
+      });
+    }
+  }
+
+  private async assertMainheadsExist(
+    tx: Prisma.TransactionClient,
+    mainheadIds: string[],
+  ) {
+    if (mainheadIds.length === 0) {
+      return;
+    }
+
+    const count = await tx.mainhead.count({
+      where: {
+        id: {
+          in: mainheadIds,
+        },
+      },
+    });
+
+    if (count !== mainheadIds.length) {
+      throw new NotFoundException('One or more MAINHEAD records were not found.');
+    }
+  }
+
+  private async syncUserMainheadAccesses(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    mainheadIds: string[],
+    accessRole?: MainheadAccessRole,
+  ) {
+    const normalizedMainheadIds = this.normalizeIdList(mainheadIds);
+    await this.assertMainheadsExist(tx, normalizedMainheadIds);
+
+    await tx.userMainheadAccess.deleteMany({
+      where: {
+        userId,
+        ...(normalizedMainheadIds.length > 0
+          ? {
+              mainheadId: {
+                notIn: normalizedMainheadIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const mainheadId of normalizedMainheadIds) {
+      await tx.userMainheadAccess.upsert({
+        where: {
+          userId_mainheadId: {
+            userId,
+            mainheadId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          userId,
+          mainheadId,
+          accessRole: accessRole ?? null,
+        },
+        update: {
+          accessRole: accessRole ?? undefined,
+        },
+      });
+    }
+  }
+
+  private async assertOperationalRegionsExist(
+    tx: Prisma.TransactionClient,
+    operationalRegionIds: string[],
+  ) {
+    if (operationalRegionIds.length === 0) {
+      return;
+    }
+
+    const count = await tx.operationalRegion.count({
+      where: {
+        id: {
+          in: operationalRegionIds,
+        },
+      },
+    });
+
+    if (count !== operationalRegionIds.length) {
+      throw new NotFoundException(
+        'One or more operational regions were not found.',
+      );
+    }
+  }
+
+  private async syncUserOperationalRegionAccesses(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    operationalRegionIds: string[],
+    accessRole?: MainheadAccessRole,
+  ) {
+    const normalizedOperationalRegionIds = this.normalizeIdList(
+      operationalRegionIds,
+    );
+    await this.assertOperationalRegionsExist(
+      tx,
+      normalizedOperationalRegionIds,
+    );
+
+    await tx.userOperationalRegionAccess.deleteMany({
+      where: {
+        userId,
+        ...(normalizedOperationalRegionIds.length > 0
+          ? {
+              operationalRegionId: {
+                notIn: normalizedOperationalRegionIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const operationalRegionId of normalizedOperationalRegionIds) {
+      await tx.userOperationalRegionAccess.upsert({
+        where: {
+          userId_operationalRegionId: {
+            userId,
+            operationalRegionId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          userId,
+          operationalRegionId,
+          accessRole: accessRole ?? null,
+        },
+        update: {
+          accessRole: accessRole ?? undefined,
         },
       });
     }

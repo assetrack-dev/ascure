@@ -13,11 +13,13 @@ import {
   WorkPackageStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   ListBranchesQueryDto,
   ListCapabilitiesQueryDto,
   ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
+  ListOperationalRegionsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
 } from './dto/list-enterprise-query.dto';
@@ -25,6 +27,7 @@ import {
   CreateBranchDto,
   CreateCapabilityDto,
   CreateMainheadDto,
+  CreateOperationalRegionDto,
   CreateOrganizationDto,
   CreateProjectDto,
   CreateWorkPackageDto,
@@ -32,12 +35,15 @@ import {
   UpdateCapabilityDto,
   UpdateEnterpriseActiveDto,
   UpdateMainheadDto,
+  UpdateOperationalRegionDto,
   UpdateOrganizationDto,
   UpdateProjectDto,
   UpdateProjectLifecycleStatusDto,
   UpdateWorkPackageDto,
   UpdateWorkPackageLifecycleStatusDto,
 } from './dto/manage-enterprise.dto';
+
+type PrismaClientLike = Prisma.TransactionClient | PrismaService;
 
 const ORGANIZATION_INCLUDE = Prisma.validator<Prisma.OrganizationInclude>()({
   parentOrganization: {
@@ -121,6 +127,17 @@ const BRANCH_INCLUDE = Prisma.validator<Prisma.BranchInclude>()({
   },
 });
 
+const OPERATIONAL_REGION_INCLUDE =
+  Prisma.validator<Prisma.OperationalRegionInclude>()({
+    _count: {
+      select: {
+        mainheads: true,
+        userAccesses: true,
+        inspectionTemplates: true,
+      },
+    },
+  });
+
 const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
   branch: {
     select: {
@@ -139,6 +156,16 @@ const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
           isActive: true,
         },
       },
+    },
+  },
+  operationalRegion: {
+    select: {
+      id: true,
+      tenantId: true,
+      name: true,
+      code: true,
+      state: true,
+      isActive: true,
     },
   },
   capabilityAssignments: {
@@ -160,6 +187,7 @@ const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
       siteVisits: true,
       teams: true,
       assignedUsers: true,
+      userAccesses: true,
       capabilityAssignments: true,
     },
   },
@@ -277,8 +305,16 @@ const WORK_PACKAGE_INCLUDE = Prisma.validator<Prisma.WorkPackageInclude>()({
 export class EnterpriseService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOptions() {
-    const [organizations, branches, mainheads, capabilities, projects, workPackages] =
+  async getOptions(user: RequestUser) {
+    const [
+      organizations,
+      branches,
+      operationalRegions,
+      mainheads,
+      capabilities,
+      projects,
+      workPackages,
+    ] =
       await Promise.all([
         this.prisma.organization.findMany({
           orderBy: {
@@ -321,6 +357,27 @@ export class EnterpriseService {
             },
           },
         }),
+        this.prisma.operationalRegion.findMany({
+          where: {
+            tenantId: user.tenantId,
+          },
+          orderBy: [
+            {
+              isActive: 'desc',
+            },
+            {
+              name: 'asc',
+            },
+          ],
+          select: {
+            id: true,
+            tenantId: true,
+            name: true,
+            code: true,
+            state: true,
+            isActive: true,
+          },
+        }),
         this.prisma.mainhead.findMany({
           orderBy: [
             {
@@ -333,10 +390,21 @@ export class EnterpriseService {
           select: {
             id: true,
             branchId: true,
+            operationalRegionId: true,
             name: true,
             code: true,
             description: true,
             isActive: true,
+            operationalRegion: {
+              select: {
+                id: true,
+                tenantId: true,
+                name: true,
+                code: true,
+                state: true,
+                isActive: true,
+              },
+            },
             branch: {
               select: {
                 id: true,
@@ -422,6 +490,7 @@ export class EnterpriseService {
       workPackageStatuses: Object.values(WorkPackageStatus),
       organizations,
       branches,
+      operationalRegions,
       mainheads,
       capabilities,
       projects,
@@ -815,20 +884,38 @@ export class EnterpriseService {
     });
   }
 
-  async createMainhead(dto: CreateMainheadDto) {
+  async createMainhead(user: RequestUser, dto: CreateMainheadDto) {
     return this.prisma.$transaction(async (tx) => {
-      const branchId = await this.resolveBranchId(tx, {
-        branchId: dto.branchId,
-        organizationId: dto.organizationId,
-        branchName: dto.branchName,
-        branchCode: dto.branchCode,
-        region: dto.region,
-        fallbackName: dto.name,
-      });
+      const shouldResolveLegacyBranch =
+        Boolean(dto.branchId) ||
+        dto.organizationId !== undefined ||
+        dto.branchName !== undefined ||
+        dto.branchCode !== undefined ||
+        dto.region !== undefined;
+      const branchId = shouldResolveLegacyBranch
+        ? await this.resolveBranchId(tx, {
+            branchId: dto.branchId,
+            organizationId: dto.organizationId,
+            branchName: dto.branchName,
+            branchCode: dto.branchCode,
+            region: dto.region,
+            fallbackName: dto.name,
+          })
+        : null;
+
+      await this.assertOperationalRegionExists(
+        user,
+        dto.operationalRegionId,
+        'Operational region',
+        tx,
+      );
 
       const mainhead = await tx.mainhead.create({
         data: {
           branchId,
+          operationalRegionId: this.normalizeOptionalString(
+            dto.operationalRegionId,
+          ),
           name: this.normalizeRequiredString(dto.name, 'MAINHEAD name'),
           code: this.normalizeOptionalString(dto.code),
           description: this.normalizeOptionalString(dto.description),
@@ -856,7 +943,7 @@ export class EnterpriseService {
     });
   }
 
-  async updateMainhead(id: string, dto: UpdateMainheadDto) {
+  async updateMainhead(user: RequestUser, id: string, dto: UpdateMainheadDto) {
     return this.prisma.$transaction(async (tx) => {
       const existingMainhead = await tx.mainhead.findUnique({
         where: {
@@ -875,28 +962,50 @@ export class EnterpriseService {
 
       const data: Prisma.MainheadUpdateInput = {};
       let branchChanged = false;
+      const shouldDisconnectBranch = dto.branchId === null;
       const shouldResolveBranch =
-        dto.branchId !== undefined || dto.organizationId !== undefined;
+        Boolean(dto.branchId) ||
+        dto.organizationId !== undefined ||
+        (existingMainhead.branchId === null &&
+          (dto.branchName !== undefined ||
+            dto.branchCode !== undefined ||
+            dto.region !== undefined));
 
-      if (shouldResolveBranch) {
+      if (shouldDisconnectBranch) {
         data.branch = {
-          connect: {
-            id: await this.resolveBranchId(tx, {
-              branchId: dto.branchId,
-              organizationId: dto.organizationId,
-              branchName: dto.branchName,
-              branchCode: dto.branchCode,
-              region: dto.region,
-              fallbackName: dto.name ?? existingMainhead.name,
-            }),
-          },
+          disconnect: true,
         };
+        branchChanged = true;
+      } else if (shouldResolveBranch) {
+        const branchId = await this.resolveBranchId(tx, {
+          branchId: dto.branchId,
+          organizationId: dto.organizationId,
+          branchName: dto.branchName,
+          branchCode: dto.branchCode,
+          region: dto.region,
+          fallbackName: dto.name ?? existingMainhead.name,
+        });
+        data.branch = branchId
+          ? {
+              connect: {
+                id: branchId,
+              },
+            }
+          : {
+              disconnect: true,
+            };
         branchChanged = true;
       } else if (
         dto.branchName !== undefined ||
         dto.branchCode !== undefined ||
         dto.region !== undefined
       ) {
+        if (!existingMainhead.branchId) {
+          throw new BadRequestException(
+            'Legacy branch fields require a branch or organization.',
+          );
+        }
+
         await tx.branch.update({
           where: {
             id: existingMainhead.branchId,
@@ -935,6 +1044,24 @@ export class EnterpriseService {
 
       if (dto.isActive !== undefined) {
         data.isActive = dto.isActive;
+      }
+
+      if (dto.operationalRegionId !== undefined) {
+        await this.assertOperationalRegionExists(
+          user,
+          dto.operationalRegionId,
+          'Operational region',
+          tx,
+        );
+        data.operationalRegion = dto.operationalRegionId
+          ? {
+              connect: {
+                id: dto.operationalRegionId,
+              },
+            }
+          : {
+              disconnect: true,
+            };
       }
 
       if (
@@ -1316,6 +1443,133 @@ export class EnterpriseService {
     return branch;
   }
 
+  listOperationalRegions(
+    user: RequestUser,
+    query: ListOperationalRegionsQueryDto,
+  ) {
+    return this.prisma.operationalRegion.findMany({
+      where: {
+        tenantId: user.tenantId,
+        ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+      },
+      include: OPERATIONAL_REGION_INCLUDE,
+      orderBy: [
+        {
+          isActive: 'desc',
+        },
+        {
+          name: 'asc',
+        },
+      ],
+    });
+  }
+
+  async createOperationalRegion(
+    user: RequestUser,
+    dto: CreateOperationalRegionDto,
+  ) {
+    try {
+      return await this.prisma.operationalRegion.create({
+        data: {
+          tenantId: user.tenantId,
+          name: this.normalizeRequiredString(dto.name, 'Region name'),
+          code: this.normalizeRequiredString(dto.code, 'Region code'),
+          state: this.normalizeOptionalString(dto.state),
+          isActive: dto.isActive ?? true,
+        },
+        include: OPERATIONAL_REGION_INCLUDE,
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'operational region');
+      throw error;
+    }
+  }
+
+  async updateOperationalRegion(
+    user: RequestUser,
+    id: string,
+    dto: UpdateOperationalRegionDto,
+  ) {
+    await this.assertOperationalRegionExists(
+      user,
+      id,
+      'Operational region',
+    );
+    const data: Prisma.OperationalRegionUpdateInput = {};
+
+    if (dto.name !== undefined) {
+      data.name = this.normalizeRequiredString(dto.name, 'Region name');
+    }
+
+    if (dto.code !== undefined) {
+      data.code = this.normalizeRequiredString(dto.code, 'Region code');
+    }
+
+    if (dto.state !== undefined) {
+      data.state = this.normalizeOptionalString(dto.state);
+    }
+
+    if (dto.isActive !== undefined) {
+      data.isActive = dto.isActive;
+    }
+
+    this.assertHasChanges(data);
+
+    try {
+      return await this.prisma.operationalRegion.update({
+        where: {
+          id,
+        },
+        data,
+        include: OPERATIONAL_REGION_INCLUDE,
+      });
+    } catch (error) {
+      this.throwDuplicateCodeConflict(error, 'operational region');
+      throw error;
+    }
+  }
+
+  updateOperationalRegionActive(
+    user: RequestUser,
+    id: string,
+    dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertOperationalRegionExists(
+        user,
+        id,
+        'Operational region',
+        tx,
+      );
+
+      return tx.operationalRegion.update({
+      where: {
+        id,
+      },
+      data: {
+        isActive: dto.isActive,
+      },
+      include: OPERATIONAL_REGION_INCLUDE,
+      });
+    });
+  }
+
+  async getOperationalRegion(user: RequestUser, id: string) {
+    const operationalRegion = await this.prisma.operationalRegion.findFirst({
+      where: {
+        id,
+        tenantId: user.tenantId,
+      },
+      include: OPERATIONAL_REGION_INCLUDE,
+    });
+
+    if (!operationalRegion) {
+      throw new NotFoundException('Operational region not found.');
+    }
+
+    return operationalRegion;
+  }
+
   listCapabilities(query: ListCapabilitiesQueryDto) {
     return this.prisma.capability.findMany({
       where: {
@@ -1355,6 +1609,11 @@ export class EnterpriseService {
       orderBy: [
         {
           isActive: 'desc',
+        },
+        {
+          operationalRegion: {
+            name: 'asc',
+          },
         },
         {
           branch: {
@@ -1763,6 +2022,31 @@ export class EnterpriseService {
     }
   }
 
+  private async assertOperationalRegionExists(
+    user: RequestUser,
+    operationalRegionId: string | null | undefined,
+    label: string,
+    client: PrismaClientLike = this.prisma,
+  ) {
+    if (!operationalRegionId) {
+      return;
+    }
+
+    const operationalRegion = await client.operationalRegion.findFirst({
+      where: {
+        id: operationalRegionId,
+        tenantId: user.tenantId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!operationalRegion) {
+      throw new NotFoundException(`${label} not found.`);
+    }
+  }
+
   private async assertBranchCodeAvailable(
     tx: Prisma.TransactionClient,
     organizationId: string,
@@ -1935,6 +2219,9 @@ export class EnterpriseService {
   ): Prisma.MainheadWhereInput {
     return {
       ...(query.branchId ? { branchId: query.branchId } : {}),
+      ...(query.operationalRegionId
+        ? { operationalRegionId: query.operationalRegionId }
+        : {}),
       ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     };
   }

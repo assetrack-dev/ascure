@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { MainheadAccessRole, UserRole } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsArray,
@@ -74,4 +74,18 @@ export class UpdateUserDto {
   @IsArray()
   @IsUUID(undefined, { each: true })
   capabilityIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  mainheadAccessIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  operationalRegionAccessIds?: string[];
+
+  @IsOptional()
+  @IsEnum(MainheadAccessRole)
+  accessRole?: MainheadAccessRole;
 }

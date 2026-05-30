@@ -10,11 +10,14 @@ import {
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   ListBranchesQueryDto,
   ListCapabilitiesQueryDto,
   ListMainheadsQueryDto,
   ListOrganizationsQueryDto,
+  ListOperationalRegionsQueryDto,
   ListProjectsQueryDto,
   ListWorkPackagesQueryDto,
 } from './dto/list-enterprise-query.dto';
@@ -22,6 +25,7 @@ import {
   CreateBranchDto,
   CreateCapabilityDto,
   CreateMainheadDto,
+  CreateOperationalRegionDto,
   CreateOrganizationDto,
   CreateProjectDto,
   CreateWorkPackageDto,
@@ -29,6 +33,7 @@ import {
   UpdateCapabilityDto,
   UpdateEnterpriseActiveDto,
   UpdateMainheadDto,
+  UpdateOperationalRegionDto,
   UpdateOrganizationDto,
   UpdateProjectDto,
   UpdateProjectLifecycleStatusDto,
@@ -48,8 +53,8 @@ export class EnterpriseController {
   constructor(private readonly enterpriseService: EnterpriseService) {}
 
   @Get('options')
-  getOptions() {
-    return this.enterpriseService.getOptions();
+  getOptions(@CurrentUser() user: RequestUser) {
+    return this.enterpriseService.getOptions(user);
   }
 
   @Post('organizations')
@@ -114,6 +119,52 @@ export class EnterpriseController {
     return this.enterpriseService.getBranch(params.id);
   }
 
+  @Get('operational-regions')
+  listOperationalRegions(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ListOperationalRegionsQueryDto,
+  ) {
+    return this.enterpriseService.listOperationalRegions(user, query);
+  }
+
+  @Post('operational-regions')
+  createOperationalRegion(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: CreateOperationalRegionDto,
+  ) {
+    return this.enterpriseService.createOperationalRegion(user, dto);
+  }
+
+  @Patch('operational-regions/:id')
+  updateOperationalRegion(
+    @CurrentUser() user: RequestUser,
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateOperationalRegionDto,
+  ) {
+    return this.enterpriseService.updateOperationalRegion(user, params.id, dto);
+  }
+
+  @Patch('operational-regions/:id/status')
+  updateOperationalRegionActive(
+    @CurrentUser() user: RequestUser,
+    @Param() params: EnterpriseIdParamDto,
+    @Body() dto: UpdateEnterpriseActiveDto,
+  ) {
+    return this.enterpriseService.updateOperationalRegionActive(
+      user,
+      params.id,
+      dto,
+    );
+  }
+
+  @Get('operational-regions/:id')
+  getOperationalRegion(
+    @CurrentUser() user: RequestUser,
+    @Param() params: EnterpriseIdParamDto,
+  ) {
+    return this.enterpriseService.getOperationalRegion(user, params.id);
+  }
+
   @Get('capabilities')
   listCapabilities(@Query() query: ListCapabilitiesQueryDto) {
     return this.enterpriseService.listCapabilities(query);
@@ -146,8 +197,8 @@ export class EnterpriseController {
   }
 
   @Post('mainheads')
-  createMainhead(@Body() dto: CreateMainheadDto) {
-    return this.enterpriseService.createMainhead(dto);
+  createMainhead(@CurrentUser() user: RequestUser, @Body() dto: CreateMainheadDto) {
+    return this.enterpriseService.createMainhead(user, dto);
   }
 
   @Get('mainheads')
@@ -157,10 +208,11 @@ export class EnterpriseController {
 
   @Patch('mainheads/:id')
   updateMainhead(
+    @CurrentUser() user: RequestUser,
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateMainheadDto,
   ) {
-    return this.enterpriseService.updateMainhead(params.id, dto);
+    return this.enterpriseService.updateMainhead(user, params.id, dto);
   }
 
   @Patch('mainheads/:id/status')

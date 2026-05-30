@@ -74,6 +74,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: GitBranch,
     },
     {
+      href: "/operational-regions",
+      label: "Regions",
+      icon: MapPinned,
+      adminOnly: true,
+    },
+    {
       href: "/capabilities",
       label: "Capabilities",
       icon: Tags,

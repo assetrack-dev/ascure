@@ -978,7 +978,7 @@ export class OperationalSessionsService {
 
     const branchId = branch?.id ?? mainhead?.branchId ?? null;
 
-    if (branchId && mainhead && branchId !== mainhead.branchId) {
+    if (branch?.id && mainhead?.branchId && branch.id !== mainhead.branchId) {
       throw new BadRequestException(
         'MAINHEAD does not belong to the selected branch.',
       );
@@ -1001,10 +1001,10 @@ export class OperationalSessionsService {
     mainhead:
       | {
           id: string;
-          branchId: string;
+          branchId: string | null;
           branch: {
             organizationId: string;
-          };
+          } | null;
         }
       | null;
   }) {
@@ -1016,6 +1016,7 @@ export class OperationalSessionsService {
 
     if (
       input.mainhead &&
+      input.mainhead.branch &&
       input.mainhead.branch.organizationId !== input.organizationId
     ) {
       throw new BadRequestException(
@@ -1026,6 +1027,7 @@ export class OperationalSessionsService {
     if (
       input.branch &&
       input.mainhead &&
+      input.mainhead.branchId &&
       input.mainhead.branchId !== input.branch.id
     ) {
       throw new BadRequestException(

@@ -35,10 +35,18 @@ export interface Mainhead {
   id: string;
   name: string;
   code?: string | null;
-  branchId: string;
+  branchId?: string | null;
+  operationalRegionId?: string | null;
   organizationId?: string | null;
   description?: string | null;
   isActive?: boolean;
+  operationalRegion?: {
+    id: string;
+    name: string;
+    code?: string | null;
+    state?: string | null;
+    isActive?: boolean;
+  } | null;
   branch?: {
     id: string;
     organizationId?: string | null;
@@ -718,7 +726,12 @@ export interface SelectOption {
   prefix?: string;
 }
 
-export type ChecklistTemplateScopeLevel = 'GLOBAL' | 'ORGANIZATION' | 'BRANCH' | 'MAINHEAD';
+export type ChecklistTemplateScopeLevel =
+  | 'GLOBAL'
+  | 'ORGANIZATION'
+  | 'OPERATIONAL_REGION'
+  | 'BRANCH'
+  | 'MAINHEAD';
 
 export interface ChecklistTemplateItem {
   id: string;

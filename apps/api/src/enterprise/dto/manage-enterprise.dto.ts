@@ -20,6 +20,16 @@ import {
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+const normalizeNullableString = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmedValue = value.trim();
+
+  return trimmedValue ? trimmedValue : null;
+};
+
 export class CreateOrganizationDto {
   @Transform(trimString)
   @IsString()
@@ -145,6 +155,52 @@ export class UpdateBranchDto {
   capabilityIds?: string[];
 }
 
+export class CreateOperationalRegionDto {
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(255)
+  name!: string;
+
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(64)
+  code!: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  state?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateOperationalRegionDto {
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  code?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  state?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export class CreateCapabilityDto {
   @Transform(trimString)
   @IsString()
@@ -209,9 +265,14 @@ export class CreateMainheadDto {
   @MaxLength(1000)
   description?: string | null;
 
+  @Transform(normalizeNullableString)
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  branchId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  operationalRegionId?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -264,9 +325,14 @@ export class UpdateMainheadDto {
   @MaxLength(1000)
   description?: string | null;
 
+  @Transform(normalizeNullableString)
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  branchId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  operationalRegionId?: string | null;
 
   @IsOptional()
   @IsUUID()

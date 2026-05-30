@@ -68,6 +68,13 @@ export class ListBranchesQueryDto {
   isActive?: boolean;
 }
 
+export class ListOperationalRegionsQueryDto {
+  @Transform(optionalBoolean)
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export class ListCapabilitiesQueryDto {
   @Transform(optionalBoolean)
   @IsOptional()
@@ -79,6 +86,10 @@ export class ListMainheadsQueryDto {
   @IsOptional()
   @IsUUID()
   branchId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  operationalRegionId?: string;
 
   @Transform(optionalBoolean)
   @IsOptional()

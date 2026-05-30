@@ -214,6 +214,10 @@ export class CreateChecklistTemplateDto {
 
   @IsOptional()
   @IsUUID()
+  operationalRegionId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
   branchId?: string | null;
 
   @IsOptional()
@@ -260,6 +264,10 @@ export class UpdateChecklistTemplateDto {
   @IsOptional()
   @IsUUID()
   organizationId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  operationalRegionId?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -329,6 +337,10 @@ export class ResolveInspectionTemplateQueryDto {
   @IsOptional()
   @IsUUID()
   organizationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  operationalRegionId?: string;
 
   @IsOptional()
   @IsUUID()

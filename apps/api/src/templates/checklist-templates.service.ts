@@ -59,6 +59,16 @@ const checklistTemplateInclude = {
       type: true,
     },
   },
+  operationalRegion: {
+    select: {
+      id: true,
+      tenantId: true,
+      code: true,
+      name: true,
+      state: true,
+      isActive: true,
+    },
+  },
   branch: {
     select: {
       id: true,
@@ -103,6 +113,7 @@ type ChecklistTemplateItemRecord = ChecklistTemplateRecord['sections'][number]['
 type PrismaClientLike = Prisma.TransactionClient | PrismaService;
 type ChecklistTemplateResolutionSource =
   | 'MAINHEAD'
+  | 'OPERATIONAL_REGION'
   | 'BRANCH'
   | 'ORGANIZATION'
   | 'GLOBAL';
@@ -110,6 +121,7 @@ type ChecklistTemplateResolutionSource =
 type TemplateScopeFields = {
   scopeLevel: InspectionTemplateScopeLevel;
   organizationId: string | null;
+  operationalRegionId: string | null;
   branchId: string | null;
   mainheadId: string | null;
 };
@@ -120,6 +132,7 @@ type ChecklistTemplateMappingInput = {
   capabilityId?: string | null;
   scopeLevel?: InspectionTemplateScopeLevel | null;
   organizationId?: string | null;
+  operationalRegionId?: string | null;
   branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: OperationalDomain | null;
@@ -133,6 +146,7 @@ type TemplateResolutionContextInput = {
   siteVisitId?: string;
   operationalSessionId?: string;
   organizationId?: string | null;
+  operationalRegionId?: string | null;
   branchId?: string | null;
   mainheadId?: string | null;
 };
@@ -256,6 +270,7 @@ export class ChecklistTemplatesService {
           capabilityId: mapping.capabilityId,
           scopeLevel: mapping.scopeLevel,
           organizationId: mapping.organizationId,
+          operationalRegionId: mapping.operationalRegionId,
           branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
@@ -386,6 +401,21 @@ export class ChecklistTemplatesService {
       }
     }
 
+    if (assetType && context.operationalRegionId) {
+      const operationalRegionTemplate = await this.findActiveTemplate({
+        ...baseWhere,
+        scopeLevel: InspectionTemplateScopeLevel.OPERATIONAL_REGION,
+        operationalRegionId: context.operationalRegionId,
+      });
+
+      if (operationalRegionTemplate) {
+        return {
+          template: operationalRegionTemplate,
+          source: 'OPERATIONAL_REGION',
+        };
+      }
+    }
+
     if (assetType && context.branchId) {
       const branchTemplate = await this.findActiveTemplate({
         ...baseWhere,
@@ -420,6 +450,7 @@ export class ChecklistTemplatesService {
       ...baseWhere,
       scopeLevel: InspectionTemplateScopeLevel.GLOBAL,
       organizationId: null,
+      operationalRegionId: null,
       branchId: null,
       mainheadId: null,
     });
@@ -441,6 +472,7 @@ export class ChecklistTemplatesService {
     let assetTypeId = input.assetTypeId ?? null;
     let capabilityId = input.capabilityId ?? null;
     let organizationId = input.organizationId ?? null;
+    let operationalRegionId = input.operationalRegionId ?? null;
     let branchId = input.branchId ?? null;
     let mainheadId = input.mainheadId ?? null;
 
@@ -479,6 +511,11 @@ export class ChecklistTemplatesService {
           organizationId: true,
           branchId: true,
           mainheadId: true,
+          mainheadRecord: {
+            select: {
+              operationalRegionId: true,
+            },
+          },
           team: {
             select: {
               organizationId: true,
@@ -545,6 +582,8 @@ export class ChecklistTemplatesService {
         siteVisit.workPackage?.project.mainheadId ??
         siteVisit.team.mainheadId ??
         null;
+      operationalRegionId =
+        operationalRegionId ?? siteVisit.mainheadRecord?.operationalRegionId ?? null;
     }
 
     if (input.operationalSessionId) {
@@ -569,7 +608,7 @@ export class ChecklistTemplatesService {
       mainheadId = mainheadId ?? operationalSession.mainheadId;
     }
 
-    if (!organizationId || !branchId || !mainheadId) {
+    if (!organizationId || !branchId || !mainheadId || !operationalRegionId) {
       const currentUser = await this.prisma.user.findFirst({
         where: {
           id: user.id,
@@ -580,21 +619,32 @@ export class ChecklistTemplatesService {
           organizationId: true,
           branchId: true,
           mainheadId: true,
+          operationalRegionAccesses: {
+            select: {
+              operationalRegionId: true,
+            },
+          },
         },
       });
 
       organizationId = organizationId ?? currentUser?.organizationId ?? null;
       branchId = branchId ?? currentUser?.branchId ?? null;
       mainheadId = mainheadId ?? currentUser?.mainheadId ?? null;
+      operationalRegionId =
+        operationalRegionId ??
+        (currentUser?.operationalRegionAccesses.length === 1
+          ? currentUser.operationalRegionAccesses[0].operationalRegionId
+          : null);
     }
 
-    if (mainheadId && (!branchId || !organizationId)) {
+    if (mainheadId && (!branchId || !organizationId || !operationalRegionId)) {
       const mainhead = await this.prisma.mainhead.findUnique({
         where: {
           id: mainheadId,
         },
         select: {
           branchId: true,
+          operationalRegionId: true,
           branch: {
             select: {
               organizationId: true,
@@ -604,7 +654,9 @@ export class ChecklistTemplatesService {
       });
 
       branchId = branchId ?? mainhead?.branchId ?? null;
-      organizationId = organizationId ?? mainhead?.branch.organizationId ?? null;
+      operationalRegionId =
+        operationalRegionId ?? mainhead?.operationalRegionId ?? null;
+      organizationId = organizationId ?? mainhead?.branch?.organizationId ?? null;
     }
 
     if (branchId && !organizationId) {
@@ -624,6 +676,7 @@ export class ChecklistTemplatesService {
       assetTypeId: assetTypeId ?? undefined,
       capabilityId,
       organizationId,
+      operationalRegionId,
       branchId,
       mainheadId,
     };
@@ -652,6 +705,7 @@ export class ChecklistTemplatesService {
     capabilityId?: string | null;
     scopeLevel: InspectionTemplateScopeLevel;
     organizationId?: string | null;
+    operationalRegionId?: string | null;
     branchId?: string | null;
     mainheadId?: string | null;
   }) {
@@ -662,6 +716,9 @@ export class ChecklistTemplatesService {
         ...(where.capabilityId !== undefined ? { capabilityId: where.capabilityId } : {}),
         scopeLevel: where.scopeLevel,
         ...(where.organizationId !== undefined ? { organizationId: where.organizationId } : {}),
+        ...(where.operationalRegionId !== undefined
+          ? { operationalRegionId: where.operationalRegionId }
+          : {}),
         ...(where.branchId !== undefined ? { branchId: where.branchId } : {}),
         ...(where.mainheadId !== undefined ? { mainheadId: where.mainheadId } : {}),
         isActive: true,
@@ -695,6 +752,7 @@ export class ChecklistTemplatesService {
             capabilityId: sourceTemplate.capabilityId,
             scopeLevel: sourceTemplate.scopeLevel,
             organizationId: sourceTemplate.organizationId,
+            operationalRegionId: sourceTemplate.operationalRegionId,
             branchId: sourceTemplate.branchId,
             mainheadId: sourceTemplate.mainheadId,
             operationalDomain: sourceTemplate.operationalDomain,
@@ -793,6 +851,7 @@ export class ChecklistTemplatesService {
           capabilityId: mapping.capabilityId,
           scopeLevel: mapping.scopeLevel,
           organizationId: mapping.organizationId,
+          operationalRegionId: mapping.operationalRegionId,
           branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
@@ -858,6 +917,7 @@ export class ChecklistTemplatesService {
           capabilityId: mapping.capabilityId,
           scopeLevel: mapping.scopeLevel,
           organizationId: mapping.organizationId,
+          operationalRegionId: mapping.operationalRegionId,
           branchId: mapping.branchId,
           mainheadId: mapping.mainheadId,
           operationalDomain: mapping.operationalDomain,
@@ -1423,6 +1483,7 @@ export class ChecklistTemplatesService {
         capabilityId: scope.capabilityId,
         scopeLevel: scope.scopeLevel,
         organizationId: scope.organizationId,
+        operationalRegionId: scope.operationalRegionId,
         branchId: scope.branchId,
         mainheadId: scope.mainheadId,
         isActive: true,
@@ -1446,6 +1507,7 @@ export class ChecklistTemplatesService {
         capabilityId: scope.capabilityId,
         scopeLevel: scope.scopeLevel,
         organizationId: scope.organizationId,
+        operationalRegionId: scope.operationalRegionId,
         branchId: scope.branchId,
         mainheadId: scope.mainheadId,
       },
@@ -1469,6 +1531,7 @@ export class ChecklistTemplatesService {
       template.capabilityId !== nextScope.capabilityId ||
       template.scopeLevel !== nextScope.scopeLevel ||
       template.organizationId !== nextScope.organizationId ||
+      template.operationalRegionId !== nextScope.operationalRegionId ||
       template.branchId !== nextScope.branchId ||
       template.mainheadId !== nextScope.mainheadId
     );
@@ -1618,21 +1681,30 @@ export class ChecklistTemplatesService {
     const scopeLevel =
       input.scopeLevel ??
       (input.mainheadId ? InspectionTemplateScopeLevel.MAINHEAD : null) ??
+      (input.operationalRegionId
+        ? InspectionTemplateScopeLevel.OPERATIONAL_REGION
+        : null) ??
       (input.branchId ? InspectionTemplateScopeLevel.BRANCH : null) ??
       (input.organizationId ? InspectionTemplateScopeLevel.ORGANIZATION : null) ??
       fallback?.scopeLevel ??
       InspectionTemplateScopeLevel.GLOBAL;
 
     if (scopeLevel === InspectionTemplateScopeLevel.GLOBAL) {
-      if (input.organizationId || input.branchId || input.mainheadId) {
+      if (
+        input.organizationId ||
+        input.operationalRegionId ||
+        input.branchId ||
+        input.mainheadId
+      ) {
         throw new BadRequestException(
-          'GLOBAL templates cannot include organizationId, branchId, or mainheadId.',
+          'GLOBAL templates cannot include organizationId, operationalRegionId, branchId, or mainheadId.',
         );
       }
 
       return {
         scopeLevel,
         organizationId: null,
+        operationalRegionId: null,
         branchId: null,
         mainheadId: null,
       };
@@ -1648,15 +1720,43 @@ export class ChecklistTemplatesService {
         throw new BadRequestException('ORGANIZATION scoped templates require organizationId.');
       }
 
-      if (input.branchId || input.mainheadId) {
+      if (input.operationalRegionId || input.branchId || input.mainheadId) {
         throw new BadRequestException(
-          'ORGANIZATION scoped templates cannot include branchId or mainheadId.',
+          'ORGANIZATION scoped templates cannot include operationalRegionId, branchId, or mainheadId.',
         );
       }
 
       return {
         scopeLevel,
         organizationId,
+        operationalRegionId: null,
+        branchId: null,
+        mainheadId: null,
+      };
+    }
+
+    if (scopeLevel === InspectionTemplateScopeLevel.OPERATIONAL_REGION) {
+      const operationalRegionId =
+        input.operationalRegionId !== undefined
+          ? input.operationalRegionId
+          : fallback?.operationalRegionId ?? null;
+
+      if (!operationalRegionId) {
+        throw new BadRequestException(
+          'OPERATIONAL_REGION scoped templates require operationalRegionId.',
+        );
+      }
+
+      if (input.organizationId || input.branchId || input.mainheadId) {
+        throw new BadRequestException(
+          'OPERATIONAL_REGION scoped templates cannot include organizationId, branchId, or mainheadId.',
+        );
+      }
+
+      return {
+        scopeLevel,
+        organizationId: null,
+        operationalRegionId,
         branchId: null,
         mainheadId: null,
       };
@@ -1670,15 +1770,16 @@ export class ChecklistTemplatesService {
         throw new BadRequestException('BRANCH scoped templates require branchId.');
       }
 
-      if (input.organizationId || input.mainheadId) {
+      if (input.organizationId || input.operationalRegionId || input.mainheadId) {
         throw new BadRequestException(
-          'BRANCH scoped templates cannot include organizationId or mainheadId.',
+          'BRANCH scoped templates cannot include organizationId, operationalRegionId, or mainheadId.',
         );
       }
 
       return {
         scopeLevel,
         organizationId: null,
+        operationalRegionId: null,
         branchId,
         mainheadId: null,
       };
@@ -1691,15 +1792,16 @@ export class ChecklistTemplatesService {
       throw new BadRequestException('MAINHEAD scoped templates require mainheadId.');
     }
 
-    if (input.organizationId || input.branchId) {
+    if (input.organizationId || input.operationalRegionId || input.branchId) {
       throw new BadRequestException(
-        'MAINHEAD scoped templates cannot include organizationId or branchId.',
+        'MAINHEAD scoped templates cannot include organizationId, operationalRegionId, or branchId.',
       );
     }
 
     return {
       scopeLevel,
       organizationId: null,
+      operationalRegionId: null,
       branchId: null,
       mainheadId,
     };
@@ -1721,6 +1823,23 @@ export class ChecklistTemplatesService {
 
       if (!organization) {
         throw new NotFoundException('Organization not found.');
+      }
+
+      return;
+    }
+
+    if (scope.scopeLevel === InspectionTemplateScopeLevel.OPERATIONAL_REGION) {
+      const operationalRegion = await client.operationalRegion.findUnique({
+        where: {
+          id: scope.operationalRegionId ?? '',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!operationalRegion) {
+        throw new NotFoundException('Operational region not found.');
       }
 
       return;
@@ -1786,6 +1905,8 @@ export class ChecklistTemplatesService {
       scopeLevel: template.scopeLevel,
       organizationId: template.organizationId,
       organization: template.organization,
+      operationalRegionId: template.operationalRegionId,
+      operationalRegion: template.operationalRegion,
       branchId: template.branchId,
       branch: template.branch,
       mainheadId: template.mainheadId,

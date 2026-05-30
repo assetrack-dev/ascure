@@ -291,10 +291,11 @@ export class TeamsService {
         );
       }
 
-      branchId = mainhead.branchId;
+      branchId = mainhead.branchId ?? branchId;
 
       if (
         organizationId &&
+        mainhead.branch &&
         organizationId !== mainhead.branch.organizationId
       ) {
         throw new BadRequestException(
@@ -302,7 +303,7 @@ export class TeamsService {
         );
       }
 
-      organizationId = mainhead.branch.organizationId;
+      organizationId = mainhead.branch?.organizationId ?? organizationId;
     }
 
     if (branchId) {

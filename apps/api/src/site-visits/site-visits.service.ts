@@ -1006,7 +1006,7 @@ export class SiteVisitsService {
       organizationId:
         organization?.id ??
         branch?.organizationId ??
-        resolvedMainhead?.branch.organizationId ??
+        resolvedMainhead?.branch?.organizationId ??
         resolvedProject?.clientOrganizationId ??
         null,
       branchId,

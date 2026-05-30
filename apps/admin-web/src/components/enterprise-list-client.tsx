@@ -9,6 +9,7 @@ import {
   ChevronRight,
   FolderKanban,
   GitBranch,
+  MapPinned,
   Network,
   PackageCheck,
   Pencil,
@@ -52,9 +53,11 @@ interface EnterpriseFormState {
   isActive: boolean;
   organizationId: string;
   branchId: string;
+  operationalRegionId: string;
   branchName: string;
   branchCode: string;
   region: string;
+  state: string;
   mainheadId: string;
   projectId: string;
   operationalDomain: string;
@@ -101,6 +104,17 @@ const PAGE_CONFIG: Record<
     extraFilterLabel: "All capabilities",
     emptyLabel: "No branches found",
     icon: GitBranch,
+    hasDetail: false,
+  },
+  "operational-regions": {
+    eyebrow: "Operational Configuration",
+    title: "Operational Regions",
+    basePath: "/operational-regions",
+    searchPlaceholder: "Search regions",
+    primaryFilterLabel: "All states",
+    groupFilterLabel: "All states",
+    emptyLabel: "No operational regions found",
+    icon: MapPinned,
     hasDetail: false,
   },
   capabilities: {
@@ -177,9 +191,11 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   isActive: true,
   organizationId: "",
   branchId: "",
+  operationalRegionId: "",
   branchName: "",
   branchCode: "",
   region: "",
+  state: "",
   mainheadId: "",
   projectId: "",
   operationalDomain: "",
@@ -335,6 +351,7 @@ function createFormFromRow(
   row: EnterpriseListRow,
 ): EnterpriseFormState {
   const branch = nestedRaw(row, "branch");
+  const operationalRegion = nestedRaw(row, "operationalRegion");
   const organization = nestedRaw(row, "organization");
   const branchOrganization = branch?.organization;
 
@@ -356,9 +373,13 @@ function createFormFromRow(
         "id",
       ),
     branchId: readRawString(row, "branchId") || readNestedString(branch, "id"),
+    operationalRegionId:
+      readRawString(row, "operationalRegionId") ||
+      readNestedString(operationalRegion, "id"),
     branchName: readNestedString(branch, "name"),
     branchCode: readNestedString(branch, "code"),
     region: readRawString(row, "region") || readNestedString(branch, "region"),
+    state: readRawString(row, "state"),
     mainheadId:
       readRawString(row, "mainheadId") ||
       readNestedString(nestedRaw(row, "mainheadRecord"), "id") ||
@@ -377,7 +398,7 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
   const payload: Record<string, unknown> = {
     name: form.name.trim(),
     code:
-      kind === "capabilities" || kind === "teams"
+      kind === "capabilities" || kind === "teams" || kind === "operational-regions"
         ? form.code.trim()
         : form.code.trim() || null,
   };
@@ -395,6 +416,11 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     payload.capabilityIds = form.capabilityIds;
   }
 
+  if (kind === "operational-regions") {
+    payload.state = form.state.trim() || null;
+    payload.isActive = form.isActive;
+  }
+
   if (kind === "capabilities") {
     payload.description = form.description.trim() || null;
     payload.isActive = form.isActive;
@@ -403,7 +429,8 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
   if (kind === "mainheads") {
     payload.description = form.description.trim() || null;
     payload.isActive = form.isActive;
-    payload.branchId = form.branchId || undefined;
+    payload.operationalRegionId = form.operationalRegionId || null;
+    payload.branchId = form.branchId || null;
     payload.organizationId = form.organizationId || undefined;
     payload.branchName = form.branchName.trim() || undefined;
     payload.branchCode = form.branchCode.trim() || undefined;
@@ -564,7 +591,11 @@ function EnterpriseFormModal({
                 value={values.code}
                 onChange={(event) => onChange("code", event.target.value)}
                 className={`${inputClassName} mt-1.5`}
-                required={kind === "capabilities" || kind === "teams"}
+                required={
+                  kind === "capabilities" ||
+                  kind === "teams" ||
+                  kind === "operational-regions"
+                }
                 maxLength={64}
               />
             </label>
@@ -655,6 +686,30 @@ function EnterpriseFormModal({
             </>
           ) : null}
 
+          {kind === "operational-regions" ? (
+            <>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">State</span>
+                <input
+                  type="text"
+                  value={values.state}
+                  onChange={(event) => onChange("state", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                  maxLength={255}
+                />
+              </label>
+              <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={values.isActive}
+                  onChange={(event) => onChange("isActive", event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                Active
+              </label>
+            </>
+          ) : null}
+
           {kind === "capabilities" ? (
             <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
               <input
@@ -671,28 +726,28 @@ function EnterpriseFormModal({
             <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Organization</span>
+                  <span className="text-sm font-semibold text-slate-700">Region</span>
                   <select
-                    value={values.organizationId}
-                    onChange={(event) => onChange("organizationId", event.target.value)}
+                    value={values.operationalRegionId}
+                    onChange={(event) => onChange("operationalRegionId", event.target.value)}
                     className={`${inputClassName} mt-1.5`}
                   >
-                    <option value="">Select organization</option>
-                    {options?.organizations.map((organization) => (
-                      <option key={organization.id} value={organization.id}>
-                        {optionLabel(organization)}
+                    <option value="">No region</option>
+                    {options?.operationalRegions.map((region) => (
+                      <option key={region.id} value={region.id}>
+                        {optionLabel(region)}
                       </option>
                     ))}
                   </select>
                 </label>
                 <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Existing Branch</span>
+                  <span className="text-sm font-semibold text-slate-700">Legacy Branch</span>
                   <select
                     value={values.branchId}
                     onChange={(event) => onChange("branchId", event.target.value)}
                     className={`${inputClassName} mt-1.5`}
                   >
-                    <option value="">Create/use branch below</option>
+                    <option value="">No legacy branch</option>
                     {options?.branches.map((branch) => (
                       <option key={branch.id} value={branch.id}>
                         {optionLabel(branch)}
@@ -701,7 +756,26 @@ function EnterpriseFormModal({
                   </select>
                 </label>
               </div>
-              <div className="grid gap-4 sm:grid-cols-3">
+              <details className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                  Legacy branch fields
+                </summary>
+                <div className="mt-3 grid gap-4 sm:grid-cols-4">
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Organization</span>
+                    <select
+                      value={values.organizationId}
+                      onChange={(event) => onChange("organizationId", event.target.value)}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">No organization</option>
+                      {options?.organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {optionLabel(organization)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 <label className="block">
                   <span className="text-sm font-semibold text-slate-700">Branch</span>
                   <input
@@ -732,7 +806,8 @@ function EnterpriseFormModal({
                     maxLength={255}
                   />
                 </label>
-              </div>
+                </div>
+              </details>
               <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
                 <input
                   type="checkbox"

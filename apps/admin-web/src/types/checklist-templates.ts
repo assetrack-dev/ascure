@@ -1,5 +1,10 @@
 export type ChecklistTemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
-export type ChecklistTemplateScopeLevel = "GLOBAL" | "ORGANIZATION" | "BRANCH" | "MAINHEAD";
+export type ChecklistTemplateScopeLevel =
+  | "GLOBAL"
+  | "ORGANIZATION"
+  | "OPERATIONAL_REGION"
+  | "BRANCH"
+  | "MAINHEAD";
 
 export type ChecklistFieldType =
   | "TEXT"
@@ -53,6 +58,13 @@ export interface TemplateBranch {
   name: string;
   region?: string | null;
   organizationId?: string | null;
+}
+
+export interface TemplateOperationalRegion {
+  id: string;
+  code?: string | null;
+  name: string;
+  state?: string | null;
 }
 
 export interface ChecklistTemplateOption {
@@ -132,6 +144,8 @@ export interface ChecklistTemplate {
   scopeLevel: ChecklistTemplateScopeLevel;
   organizationId?: string | null;
   organization?: TemplateOrganization | null;
+  operationalRegionId?: string | null;
+  operationalRegion?: TemplateOperationalRegion | null;
   branchId?: string | null;
   branch?: TemplateBranch | null;
   mainheadId?: string | null;
@@ -172,6 +186,7 @@ export interface CreateChecklistTemplatePayload {
   capabilityId?: string | null;
   scopeLevel?: ChecklistTemplateScopeLevel | null;
   organizationId?: string | null;
+  operationalRegionId?: string | null;
   branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: string | null;
@@ -186,6 +201,7 @@ export interface UpdateChecklistTemplatePayload {
   capabilityId?: string | null;
   scopeLevel?: ChecklistTemplateScopeLevel | null;
   organizationId?: string | null;
+  operationalRegionId?: string | null;
   branchId?: string | null;
   mainheadId?: string | null;
   operationalDomain?: string | null;

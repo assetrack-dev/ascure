@@ -19,6 +19,10 @@ export class CreateTemplateDto {
 
   @IsOptional()
   @IsUUID()
+  operationalRegionId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
   branchId?: string | null;
 
   @IsOptional()

@@ -44,6 +44,8 @@ export function createUser(token: string, payload: CreateUserPayload) {
       mainheadId: normalizeDepartmentId(payload.mainheadId),
       teamId: normalizeDepartmentId(payload.teamId),
       capabilityIds: payload.capabilityIds,
+      mainheadAccessIds: payload.mainheadAccessIds,
+      operationalRegionAccessIds: payload.operationalRegionAccessIds,
     }),
   });
 }
@@ -60,6 +62,8 @@ export function updateUser(token: string, userId: string, payload: UpdateUserPay
       mainheadId: normalizeDepartmentId(payload.mainheadId),
       teamId: normalizeDepartmentId(payload.teamId),
       capabilityIds: payload.capabilityIds ?? [],
+      mainheadAccessIds: payload.mainheadAccessIds,
+      operationalRegionAccessIds: payload.operationalRegionAccessIds,
     }),
   });
 }

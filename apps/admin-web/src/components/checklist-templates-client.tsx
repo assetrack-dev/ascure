@@ -90,6 +90,7 @@ interface TemplateFormState {
   capabilityId: string;
   scopeLevel: ChecklistTemplateScopeLevel;
   organizationId: string;
+  operationalRegionId: string;
   branchId: string;
   mainheadId: string;
   name: string;
@@ -126,6 +127,7 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
 const SCOPE_LEVEL_OPTIONS: Array<{ label: string; value: ChecklistTemplateScopeLevel }> = [
   { label: "Global", value: "GLOBAL" },
   { label: "Organization", value: "ORGANIZATION" },
+  { label: "Region", value: "OPERATIONAL_REGION" },
   { label: "Branch", value: "BRANCH" },
   { label: "MAINHEAD", value: "MAINHEAD" },
 ];
@@ -336,6 +338,7 @@ function defaultForm(assetTypeId = "", capabilityId = ""): TemplateFormState {
     capabilityId,
     scopeLevel: "GLOBAL",
     organizationId: "",
+    operationalRegionId: "",
     branchId: "",
     mainheadId: "",
     name: "",
@@ -386,6 +389,10 @@ function templateScopeLabel(template: ChecklistTemplate) {
     return `Organization: ${template.organization?.code ?? template.organization?.name ?? template.organizationId ?? "Unknown"}`;
   }
 
+  if (template.scopeLevel === "OPERATIONAL_REGION") {
+    return `Region: ${template.operationalRegion?.code ?? template.operationalRegion?.name ?? template.operationalRegionId ?? "Unknown"}`;
+  }
+
   if (template.scopeLevel === "BRANCH") {
     return `Branch: ${template.branch?.code ?? template.branch?.name ?? template.branchId ?? "Unknown"}`;
   }
@@ -400,6 +407,10 @@ function templateScopeLabel(template: ChecklistTemplate) {
 function templateScopeBadgeLabel(template: ChecklistTemplate) {
   if (template.scopeLevel === "ORGANIZATION") {
     return `Org: ${template.organization?.code ?? template.organization?.name ?? template.organizationId ?? "Unknown"}`;
+  }
+
+  if (template.scopeLevel === "OPERATIONAL_REGION") {
+    return `Region: ${template.operationalRegion?.code ?? template.operationalRegion?.name ?? template.operationalRegionId ?? "Unknown"}`;
   }
 
   if (template.scopeLevel === "BRANCH") {
@@ -428,6 +439,7 @@ function sameTemplateActivationScope(left: ChecklistTemplate, right: ChecklistTe
       (right.capabilityId ?? right.capability?.id ?? null) &&
     (left.scopeLevel ?? "GLOBAL") === (right.scopeLevel ?? "GLOBAL") &&
     (left.organizationId ?? null) === (right.organizationId ?? null) &&
+    (left.operationalRegionId ?? null) === (right.operationalRegionId ?? null) &&
     (left.branchId ?? null) === (right.branchId ?? null) &&
     (left.mainheadId ?? null) === (right.mainheadId ?? null)
   );
@@ -1088,6 +1100,7 @@ function TemplateFormModal({
   assetTypes,
   capabilities,
   organizations,
+  operationalRegions,
   branches,
   mainheads,
   selectedTemplate,
@@ -1103,6 +1116,7 @@ function TemplateFormModal({
   assetTypes: AssetType[];
   capabilities: EnterpriseOptionRecord[];
   organizations: EnterpriseOptionRecord[];
+  operationalRegions: EnterpriseOptionRecord[];
   branches: EnterpriseOptionRecord[];
   mainheads: EnterpriseOptionRecord[];
   selectedTemplate: ChecklistTemplate | null;
@@ -1135,6 +1149,10 @@ function TemplateFormModal({
   const activeBranches = useMemo(
     () => branches.filter((branch) => branch.isActive !== false),
     [branches],
+  );
+  const activeOperationalRegions = useMemo(
+    () => operationalRegions.filter((region) => region.isActive !== false),
+    [operationalRegions],
   );
   const activeMainheads = useMemo(
     () => mainheads.filter((mainhead) => mainhead.isActive !== false),
@@ -1388,6 +1406,10 @@ function TemplateFormModal({
                         ...currentValues,
                         scopeLevel,
                         organizationId: scopeLevel === "ORGANIZATION" ? currentValues.organizationId : "",
+                        operationalRegionId:
+                          scopeLevel === "OPERATIONAL_REGION"
+                            ? currentValues.operationalRegionId
+                            : "",
                         branchId: scopeLevel === "BRANCH" ? currentValues.branchId : "",
                         mainheadId: scopeLevel === "MAINHEAD" ? currentValues.mainheadId : "",
                       }));
@@ -1420,6 +1442,30 @@ function TemplateFormModal({
                       {activeOrganizations.map((organization) => (
                         <option key={organization.id} value={organization.id}>
                           {optionDisplayName(organization)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {values.scopeLevel === "OPERATIONAL_REGION" ? (
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Region</span>
+                    <select
+                      value={values.operationalRegionId}
+                      onChange={(event) =>
+                        updateFormValues((currentValues) => ({
+                          ...currentValues,
+                          operationalRegionId: event.target.value,
+                        }))
+                      }
+                      className={`${inputClassName} mt-1.5`}
+                      required
+                    >
+                      <option value="">Choose region</option>
+                      {activeOperationalRegions.map((region) => (
+                        <option key={region.id} value={region.id}>
+                          {optionDisplayName(region)}
                         </option>
                       ))}
                     </select>
@@ -1634,6 +1680,7 @@ function ChecklistTemplatesContent() {
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [capabilities, setCapabilities] = useState<EnterpriseOptionRecord[]>([]);
   const [organizations, setOrganizations] = useState<EnterpriseOptionRecord[]>([]);
+  const [operationalRegions, setOperationalRegions] = useState<EnterpriseOptionRecord[]>([]);
   const [branches, setBranches] = useState<EnterpriseOptionRecord[]>([]);
   const [mainheads, setMainheads] = useState<EnterpriseOptionRecord[]>([]);
   const [error, setError] = useState("");
@@ -1672,6 +1719,7 @@ function ChecklistTemplatesContent() {
         setTemplates(nextTemplates);
         setCapabilities(options.capabilities.filter((capability) => capability.isActive !== false));
         setOrganizations(options.organizations);
+        setOperationalRegions(options.operationalRegions);
         setBranches(options.branches);
         setMainheads(options.mainheads);
       } catch (loadError) {
@@ -1779,6 +1827,7 @@ function ChecklistTemplatesContent() {
       capabilityId: template.capabilityId ?? template.capability?.id ?? "",
       scopeLevel: template.scopeLevel ?? "GLOBAL",
       organizationId: template.organizationId ?? "",
+      operationalRegionId: template.operationalRegionId ?? "",
       branchId: template.branchId ?? "",
       mainheadId: template.mainheadId ?? "",
       name: template.name,
@@ -1839,6 +1888,7 @@ function ChecklistTemplatesContent() {
       const scopePayload = {
         scopeLevel: formValues.scopeLevel,
         organizationId: null as string | null,
+        operationalRegionId: null as string | null,
         branchId: null as string | null,
         mainheadId: null as string | null,
       };
@@ -1849,6 +1899,14 @@ function ChecklistTemplatesContent() {
         }
 
         scopePayload.organizationId = formValues.organizationId;
+      }
+
+      if (formValues.scopeLevel === "OPERATIONAL_REGION") {
+        if (!formValues.operationalRegionId) {
+          throw new Error("Choose a region for this scoped template.");
+        }
+
+        scopePayload.operationalRegionId = formValues.operationalRegionId;
       }
 
       if (formValues.scopeLevel === "BRANCH") {
@@ -2319,6 +2377,7 @@ function ChecklistTemplatesContent() {
           assetTypes={assetTypes}
           capabilities={capabilities}
           organizations={organizations}
+          operationalRegions={operationalRegions}
           branches={branches}
           mainheads={mainheads}
           selectedTemplate={selectedTemplate}
