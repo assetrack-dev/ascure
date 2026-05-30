@@ -174,6 +174,10 @@ const dangerButtonClassName =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const rowActionButtonClassName =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+const compactRowActionButtonClassName =
+  "inline-flex h-7 items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+const compactDangerButtonClassName =
+  "inline-flex h-7 items-center justify-center gap-1 rounded-md border border-red-200 bg-white px-1.5 text-[11px] font-semibold leading-none text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const lastActiveItemError = "At least one checklist item must remain active.";
 
 function createLocalId() {
@@ -393,27 +397,28 @@ function templateScopeLabel(template: ChecklistTemplate) {
   return "Global";
 }
 
-function ScopeBadge({ template }: { template: ChecklistTemplate }) {
-  return (
-    <span className="inline-block max-w-full rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold leading-tight text-slate-700">
-      {templateScopeLabel(template)}
-    </span>
-  );
+function templateScopeBadgeLabel(template: ChecklistTemplate) {
+  if (template.scopeLevel === "ORGANIZATION") {
+    return `Org: ${template.organization?.code ?? template.organization?.name ?? template.organizationId ?? "Unknown"}`;
+  }
+
+  if (template.scopeLevel === "BRANCH") {
+    return `Branch: ${template.branch?.code ?? template.branch?.name ?? template.branchId ?? "Unknown"}`;
+  }
+
+  if (template.scopeLevel === "MAINHEAD") {
+    return `MAINHEAD: ${template.mainhead?.code ?? template.mainhead?.name ?? template.mainheadId ?? "Unknown"}`;
+  }
+
+  return "Global";
 }
 
-function stickyActionsCellClassName(status: ChecklistTemplateStatus) {
-  const baseClassName =
-    "sticky right-0 z-10 w-[15.75rem] min-w-[15.75rem] border-l border-slate-200 px-3 py-4 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)] sm:w-[16.5rem] sm:min-w-[16.5rem]";
-
-  if (status === "ACTIVE") {
-    return `${baseClassName} bg-teal-50 group-hover:bg-teal-50`;
-  }
-
-  if (status === "ARCHIVED") {
-    return `${baseClassName} bg-slate-50 group-hover:bg-slate-100`;
-  }
-
-  return `${baseClassName} bg-white group-hover:bg-amber-50`;
+function ScopeBadge({ template }: { template: ChecklistTemplate }) {
+  return (
+    <span className="inline-block max-w-full whitespace-normal break-words rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold leading-tight text-slate-700">
+      {templateScopeBadgeLabel(template)}
+    </span>
+  );
 }
 
 function sameTemplateActivationScope(left: ChecklistTemplate, right: ChecklistTemplate) {
@@ -452,7 +457,7 @@ const STATUS_META: Record<
     listDescription: "Currently used by mobile inspections.",
     modalDescription: "This active version is currently used by mobile inspections.",
     panelClassName: "border-teal-200 bg-teal-50 text-teal-900",
-    rowClassName: "bg-teal-50/30 hover:bg-teal-50/70",
+    rowClassName: "bg-teal-50/20 hover:bg-teal-50/40",
   },
   DRAFT: {
     badgeClassName: "border-amber-200 bg-amber-50 text-amber-800",
@@ -460,7 +465,7 @@ const STATUS_META: Record<
     listDescription: "Not used by mobile inspections.",
     modalDescription: "This draft is not used by mobile inspections until activated.",
     panelClassName: "border-amber-200 bg-amber-50 text-amber-900",
-    rowClassName: "hover:bg-amber-50/40",
+    rowClassName: "hover:bg-slate-50",
   },
   ARCHIVED: {
     badgeClassName: "border-slate-200 bg-slate-100 text-slate-600",
@@ -468,7 +473,7 @@ const STATUS_META: Record<
     listDescription: "Archived; edits create a draft.",
     modalDescription: "This archived version should not be edited directly. Saving changes creates a new draft version.",
     panelClassName: "border-slate-200 bg-slate-50 text-slate-700",
-    rowClassName: "bg-slate-50/70 hover:bg-slate-100/80",
+    rowClassName: "bg-slate-50/60 hover:bg-slate-100/70",
   },
 };
 
@@ -502,7 +507,7 @@ function StatusBadge({
         {status}
       </span>
       {showDescription ? (
-        <span className="max-w-48 whitespace-normal text-xs leading-snug text-[var(--muted)]">
+        <span className="hidden max-w-36 whitespace-normal text-[11px] leading-snug text-[var(--muted)] xl:block">
           {meta.listDescription}
         </span>
       ) : null}
@@ -2146,18 +2151,18 @@ function ChecklistTemplatesContent() {
                   </div>
                 </div>
 
-                <div className="max-w-full overflow-x-auto pb-2">
-                  <table className="w-full min-w-[1200px] table-fixed border-separate border-spacing-0 text-left text-sm">
+                <div className="max-w-full overflow-x-auto">
+                  <table className="w-full min-w-[1120px] table-fixed text-left text-sm">
                     <colgroup>
-                      <col className="w-[15rem]" />
-                      <col className="w-[8rem]" />
-                      <col className="w-[7.5rem]" />
-                      <col className="w-[8rem]" />
-                      <col className="w-[6.5rem]" />
-                      <col className="w-[4rem]" />
-                      <col className="w-[5rem]" />
-                      <col className="w-[5.25rem]" />
-                      <col className="w-[15.75rem] sm:w-[16.5rem]" />
+                      <col className="w-[20%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[9%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[4.5%]" />
+                      <col className="w-[6.5%]" />
+                      <col className="w-[8%]" />
+                      <col className="w-[22%]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
@@ -2169,7 +2174,7 @@ function ChecklistTemplatesContent() {
                         <th className="px-2 py-3.5 text-center font-semibold">Items</th>
                         <th className="px-2 py-3.5 text-center font-semibold">Inspections</th>
                         <th className="px-3 py-3.5 font-semibold">Updated</th>
-                        <th className="sticky right-0 z-20 w-[15.75rem] min-w-[15.75rem] border-l border-slate-200 bg-slate-50 px-3 py-3.5 text-right font-semibold shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)] sm:w-[16.5rem] sm:min-w-[16.5rem]">
+                        <th className="px-2 py-3.5 text-right font-semibold">
                           Actions
                         </th>
                       </tr>
@@ -2189,7 +2194,7 @@ function ChecklistTemplatesContent() {
                               isHighlighted ? "outline outline-2 outline-offset-[-2px] outline-amber-300" : ""
                             }`}
                           >
-                            <td className="px-4 py-4 align-top">
+                            <td className="px-4 py-3.5 align-top">
                               <div className="flex items-start gap-3">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500">
                                   <ClipboardList size={17} />
@@ -2208,7 +2213,7 @@ function ChecklistTemplatesContent() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-slate-700">
+                            <td className="px-3 py-3.5 align-top text-slate-700">
                               <div className="break-words font-semibold leading-snug text-slate-900">
                                 {template.assetTypeCode ?? template.assetType}
                               </div>
@@ -2216,7 +2221,7 @@ function ChecklistTemplatesContent() {
                                 {template.assetTypeName ?? "Asset type"}
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-slate-700">
+                            <td className="px-3 py-3.5 align-top text-slate-700">
                               <div className="break-words leading-snug">
                                 {template.capability?.name ?? "Not assigned"}
                               </div>
@@ -2226,56 +2231,56 @@ function ChecklistTemplatesContent() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="px-3 py-4 align-top text-slate-700">
+                            <td className="px-3 py-3.5 align-top text-slate-700">
                               <ScopeBadge template={template} />
                             </td>
-                            <td className="px-3 py-4 align-top">
-                              <StatusBadge status={templateStatus} />
+                            <td className="px-3 py-3.5 align-top">
+                              <StatusBadge status={templateStatus} showDescription />
                             </td>
-                            <td className="px-2 py-4 text-center align-top font-semibold text-slate-700">
+                            <td className="px-2 py-3.5 text-center align-top font-semibold text-slate-700">
                               {template.itemCount}
                             </td>
-                            <td className="px-2 py-4 text-center align-top font-semibold text-slate-700">
+                            <td className="px-2 py-3.5 text-center align-top font-semibold text-slate-700">
                               {template.inspectionCount}
                             </td>
-                            <td className="px-3 py-4 align-top text-xs leading-snug text-slate-600">
+                            <td className="px-3 py-3.5 align-top text-xs leading-snug text-slate-600">
                               {formatCompactDate(template.updatedAt)}
                             </td>
-                            <td className={stickyActionsCellClassName(templateStatus)}>
-                              <div className="flex flex-wrap justify-end gap-2">
+                            <td className="px-2 py-3.5 align-top">
+                              <div className="flex flex-wrap items-center justify-end gap-1">
                                 <button
                                   type="button"
                                   onClick={() => openDuplicateModal(template)}
                                   disabled={!isAdmin || isAnyActionRunning}
-                                  className={rowActionButtonClassName}
+                                  className={compactRowActionButtonClassName}
                                 >
-                                  <Copy size={14} />
+                                  <Copy size={12} />
                                   Duplicate
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openEditModal(template)}
-                                  className={rowActionButtonClassName}
+                                  className={compactRowActionButtonClassName}
                                 >
-                                  <Pencil size={14} />
+                                  <Pencil size={12} />
                                   Edit
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => handleActivate(template)}
                                   disabled={!isAdmin || templateStatus === "ACTIVE" || isActionRunning}
-                                  className={rowActionButtonClassName}
+                                  className={compactRowActionButtonClassName}
                                 >
-                                  <CheckCircle2 size={14} />
+                                  <CheckCircle2 size={12} />
                                   Activate
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => handleArchive(template)}
                                   disabled={!isAdmin || templateStatus === "ARCHIVED" || isActionRunning}
-                                  className={dangerButtonClassName}
+                                  className={compactDangerButtonClassName}
                                 >
-                                  <Trash2 size={14} />
+                                  <Trash2 size={12} />
                                   Archive
                                 </button>
                               </div>
