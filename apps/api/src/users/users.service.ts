@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { Prisma, UserRole } from '@prisma/client';
+import { OrganizationType, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -391,6 +391,24 @@ export class UsersService {
         organizationId: true,
         branchId: true,
         mainheadId: true,
+        organization: {
+          select: {
+            type: true,
+            isActive: true,
+          },
+        },
+        capabilityAssignments: {
+          where: {
+            isActive: true,
+            capability: {
+              code: 'QA_VALIDATION',
+              isActive: true,
+            },
+          },
+          select: {
+            id: true,
+          },
+        },
         teamMemberships: {
           where: {
             isActive: true,
@@ -416,18 +434,25 @@ export class UsersService {
       return [];
     }
 
+    if (this.hasGlobalMainheadAccess(currentUser)) {
+      const mainheads = await this.prisma.mainhead.findMany({
+        where: activeMainheadWhere,
+        include,
+        orderBy: this.mainheadOrderBy(),
+      });
+
+      return mainheads.map((mainhead) => this.serializeMainheadOption(mainhead));
+    }
+
     const mainheadIds = new Set<string>();
     const branchIds = new Set<string>();
-    const organizationIds = new Set<string>();
 
     this.addOptionalId(mainheadIds, currentUser.mainheadId);
     this.addOptionalId(branchIds, currentUser.branchId);
-    this.addOptionalId(organizationIds, currentUser.organizationId);
 
     for (const membership of currentUser.teamMemberships) {
       this.addOptionalId(mainheadIds, membership.team.mainheadId);
       this.addOptionalId(branchIds, membership.team.branchId);
-      this.addOptionalId(organizationIds, membership.team.organizationId);
     }
 
     const accessFilters: Prisma.MainheadWhereInput[] = [];
@@ -444,16 +469,6 @@ export class UsersService {
       accessFilters.push({
         branchId: {
           in: Array.from(branchIds),
-        },
-      });
-    }
-
-    if (organizationIds.size > 0) {
-      accessFilters.push({
-        branch: {
-          organizationId: {
-            in: Array.from(organizationIds),
-          },
         },
       });
     }
@@ -611,6 +626,20 @@ export class UsersService {
     };
   }
 
+  private hasGlobalMainheadAccess(user: {
+    organization: {
+      type: OrganizationType;
+      isActive: boolean;
+    } | null;
+    capabilityAssignments: Array<{ id: string }>;
+  }) {
+    return (
+      user.organization?.type === OrganizationType.ASCURE &&
+      user.organization.isActive &&
+      user.capabilityAssignments.length > 0
+    );
+  }
+
   private async resolveOperationalLinks(
     tx: Prisma.TransactionClient,
     tenantId: string,
@@ -682,37 +711,12 @@ export class UsersService {
         },
         select: {
           id: true,
-          branchId: true,
-          branch: {
-            select: {
-              organizationId: true,
-            },
-          },
         },
       });
 
       if (!mainhead) {
         throw new NotFoundException('MAINHEAD not found.');
       }
-
-      if (branchId && branchId !== mainhead.branchId) {
-        throw new BadRequestException(
-          'Selected MAINHEAD does not belong to the selected branch.',
-        );
-      }
-
-      branchId = mainhead.branchId;
-
-      if (
-        organizationId &&
-        organizationId !== mainhead.branch.organizationId
-      ) {
-        throw new BadRequestException(
-          'Selected MAINHEAD does not belong to the selected organization.',
-        );
-      }
-
-      organizationId = mainhead.branch.organizationId;
     }
 
     if (branchId) {
