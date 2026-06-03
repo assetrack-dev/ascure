@@ -17,6 +17,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
+import {
+  buildScopeContext,
+  ScopeContext,
+} from '../common/authorization/scope-context';
 import { normalizeOperationalText } from '../common/operational-text';
 import {
   buildDefectEvidenceImagePath,
@@ -432,7 +436,8 @@ export class DefectsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(user: RequestUser) {
-    await this.ensureDefectsForAccessibleItems(user);
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
 
     const defects = await this.prisma.defect.findMany({
       where: {
@@ -440,7 +445,7 @@ export class DefectsService {
           isDefect: true,
           inspection: {
             tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user),
+            ...this.inspectionAccessScope(user, ctx),
           },
         },
       },
@@ -564,10 +569,11 @@ export class DefectsService {
     user: RequestUser,
     query: ListDefectOperationsBoardQueryDto,
   ) {
-    await this.ensureDefectsForAccessibleItems(user);
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
 
     const defects = await this.prisma.defect.findMany({
-      where: this.buildOperationsBoardWhere(user, query),
+      where: this.buildOperationsBoardWhere(user, query, ctx),
       orderBy: [
         {
           dueDate: 'asc',
@@ -1423,13 +1429,16 @@ export class DefectsService {
     return this.getDetail(user, defect.id);
   }
 
-  private async ensureDefectsForAccessibleItems(user: RequestUser) {
+  private async ensureDefectsForAccessibleItems(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ) {
     const itemResults = await this.prisma.inspectionItemResult.findMany({
       where: {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
-          ...this.inspectionAccessScope(user),
+          ...this.inspectionAccessScope(user, ctx),
         },
       },
       select: {
@@ -1459,7 +1468,8 @@ export class DefectsService {
   }
 
   private async findOrCreateAccessibleDefect(user: RequestUser, defectId: string) {
-    const existingDefect = await this.findAccessibleDefectById(user, defectId);
+    const ctx = await buildScopeContext(this.prisma, user);
+    const existingDefect = await this.findAccessibleDefectById(user, defectId, ctx);
 
     if (existingDefect) {
       return existingDefect;
@@ -1471,7 +1481,7 @@ export class DefectsService {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
-          ...this.inspectionAccessScope(user),
+          ...this.inspectionAccessScope(user, ctx),
         },
       },
       select: {
@@ -1498,7 +1508,7 @@ export class DefectsService {
       update: {},
     });
 
-    const defect = await this.findAccessibleDefectByItemResultId(user, itemResult.id);
+    const defect = await this.findAccessibleDefectByItemResultId(user, itemResult.id, ctx);
 
     if (!defect) {
       throw new NotFoundException('Defect not found.');
@@ -1507,7 +1517,12 @@ export class DefectsService {
     return defect;
   }
 
-  private findAccessibleDefectById(user: RequestUser, defectId: string) {
+  private async findAccessibleDefectById(
+    user: RequestUser,
+    defectId: string,
+    ctx?: ScopeContext,
+  ) {
+    const scope = ctx ?? (await buildScopeContext(this.prisma, user));
     return this.prisma.defect.findFirst({
       where: {
         id: defectId,
@@ -1515,7 +1530,7 @@ export class DefectsService {
           isDefect: true,
           inspection: {
             tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user),
+            ...this.inspectionAccessScope(user, scope),
           },
         },
       },
@@ -1523,7 +1538,12 @@ export class DefectsService {
     });
   }
 
-  private findAccessibleDefectByItemResultId(user: RequestUser, inspectionItemResultId: string) {
+  private async findAccessibleDefectByItemResultId(
+    user: RequestUser,
+    inspectionItemResultId: string,
+    ctx?: ScopeContext,
+  ) {
+    const scope = ctx ?? (await buildScopeContext(this.prisma, user));
     return this.prisma.defect.findFirst({
       where: {
         inspectionItemResultId,
@@ -1531,7 +1551,7 @@ export class DefectsService {
           isDefect: true,
           inspection: {
             tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user),
+            ...this.inspectionAccessScope(user, scope),
           },
         },
       },
@@ -1743,6 +1763,7 @@ export class DefectsService {
   private buildOperationsBoardWhere(
     user: RequestUser,
     query: ListDefectOperationsBoardQueryDto,
+    ctx?: ScopeContext,
   ): Prisma.DefectWhereInput {
     const filters: Prisma.DefectWhereInput[] = [
       {
@@ -1750,7 +1771,7 @@ export class DefectsService {
           isDefect: true,
           inspection: {
             tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user),
+            ...this.inspectionAccessScope(user, ctx),
           },
         },
       },
@@ -3141,9 +3162,24 @@ export class DefectsService {
     return '.jpg';
   }
 
-  private inspectionAccessScope(user: RequestUser) {
-    if (user.role === 'ADMIN') {
+  /**
+   * Governance Fix Package G3 — QA bypass on inspection reads.
+   *
+   * - ADMIN     : empty filter.
+   * - QA actor  : inspection's site visit must belong to a QA-accessible MAINHEAD.
+   * - Other     : legacy team membership.
+   */
+  private inspectionAccessScope(user: RequestUser, ctx?: ScopeContext) {
+    if (user.role === 'ADMIN' || ctx?.isAdmin) {
       return {};
+    }
+
+    if (ctx?.isQa) {
+      return {
+        siteVisit: {
+          mainheadId: { in: ctx.qaMainheadIds },
+        },
+      };
     }
 
     return {

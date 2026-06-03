@@ -12,6 +12,10 @@ import {
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
+  buildScopeContext,
+  ScopeContext,
+} from '../common/authorization/scope-context';
+import {
   calculateOperationalHealthStatus,
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
@@ -33,9 +37,10 @@ export class DashboardService {
   ) {}
 
   async getDashboard(user: RequestUser) {
-    await this.ensureDefectsForAccessibleItems(user);
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
 
-    const defectWhere = this.accessibleDefectWhere(user);
+    const defectWhere = this.accessibleDefectWhere(user, ctx);
     const now = new Date();
     const overdueThresholdHours = this.getOverdueThresholdHours();
     const activeVisitCutoff = new Date(
@@ -80,10 +85,10 @@ export class DashboardService {
       activeMappedVisitCount,
     ] = await Promise.all([
       this.prisma.asset.count({
-        where: this.accessibleAssetWhere(user),
+        where: this.accessibleAssetWhere(user, ctx),
       }),
       this.prisma.inspection.count({
-        where: this.accessibleInspectionWhere(user),
+        where: this.accessibleInspectionWhere(user, ctx),
       }),
       this.prisma.defect.groupBy({
         by: ['status'],
@@ -105,7 +110,7 @@ export class DashboardService {
           defect: {
             isNot: null,
           },
-          inspection: this.accessibleInspectionWhere(user),
+          inspection: this.accessibleInspectionWhere(user, ctx),
         },
         orderBy: {
           createdAt: 'desc',
@@ -218,28 +223,28 @@ export class DashboardService {
       }),
       this.prisma.siteVisit.groupBy({
         by: ['status'],
-        where: this.accessibleSiteVisitWhere(user),
+        where: this.accessibleSiteVisitWhere(user, ctx),
         _count: {
           _all: true,
         },
       }),
       this.prisma.siteVisit.groupBy({
         by: ['validationStatus'],
-        where: this.accessibleSiteVisitWhere(user),
+        where: this.accessibleSiteVisitWhere(user, ctx),
         _count: {
           _all: true,
         },
       }),
       this.prisma.siteVisit.groupBy({
         by: ['visitType'],
-        where: this.accessibleSiteVisitWhere(user),
+        where: this.accessibleSiteVisitWhere(user, ctx),
         _count: {
           _all: true,
         },
       }),
       this.prisma.siteVisit.count({
         where: {
-          ...this.accessibleSiteVisitWhere(user),
+          ...this.accessibleSiteVisitWhere(user, ctx),
           status: {
             in: this.activeSiteVisitStatuses(),
           },
@@ -247,13 +252,13 @@ export class DashboardService {
       }),
       this.prisma.siteVisit.count({
         where: {
-          ...this.accessibleSiteVisitWhere(user),
+          ...this.accessibleSiteVisitWhere(user, ctx),
           status: SiteVisitStatus.COMPLETED,
         },
       }),
       this.prisma.siteVisit.count({
         where: {
-          ...this.accessibleSiteVisitWhere(user),
+          ...this.accessibleSiteVisitWhere(user, ctx),
           status: {
             in: this.activeSiteVisitStatuses(),
           },
@@ -265,7 +270,7 @@ export class DashboardService {
       this.prisma.siteVisit.groupBy({
         by: ['teamId'],
         where: {
-          ...this.accessibleSiteVisitWhere(user),
+          ...this.accessibleSiteVisitWhere(user, ctx),
           status: {
             in: this.activeSiteVisitStatuses(),
           },
@@ -286,7 +291,7 @@ export class DashboardService {
         },
       }),
       this.prisma.siteVisit.findMany({
-        where: this.accessibleSiteVisitWhere(user),
+        where: this.accessibleSiteVisitWhere(user, ctx),
         select: {
           status: true,
           validationStatus: true,
@@ -295,14 +300,14 @@ export class DashboardService {
         },
       }),
       this.prisma.siteVisit.aggregate({
-        where: this.accessibleSiteVisitWhere(user),
+        where: this.accessibleSiteVisitWhere(user, ctx),
         _max: {
           updatedAt: true,
         },
       }),
       this.prisma.siteVisit.count({
         where: {
-          ...this.accessibleSiteVisitWhere(user),
+          ...this.accessibleSiteVisitWhere(user, ctx),
           status: {
             in: this.activeSiteVisitStatuses(),
           },
@@ -557,14 +562,17 @@ export class DashboardService {
     };
   }
 
-  private async ensureDefectsForAccessibleItems(user: RequestUser) {
+  private async ensureDefectsForAccessibleItems(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ) {
     const itemResults = await this.prisma.inspectionItemResult.findMany({
       where: {
         isDefect: true,
         defect: {
           is: null,
         },
-        inspection: this.accessibleInspectionWhere(user),
+        inspection: this.accessibleInspectionWhere(user, ctx),
       },
       select: {
         id: true,
@@ -632,38 +640,71 @@ export class DashboardService {
     return labels.length > 0 ? labels.join(' / ') : 'Unassigned';
   }
 
-  private accessibleAssetWhere(user: RequestUser): Prisma.AssetWhereInput {
+  private accessibleAssetWhere(
+    user: RequestUser,
+    _ctx?: ScopeContext,
+  ): Prisma.AssetWhereInput {
+    // Assets are not gated by team membership today; tenant scoping is
+    // sufficient. The ctx parameter is accepted for signature symmetry with
+    // the other accessible*Where helpers under Governance G3.
     return {
       tenantId: user.tenantId,
     };
   }
 
-  private accessibleDefectWhere(user: RequestUser): Prisma.DefectWhereInput {
+  private accessibleDefectWhere(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.DefectWhereInput {
     return {
       inspectionItemResult: {
         isDefect: true,
-        inspection: this.accessibleInspectionWhere(user),
+        inspection: this.accessibleInspectionWhere(user, ctx),
       },
     };
   }
 
-  private accessibleInspectionWhere(user: RequestUser): Prisma.InspectionWhereInput {
+  private accessibleInspectionWhere(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.InspectionWhereInput {
     return {
       tenantId: user.tenantId,
-      ...this.inspectionAccessScope(user),
+      ...this.inspectionAccessScope(user, ctx),
     };
   }
 
-  private accessibleSiteVisitWhere(user: RequestUser): Prisma.SiteVisitWhereInput {
+  private accessibleSiteVisitWhere(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.SiteVisitWhereInput {
     return {
       tenantId: user.tenantId,
-      ...this.siteVisitAccessScope(user),
+      ...this.siteVisitAccessScope(user, ctx),
     };
   }
 
-  private inspectionAccessScope(user: RequestUser): Prisma.InspectionWhereInput {
-    if (user.role === 'ADMIN') {
+  /**
+   * Governance Fix Package G3 — QA bypass on inspection reads.
+   *
+   * - ADMIN     : empty filter.
+   * - QA actor  : inspection's site visit must belong to a QA-accessible MAINHEAD.
+   * - Other     : legacy team membership via siteVisit.team.
+   */
+  private inspectionAccessScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.InspectionWhereInput {
+    if (user.role === 'ADMIN' || ctx?.isAdmin) {
       return {};
+    }
+
+    if (ctx?.isQa) {
+      return {
+        siteVisit: {
+          mainheadId: { in: ctx.qaMainheadIds },
+        },
+      };
     }
 
     return {
@@ -680,9 +721,21 @@ export class DashboardService {
     };
   }
 
-  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
-    if (user.role === 'ADMIN') {
+  /**
+   * Governance Fix Package G3 — QA bypass on site visit reads.
+   */
+  private siteVisitAccessScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.SiteVisitWhereInput {
+    if (user.role === 'ADMIN' || ctx?.isAdmin) {
       return {};
+    }
+
+    if (ctx?.isQa) {
+      return {
+        mainheadId: { in: ctx.qaMainheadIds },
+      };
     }
 
     return {

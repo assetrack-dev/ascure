@@ -18,6 +18,10 @@ import {
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
+  buildScopeContext,
+  ScopeContext,
+} from '../common/authorization/scope-context';
+import {
   calculateOperationalHealthStatus,
   isSiteVisitOverdue,
   parseOperationalOverdueThresholdHours,
@@ -496,8 +500,9 @@ export class SiteVisitsService {
   }
 
   async list(user: RequestUser, query: ListSiteVisitsQueryDto) {
+    const ctx = await buildScopeContext(this.prisma, user);
     const siteVisits = await this.prisma.siteVisit.findMany({
-      where: this.buildListWhere(user, query),
+      where: this.buildListWhere(user, query, ctx),
       include: SITE_VISIT_READ_BASE_INCLUDE,
       orderBy: {
         startedAt: 'desc',
@@ -523,11 +528,12 @@ export class SiteVisitsService {
   }
 
   async getReadById(user: RequestUser, id: string) {
+    const ctx = await buildScopeContext(this.prisma, user);
     const siteVisit = await this.prisma.siteVisit.findFirst({
       where: {
         id,
         tenantId: user.tenantId,
-        ...this.accessScope(user),
+        ...this.accessScope(user, ctx),
       },
       include: SITE_VISIT_READ_DETAIL_INCLUDE,
     });
@@ -553,11 +559,12 @@ export class SiteVisitsService {
   }
 
   async getById(user: RequestUser, id: string) {
+    const ctx = await buildScopeContext(this.prisma, user);
     const siteVisit = await this.prisma.siteVisit.findFirst({
       where: {
         id,
         tenantId: user.tenantId,
-        ...this.accessScope(user),
+        ...this.accessScope(user, ctx),
       },
       include: SITE_VISIT_DETAIL_INCLUDE,
     });
@@ -1812,12 +1819,13 @@ export class SiteVisitsService {
   private buildListWhere(
     user: RequestUser,
     query: ListSiteVisitsQueryDto,
+    ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
     const filters: Prisma.SiteVisitWhereInput[] = [
       {
         tenantId: user.tenantId,
       },
-      this.accessScope(user),
+      this.accessScope(user, ctx),
       this.statusFilter(query.status),
       this.validationStatusFilter(query.validationStatus),
       this.visitTypeFilter(query.visitType),
@@ -2133,9 +2141,31 @@ export class SiteVisitsService {
     return normalizedValue ? normalizeOperationalText(normalizedValue) : null;
   }
 
-  private accessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
-    if (user.role === UserRole.ADMIN) {
+  /**
+   * Governance Fix Package G3.
+   *
+   * - ADMIN     : empty filter (full tenant visibility).
+   * - QA actor  : visit must belong to a MAINHEAD the QA user has access to.
+   *               If the QA user has zero accessible MAINHEADs, no visits
+   *               are returned (the in-clause becomes an empty array).
+   * - Everyone  : legacy team-membership filter.
+   *
+   * The optional `ctx` is built once per request by buildScopeContext().
+   * When omitted, legacy behaviour is preserved so callers that haven't
+   * been migrated yet keep working.
+   */
+  private accessScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.SiteVisitWhereInput {
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
       return {};
+    }
+
+    if (ctx?.isQa) {
+      return {
+        mainheadId: { in: ctx.qaMainheadIds },
+      };
     }
 
     return {

@@ -127,7 +127,6 @@ export function CheckInScreen() {
   const [isLocating, setIsLocating] = useState(false);
   const [isOpeningMapPicker, setIsOpeningMapPicker] = useState(false);
   const [isCapturingPhoto, setIsCapturingPhoto] = useState(false);
-  const [isTeamPickerOpen, setIsTeamPickerOpen] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -667,40 +666,16 @@ export function CheckInScreen() {
                 description="This user must belong to a team before a site visit can be created."
               />
             ) : (
-              <>
-                <View style={styles.readOnlyPanel}>
-                  <FieldSummary label="Team (Auto)" value={formatTeam(selectedTeam)} />
-                  <FieldSummary label="PIC Name (Auto)" value={user.name || user.email} />
-                </View>
-                {teams.length > 1 ? (
-                  <>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => setIsTeamPickerOpen((currentValue) => !currentValue)}
-                      style={({ pressed }) => [styles.inlinePickerButton, pressed && styles.pressedButton]}
-                    >
-                      <Text style={styles.inlinePickerText}>
-                        {isTeamPickerOpen ? 'Hide Team Choices' : 'Change Assigned Team'}
-                      </Text>
-                    </Pressable>
-                    {isTeamPickerOpen ? (
-                      <View style={styles.selectList}>
-                        {teams.map((team) => (
-                          <SelectCard
-                            key={team.id}
-                            label={`${team.code} - ${team.name}`}
-                            selected={selectedTeamId === team.id}
-                            onPress={() => {
-                              setSelectedTeamId(team.id);
-                              setIsTeamPickerOpen(false);
-                            }}
-                          />
-                        ))}
-                      </View>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
+              {/*
+                Governance Fix Package G3 — Item 4. The team is inferred
+                from the user's team assignment(s) returned by api.getTeams.
+                The picker UI is removed; the team is displayed read-only as
+                "Team (Auto)" and used directly by the create call.
+              */}
+              <View style={styles.readOnlyPanel}>
+                <FieldSummary label="Team (Auto)" value={formatTeam(selectedTeam)} />
+                <FieldSummary label="PIC Name (Auto)" value={user.name || user.email} />
+              </View>
             )}
           </Card>
 

@@ -553,11 +553,25 @@ function UserFormModal({
                 className={`${inputClassName} mt-1.5`}
               >
                 <option value="">No team</option>
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {optionLabel(team)}
-                  </option>
-                ))}
+                {/*
+                  Governance Fix Package G3 — Team filtered by Organization.
+                  If the form has an Organization selection, only show teams
+                  that belong to that organization. When no organization is
+                  picked, fall through to the full list so admins can still
+                  see every team.
+                */}
+                {teams
+                  .filter(
+                    (team) =>
+                      !values.organizationId ||
+                      !team.organizationId ||
+                      team.organizationId === values.organizationId,
+                  )
+                  .map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {optionLabel(team)}
+                    </option>
+                  ))}
               </select>
             </label>
           </div>
