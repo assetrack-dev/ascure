@@ -1,11 +1,14 @@
 import type {
+  EffectiveCapability,
   InspectionCompletionStatus,
   OperationMode,
   OperationalScope,
   SessionKind,
   SessionUser,
-  UserRole,
 } from './types';
+
+const INSPECTION_WORKSPACE_CAPABILITY_CODE = 'INSPECTION';
+const MAINTENANCE_WORKSPACE_CAPABILITY_CODE = 'MAINTENANCE';
 
 export type MobileWorkspaceId = OperationMode;
 
@@ -50,24 +53,39 @@ const STANDALONE_SCOPES = new Set<OperationalScope>([
   'LINK_BOX',
 ]);
 
-export function getAvailableMobileWorkspaces(user: Pick<SessionUser, 'role'>) {
+export function getAvailableMobileWorkspaces(
+  user: Pick<SessionUser, 'role'>,
+  capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
+): MobileWorkspace[] {
+  const codes = new Set(capabilities.map((capability) => capability.code));
   const workspaces: MobileWorkspace[] = [];
+  const isAdmin = user.role === 'ADMIN';
 
-  if (hasInspectionWorkspaceAccess(user.role)) {
+  if (isAdmin || codes.has(INSPECTION_WORKSPACE_CAPABILITY_CODE)) {
     workspaces.push(INSPECTION_WORKSPACE);
   }
 
-  if (hasMaintenanceWorkspaceAccess(user.role)) {
+  if (isAdmin || codes.has(MAINTENANCE_WORKSPACE_CAPABILITY_CODE)) {
     workspaces.push(MAINTENANCE_WORKSPACE);
   }
 
   return workspaces;
 }
 
-export function getAutoOpenWorkspace(user: Pick<SessionUser, 'role'>) {
-  const workspaces = getAvailableMobileWorkspaces(user);
+export function getAutoOpenWorkspace(
+  user: Pick<SessionUser, 'role'>,
+  capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
+) {
+  const workspaces = getAvailableMobileWorkspaces(user, capabilities);
 
   return workspaces.length === 1 ? workspaces[0] : null;
+}
+
+export function getWorkspaceCapabilityCodes(): string[] {
+  return [
+    INSPECTION_WORKSPACE_CAPABILITY_CODE,
+    MAINTENANCE_WORKSPACE_CAPABILITY_CODE,
+  ];
 }
 
 export function getSessionKindForScope(
@@ -136,19 +154,6 @@ export function filterDefaultInspectionOperationalQueue<
 >(items: T[]) {
   return items.filter((item) =>
     canShowInInspectionMobileQueue(item.completionStatus ?? item.status),
-  );
-}
-
-function hasInspectionWorkspaceAccess(role: UserRole) {
-  return Boolean(role);
-}
-
-function hasMaintenanceWorkspaceAccess(role: UserRole) {
-  return (
-    role === 'ADMIN' ||
-    role === 'MANAGER' ||
-    role === 'SUPERVISOR' ||
-    role === 'TECHNICIAN'
   );
 }
 

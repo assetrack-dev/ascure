@@ -27,6 +27,20 @@ export class UsersController {
     return this.usersService.getCurrentUserMainheads(user);
   }
 
+  @Get('me/capabilities')
+  getCurrentUserCapabilities(@CurrentUser() user: RequestUser) {
+    return this.usersService.getCurrentUserCapabilities(user);
+  }
+
+  @Get(':id/capabilities')
+  @Roles(UserRole.ADMIN)
+  getUserCapabilities(
+    @CurrentUser() user: RequestUser,
+    @Param() params: UserIdParamDto,
+  ) {
+    return this.usersService.getCapabilitiesForUser(user, params.id);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN)
   list(@CurrentUser() user: RequestUser) {

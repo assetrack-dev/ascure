@@ -17,6 +17,22 @@ export interface SessionUser {
   updatedAt?: string;
 }
 
+export type CapabilitySource =
+  | { scope: 'ADMIN' }
+  | { scope: 'USER' }
+  | { scope: 'TEAM'; scopeId: string; scopeName: string }
+  | { scope: 'MAINHEAD'; scopeId: string; scopeName: string }
+  | { scope: 'BRANCH'; scopeId: string; scopeName: string }
+  | { scope: 'ORGANIZATION'; scopeId: string; scopeName: string };
+
+export interface EffectiveCapability {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  sources: CapabilitySource[];
+}
+
 export interface Team {
   id: string;
   tenantId?: string;

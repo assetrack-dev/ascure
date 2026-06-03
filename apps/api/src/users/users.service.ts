@@ -16,6 +16,22 @@ import { UpdateUserDto } from './dto/update-user.dto';
 
 const PASSWORD_SALT_ROUNDS = 10;
 
+export type CapabilitySource =
+  | { scope: 'ADMIN' }
+  | { scope: 'USER' }
+  | { scope: 'TEAM'; scopeId: string; scopeName: string }
+  | { scope: 'MAINHEAD'; scopeId: string; scopeName: string }
+  | { scope: 'BRANCH'; scopeId: string; scopeName: string }
+  | { scope: 'ORGANIZATION'; scopeId: string; scopeName: string };
+
+export interface EffectiveCapability {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  sources: CapabilitySource[];
+}
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -380,6 +396,411 @@ export class UsersService {
         select: this.userSelect(),
       });
     });
+  }
+
+  async getCurrentUserCapabilities(user: RequestUser): Promise<EffectiveCapability[]> {
+    return this.resolveEffectiveCapabilities(user.tenantId, user.id);
+  }
+
+  async getCapabilitiesForUser(
+    actor: RequestUser,
+    userId: string,
+  ): Promise<EffectiveCapability[]> {
+    const target = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        tenantId: actor.tenantId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!target) {
+      throw new NotFoundException('User not found.');
+    }
+
+    return this.resolveEffectiveCapabilities(actor.tenantId, userId);
+  }
+
+  private async resolveEffectiveCapabilities(
+    tenantId: string,
+    userId: string,
+  ): Promise<EffectiveCapability[]> {
+    const userData = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        tenantId,
+        isActive: true,
+      },
+      select: {
+        role: true,
+        organizationId: true,
+        branchId: true,
+        mainheadId: true,
+        mainheadAccesses: {
+          select: {
+            mainheadId: true,
+          },
+        },
+        operationalRegionAccesses: {
+          select: {
+            operationalRegionId: true,
+          },
+        },
+        teamMemberships: {
+          where: {
+            isActive: true,
+            team: {
+              tenantId,
+              isActive: true,
+            },
+          },
+          select: {
+            team: {
+              select: {
+                id: true,
+                organizationId: true,
+                branchId: true,
+                mainheadId: true,
+              },
+            },
+          },
+        },
+        organizationMemberships: {
+          where: {
+            isActive: true,
+            organization: {
+              isActive: true,
+            },
+          },
+          select: {
+            organizationId: true,
+          },
+        },
+      },
+    });
+
+    if (!userData) {
+      return [];
+    }
+
+    if (userData.role === UserRole.ADMIN) {
+      const all = await this.prisma.capability.findMany({
+        where: {
+          isActive: true,
+        },
+        orderBy: {
+          code: 'asc',
+        },
+      });
+
+      return all.map((capability) => ({
+        id: capability.id,
+        code: capability.code,
+        name: capability.name,
+        description: capability.description ?? null,
+        sources: [{ scope: 'ADMIN' as const }],
+      }));
+    }
+
+    const teamIds = new Set<string>();
+    const directMainheadIds = new Set<string>();
+    const branchIds = new Set<string>();
+    const organizationIds = new Set<string>();
+
+    for (const membership of userData.teamMemberships) {
+      teamIds.add(membership.team.id);
+      if (membership.team.mainheadId) {
+        directMainheadIds.add(membership.team.mainheadId);
+      }
+      if (membership.team.branchId) {
+        branchIds.add(membership.team.branchId);
+      }
+      if (membership.team.organizationId) {
+        organizationIds.add(membership.team.organizationId);
+      }
+    }
+
+    if (userData.mainheadId) {
+      directMainheadIds.add(userData.mainheadId);
+    }
+
+    for (const access of userData.mainheadAccesses) {
+      directMainheadIds.add(access.mainheadId);
+    }
+
+    if (userData.branchId) {
+      branchIds.add(userData.branchId);
+    }
+
+    if (userData.organizationId) {
+      organizationIds.add(userData.organizationId);
+    }
+
+    for (const membership of userData.organizationMemberships) {
+      organizationIds.add(membership.organizationId);
+    }
+
+    const regionIds = userData.operationalRegionAccesses
+      .map((access) => access.operationalRegionId)
+      .filter((value): value is string => Boolean(value));
+
+    if (regionIds.length > 0) {
+      const regionMainheads = await this.prisma.mainhead.findMany({
+        where: {
+          operationalRegionId: {
+            in: regionIds,
+          },
+          isActive: true,
+        },
+        select: {
+          id: true,
+          branchId: true,
+        },
+      });
+
+      for (const mainhead of regionMainheads) {
+        directMainheadIds.add(mainhead.id);
+        if (mainhead.branchId) {
+          branchIds.add(mainhead.branchId);
+        }
+      }
+    }
+
+    if (directMainheadIds.size > 0) {
+      const mainheads = await this.prisma.mainhead.findMany({
+        where: {
+          id: {
+            in: Array.from(directMainheadIds),
+          },
+          isActive: true,
+        },
+        select: {
+          id: true,
+          branchId: true,
+        },
+      });
+
+      for (const mainhead of mainheads) {
+        if (mainhead.branchId) {
+          branchIds.add(mainhead.branchId);
+        }
+      }
+    }
+
+    if (branchIds.size > 0) {
+      const branches = await this.prisma.branch.findMany({
+        where: {
+          id: {
+            in: Array.from(branchIds),
+          },
+          isActive: true,
+        },
+        select: {
+          id: true,
+          organizationId: true,
+        },
+      });
+
+      for (const branch of branches) {
+        organizationIds.add(branch.organizationId);
+      }
+    }
+
+    const capabilitySelect = {
+      capability: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          description: true,
+        },
+      },
+    } as const;
+
+    const teamIdList = Array.from(teamIds);
+    const mainheadIdList = Array.from(directMainheadIds);
+    const branchIdList = Array.from(branchIds);
+    const organizationIdList = Array.from(organizationIds);
+
+    const [
+      userCapabilities,
+      teamCapabilities,
+      mainheadCapabilities,
+      branchCapabilities,
+      organizationCapabilities,
+    ] = await Promise.all([
+      this.prisma.userCapability.findMany({
+        where: {
+          userId,
+          isActive: true,
+          capability: {
+            isActive: true,
+          },
+        },
+        select: capabilitySelect,
+      }),
+      teamIdList.length > 0
+        ? this.prisma.teamCapability.findMany({
+            where: {
+              teamId: {
+                in: teamIdList,
+              },
+              isActive: true,
+              capability: {
+                isActive: true,
+              },
+            },
+            select: {
+              ...capabilitySelect,
+              team: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      mainheadIdList.length > 0
+        ? this.prisma.mainheadCapability.findMany({
+            where: {
+              mainheadId: {
+                in: mainheadIdList,
+              },
+              isActive: true,
+              mainhead: {
+                isActive: true,
+              },
+              capability: {
+                isActive: true,
+              },
+            },
+            select: {
+              ...capabilitySelect,
+              mainhead: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      branchIdList.length > 0
+        ? this.prisma.branchCapability.findMany({
+            where: {
+              branchId: {
+                in: branchIdList,
+              },
+              isActive: true,
+              branch: {
+                isActive: true,
+              },
+              capability: {
+                isActive: true,
+              },
+            },
+            select: {
+              ...capabilitySelect,
+              branch: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      organizationIdList.length > 0
+        ? this.prisma.organizationCapabilityAssignment.findMany({
+            where: {
+              organizationId: {
+                in: organizationIdList,
+              },
+              isActive: true,
+              organization: {
+                isActive: true,
+              },
+              capability: {
+                isActive: true,
+              },
+            },
+            select: {
+              ...capabilitySelect,
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const accumulator = new Map<string, EffectiveCapability>();
+
+    const recordSource = (
+      capability: { id: string; code: string; name: string; description: string | null },
+      source: CapabilitySource,
+    ) => {
+      const existing = accumulator.get(capability.id);
+
+      if (existing) {
+        existing.sources.push(source);
+        return;
+      }
+
+      accumulator.set(capability.id, {
+        id: capability.id,
+        code: capability.code,
+        name: capability.name,
+        description: capability.description ?? null,
+        sources: [source],
+      });
+    };
+
+    for (const row of userCapabilities) {
+      recordSource(row.capability, { scope: 'USER' });
+    }
+
+    for (const row of teamCapabilities) {
+      recordSource(row.capability, {
+        scope: 'TEAM',
+        scopeId: row.team.id,
+        scopeName: row.team.name,
+      });
+    }
+
+    for (const row of mainheadCapabilities) {
+      recordSource(row.capability, {
+        scope: 'MAINHEAD',
+        scopeId: row.mainhead.id,
+        scopeName: row.mainhead.name,
+      });
+    }
+
+    for (const row of branchCapabilities) {
+      recordSource(row.capability, {
+        scope: 'BRANCH',
+        scopeId: row.branch.id,
+        scopeName: row.branch.name,
+      });
+    }
+
+    for (const row of organizationCapabilities) {
+      recordSource(row.capability, {
+        scope: 'ORGANIZATION',
+        scopeId: row.organization.id,
+        scopeName: row.organization.name,
+      });
+    }
+
+    return Array.from(accumulator.values()).sort((left, right) =>
+      left.code.localeCompare(right.code),
+    );
   }
 
   async getCurrentUserTeams(user: RequestUser) {

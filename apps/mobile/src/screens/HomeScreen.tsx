@@ -34,7 +34,13 @@ import {
   WarningBanner,
   uiTheme,
 } from '../ui';
-import { InspectionSummary, OperationalScope, SiteVisit, UserRole } from '../types';
+import {
+  EffectiveCapability,
+  InspectionSummary,
+  OperationalScope,
+  SiteVisit,
+  UserRole,
+} from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -95,8 +101,15 @@ export function HomeScreen() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] =
     useState<MobileWorkspaceId | null>(null);
   const [selectedScope, setSelectedScope] = useState<OperationalScope>('SAVR');
-  const workspaces = useMemo(() => getAvailableMobileWorkspaces(user), [user]);
-  const autoOpenWorkspace = useMemo(() => getAutoOpenWorkspace(user), [user]);
+  const [capabilities, setCapabilities] = useState<EffectiveCapability[]>([]);
+  const workspaces = useMemo(
+    () => getAvailableMobileWorkspaces(user, capabilities),
+    [user, capabilities],
+  );
+  const autoOpenWorkspace = useMemo(
+    () => getAutoOpenWorkspace(user, capabilities),
+    [user, capabilities],
+  );
   const availableScopes = useMemo(
     () => getAvailableInspectionScopes(activeVisits, completedVisits),
     [activeVisits, completedVisits],
@@ -112,16 +125,18 @@ export function HomeScreen() {
       setError(null);
       setIsLoading(true);
 
-      const [me, activeVisitList, completedVisitList] = await Promise.all([
+      const [me, activeVisitList, completedVisitList, myCapabilities] = await Promise.all([
         api.getMe(token),
         api.getActiveSiteVisits(token),
         api.getCompletedSiteVisits(token),
+        api.getMyCapabilities(token),
       ]);
       const activeVisitsWithImageData = await loadVisitDetails(token, activeVisitList);
 
       setUser(me);
       setActiveVisits(activeVisitsWithImageData);
       setCompletedVisits(completedVisitList);
+      setCapabilities(myCapabilities);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -261,12 +276,12 @@ export function HomeScreen() {
       ) : null}
 
       {!isLoading && workspaces.length === 0 ? (
-        <LegacyVisitsView
-          activeVisits={activeVisits}
-          completedVisits={completedVisits}
-          joiningVisitId={joiningVisitId}
-          onOpenVisit={handleOpenVisit}
-        />
+        <Card>
+          <EmptyState
+            title="No workspace assigned"
+            description="Contact your administrator to grant Inspection or Maintenance capability."
+          />
+        </Card>
       ) : null}
 
       {!isLoading && selectedWorkspaceId === 'INSPECTION' ? (

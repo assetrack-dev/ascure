@@ -14,6 +14,7 @@ import {
   DefectResolutionOutcome,
   DefectListItem,
   DefectStatus,
+  EffectiveCapability,
   InspectionImage,
   InspectionImageUploadInput,
   InspectionDetail,
@@ -280,6 +281,18 @@ export const api = {
     } catch (error) {
       if (isEndpointUnavailableError(error)) {
         return request<Mainhead[]>('/enterprise/mainheads?isActive=true', { token });
+      }
+
+      throw error;
+    }
+  },
+
+  async getMyCapabilities(token: string): Promise<EffectiveCapability[]> {
+    try {
+      return await request<EffectiveCapability[]>('/users/me/capabilities', { token });
+    } catch (error) {
+      if (isEndpointUnavailableError(error)) {
+        return [];
       }
 
       throw error;
