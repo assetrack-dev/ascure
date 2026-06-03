@@ -41,9 +41,8 @@ export class CreateSiteVisitDto {
   @IsUUID()
   branchId?: string;
 
-  @IsOptional()
   @IsUUID()
-  mainheadId?: string;
+  mainheadId!: string;
 
   @IsOptional()
   @IsUUID()

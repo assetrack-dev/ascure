@@ -1101,8 +1101,8 @@ export class SiteVisitsService {
       missingFields.push({ key: 'pencawangCode', label: 'Kod Pencawang' });
     }
 
-    if (!this.normalizeOptionalString(dto.mainhead) && !dto.mainheadId) {
-      missingFields.push({ key: 'mainhead', label: 'MAINHEAD' });
+    if (!dto.mainheadId) {
+      missingFields.push({ key: 'mainheadId', label: 'MAINHEAD' });
     }
 
     if (dto.checkInLatitude === undefined || dto.checkInLongitude === undefined) {

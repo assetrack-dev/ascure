@@ -134,6 +134,17 @@ export interface CapabilityGroup<T extends CapabilityLike> {
 }
 
 /**
+ * Per-context allow-lists used by the assignment pickers.
+ *
+ * Governance G2 (MAINHEAD Capability Restriction) — the MAINHEAD picker is
+ * limited to Asset Domains. Organization / Branch / Team / User pickers
+ * continue to show all three groups.
+ */
+export const MAINHEAD_PICKER_GROUP_KEYS: ReadonlyArray<CapabilityGroupKey> = [
+  "ASSET_DOMAIN",
+];
+
+/**
  * Bucket the provided capabilities into the three pilot groups, in the
  * canonical order defined by CAPABILITY_GROUPS. Empty groups are dropped so
  * the picker only renders sections that have at least one capability.

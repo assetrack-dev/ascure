@@ -14,7 +14,10 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
-import { CANONICAL_CAPABILITY_CODES } from '../common/canonical-capabilities';
+import {
+  CANONICAL_CAPABILITY_CODES,
+  MAINHEAD_ASSIGNABLE_CAPABILITY_CODES,
+} from '../common/canonical-capabilities';
 import {
   ListBranchesQueryDto,
   ListCapabilitiesQueryDto,
@@ -1882,6 +1885,56 @@ export class EnterpriseService {
     }
   }
 
+  /**
+   * Governance G2 — MAINHEAD Capability Restriction.
+   *
+   * MAINHEADs may only be assigned Asset Domain capabilities (SAVR, SAVT,
+   * PENCAWANG, FEEDER_PILLAR, LINK_BOX, CABLE_BRIDGE, UNDERGROUND_CABLE,
+   * THERMAL_INSPECTION). Workspace Access and Governance & Reporting codes
+   * are rejected here so the UI restriction cannot be bypassed by direct
+   * API callers. Existing non-asset-domain rows already in the database are
+   * left untouched (no destructive cleanup); they are simply no longer
+   * editable through the UI and are not consulted by the effective
+   * capability resolver.
+   */
+  private async assertMainheadCapabilitiesAllowed(
+    tx: Prisma.TransactionClient,
+    capabilityIds: string[],
+  ) {
+    if (capabilityIds.length === 0) {
+      return;
+    }
+
+    const capabilities = await tx.capability.findMany({
+      where: {
+        id: {
+          in: capabilityIds,
+        },
+      },
+      select: {
+        id: true,
+        code: true,
+      },
+    });
+
+    const disallowed = capabilities.filter(
+      (capability) =>
+        !MAINHEAD_ASSIGNABLE_CAPABILITY_CODES.has(
+          capability.code.trim().toUpperCase(),
+        ),
+    );
+
+    if (disallowed.length > 0) {
+      throw new BadRequestException({
+        message: 'MAINHEADs may only be assigned Asset Domain capabilities.',
+        disallowedCapabilities: disallowed.map((capability) => ({
+          id: capability.id,
+          code: capability.code,
+        })),
+      });
+    }
+  }
+
   private async syncOrganizationCapabilities(
     tx: Prisma.TransactionClient,
     organizationId: string,
@@ -1973,6 +2026,7 @@ export class EnterpriseService {
   ) {
     const normalizedCapabilityIds = this.normalizeIdList(capabilityIds);
     await this.assertCapabilitiesExist(tx, normalizedCapabilityIds);
+    await this.assertMainheadCapabilitiesAllowed(tx, normalizedCapabilityIds);
 
     await tx.mainheadCapability.deleteMany({
       where: {

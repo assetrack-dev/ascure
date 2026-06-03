@@ -63,7 +63,6 @@ interface SiteVisitCreateForm {
   pencawangCode: string;
   pencawangName: string;
   functionalLocation: string;
-  mainhead: string;
   mainheadId: string;
   projectId: string;
   workPackageId: string;
@@ -78,7 +77,6 @@ const DEFAULT_SITE_VISIT_CREATE_FORM: SiteVisitCreateForm = {
   pencawangCode: "",
   pencawangName: "",
   functionalLocation: "",
-  mainhead: "",
   mainheadId: "",
   projectId: "",
   workPackageId: "",
@@ -803,8 +801,9 @@ function SiteVisitCreateModal({
                 value={values.mainheadId}
                 onChange={(event) => onChange("mainheadId", event.target.value)}
                 className={`${filterControlClassName} mt-1.5`}
+                required
               >
-                <option value="">Text MAINHEAD only</option>
+                <option value="">Select MAINHEAD</option>
                 {enterpriseOptions?.mainheads.map((mainhead) => (
                   <option key={mainhead.id} value={mainhead.id}>
                     {optionLabel(mainhead)}
@@ -843,16 +842,6 @@ function SiteVisitCreateModal({
               </select>
             </label>
           </div>
-
-          <label className="block">
-            <span className="text-sm font-semibold text-slate-700">MAINHEAD Text</span>
-            <input
-              type="text"
-              value={values.mainhead}
-              onChange={(event) => onChange("mainhead", event.target.value)}
-              className={`${filterControlClassName} mt-1.5`}
-            />
-          </label>
 
           <label className="block">
             <span className="text-sm font-semibold text-slate-700">Notes</span>
@@ -1222,6 +1211,12 @@ function SiteVisitsContent() {
     }
 
     const hasExistingSubstation = Boolean(createForm.substationId);
+
+    if (!createForm.mainheadId) {
+      setModalError("MAINHEAD must be selected.");
+      return;
+    }
+
     const payload: Record<string, unknown> = {
       teamId: createForm.teamId,
       visitType: createForm.visitType,
@@ -1229,8 +1224,7 @@ function SiteVisitsContent() {
       pencawangCode: createForm.pencawangCode.trim() || undefined,
       pencawangName: createForm.pencawangName.trim() || undefined,
       functionalLocation: createForm.functionalLocation.trim() || undefined,
-      mainhead: createForm.mainhead.trim() || undefined,
-      mainheadId: createForm.mainheadId || undefined,
+      mainheadId: createForm.mainheadId,
       projectId: createForm.projectId || undefined,
       workPackageId: createForm.workPackageId || undefined,
       operationalDomain: createForm.operationalDomain || undefined,

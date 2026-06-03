@@ -29,6 +29,28 @@ export const CANONICAL_CAPABILITY_CODES: ReadonlySet<string> = new Set([
   'THERMAL_INSPECTION',
 ]);
 
+/**
+ * Governance G2 — MAINHEAD Capability Restriction.
+ *
+ * MAINHEADs may only be assigned Asset Domain capabilities. Workspace Access
+ * and Governance & Reporting codes are not assignable to MAINHEADs and are
+ * rejected by the syncMainheadCapabilities validator.
+ *
+ * MAINHEAD remains an operational-scope label; user authority is resolved
+ * exclusively from User + Team + Branch + Organization assignments by
+ * UsersService.getEffectiveCapabilitiesForUser().
+ */
+export const MAINHEAD_ASSIGNABLE_CAPABILITY_CODES: ReadonlySet<string> = new Set([
+  'SAVR',
+  'SAVT',
+  'PENCAWANG',
+  'FEEDER_PILLAR',
+  'LINK_BOX',
+  'CABLE_BRIDGE',
+  'UNDERGROUND_CABLE',
+  'THERMAL_INSPECTION',
+]);
+
 export function isCanonicalCapabilityCode(
   code: string | null | undefined,
 ): boolean {
@@ -37,4 +59,14 @@ export function isCanonicalCapabilityCode(
   }
 
   return CANONICAL_CAPABILITY_CODES.has(code.trim().toUpperCase());
+}
+
+export function isMainheadAssignableCapabilityCode(
+  code: string | null | undefined,
+): boolean {
+  if (typeof code !== 'string') {
+    return false;
+  }
+
+  return MAINHEAD_ASSIGNABLE_CAPABILITY_CODES.has(code.trim().toUpperCase());
 }

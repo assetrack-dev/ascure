@@ -620,14 +620,21 @@ export class UsersService {
     } as const;
 
     const teamIdList = Array.from(teamIds);
-    const mainheadIdList = Array.from(directMainheadIds);
     const branchIdList = Array.from(branchIds);
     const organizationIdList = Array.from(organizationIds);
 
+    // Governance G2 — MAINHEAD Capability Restriction.
+    //
+    // MAINHEAD capabilities are no longer merged into the user's effective
+    // authority set. MAINHEAD remains an operational-scope label; user
+    // authority resolves exclusively from User + Team + Branch + Organization
+    // assignments. The MAINHEAD -> branch derivation above is preserved so
+    // BranchCapability inheritance via the MAINHEAD's branch still flows.
+    // UserMainheadAccess / UserOperationalRegionAccess visibility is
+    // unchanged.
     const [
       userCapabilities,
       teamCapabilities,
-      mainheadCapabilities,
       branchCapabilities,
       organizationCapabilities,
     ] = await Promise.all([
@@ -655,31 +662,6 @@ export class UsersService {
             select: {
               ...capabilitySelect,
               team: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          })
-        : Promise.resolve([]),
-      mainheadIdList.length > 0
-        ? this.prisma.mainheadCapability.findMany({
-            where: {
-              mainheadId: {
-                in: mainheadIdList,
-              },
-              isActive: true,
-              mainhead: {
-                isActive: true,
-              },
-              capability: {
-                isActive: true,
-              },
-            },
-            select: {
-              ...capabilitySelect,
-              mainhead: {
                 select: {
                   id: true,
                   name: true,
@@ -771,14 +753,6 @@ export class UsersService {
         scope: 'TEAM',
         scopeId: row.team.id,
         scopeName: row.team.name,
-      });
-    }
-
-    for (const row of mainheadCapabilities) {
-      recordSource(row.capability, {
-        scope: 'MAINHEAD',
-        scopeId: row.mainhead.id,
-        scopeName: row.mainhead.name,
       });
     }
 

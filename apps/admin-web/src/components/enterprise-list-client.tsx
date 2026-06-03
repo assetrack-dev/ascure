@@ -34,7 +34,13 @@ import {
   updateEnterpriseEntity,
   updateEnterpriseOperationalStatus,
 } from "@/lib/enterprise";
-import { groupCapabilities, isAssignableCapability } from "@/lib/capability-groups";
+import {
+  capabilityGroupFor,
+  groupCapabilities,
+  isAssignableCapability,
+  MAINHEAD_PICKER_GROUP_KEYS,
+  type CapabilityGroupKey,
+} from "@/lib/capability-groups";
 import type { AuthSession } from "@/types/auth";
 import type {
   EnterpriseEntityKind,
@@ -473,16 +479,31 @@ function CapabilityPicker({
   values,
   options,
   onChange,
+  groupKeys,
 }: {
   values: string[];
   options: EnterpriseOptions | null;
   onChange: (nextValues: string[]) => void;
+  /**
+   * Optional per-context allow-list. When provided, only capabilities whose
+   * group key is in this set are rendered. Used by the MAINHEAD modal to
+   * enforce Governance G2 (MAINHEAD capabilities limited to Asset Domains).
+   * Org / Branch / Team pickers omit this prop and continue to render all
+   * three groups.
+   */
+  groupKeys?: ReadonlyArray<CapabilityGroupKey>;
 }) {
   if (!options?.capabilities.length) {
     return null;
   }
 
-  const assignable = options.capabilities.filter(isAssignableCapability);
+  const allowedGroups = groupKeys ? new Set(groupKeys) : null;
+  const assignable = options.capabilities
+    .filter(isAssignableCapability)
+    .filter(
+      (capability) =>
+        !allowedGroups || allowedGroups.has(capabilityGroupFor(capability.code)),
+    );
 
   if (assignable.length === 0) {
     return null;
@@ -838,6 +859,7 @@ function EnterpriseFormModal({
                 values={values.capabilityIds}
                 options={options}
                 onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+                groupKeys={MAINHEAD_PICKER_GROUP_KEYS}
               />
             </>
           ) : null}

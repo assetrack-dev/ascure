@@ -147,6 +147,27 @@ function DetailField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MainheadDetailField({ visit }: { visit: SiteVisitDetail }) {
+  const isLegacy = !visit.mainheadRecord && Boolean(visit.mainhead?.trim());
+
+  return (
+    <div className={fieldClassName}>
+      <dt className="text-xs font-semibold uppercase text-[var(--muted)]">MAINHEAD</dt>
+      <dd className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+        <span>{displayMainhead(visit)}</span>
+        {isLegacy ? (
+          <span
+            className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800"
+            title="Free-text MAINHEAD captured before Governance G1. Not linked to a MAINHEAD record."
+          >
+            Legacy MAINHEAD
+          </span>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
 function MetricTile({
   label,
   value,
@@ -508,7 +529,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         Operational Metadata
                       </div>
                       <dl className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        <DetailField label="MAINHEAD" value={displayMainhead(visit)} />
+                        <MainheadDetailField visit={visit} />
                         <DetailField label="Pencawang Code" value={formatNullable(visit.pencawangCode)} />
                         <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
                         <DetailField label="Functional Location" value={formatNullable(visit.functionalLocation)} />
