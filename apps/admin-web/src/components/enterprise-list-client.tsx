@@ -34,6 +34,7 @@ import {
   updateEnterpriseEntity,
   updateEnterpriseOperationalStatus,
 } from "@/lib/enterprise";
+import { groupCapabilities, isAssignableCapability } from "@/lib/capability-groups";
 import type { AuthSession } from "@/types/auth";
 import type {
   EnterpriseEntityKind,
@@ -481,6 +482,14 @@ function CapabilityPicker({
     return null;
   }
 
+  const assignable = options.capabilities.filter(isAssignableCapability);
+
+  if (assignable.length === 0) {
+    return null;
+  }
+
+  const groups = groupCapabilities(assignable);
+
   function toggleCapability(capabilityId: string, checked: boolean) {
     onChange(
       checked
@@ -490,29 +499,37 @@ function CapabilityPicker({
   }
 
   return (
-    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-      <legend className="px-1 text-sm font-semibold text-slate-700">
-        Capabilities
-      </legend>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {options.capabilities.map((capability) => (
-          <label
-            key={capability.id}
-            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
-          >
-            <input
-              type="checkbox"
-              checked={values.includes(capability.id)}
-              onChange={(event) =>
-                toggleCapability(capability.id, event.target.checked)
-              }
-              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-            />
-            <span className="truncate">{optionLabel(capability)}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
+    <div className="space-y-3">
+      {groups.map((group) => (
+        <fieldset
+          key={group.key}
+          className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+        >
+          <legend className="px-1 text-sm font-semibold text-slate-700">
+            {group.title}
+          </legend>
+          <p className="px-1 text-xs text-slate-500">{group.caption}</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {group.items.map((capability) => (
+              <label
+                key={capability.id}
+                className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={values.includes(capability.id)}
+                  onChange={(event) =>
+                    toggleCapability(capability.id, event.target.checked)
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                <span className="truncate">{optionLabel(capability)}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+    </div>
   );
 }
 

@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { CANONICAL_CAPABILITY_CODES } from '../common/canonical-capabilities';
 import {
   ListBranchesQueryDto,
   ListCapabilitiesQueryDto,
@@ -425,7 +426,15 @@ export class EnterpriseService {
             },
           },
         }),
+        // Pilot Execution Sprint: assignment pickers (/enterprise/options)
+        // expose only canonical, active capabilities. Legacy rows still live
+        // in the Capability table and remain visible from the catalogue page
+        // (/enterprise/capabilities) for governance.
         this.prisma.capability.findMany({
+          where: {
+            isActive: true,
+            code: { in: Array.from(CANONICAL_CAPABILITY_CODES) },
+          },
           orderBy: [
             {
               isActive: 'desc',

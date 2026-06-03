@@ -21,6 +21,12 @@ import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
+import { groupCapabilities, isAssignableCapability } from "@/lib/capability-groups";
+import {
+  formatMainheadLabel,
+  formatRegionLabel,
+  resolveEffectiveMainheads,
+} from "@/lib/mainhead-resolver";
 import {
   createUser,
   fetchTeams,
@@ -240,6 +246,14 @@ function UserCapabilityPicker({
     return null;
   }
 
+  const assignable = options.capabilities.filter(isAssignableCapability);
+
+  if (assignable.length === 0) {
+    return null;
+  }
+
+  const groups = groupCapabilities(assignable);
+
   function toggleCapability(capabilityId: string, checked: boolean) {
     onChange(
       checked
@@ -249,29 +263,37 @@ function UserCapabilityPicker({
   }
 
   return (
-    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-      <legend className="px-1 text-sm font-semibold text-slate-700">
-        Capabilities
-      </legend>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {options.capabilities.map((capability) => (
-          <label
-            key={capability.id}
-            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
-          >
-            <input
-              type="checkbox"
-              checked={values.includes(capability.id)}
-              onChange={(event) =>
-                toggleCapability(capability.id, event.target.checked)
-              }
-              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-            />
-            <span className="truncate">{optionLabel(capability)}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
+    <div className="space-y-3">
+      {groups.map((group) => (
+        <fieldset
+          key={group.key}
+          className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+        >
+          <legend className="px-1 text-sm font-semibold text-slate-700">
+            {group.title}
+          </legend>
+          <p className="px-1 text-xs text-slate-500">{group.caption}</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {group.items.map((capability) => (
+              <label
+                key={capability.id}
+                className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={values.includes(capability.id)}
+                  onChange={(event) =>
+                    toggleCapability(capability.id, event.target.checked)
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                <span className="truncate">{optionLabel(capability)}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+    </div>
   );
 }
 
@@ -323,6 +345,78 @@ function UserAccessPicker({
         ))}
       </div>
     </fieldset>
+  );
+}
+
+function EffectiveMainheadPreview({
+  directIds,
+  regionIds,
+  enterpriseOptions,
+  role,
+}: {
+  directIds: string[];
+  regionIds: string[];
+  enterpriseOptions: EnterpriseOptions | null;
+  role: UserRole;
+}) {
+  const mainheads = enterpriseOptions?.mainheads ?? [];
+  const regions = enterpriseOptions?.operationalRegions ?? [];
+
+  const preview = useMemo(
+    () =>
+      resolveEffectiveMainheads({
+        directIds,
+        regionIds,
+        mainheads,
+        regions,
+      }),
+    [directIds, mainheads, regionIds, regions],
+  );
+
+  const overrideMessage =
+    role === "ADMIN"
+      ? "Role: ADMIN — sees all active MAINHEADs via administrative override."
+      : null;
+
+  const segments: string[] = [];
+
+  if (preview.direct.length > 0) {
+    segments.push(
+      `${preview.direct.map(formatMainheadLabel).join(", ")} (direct)`,
+    );
+  }
+
+  for (const group of preview.viaRegion) {
+    segments.push(
+      `${group.mainheads
+        .map(formatMainheadLabel)
+        .join(", ")} (via Region: ${formatRegionLabel(group.region)})`,
+    );
+  }
+
+  const summary =
+    segments.length > 0
+      ? `Effective MAINHEAD access: ${segments.join(" + ")}.`
+      : "No MAINHEAD access — user will not see any visits.";
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Effective MAINHEAD Access
+      </p>
+      {overrideMessage ? (
+        <p className="mt-1 text-sm font-semibold text-amber-700">
+          {overrideMessage}
+        </p>
+      ) : null}
+      <p className="mt-1 text-sm text-slate-700">{summary}</p>
+      {preview.effective.length > 0 ? (
+        <p className="mt-1 text-xs text-slate-500">
+          {preview.effective.length} MAINHEAD
+          {preview.effective.length === 1 ? "" : "s"} resolved.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -483,6 +577,13 @@ function UserFormModal({
             values={values.operationalRegionAccessIds}
             options={activeOperationalRegions}
             onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
+          />
+
+          <EffectiveMainheadPreview
+            directIds={values.mainheadAccessIds}
+            regionIds={values.operationalRegionAccessIds}
+            enterpriseOptions={enterpriseOptions}
+            role={values.role}
           />
 
           <UserCapabilityPicker
