@@ -16,6 +16,7 @@ import {
   ResolutionOutcome as DefectResolutionOutcome,
   UserRole,
 } from '@prisma/client';
+import { isQaActor } from '../common/authorization/qa-actor';
 import { normalizeOperationalText } from '../common/operational-text';
 import {
   buildDefectEvidenceImagePath,
@@ -716,6 +717,7 @@ export class DefectsService {
 
   async updateStatus(user: RequestUser, defectId: string, dto: UpdateDefectStatusDto) {
     this.assertCanMutate(user);
+    this.assertNotGovernedStatusBypass(dto.status);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const actionRemark =
@@ -843,6 +845,7 @@ export class DefectsService {
     dto: UpdateDefectAssignmentDto,
   ) {
     this.assertCanMutate(user);
+    this.assertCanAssignDefect(user);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const hasLegacyAssignedUserId = Object.prototype.hasOwnProperty.call(
@@ -1046,6 +1049,7 @@ export class DefectsService {
     dto: UpdateDefectVerificationDto,
   ) {
     this.assertCanMutate(user);
+    await this.assertCanGovernQa(user, 'Defect verification');
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
@@ -1113,6 +1117,7 @@ export class DefectsService {
     dto: UpdateDefectVerificationDto,
   ) {
     this.assertCanMutate(user);
+    await this.assertCanGovernQa(user, 'Defect rejection');
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
@@ -1182,6 +1187,7 @@ export class DefectsService {
     this.assertCanMutate(user);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    await this.assertCanCompleteMaintenance(user, defect);
     const now = new Date();
     const hasLegacyCompletionRemarks = Object.prototype.hasOwnProperty.call(
       dto,
@@ -1302,6 +1308,7 @@ export class DefectsService {
     dto: VerifyDefectClosureDto,
   ) {
     this.assertCanMutate(user);
+    await this.assertCanGovernQa(user, 'Closure verification');
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
     const now = new Date();
@@ -3156,6 +3163,87 @@ export class DefectsService {
   private assertCanMutate(user: RequestUser) {
     if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
       throw new ForbiddenException('This role is read-only for defect actions.');
+    }
+  }
+
+  private async assertCanGovernQa(user: RequestUser, action: string) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+
+    if (await isQaActor(this.prisma, user)) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      `${action} requires ASCURA QA authority (ADMIN or QA validator).`,
+    );
+  }
+
+  private assertCanAssignDefect(user: RequestUser) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'Defect assignment requires ADMIN or MANAGER authority.',
+    );
+  }
+
+  private async assertCanCompleteMaintenance(
+    user: RequestUser,
+    defect: {
+      assignedToUserId: string | null;
+      assignedUserId: string | null;
+      assignedToTeamId: string | null;
+      assignedTeamId: string | null;
+    },
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+
+    const assignedUserId =
+      defect.assignedToUserId ?? defect.assignedUserId ?? null;
+
+    if (assignedUserId && assignedUserId === user.id) {
+      return;
+    }
+
+    const assignedTeamId =
+      defect.assignedToTeamId ?? defect.assignedTeamId ?? null;
+
+    if (assignedTeamId) {
+      const membership = await this.prisma.teamMember.findFirst({
+        where: {
+          teamId: assignedTeamId,
+          userId: user.id,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+
+      if (membership) {
+        return;
+      }
+    }
+
+    throw new ForbiddenException(
+      'Maintenance completion is restricted to the assigned user or active members of the assigned team.',
+    );
+  }
+
+  private assertNotGovernedStatusBypass(status: DefectStatus) {
+    if (status === DefectStatus.CLOSED) {
+      throw new ForbiddenException(
+        'Use PATCH /defects/:id/closure-verification to close a defect.',
+      );
+    }
+
+    if (status === DefectStatus.RESOLVED) {
+      throw new ForbiddenException(
+        'Use PATCH /defects/:id/maintenance-completion to mark maintenance complete.',
+      );
     }
   }
 
