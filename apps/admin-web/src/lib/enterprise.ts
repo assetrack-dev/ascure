@@ -512,10 +512,7 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
   }
 
   const activeState = stateChip(readBoolean(record, "isActive"));
-  const branch = nestedRecord(record, "branch");
   const operationalRegion = nestedRecord(record, "operationalRegion");
-  const branchOrganization = nestedRecord(branch, "organization");
-  const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
   const regionLabel = operationalRegion ? compactLabel(operationalRegion) : null;
   const capabilities = capabilityLabels(record);
   const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
@@ -529,8 +526,6 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: activeState.label },
     { label: "Region", value: regionLabel },
-    { label: "Legacy Branch", value: branchLabel || null },
-    { label: "Legacy Branch Region", value: readString(branch, "region") },
     { label: "Capabilities", value: capabilityDisplay || null },
   ];
 
@@ -543,16 +538,13 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     status: readBoolean(record, "isActive") === false ? "INACTIVE" : "ACTIVE",
     primaryChip: activeState.label,
     primaryTone: activeState.tone,
-    secondaryChip: regionLabel ?? (branch ? compactLabel(branch) : null),
+    secondaryChip: regionLabel,
     secondaryTone: "info",
     relationLabel: capabilityDisplay
-      ? `${regionLabel || branchLabel || "Region not recorded"} / ${capabilityDisplay}`
-      : regionLabel || branchLabel || "Region not recorded",
-    filterGroup: regionLabel ?? (branch ? compactLabel(branch) : null),
-    extraFilterGroups: [
-      ...(branch ? [compactLabel(branch)] : []),
-      ...capabilities.map((capability) => capability.filterLabel),
-    ],
+      ? `${regionLabel || "Region not recorded"} / ${capabilityDisplay}`
+      : regionLabel || "Region not recorded",
+    filterGroup: regionLabel,
+    extraFilterGroups: capabilities.map((capability) => capability.filterLabel),
     metrics,
     fields,
     description: readString(record, "description"),

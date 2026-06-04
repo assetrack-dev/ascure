@@ -438,11 +438,6 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     payload.description = form.description.trim() || null;
     payload.isActive = form.isActive;
     payload.operationalRegionId = form.operationalRegionId || null;
-    payload.branchId = form.branchId || null;
-    payload.organizationId = form.organizationId || undefined;
-    payload.branchName = form.branchName.trim() || undefined;
-    payload.branchCode = form.branchCode.trim() || undefined;
-    payload.region = form.region.trim() || undefined;
     payload.capabilityIds = form.capabilityIds;
   }
 
@@ -763,90 +758,21 @@ function EnterpriseFormModal({
 
           {kind === "mainheads" ? (
             <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Region</span>
-                  <select
-                    value={values.operationalRegionId}
-                    onChange={(event) => onChange("operationalRegionId", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                  >
-                    <option value="">No region</option>
-                    {options?.operationalRegions.map((region) => (
-                      <option key={region.id} value={region.id}>
-                        {optionLabel(region)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Legacy Branch</span>
-                  <select
-                    value={values.branchId}
-                    onChange={(event) => onChange("branchId", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                  >
-                    <option value="">No legacy branch</option>
-                    {options?.branches.map((branch) => (
-                      <option key={branch.id} value={branch.id}>
-                        {optionLabel(branch)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <details className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-700">
-                  Legacy branch fields
-                </summary>
-                <div className="mt-3 grid gap-4 sm:grid-cols-4">
-                  <label className="block">
-                    <span className="text-sm font-semibold text-slate-700">Organization</span>
-                    <select
-                      value={values.organizationId}
-                      onChange={(event) => onChange("organizationId", event.target.value)}
-                      className={`${inputClassName} mt-1.5`}
-                    >
-                      <option value="">No organization</option>
-                      {options?.organizations.map((organization) => (
-                        <option key={organization.id} value={organization.id}>
-                          {optionLabel(organization)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Branch</span>
-                  <input
-                    type="text"
-                    value={values.branchName}
-                    onChange={(event) => onChange("branchName", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                    maxLength={255}
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Branch Code</span>
-                  <input
-                    type="text"
-                    value={values.branchCode}
-                    onChange={(event) => onChange("branchCode", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                    maxLength={64}
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Region/State</span>
-                  <input
-                    type="text"
-                    value={values.region}
-                    onChange={(event) => onChange("region", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                    maxLength={255}
-                  />
-                </label>
-                </div>
-              </details>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Operational Region</span>
+                <select
+                  value={values.operationalRegionId}
+                  onChange={(event) => onChange("operationalRegionId", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">No region</option>
+                  {options?.operationalRegions.map((region) => (
+                    <option key={region.id} value={region.id}>
+                      {optionLabel(region)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
                 <input
                   type="checkbox"
