@@ -438,16 +438,10 @@ export class UsersService {
         organizationId: true,
         branchId: true,
         mainheadId: true,
-        mainheadAccesses: {
-          select: {
-            mainheadId: true,
-          },
-        },
-        operationalRegionAccesses: {
-          select: {
-            operationalRegionId: true,
-          },
-        },
+        // Governance G4D — UserMainheadAccess / UserOperationalRegionAccess are
+        // visibility grants only (consumed by buildScopeContext for
+        // qaMainheadIds). They are intentionally NOT selected here so they can
+        // no longer seed capability authority in this resolver.
         teamMemberships: {
           where: {
             isActive: true,
@@ -526,9 +520,11 @@ export class UsersService {
       directMainheadIds.add(userData.mainheadId);
     }
 
-    for (const access of userData.mainheadAccesses) {
-      directMainheadIds.add(access.mainheadId);
-    }
+    // Governance G4D — removed: userData.mainheadAccesses -> directMainheadIds.
+    // MAINHEAD *access* is a visibility grant; folding it into directMainheadIds
+    // made a technician inherit BranchCapability / OrganizationCapability from
+    // every MAINHEAD they could merely view. Authority now resolves only from
+    // the user's own operational user/team MAINHEAD assignment below.
 
     if (userData.branchId) {
       branchIds.add(userData.branchId);
@@ -542,31 +538,11 @@ export class UsersService {
       organizationIds.add(membership.organizationId);
     }
 
-    const regionIds = userData.operationalRegionAccesses
-      .map((access) => access.operationalRegionId)
-      .filter((value): value is string => Boolean(value));
-
-    if (regionIds.length > 0) {
-      const regionMainheads = await this.prisma.mainhead.findMany({
-        where: {
-          operationalRegionId: {
-            in: regionIds,
-          },
-          isActive: true,
-        },
-        select: {
-          id: true,
-          branchId: true,
-        },
-      });
-
-      for (const mainhead of regionMainheads) {
-        directMainheadIds.add(mainhead.id);
-        if (mainhead.branchId) {
-          branchIds.add(mainhead.branchId);
-        }
-      }
-    }
+    // Governance G4D — removed: region access (UserOperationalRegionAccess) ->
+    // every MAINHEAD in the region -> directMainheadIds / branchIds. That
+    // expansion let a single region visibility grant inflate authority across
+    // every branch and organization the region's MAINHEADs belong to. Region
+    // visibility remains handled by buildScopeContext, untouched.
 
     if (directMainheadIds.size > 0) {
       const mainheads = await this.prisma.mainhead.findMany({
