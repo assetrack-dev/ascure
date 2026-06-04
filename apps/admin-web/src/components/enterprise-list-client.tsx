@@ -152,7 +152,7 @@ const PAGE_CONFIG: Record<
     basePath: "/projects",
     searchPlaceholder: "Search projects",
     primaryFilterLabel: "All statuses",
-    groupFilterLabel: "All branches",
+    groupFilterLabel: "All MAINHEAD",
     extraFilterLabel: "All domains",
     emptyLabel: "No projects found",
     icon: FolderKanban,

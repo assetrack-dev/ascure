@@ -302,10 +302,14 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
   const capabilityFilters = Array.from(
     new Set(capabilities.map((capability) => capability.filterLabel)),
   );
+  // Governance G4 — count capability ASSIGNMENTS (OrganizationCapabilityAssignment),
+  // not the legacy OrganizationCapability rows, so the badge matches the names
+  // displayed. Branch is detached; Memberships is replaced by explicit Users and
+  // Teams counts.
   const metrics: EnterpriseMetric[] = [
-    { label: "Branches", value: count(record, "branches") },
-    { label: "Capabilities", value: count(record, "capabilities") },
-    { label: "Memberships", value: count(record, "memberships") },
+    { label: "Capabilities", value: count(record, "capabilityAssignments") },
+    { label: "Users", value: count(record, "assignedUsers") },
+    { label: "Teams", value: count(record, "teams") },
   ];
   const fields: EnterpriseField[] = [
     { label: "Code", value: readString(record, "code") },
@@ -570,13 +574,15 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
 
   const status = readString(record, "status");
   const operationalDomain = readString(record, "operationalDomain");
-  const branch = nestedRecord(record, "branch");
-  const branchOrganization = nestedRecord(branch, "organization");
+  // Governance G4 — Branch detached. Project scope is Operational Region /
+  // MAINHEAD (the region is read from the project's MAINHEAD).
   const mainhead = nestedRecord(record, "mainhead");
+  const operationalRegion = nestedRecord(mainhead, "operationalRegion");
   const clientOrganization = nestedRecord(record, "clientOrganization");
-  const branchLabel = joinLabels([compactLabel(branchOrganization), compactLabel(branch)]);
   const mainheadLabel = mainhead ? compactLabel(mainhead) : null;
+  const regionLabel = operationalRegion ? compactLabel(operationalRegion) : null;
   const clientLabel = clientOrganization ? compactLabel(clientOrganization) : null;
+  const scopeLabel = joinLabels([regionLabel, mainheadLabel]);
   const metrics: EnterpriseMetric[] = [
     { label: "Work Packages", value: count(record, "workPackages") },
     { label: "Memberships", value: count(record, "memberships") },
@@ -585,8 +591,8 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: formatEnum(status) },
     { label: "Operational Domain", value: operationalDomain ? formatEnum(operationalDomain) : null },
+    { label: "Operational Region", value: regionLabel },
     { label: "MAINHEAD", value: mainheadLabel },
-    { label: "Branch", value: branchLabel || null },
     { label: "Client", value: clientLabel },
     { label: "Start Date", value: readString(record, "startDate") },
     { label: "End Date", value: readString(record, "endDate") },
@@ -603,8 +609,8 @@ function normalizeProject(rawProject: unknown): EnterpriseDetail | null {
     primaryTone: statusTone(status),
     secondaryChip: operationalDomain ? formatEnum(operationalDomain) : clientLabel,
     secondaryTone: "info",
-    relationLabel: branchLabel || "Branch not recorded",
-    filterGroup: branch ? compactLabel(branch) : null,
+    relationLabel: scopeLabel || "MAINHEAD not recorded",
+    filterGroup: mainheadLabel,
     extraFilterGroups: operationalDomain ? [formatEnum(operationalDomain)] : [],
     metrics,
     fields,

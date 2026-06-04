@@ -210,30 +210,22 @@ const CAPABILITY_INCLUDE = Prisma.validator<Prisma.CapabilityInclude>()({
 });
 
 const PROJECT_INCLUDE = Prisma.validator<Prisma.ProjectInclude>()({
-  branch: {
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      region: true,
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          type: true,
-        },
-      },
-    },
-  },
+  // Governance G4 — Branch detached. Projects expose MAINHEAD (with its
+  // Operational Region) and the client Organization for scope.
   mainhead: {
     select: {
       id: true,
-      branchId: true,
       name: true,
       code: true,
       description: true,
       isActive: true,
+      operationalRegion: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+        },
+      },
     },
   },
   clientOrganization: {
@@ -1121,17 +1113,9 @@ export class EnterpriseService {
   async createProject(dto: CreateProjectDto) {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // Governance G4 — Projects are scoped by MAINHEAD / Operational Region.
+        // Branch is detached: never created, upserted, synced, or renamed here.
         const mainhead = await this.resolveMainhead(tx, dto.mainheadId);
-        const branchId =
-          mainhead?.branchId ??
-          (await this.resolveBranchId(tx, {
-            branchId: dto.branchId,
-            organizationId: dto.organizationId ?? dto.clientOrganizationId,
-            branchName: dto.branchName,
-            branchCode: dto.branchCode,
-            region: dto.region,
-            fallbackName: dto.name,
-          }));
         const clientOrganizationId =
           dto.clientOrganizationId ?? dto.organizationId ?? null;
 
@@ -1143,7 +1127,6 @@ export class EnterpriseService {
 
         return tx.project.create({
           data: {
-            branchId,
             mainheadId: mainhead?.id ?? null,
             clientOrganizationId,
             name: this.normalizeRequiredString(dto.name, 'Project name'),
@@ -1173,7 +1156,6 @@ export class EnterpriseService {
           select: {
             id: true,
             name: true,
-            branchId: true,
           },
         });
 
@@ -1182,22 +1164,12 @@ export class EnterpriseService {
         }
 
         const data: Prisma.ProjectUncheckedUpdateInput = {};
-        const mainhead = await this.resolveMainhead(tx, dto.mainheadId);
 
+        // Governance G4 — Projects are scoped by MAINHEAD / Operational Region.
+        // Branch is detached: never created, upserted, synced, or renamed here.
         if (dto.mainheadId !== undefined) {
+          const mainhead = await this.resolveMainhead(tx, dto.mainheadId);
           data.mainheadId = mainhead?.id ?? null;
-          data.branchId = mainhead?.branchId ?? existingProject.branchId;
-        }
-
-        if (dto.branchId !== undefined || dto.organizationId !== undefined) {
-          data.branchId = await this.resolveBranchId(tx, {
-            branchId: dto.branchId,
-            organizationId: dto.organizationId ?? dto.clientOrganizationId,
-            branchName: dto.branchName,
-            branchCode: dto.branchCode,
-            region: dto.region,
-            fallbackName: dto.name ?? existingProject.name,
-          });
         }
 
         if (dto.name !== undefined) {

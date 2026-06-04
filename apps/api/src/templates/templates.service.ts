@@ -350,8 +350,8 @@ export class TemplatesService {
       organizationId =
         organizationId ??
         siteVisit.organizationId ??
-        siteVisit.project?.branch.organizationId ??
-        siteVisit.workPackage?.project.branch.organizationId ??
+        siteVisit.project?.branch?.organizationId ??
+        siteVisit.workPackage?.project.branch?.organizationId ??
         siteVisit.team.organizationId ??
         null;
       branchId =

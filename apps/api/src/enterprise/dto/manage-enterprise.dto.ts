@@ -386,10 +386,6 @@ export class CreateProjectDto {
 
   @IsOptional()
   @IsUUID()
-  branchId?: string;
-
-  @IsOptional()
-  @IsUUID()
   mainheadId?: string | null;
 
   @IsOptional()
@@ -415,24 +411,6 @@ export class CreateProjectDto {
   @IsOptional()
   @IsDateString()
   endDate?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  branchName?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  branchCode?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  region?: string | null;
 }
 
 export class UpdateProjectDto {
@@ -456,10 +434,6 @@ export class UpdateProjectDto {
 
   @IsOptional()
   @IsUUID()
-  branchId?: string;
-
-  @IsOptional()
-  @IsUUID()
   mainheadId?: string | null;
 
   @IsOptional()
@@ -485,24 +459,6 @@ export class UpdateProjectDto {
   @IsOptional()
   @IsDateString()
   endDate?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  branchName?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  branchCode?: string | null;
-
-  @Transform(trimString)
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  region?: string | null;
 }
 
 export class CreateWorkPackageDto {
