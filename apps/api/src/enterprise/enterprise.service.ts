@@ -890,22 +890,10 @@ export class EnterpriseService {
 
   async createMainhead(user: RequestUser, dto: CreateMainheadDto) {
     return this.prisma.$transaction(async (tx) => {
-      const shouldResolveLegacyBranch =
-        Boolean(dto.branchId) ||
-        dto.organizationId !== undefined ||
-        dto.branchName !== undefined ||
-        dto.branchCode !== undefined ||
-        dto.region !== undefined;
-      const branchId = shouldResolveLegacyBranch
-        ? await this.resolveBranchId(tx, {
-            branchId: dto.branchId,
-            organizationId: dto.organizationId,
-            branchName: dto.branchName,
-            branchCode: dto.branchCode,
-            region: dto.region,
-            fallbackName: dto.name,
-          })
-        : null;
+      // Governance G4 — Branch detached. No branch is created, upserted,
+      // synced, or renamed here. An explicit existing branchId (if provided)
+      // is linked as-is; otherwise the MAINHEAD has no branch.
+      const branchId = dto.branchId ?? null;
 
       await this.assertOperationalRegionExists(
         user,
@@ -955,7 +943,6 @@ export class EnterpriseService {
         },
         select: {
           id: true,
-          branchId: true,
           name: true,
         },
       });
@@ -965,74 +952,10 @@ export class EnterpriseService {
       }
 
       const data: Prisma.MainheadUpdateInput = {};
-      let branchChanged = false;
-      const shouldDisconnectBranch = dto.branchId === null;
-      const shouldResolveBranch =
-        Boolean(dto.branchId) ||
-        dto.organizationId !== undefined ||
-        (existingMainhead.branchId === null &&
-          (dto.branchName !== undefined ||
-            dto.branchCode !== undefined ||
-            dto.region !== undefined));
 
-      if (shouldDisconnectBranch) {
-        data.branch = {
-          disconnect: true,
-        };
-        branchChanged = true;
-      } else if (shouldResolveBranch) {
-        const branchId = await this.resolveBranchId(tx, {
-          branchId: dto.branchId,
-          organizationId: dto.organizationId,
-          branchName: dto.branchName,
-          branchCode: dto.branchCode,
-          region: dto.region,
-          fallbackName: dto.name ?? existingMainhead.name,
-        });
-        data.branch = branchId
-          ? {
-              connect: {
-                id: branchId,
-              },
-            }
-          : {
-              disconnect: true,
-            };
-        branchChanged = true;
-      } else if (
-        dto.branchName !== undefined ||
-        dto.branchCode !== undefined ||
-        dto.region !== undefined
-      ) {
-        if (!existingMainhead.branchId) {
-          throw new BadRequestException(
-            'Legacy branch fields require a branch or organization.',
-          );
-        }
-
-        await tx.branch.update({
-          where: {
-            id: existingMainhead.branchId,
-          },
-          data: {
-            ...(dto.branchName !== undefined
-              ? {
-                  name: this.normalizeRequiredString(
-                    dto.branchName,
-                    'Branch name',
-                  ),
-                }
-              : {}),
-            ...(dto.branchCode !== undefined
-              ? { code: this.normalizeOptionalString(dto.branchCode) }
-              : {}),
-            ...(dto.region !== undefined
-              ? { region: this.normalizeOptionalString(dto.region) }
-            : {}),
-          },
-        });
-        branchChanged = true;
-      }
+      // Governance G4 — Branch detached. MAINHEAD updates never resolve,
+      // create, connect, disconnect, rename, or sync a Branch. MAINHEADs are
+      // anchored by Operational Region only.
 
       if (dto.name !== undefined) {
         data.name = this.normalizeRequiredString(dto.name, 'MAINHEAD name');
@@ -1069,7 +992,6 @@ export class EnterpriseService {
       }
 
       if (
-        !branchChanged &&
         Object.keys(data).length === 0 &&
         dto.capabilityIds === undefined
       ) {
@@ -1687,91 +1609,6 @@ export class EnterpriseService {
     }
 
     return workPackage;
-  }
-
-  private async resolveBranchId(
-    tx: Prisma.TransactionClient,
-    input: {
-      branchId?: string | null;
-      organizationId?: string | null;
-      branchName?: string | null;
-      branchCode?: string | null;
-      region?: string | null;
-      fallbackName: string;
-    },
-  ) {
-    if (input.branchId) {
-      const branch = await tx.branch.findUnique({
-        where: {
-          id: input.branchId,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (!branch) {
-        throw new NotFoundException('Branch not found.');
-      }
-
-      return branch.id;
-    }
-
-    const organizationId = this.normalizeOptionalString(input.organizationId);
-
-    if (!organizationId) {
-      throw new BadRequestException(
-        'Branch or organization is required for this record.',
-      );
-    }
-
-    await this.assertOrganizationExists(tx, organizationId, 'Organization');
-
-    const branchName =
-      this.normalizeOptionalString(input.branchName) ??
-      `${this.normalizeRequiredString(input.fallbackName, 'Branch name')} Branch`;
-    const branchCode = this.normalizeOptionalString(input.branchCode);
-
-    const existingBranch = await tx.branch.findFirst({
-      where: {
-        organizationId,
-        ...(branchCode
-          ? {
-              code: {
-                equals: branchCode,
-                mode: Prisma.QueryMode.insensitive,
-              },
-            }
-          : {
-              name: {
-                equals: branchName,
-                mode: Prisma.QueryMode.insensitive,
-              },
-            }),
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (existingBranch) {
-      return existingBranch.id;
-    }
-
-    const branch = await tx.branch.create({
-      data: {
-        organizationId,
-        name: branchName,
-        code: branchCode,
-        region: this.normalizeOptionalString(input.region),
-        isActive: true,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    return branch.id;
   }
 
   private async resolveMainhead(
