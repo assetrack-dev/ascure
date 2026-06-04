@@ -30,3 +30,7 @@ package-lock.json
 apps/mobile/.expo/
 uploads/
 apps/api/uploads/
+
+# Claude assessment artifacts
+docs/*.pdf
+docs/*.py
