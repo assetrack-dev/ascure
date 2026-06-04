@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
@@ -1161,6 +1162,8 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [statusRowId, setStatusRowId] = useState<string | null>(null);
+  const [statusConfirmRow, setStatusConfirmRow] = useState<EnterpriseListRow | null>(null);
+  const [successMessage, setSuccessMessage] = useState("");
   const [search, setSearch] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState<FilterValue>("ALL");
   const [groupFilter, setGroupFilter] = useState<FilterValue>("ALL");
@@ -1179,6 +1182,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
     async (token: string) => {
       setIsLoading(true);
       setError("");
+      setSuccessMessage("");
 
       try {
         const [nextRows, nextOptions] = await Promise.all([
@@ -1346,34 +1350,55 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
     }
   }
 
-  async function handleStatusToggle(
+  function requestStatusToggle(
     row: EnterpriseListRow,
     event: MouseEvent<HTMLButtonElement>,
   ) {
     event.stopPropagation();
+    setStatusConfirmRow(row);
+  }
 
-    if (!session?.token || statusRowId) {
+  function closeStatusConfirm() {
+    if (statusRowId) {
       return;
     }
 
+    setStatusConfirmRow(null);
+  }
+
+  async function confirmStatusToggle() {
+    const row = statusConfirmRow;
+
+    if (!session?.token || !row || statusRowId) {
+      return;
+    }
+
+    const nextIsActive = row.isActive === false;
+
     setStatusRowId(row.id);
     setError("");
+    setSuccessMessage("");
 
     try {
       const updatedRow = await updateEnterpriseOperationalStatus(
         session.token,
         kind,
         row.id,
-        row.isActive === false,
+        nextIsActive,
       );
       upsertRow(updatedRow);
       setOptions(await fetchEnterpriseOptions(session.token));
+      setStatusConfirmRow(null);
+      setSuccessMessage(
+        `${updatedRow.name} ${nextIsActive ? "activated" : "deactivated"}.`,
+      );
     } catch (statusError) {
       if (statusError instanceof ApiError && statusError.status === 401) {
         handleLogout();
         return;
       }
 
+      setStatusConfirmRow(null);
       setError(statusError instanceof Error ? statusError.message : "Unable to update status.");
     } finally {
       setStatusRowId(null);
@@ -1431,6 +1456,12 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
           </div>
 
           <div className="mt-6">
+            {successMessage ? (
+              <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                {successMessage}
+              </div>
+            ) : null}
+
             {isLoading && rows.length === 0 ? (
               <EnterpriseLoading />
             ) : error ? (
@@ -1592,7 +1623,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                               </button>
                               <button
                                 type="button"
-                                onClick={(event) => handleStatusToggle(row, event)}
+                                onClick={(event) => requestStatusToggle(row, event)}
                                 disabled={!isAdmin || statusRowId === row.id}
                                 className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                               >
@@ -1653,6 +1684,21 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
           onSubmit={handleSubmit}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(statusConfirmRow)}
+        title={statusConfirmRow?.isActive === false ? "Activate record" : "Deactivate record"}
+        message={
+          statusConfirmRow?.isActive === false
+            ? "Activate this record?"
+            : "Deactivate this record? It will no longer be available for assignment."
+        }
+        confirmLabel={statusConfirmRow?.isActive === false ? "Activate" : "Deactivate"}
+        tone={statusConfirmRow?.isActive === false ? "default" : "danger"}
+        isBusy={Boolean(statusRowId)}
+        onConfirm={confirmStatusToggle}
+        onCancel={closeStatusConfirm}
+      />
     </AppShell>
   );
 }

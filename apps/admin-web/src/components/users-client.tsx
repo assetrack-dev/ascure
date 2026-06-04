@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
@@ -742,6 +743,8 @@ function UsersContent() {
   const [passwordError, setPasswordError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [statusUserId, setStatusUserId] = useState<string | null>(null);
+  const [statusConfirmUser, setStatusConfirmUser] = useState<ManagedUser | null>(null);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -752,6 +755,7 @@ function UsersContent() {
     async (token: string) => {
       setIsLoading(true);
       setError("");
+      setSuccessMessage("");
 
       try {
         const [nextUsers, nextOptions, nextTeams] = await Promise.all([
@@ -1007,8 +1011,22 @@ function UsersContent() {
     }
   }
 
-  async function handleStatusToggle(user: ManagedUser) {
-    if (!session?.token || statusUserId) {
+  function requestStatusToggle(user: ManagedUser) {
+    setStatusConfirmUser(user);
+  }
+
+  function closeStatusConfirm() {
+    if (statusUserId) {
+      return;
+    }
+
+    setStatusConfirmUser(null);
+  }
+
+  async function confirmStatusToggle() {
+    const user = statusConfirmUser;
+
+    if (!session?.token || !user || statusUserId) {
       return;
     }
 
@@ -1016,16 +1034,22 @@ function UsersContent() {
 
     setStatusUserId(user.id);
     setError("");
+    setSuccessMessage("");
 
     try {
       const updatedUser = await updateUserStatus(session.token, user.id, nextIsActive);
       upsertUser(updatedUser);
+      setStatusConfirmUser(null);
+      setSuccessMessage(
+        `${updatedUser.name} ${nextIsActive ? "activated" : "deactivated"}.`,
+      );
     } catch (statusError) {
       if (statusError instanceof ApiError && statusError.status === 401) {
         handleLogout();
         return;
       }
 
+      setStatusConfirmUser(null);
       setError(requestErrorMessage(statusError, "Unable to update user status."));
     } finally {
       setStatusUserId(null);
@@ -1099,6 +1123,12 @@ function UsersContent() {
             ) : (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
+                  {successMessage ? (
+                    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {successMessage}
+                    </div>
+                  ) : null}
+
                   {error ? (
                     <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                       {error}
@@ -1251,7 +1281,7 @@ function UsersContent() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleStatusToggle(user)}
+                                  onClick={() => requestStatusToggle(user)}
                                   disabled={disableDeactivate || statusUserId === user.id}
                                   title={
                                     disableDeactivate
@@ -1317,6 +1347,21 @@ function UsersContent() {
           onSubmit={handlePasswordSubmit}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(statusConfirmUser)}
+        title={statusConfirmUser?.isActive ? "Deactivate record" : "Activate record"}
+        message={
+          statusConfirmUser?.isActive
+            ? "Deactivate this record? It will no longer be available for assignment."
+            : "Activate this record?"
+        }
+        confirmLabel={statusConfirmUser?.isActive ? "Deactivate" : "Activate"}
+        tone={statusConfirmUser?.isActive ? "danger" : "default"}
+        isBusy={Boolean(statusUserId)}
+        onConfirm={confirmStatusToggle}
+        onCancel={closeStatusConfirm}
+      />
     </AppShell>
   );
 }
