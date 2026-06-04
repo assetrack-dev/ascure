@@ -666,16 +666,18 @@ export function CheckInScreen() {
                 description="This user must belong to a team before a site visit can be created."
               />
             ) : (
-              {/*
-                Governance Fix Package G3 — Item 4. The team is inferred
-                from the user's team assignment(s) returned by api.getTeams.
-                The picker UI is removed; the team is displayed read-only as
-                "Team (Auto)" and used directly by the create call.
-              */}
-              <View style={styles.readOnlyPanel}>
-                <FieldSummary label="Team (Auto)" value={formatTeam(selectedTeam)} />
-                <FieldSummary label="PIC Name (Auto)" value={user.name || user.email} />
-              </View>
+              <>
+                {/*
+                  Governance Fix Package G3 — Item 4. The team is inferred
+                  from the user's team assignment(s) returned by api.getTeams.
+                  The picker UI is removed; the team is displayed read-only as
+                  "Team (Auto)" and used directly by the create call.
+                */}
+                <View style={styles.readOnlyPanel}>
+                  <FieldSummary label="Team (Auto)" value={formatTeam(selectedTeam)} />
+                  <FieldSummary label="PIC Name (Auto)" value={user.name || user.email} />
+                </View>
+              </>
             )}
           </Card>
 

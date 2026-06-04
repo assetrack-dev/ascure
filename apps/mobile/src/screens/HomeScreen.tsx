@@ -154,6 +154,22 @@ export function HomeScreen() {
   }, [loadHomeData]);
 
   useEffect(() => {
+    // Temporary G4E diagnostic — confirms what the device actually receives
+    // from /users/me/capabilities and which workspaces resolve. Remove once
+    // mobile workspace visibility is verified.
+    console.log(
+      '[G4E] effective capabilities:',
+      capabilities.map((capability) => capability.code),
+    );
+    console.log(
+      '[G4E] resolved workspaces:',
+      workspaces.map((workspace) => workspace.id),
+      '| role:',
+      user.role,
+    );
+  }, [capabilities, workspaces, user.role]);
+
+  useEffect(() => {
     if (autoOpenWorkspace) {
       setSelectedWorkspaceId(autoOpenWorkspace.id);
       return;

@@ -10,6 +10,23 @@ import type {
 const INSPECTION_WORKSPACE_CAPABILITY_CODE = 'INSPECTION';
 const MAINTENANCE_WORKSPACE_CAPABILITY_CODE = 'MAINTENANCE';
 
+// Any of these capabilities unlock the Inspection workspace. A field
+// technician is frequently granted only scope-specific inspection
+// capabilities (SAVR/SAVT/PENCAWANG/...) without the umbrella INSPECTION code.
+const INSPECTION_CAPABILITY_CODES = new Set<string>([
+  INSPECTION_WORKSPACE_CAPABILITY_CODE,
+  'SAVR',
+  'SAVT',
+  'PENCAWANG',
+  'FEEDER_PILLAR',
+  'CABLE_BRIDGE',
+  'LINK_BOX',
+]);
+
+function normalizeCapabilityCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
 export type MobileWorkspaceId = OperationMode;
 
 export type MobileWorkspace = {
@@ -57,15 +74,28 @@ export function getAvailableMobileWorkspaces(
   user: Pick<SessionUser, 'role'>,
   capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
 ): MobileWorkspace[] {
-  const codes = new Set(capabilities.map((capability) => capability.code));
-  const workspaces: MobileWorkspace[] = [];
+  const codes = new Set(
+    capabilities.map((capability) => normalizeCapabilityCode(capability.code)),
+  );
   const isAdmin = user.role === 'ADMIN';
+  const workspaces: MobileWorkspace[] = [];
 
-  if (isAdmin || codes.has(INSPECTION_WORKSPACE_CAPABILITY_CODE)) {
+  // Inspection: ADMIN, the umbrella INSPECTION code, OR any scope-specific
+  // inspection capability (SAVR/SAVT/PENCAWANG/...).
+  const hasInspectionAuthority =
+    isAdmin || [...codes].some((code) => INSPECTION_CAPABILITY_CODES.has(code));
+
+  if (hasInspectionAuthority) {
     workspaces.push(INSPECTION_WORKSPACE);
   }
 
-  if (isAdmin || codes.has(MAINTENANCE_WORKSPACE_CAPABILITY_CODE)) {
+  // Maintenance: STRICT. Only an explicit MAINTENANCE capability or ADMIN.
+  // Never inferred from the presence of other capabilities, and never
+  // defaulted on.
+  const hasMaintenanceAuthority =
+    isAdmin || codes.has(MAINTENANCE_WORKSPACE_CAPABILITY_CODE);
+
+  if (hasMaintenanceAuthority) {
     workspaces.push(MAINTENANCE_WORKSPACE);
   }
 
