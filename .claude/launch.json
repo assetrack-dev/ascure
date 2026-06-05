@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["brand/serve-brand.js"],
       "port": 4789
+    },
+    {
+      "name": "admin-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@ascure/admin-web", "dev"],
+      "port": 3001
     }
   ]
 }
