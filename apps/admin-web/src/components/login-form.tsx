@@ -60,11 +60,17 @@ export function LoginForm() {
       <section className="flex items-center justify-center border-b border-slate-800 bg-slate-950 px-6 py-10 text-white lg:border-b-0 lg:border-r">
         <div className="w-full max-w-md">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--brand)] text-lg font-bold shadow-sm">
-              A
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--brand)] shadow-sm">
+              <svg width="27" height="27" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#ECFEFF" strokeWidth="3.3" />
+                <circle cx="32" cy="21" r="2.7" stroke="#ECFEFF" strokeWidth="2.2" />
+                <path d="M26 46 L32 31 L38 46" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M28.3 40 H35.7" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" />
+                <circle cx="32" cy="30.7" r="3" fill="#FFFFFF" />
+              </svg>
             </div>
             <div>
-              <p className="text-2xl font-bold">ASCURE</p>
+              <p className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)" }}>ASCURE</p>
               <p className="text-sm text-slate-300">Asset Inspection Platform</p>
             </div>
           </div>
