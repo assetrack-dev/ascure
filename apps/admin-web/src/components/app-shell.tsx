@@ -131,11 +131,17 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
         <div className="flex items-center justify-between gap-4 px-5 py-4 lg:block lg:px-6 lg:py-7">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--brand)] text-base font-bold shadow-sm">
-                A
+              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--brand)] shadow-sm">
+                <svg width="24" height="24" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                  <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#ECFEFF" strokeWidth="3.3" />
+                  <circle cx="32" cy="21" r="2.7" stroke="#ECFEFF" strokeWidth="2.2" />
+                  <path d="M26 46 L32 31 L38 46" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M28.3 40 H35.7" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" />
+                  <circle cx="32" cy="30.7" r="3" fill="#FFFFFF" />
+                </svg>
               </div>
               <div>
-                <p className="text-lg font-bold">ASCURE</p>
+                <p className="text-lg font-bold" style={{ fontFamily: "var(--font-display)" }}>ASCURE</p>
                 <p className="text-xs font-medium text-slate-300">Admin Console</p>
               </div>
             </div>

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ascure-brand",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["brand/serve-brand.js"],
+      "port": 4789
+    }
+  ]
+}

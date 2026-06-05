@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ASCURE — Brand Concept v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink-950:#0A0F1A; --ink-900:#0F172A; --ink-850:#162236; --ink-800:#1E293B;
+    --ink-700:#334155; --slate-400:#94A3B8; --slate-300:#CBD5E1; --slate-200:#E2E8F0;
+    --teal-700:#0F766E; --teal-600:#0D9488; --teal-500:#14B8A6; --teal-300:#5EEAD4;
+    --cyan-400:#22D3EE; --cyan-500:#06B6D4;
+    --critical:#EF4444; --high:#F97316; --medium:#F59E0B; --low:#38BDF8; --verified:#10B981;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(circle at 1px 1px, rgba(148,163,184,0.06) 1px, transparent 0) 0 0/24px 24px,
+      radial-gradient(1200px 600px at 80% -10%, rgba(20,184,166,0.10), transparent 60%),
+      var(--ink-950);
+    color:var(--slate-200);
+    font-family:Inter,ui-sans-serif,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.5;
+    padding:56px 40px 80px;
+  }
+  .wrap{max-width:1120px;margin:0 auto}
+  .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+  .display{font-family:'Space Grotesk',Inter,sans-serif}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--teal-300);margin:0 0 14px}
+  h2.sec{font-family:'Space Grotesk';font-weight:700;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:var(--slate-400);margin:64px 0 20px;display:flex;align-items:center;gap:14px}
+  h2.sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--ink-700),transparent)}
+
+  /* HERO */
+  .hero{display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+  .hero .lockup{display:flex;align-items:center;gap:20px}
+  .wordmark{font-family:'Space Grotesk';font-weight:700;font-size:64px;letter-spacing:.02em;color:#fff;line-height:1;margin:0}
+  .wordmark .dot{color:var(--cyan-400)}
+  .tagline{font-family:'Space Grotesk';font-weight:500;font-size:18px;color:var(--slate-300);margin:14px 0 0}
+  .tagline b{color:var(--cyan-400);font-weight:600}
+  .sub{max-width:560px;color:var(--slate-400);font-size:14px;margin:18px 0 0}
+
+  .tile{
+    width:84px;height:84px;border-radius:20px;display:grid;place-items:center;
+    background:linear-gradient(160deg,#10261f, #0c1726);
+    border:1px solid #1c3a36; box-shadow:0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+
+  /* LOGO OPTIONS */
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{background:linear-gradient(180deg,rgba(30,41,59,.55),rgba(15,23,42,.55));border:1px solid var(--ink-700);border-radius:18px;padding:22px}
+  .card.primary{border-color:var(--teal-600);box-shadow:0 0 0 1px rgba(20,184,166,.25),0 18px 40px rgba(0,0,0,.4)}
+  .badge{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:rgba(34,211,238,.12);color:var(--cyan-400);border:1px solid rgba(34,211,238,.3);margin-bottom:14px}
+  .badge.alt{background:rgba(148,163,184,.1);color:var(--slate-400);border-color:var(--ink-700)}
+  .markrow{display:flex;align-items:center;gap:16px;margin:6px 0 14px}
+  .markdark{width:72px;height:72px;border-radius:16px;background:var(--ink-950);display:grid;place-items:center;border:1px solid var(--ink-800)}
+  .marklight{width:48px;height:48px;border-radius:12px;background:#F6F8FB;display:grid;place-items:center;border:1px solid #D9E1EC}
+  .card h3{font-family:'Space Grotesk';font-size:17px;color:#fff;margin:0 0 6px}
+  .card p{font-size:13px;color:var(--slate-400);margin:0;line-height:1.55}
+
+  /* LOCKUPS */
+  .lockrow{display:flex;gap:18px;flex-wrap:wrap;align-items:stretch}
+  .lockcard{flex:1;min-width:210px;background:linear-gradient(180deg,rgba(30,41,59,.5),rgba(15,23,42,.5));border:1px solid var(--ink-700);border-radius:16px;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:140px}
+  .lockcard.light{background:#F6F8FB;border-color:#D9E1EC}
+  .lockcard .wm{font-family:'Space Grotesk';font-weight:700;font-size:26px;letter-spacing:.02em;color:#fff}
+  .lockcard.light .wm{color:#0F172A}
+  .cap{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--slate-400)}
+  .appicon{width:74px;height:74px;border-radius:18px;background:linear-gradient(155deg,var(--teal-500),#0b3b39 80%);display:grid;place-items:center;box-shadow:0 12px 28px rgba(2,40,38,.6)}
+
+  /* COLOR */
+  .swrap{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  .sw{border-radius:12px;overflow:hidden;border:1px solid var(--ink-800);background:var(--ink-900)}
+  .sw .chip{height:64px}
+  .sw .meta{padding:8px 10px}
+  .sw .nm{font-size:11px;color:var(--slate-300);font-weight:600}
+  .sw .hex{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--slate-400)}
+  .label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate-400);margin:22px 0 12px}
+
+  /* TYPE */
+  .typecard{background:linear-gradient(180deg,rgba(30,41,59,.5),rgba(15,23,42,.5));border:1px solid var(--ink-700);border-radius:16px;padding:26px 28px}
+  .specimen{font-family:'Space Grotesk';font-weight:700;color:#fff;font-size:46px;letter-spacing:.01em;margin:0 0 4px;line-height:1.05}
+  .typemeta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal-300);letter-spacing:.1em;text-transform:uppercase}
+  .bodyspec{font-size:15px;color:var(--slate-300);max-width:640px;margin:18px 0 0}
+  .monospec{font-family:'JetBrains Mono',monospace;color:var(--cyan-400);font-size:15px;margin-top:18px;letter-spacing:.02em}
+  .monospec span{color:var(--slate-400)}
+
+  /* APPLIED */
+  .appgrid{display:grid;grid-template-columns:1fr 1.4fr;gap:18px}
+  .panel{background:linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--ink-700);border-radius:18px;padding:20px}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .kpi{background:var(--ink-950);border:1px solid var(--ink-800);border-radius:14px;padding:14px}
+  .kpi .k{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--slate-400)}
+  .kpi .v{font-family:'Space Grotesk';font-weight:700;font-size:30px;color:#fff;margin-top:6px;line-height:1}
+  .kpi .d{font-size:11px;margin-top:6px}
+  .up{color:var(--cyan-400)} .dn{color:var(--verified)}
+  .row{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:var(--ink-950);border:1px solid var(--ink-800);margin-top:10px}
+  .sev{width:4px;height:38px;border-radius:4px;background:var(--critical)}
+  .row .t{font-weight:600;color:#fff;font-size:14px}
+  .row .m{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--slate-400);margin-top:3px}
+  .chip{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.12em;padding:5px 9px;border-radius:999px}
+  .c-crit{background:rgba(239,68,68,.14);color:#fca5a5;border:1px solid rgba(239,68,68,.35)}
+  .c-ver{background:rgba(16,185,129,.14);color:#6ee7b7;border:1px solid rgba(16,185,129,.35)}
+  .btns{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+  .btn{font-family:Inter;font-weight:700;font-size:13px;padding:11px 16px;border-radius:11px;border:1px solid transparent;cursor:default}
+  .btn-primary{background:var(--teal-500);color:#04201e}
+  .btn-accent{background:transparent;border-color:var(--cyan-500);color:var(--cyan-400)}
+  .btn-ghost{background:transparent;border-color:var(--ink-700);color:var(--slate-300)}
+  .footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--ink-800);color:var(--slate-400);font-size:13px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .footer b{color:var(--slate-200)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">ASCURA · Brand concept v1 — operational instrument</p>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="tile">
+      <svg width="56" height="56" viewBox="0 0 64 64" fill="none" aria-label="ASCURE mark">
+        <path d="M16 50 L32 16 L48 50" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round"/>
+        <line x1="13" y1="53" x2="51" y2="53" stroke="#0D9488" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+        <circle cx="32" cy="16" r="9" fill="#22D3EE" opacity="0.18"/>
+        <circle cx="32" cy="16" r="5.2" fill="#22D3EE"/>
+      </svg>
+    </div>
+    <div>
+      <p class="wordmark">ASCURE<span class="dot">.</span></p>
+      <p class="tagline">Survey. Verify. <b>Resolve.</b></p>
+    </div>
+  </div>
+  <p class="sub">The assured, verifiable record of every utility asset — from field inspection through maintenance closure. Field-proven, now engineered as an operational instrument.</p>
+
+  <!-- TOP 2 REFINEMENT -->
+  <h2 class="sec">Refined — top 2, head to head</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+
+    <!-- OPTION A -->
+    <div class="card primary" style="padding:22px">
+      <span class="badge">Option A · recommended · heritage bridge</span>
+      <div style="display:flex;align-items:center;gap:18px;margin:16px 0 16px">
+        <div style="width:128px;height:128px;border-radius:26px;background:#0A0F1A;border:1px solid #1E293B;display:grid;place-items:center;flex:none">
+          <svg width="84" height="84" viewBox="0 0 64 64" fill="none">
+            <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#14B8A6" stroke-width="3.3"/>
+            <circle cx="32" cy="21" r="2.7" stroke="#14B8A6" stroke-width="2.2"/>
+            <path d="M26 46 L32 31 L38 46" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M28.3 40 H35.7" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round"/>
+            <circle cx="32" cy="30.7" r="3" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div style="display:grid;gap:14px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:48px;height:48px;border-radius:13px;background:linear-gradient(155deg,#14B8A6,#0b3b39 80%);display:grid;place-items:center">
+              <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+                <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#E9FFFB" stroke-width="3.3"/>
+                <circle cx="32" cy="21" r="2.7" stroke="#E9FFFB" stroke-width="2.2"/>
+                <path d="M26 46 L32 31 L38 46" stroke="#E9FFFB" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M28.3 40 H35.7" stroke="#E9FFFB" stroke-width="3.4" stroke-linecap="round"/>
+                <circle cx="32" cy="30.7" r="3" fill="#FFFFFF"/>
+              </svg>
+            </div>
+            <div style="width:44px;height:44px;border-radius:12px;background:#F6F8FB;border:1px solid #D9E1EC;display:grid;place-items:center">
+              <svg width="28" height="28" viewBox="0 0 64 64" fill="none">
+                <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#0F766E" stroke-width="3.3"/>
+                <circle cx="32" cy="21" r="2.7" stroke="#0F766E" stroke-width="2.2"/>
+                <path d="M26 46 L32 31 L38 46" stroke="#0F766E" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M28.3 40 H35.7" stroke="#0F766E" stroke-width="3.4" stroke-linecap="round"/>
+                <circle cx="32" cy="30.7" r="3" fill="#06B6D4"/>
+              </svg>
+            </div>
+            <span class="cap">icon · dark / light</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <svg width="30" height="30" viewBox="0 0 64 64" fill="none"><rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#14B8A6" stroke-width="3.3"/><circle cx="32" cy="21" r="2.7" stroke="#14B8A6" stroke-width="2.2"/><path d="M26 46 L32 31 L38 46" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M28.3 40 H35.7" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round"/><circle cx="32" cy="30.7" r="3" fill="#22D3EE"/></svg>
+            <svg width="22" height="22" viewBox="0 0 64 64" fill="none"><rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#14B8A6" stroke-width="3.3"/><circle cx="32" cy="21" r="2.7" stroke="#14B8A6" stroke-width="2.2"/><path d="M26 46 L32 31 L38 46" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M28.3 40 H35.7" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round"/><circle cx="32" cy="30.7" r="3" fill="#22D3EE"/></svg>
+            <svg width="16" height="16" viewBox="0 0 64 64" fill="none"><rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#14B8A6" stroke-width="3.3"/><circle cx="32" cy="21" r="2.7" stroke="#14B8A6" stroke-width="2.2"/><path d="M26 46 L32 31 L38 46" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M28.3 40 H35.7" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round"/><circle cx="32" cy="30.7" r="3" fill="#22D3EE"/></svg>
+            <span class="cap">favicon 30·22·16</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:#0A0F1A;border:1px solid #1E293B;border-radius:14px">
+        <svg width="34" height="34" viewBox="0 0 64 64" fill="none"><rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#14B8A6" stroke-width="3.3"/><circle cx="32" cy="21" r="2.7" stroke="#14B8A6" stroke-width="2.2"/><path d="M26 46 L32 31 L38 46" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M28.3 40 H35.7" stroke="#14B8A6" stroke-width="3.4" stroke-linecap="round"/><circle cx="32" cy="30.7" r="3" fill="#22D3EE"/></svg>
+        <span style="font-family:'Space Grotesk';font-weight:700;font-size:30px;letter-spacing:.02em;color:#fff">ASCURE</span>
+      </div>
+      <p style="font-size:13px;color:#94A3B8;margin:14px 0 0;line-height:1.55">The asset-tag origin story, refined: a clean hang-tag with eyelet, carrying the survey-node "A". Most meaningful, and the strongest, most distinctive app icon.</p>
+    </div>
+
+    <!-- OPTION B -->
+    <div class="card" style="padding:22px">
+      <span class="badge alt">Option B · pure fresh</span>
+      <div style="display:flex;align-items:center;gap:18px;margin:16px 0 16px">
+        <div style="width:128px;height:128px;border-radius:26px;background:#0A0F1A;border:1px solid #1E293B;display:grid;place-items:center;flex:none">
+          <svg width="84" height="84" viewBox="0 0 64 64" fill="none">
+            <path d="M17 49 L29.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/>
+            <path d="M47 49 L34.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/>
+            <path d="M23.5 38 H40.5" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/>
+            <circle cx="32" cy="15.5" r="8" fill="#22D3EE" opacity="0.16"/>
+            <circle cx="32" cy="15.5" r="5" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div style="display:grid;gap:14px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:48px;height:48px;border-radius:13px;background:linear-gradient(155deg,#14B8A6,#0b3b39 80%);display:grid;place-items:center">
+              <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+                <path d="M17 49 L29.5 20" stroke="#E9FFFB" stroke-width="5" stroke-linecap="round"/>
+                <path d="M47 49 L34.5 20" stroke="#E9FFFB" stroke-width="5" stroke-linecap="round"/>
+                <path d="M23.5 38 H40.5" stroke="#E9FFFB" stroke-width="5" stroke-linecap="round"/>
+                <circle cx="32" cy="15.5" r="5" fill="#FFFFFF"/>
+              </svg>
+            </div>
+            <div style="width:44px;height:44px;border-radius:12px;background:#F6F8FB;border:1px solid #D9E1EC;display:grid;place-items:center">
+              <svg width="28" height="28" viewBox="0 0 64 64" fill="none">
+                <path d="M17 49 L29.5 20" stroke="#0F766E" stroke-width="5" stroke-linecap="round"/>
+                <path d="M47 49 L34.5 20" stroke="#0F766E" stroke-width="5" stroke-linecap="round"/>
+                <path d="M23.5 38 H40.5" stroke="#0F766E" stroke-width="5" stroke-linecap="round"/>
+                <circle cx="32" cy="15.5" r="5" fill="#06B6D4"/>
+              </svg>
+            </div>
+            <span class="cap">icon · dark / light</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <svg width="30" height="30" viewBox="0 0 64 64" fill="none"><path d="M17 49 L29.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M47 49 L34.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M23.5 38 H40.5" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><circle cx="32" cy="15.5" r="5" fill="#22D3EE"/></svg>
+            <svg width="22" height="22" viewBox="0 0 64 64" fill="none"><path d="M17 49 L29.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M47 49 L34.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M23.5 38 H40.5" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><circle cx="32" cy="15.5" r="5" fill="#22D3EE"/></svg>
+            <svg width="16" height="16" viewBox="0 0 64 64" fill="none"><path d="M17 49 L29.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M47 49 L34.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M23.5 38 H40.5" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><circle cx="32" cy="15.5" r="5" fill="#22D3EE"/></svg>
+            <span class="cap">favicon 30·22·16</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:#0A0F1A;border:1px solid #1E293B;border-radius:14px">
+        <svg width="34" height="34" viewBox="0 0 64 64" fill="none"><path d="M17 49 L29.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M47 49 L34.5 20" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><path d="M23.5 38 H40.5" stroke="#14B8A6" stroke-width="5" stroke-linecap="round"/><circle cx="32" cy="15.5" r="5" fill="#22D3EE"/></svg>
+        <span style="font-family:'Space Grotesk';font-weight:700;font-size:30px;letter-spacing:.02em;color:#fff">ASCURE</span>
+      </div>
+      <p style="font-size:13px;color:#94A3B8;margin:14px 0 0;line-height:1.55">The cleanest, most abstract glyph — an "A" of survey lines with a located node. Holds up best at tiny sizes and reads as pure instrument; less story than A.</p>
+    </div>
+  </div>
+
+  <!-- LOGO OPTIONS -->
+  <h2 class="sec">Logo system — three marks, one direction</h2>
+  <div class="grid3">
+    <div class="card primary">
+      <span class="badge">Recommended · 01</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <path d="M16 50 L32 16 L48 50" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round"/>
+            <circle cx="32" cy="16" r="5.2" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <path d="M16 50 L32 16 L48 50" stroke="#0F766E" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#0F766E" stroke-width="5.5" stroke-linecap="round"/>
+            <circle cx="32" cy="16" r="5.2" fill="#06B6D4"/>
+          </svg>
+        </div>
+      </div>
+      <h3>The Survey Node "A"</h3>
+      <p>An "A" built from two survey lines and a level bar, crowned by a located node. Reads as the letter, an asset point, and a measurement at once. Scales to a 16px favicon.</p>
+    </div>
+
+    <div class="card">
+      <span class="badge alt">Alt · 02</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <path d="M32 54 C 22 40, 18 33, 18 27 a14 14 0 1 1 28 0 c0 6 -10 13 -14 27 z" fill="#14B8A6"/>
+            <path d="M25 26.5 l4.5 4.8 l9 -10" fill="none" stroke="#0A0F1A" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <path d="M32 54 C 22 40, 18 33, 18 27 a14 14 0 1 1 28 0 c0 6 -10 13 -14 27 z" fill="#0F766E"/>
+            <path d="M25 26.5 l4.5 4.8 l9 -10" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+      <h3>Waypoint + Verify</h3>
+      <p>A located asset fused with a verification tick — the two halves of ASCURE: field capture and QA assurance. Warmer, more literal, very recognisable on a map pin.</p>
+    </div>
+
+    <div class="card">
+      <span class="badge alt">Alt · 03</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="18" stroke="#14B8A6" stroke-width="4"/>
+            <line x1="32" y1="6" x2="32" y2="16" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <line x1="32" y1="48" x2="32" y2="58" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <line x1="6" y1="32" x2="16" y2="32" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <line x1="48" y1="32" x2="58" y2="32" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="32" r="5" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="18" stroke="#0F766E" stroke-width="4"/>
+            <line x1="32" y1="6" x2="32" y2="16" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <line x1="32" y1="48" x2="32" y2="58" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <line x1="6" y1="32" x2="16" y2="32" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <line x1="48" y1="32" x2="58" y2="32" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="32" r="5" fill="#06B6D4"/>
+          </svg>
+        </div>
+      </div>
+      <h3>Survey Reticle</h3>
+      <p>An instrument reticle locking onto a node — the most "control-room" of the three. Abstract and utility-agnostic, scales well beyond TNB to any asset class.</p>
+    </div>
+  </div>
+
+  <!-- LOCKUPS -->
+  <h2 class="sec">Wordmark · lockups · app icon</h2>
+  <div class="lockrow">
+    <div class="lockcard">
+      <svg width="34" height="34" viewBox="0 0 64 64" fill="none">
+        <path d="M16 50 L32 16 L48 50" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round"/>
+        <circle cx="32" cy="16" r="5.2" fill="#22D3EE"/>
+      </svg>
+      <div class="wm">ASCURE</div>
+      <div class="cap">Primary · horizontal</div>
+    </div>
+    <div class="lockcard light">
+      <svg width="34" height="34" viewBox="0 0 64 64" fill="none">
+        <path d="M16 50 L32 16 L48 50" stroke="#0F766E" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#0F766E" stroke-width="5.5" stroke-linecap="round"/>
+        <circle cx="32" cy="16" r="5.2" fill="#06B6D4"/>
+      </svg>
+      <div class="wm">ASCURE</div>
+      <div class="cap" style="color:#667085">On light surface</div>
+    </div>
+    <div class="lockcard">
+      <div class="appicon">
+        <svg width="40" height="40" viewBox="0 0 64 64" fill="none">
+          <path d="M16 50 L32 16 L48 50" stroke="#E9FFFB" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="23.5" y1="39" x2="40.5" y2="39" stroke="#E9FFFB" stroke-width="5.5" stroke-linecap="round"/>
+          <circle cx="32" cy="16" r="5.2" fill="#22D3EE"/>
+        </svg>
+      </div>
+      <div class="cap">App icon · favicon</div>
+    </div>
+  </div>
+
+  <!-- COLOR -->
+  <h2 class="sec">Color system — dual surface</h2>
+  <p class="label">Ink &amp; signal — dark "control room" surfaces (dashboards · ops board · map)</p>
+  <div class="swrap">
+    <div class="sw"><div class="chip" style="background:#0A0F1A"></div><div class="meta"><div class="nm">Ink 950</div><div class="hex">#0A0F1A</div></div></div>
+    <div class="sw"><div class="chip" style="background:#0F172A"></div><div class="meta"><div class="nm">Ink 900</div><div class="hex">#0F172A</div></div></div>
+    <div class="sw"><div class="chip" style="background:#1E293B"></div><div class="meta"><div class="nm">Ink 800</div><div class="hex">#1E293B</div></div></div>
+    <div class="sw"><div class="chip" style="background:#14B8A6"></div><div class="meta"><div class="nm">Teal 500 · primary</div><div class="hex">#14B8A6</div></div></div>
+    <div class="sw"><div class="chip" style="background:#22D3EE"></div><div class="meta"><div class="nm">Cyan 400 · signal</div><div class="hex">#22D3EE</div></div></div>
+    <div class="sw"><div class="chip" style="background:#E2E8F0"></div><div class="meta"><div class="nm">Slate 200 · text</div><div class="hex">#E2E8F0</div></div></div>
+  </div>
+
+  <p class="label">Status language — vivid &amp; consistent across mobile + admin</p>
+  <div class="swrap">
+    <div class="sw"><div class="chip" style="background:#EF4444"></div><div class="meta"><div class="nm">Critical</div><div class="hex">#EF4444</div></div></div>
+    <div class="sw"><div class="chip" style="background:#F97316"></div><div class="meta"><div class="nm">High</div><div class="hex">#F97316</div></div></div>
+    <div class="sw"><div class="chip" style="background:#F59E0B"></div><div class="meta"><div class="nm">Medium</div><div class="hex">#F59E0B</div></div></div>
+    <div class="sw"><div class="chip" style="background:#38BDF8"></div><div class="meta"><div class="nm">Low / Info</div><div class="hex">#38BDF8</div></div></div>
+    <div class="sw"><div class="chip" style="background:#10B981"></div><div class="meta"><div class="nm">Verified</div><div class="hex">#10B981</div></div></div>
+    <div class="sw"><div class="chip" style="background:#F6F8FB;border-bottom:1px solid #D9E1EC"></div><div class="meta"><div class="nm">Paper · light</div><div class="hex">#F6F8FB</div></div></div>
+  </div>
+
+  <!-- TYPE -->
+  <h2 class="sec">Typography — precise, technical, legible</h2>
+  <div class="typecard">
+    <p class="specimen">Operational truth,<br>from field to closure.</p>
+    <div class="typemeta">Space Grotesk · display &amp; headings</div>
+    <p class="bodyspec">Inter carries the interface — dense operational data stays calm and readable at small sizes, in long lists, and in bright sunlight on a phone. Strong weight contrast does the hierarchy work.</p>
+    <p class="monospec">TR-A4/1 · SS2-01 &nbsp; <span>//</span> &nbsp; 3.412198, 101.736° &nbsp; <span>//</span> &nbsp; 11.2 kV &nbsp; <span>// asset codes, GPS &amp; readings in JetBrains Mono</span></p>
+  </div>
+
+  <!-- APPLIED -->
+  <h2 class="sec">The brand, applied</h2>
+  <div class="appgrid">
+    <div class="panel">
+      <div class="kpis">
+        <div class="kpi"><div class="k">Open defects</div><div class="v">312</div><div class="d up">▲ +18 this week</div></div>
+        <div class="kpi"><div class="k">Closed · QA</div><div class="v">1,204</div><div class="d dn">▲ 94% on time</div></div>
+        <div class="kpi"><div class="k">Poles surveyed</div><div class="v">8,640</div><div class="d up">▲ +210 today</div></div>
+        <div class="kpi"><div class="k">Sync queue</div><div class="v">0</div><div class="d" style="color:#94A3B8">all clear</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div style="font-family:'Space Grotesk';font-weight:600;color:#fff;font-size:15px;margin-bottom:4px">Defect queue — KL Timur</div>
+      <div class="row">
+        <div class="sev"></div>
+        <div style="flex:1"><div class="t">Broken insulator — flashover mark</div><div class="m">TR-A4/1 · SS2-01 · captured 09:42</div></div>
+        <span class="chip c-crit">CRITICAL</span>
+      </div>
+      <div class="row">
+        <div class="sev" style="background:#10B981"></div>
+        <div style="flex:1"><div class="t">Stay wire corrosion — rectified</div><div class="m">TR-A2 · SS2-01 · evidence ×3</div></div>
+        <span class="chip c-ver">VERIFIED</span>
+      </div>
+      <div class="btns">
+        <span class="btn btn-primary">Submit inspection</span>
+        <span class="btn btn-accent">Verify defect</span>
+        <span class="btn btn-ghost">View evidence</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HERITAGE BRIDGE -->
+  <h2 class="sec">Heritage bridge — your asset-tag DNA, modernised</h2>
+  <div class="grid3">
+    <div class="card primary">
+      <span class="badge">Bridge · recommended</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <rect x="15" y="12" width="34" height="40" rx="9" stroke="#14B8A6" stroke-width="3.5"/>
+            <circle cx="32" cy="20" r="2.6" fill="#14B8A6"/>
+            <path d="M24 46 L32 28 L40 46" stroke="#14B8A6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28" y1="38.5" x2="36" y2="38.5" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="28" r="3.4" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <rect x="15" y="12" width="34" height="40" rx="9" stroke="#0F766E" stroke-width="3.5"/>
+            <circle cx="32" cy="20" r="2.6" fill="#0F766E"/>
+            <path d="M24 46 L32 28 L40 46" stroke="#0F766E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28" y1="38.5" x2="36" y2="38.5" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="28" r="3.4" fill="#06B6D4"/>
+          </svg>
+        </div>
+      </div>
+      <h3>Asset Tag + Node</h3>
+      <p>Your origin story, literally: a physical asset tag (eyelet and all) carrying the survey-node "A". Honours where ASCURE began — tagging assets — in the new palette, and collapses cleanly to an app icon.</p>
+    </div>
+
+    <div class="card">
+      <span class="badge alt">Bridge · 02</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <path d="M24 12 H40 Q50 12 50 22 V42 Q50 52 40 52 H24 Q14 52 14 42 V38 M14 26 V22 Q14 12 24 12" stroke="#14B8A6" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M24 44 L32 26 L40 44" stroke="#14B8A6" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28.5" y1="37" x2="35.5" y2="37" stroke="#14B8A6" stroke-width="3.6" stroke-linecap="round"/>
+            <circle cx="32" cy="26" r="3.2" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <path d="M24 12 H40 Q50 12 50 22 V42 Q50 52 40 52 H24 Q14 52 14 42 V38 M14 26 V22 Q14 12 24 12" stroke="#0F766E" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M24 44 L32 26 L40 44" stroke="#0F766E" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28.5" y1="37" x2="35.5" y2="37" stroke="#0F766E" stroke-width="3.6" stroke-linecap="round"/>
+            <circle cx="32" cy="26" r="3.2" fill="#06B6D4"/>
+          </svg>
+        </div>
+      </div>
+      <h3>Framed Node</h3>
+      <p>The old logo's open rounded-square frame, kept — but balanced and centred around the node "A" instead of floating off to one side. The most direct evolution of what you already have.</p>
+    </div>
+
+    <div class="card">
+      <span class="badge alt">If you keep red</span>
+      <div class="markrow">
+        <div class="markdark">
+          <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+            <rect x="15" y="12" width="34" height="40" rx="9" stroke="#E5322B" stroke-width="3.5"/>
+            <path d="M24 46 L32 28 L40 46" stroke="#14B8A6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28" y1="38.5" x2="36" y2="38.5" stroke="#14B8A6" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="28" r="3.4" fill="#22D3EE"/>
+          </svg>
+        </div>
+        <div class="marklight">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <rect x="15" y="12" width="34" height="40" rx="9" stroke="#DC2626" stroke-width="3.5"/>
+            <path d="M24 46 L32 28 L40 46" stroke="#0F766E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="28" y1="38.5" x2="36" y2="38.5" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="32" cy="28" r="3.4" fill="#06B6D4"/>
+          </svg>
+        </div>
+      </div>
+      <h3>Heritage Red</h3>
+      <p>Attached to the red — or want a Malaysian-identity nod? Keep it as the tag frame with a teal/cyan node inside. One caution: red also means "Critical" in-app, so we'd shift the shade to avoid a status clash.</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><b>ASCURE</b> — Asset Survey, Compliance, Utility Reporting &amp; Execution &nbsp;·&nbsp; by ASCURA</div>
+    <div class="mono">brand concept v1 · operational instrument</div>
+  </div>
+
+</div>
+</body>
+</html>
