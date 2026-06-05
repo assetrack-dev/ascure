@@ -985,6 +985,36 @@ export function findItemById(
   return undefined;
 }
 
+/**
+ * For a defect-trigger BOOLEAN item, returns which answer means "a defect exists".
+ * ASCURE SAVR checklists ask whether the defect is present (e.g. "TIANG - CONDONG"
+ * → YES = defect), so YES (true) is the defect by default. An optional
+ * `optionsJson.defectWhen` value ('TRUE' | 'FALSE', or a boolean) overrides it for
+ * any positively-phrased item without requiring a schema change.
+ */
+export function getBooleanDefectValue(item: InspectionTemplateItem): boolean {
+  const optionsJson = item.optionsJson;
+
+  if (
+    optionsJson &&
+    typeof optionsJson === 'object' &&
+    !Array.isArray(optionsJson) &&
+    'defectWhen' in optionsJson
+  ) {
+    const raw = (optionsJson as { defectWhen?: unknown }).defectWhen;
+
+    if (raw === false || raw === 'FALSE' || raw === 'false') {
+      return false;
+    }
+
+    if (raw === true || raw === 'TRUE' || raw === 'true') {
+      return true;
+    }
+  }
+
+  return true;
+}
+
 function getInspectionItemResultValue(
   item: InspectionTemplateItem,
   rawValue: DraftValues[string],
@@ -992,15 +1022,19 @@ function getInspectionItemResultValue(
   const inputType = normalizeInspectionInputType(item.inputType);
 
   if (inputType === 'BOOLEAN') {
-    if (rawValue === true) {
-      return 'PASS';
+    if (rawValue !== true && rawValue !== false) {
+      return 'NA';
     }
 
-    if (rawValue === false) {
-      return 'FAIL';
+    // Defect-trigger booleans follow the ASCURE SAVR rule: the inspector states
+    // whether the defect exists, so the "defect" answer maps to FAIL (which the
+    // API turns into isDefect=true → one Defect). Non-defect-trigger booleans keep
+    // the legacy pass/fail mapping (YES = PASS, NO = FAIL).
+    if (item.isDefectTrigger !== false) {
+      return rawValue === getBooleanDefectValue(item) ? 'FAIL' : 'PASS';
     }
 
-    return 'NA';
+    return rawValue === true ? 'PASS' : 'FAIL';
   }
 
   if (inputType === 'SELECT') {

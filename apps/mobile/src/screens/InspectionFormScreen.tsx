@@ -19,6 +19,7 @@ import {
   buildResultsPayload,
   createInitialDraftValues,
   formatDateTime,
+  getBooleanDefectValue,
   getVisibleInspectionSections,
   hasAnyInspectionDraftValue,
   isOperationalTemplateTextItem,
@@ -986,6 +987,8 @@ function ChecklistItemCard({
           value={typeof value === 'boolean' ? value : null}
           disabled={disabled}
           isRequired={item.isRequired}
+          isDefectTrigger={item.isDefectTrigger !== false}
+          defectValue={getBooleanDefectValue(item)}
           onChange={onChange}
         />
       ) : null}
@@ -1021,29 +1024,39 @@ function BooleanField({
   value,
   disabled,
   isRequired,
+  isDefectTrigger,
+  defectValue,
   onChange,
 }: {
   value: boolean | null;
   disabled: boolean;
   isRequired: boolean;
+  isDefectTrigger: boolean;
+  defectValue: boolean;
   onChange: (value: boolean | null) => void;
 }) {
+  // For defect-trigger items the inspector answers whether the defect exists, so
+  // the defect answer is coloured as the alarming (danger) choice and the clear
+  // answer as success. Non-defect items keep the conventional YES=good colouring.
+  const yesTone = isDefectTrigger ? (defectValue ? 'danger' : 'success') : 'success';
+  const noTone = isDefectTrigger ? (defectValue ? 'success' : 'danger') : 'danger';
+
   return (
     <View style={styles.resultControl}>
-      <Text style={styles.controlLabel}>Response</Text>
+      <Text style={styles.controlLabel}>{isDefectTrigger ? 'Defect present?' : 'Response'}</Text>
       <View style={styles.resultButtonRow}>
         <ChoiceButton
           label="YES"
           selected={value === true}
           disabled={disabled}
-          tone="success"
+          tone={yesTone}
           onPress={() => onChange(true)}
         />
         <ChoiceButton
           label="NO"
           selected={value === false}
           disabled={disabled}
-          tone="danger"
+          tone={noTone}
           onPress={() => onChange(false)}
         />
         {!isRequired ? (
@@ -1056,6 +1069,11 @@ function BooleanField({
           />
         ) : null}
       </View>
+      {isDefectTrigger ? (
+        <Text style={styles.helperText}>
+          {defectValue ? 'YES = defect found · NO = no defect' : 'NO = defect found · YES = no defect'}
+        </Text>
+      ) : null}
     </View>
   );
 }
