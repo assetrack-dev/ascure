@@ -20,28 +20,5 @@ allprojects {
   }
 }
 
-def applyNativeCxxLinkerFix = { subproject ->
-  subproject.android {
-    defaultConfig {
-      externalNativeBuild {
-        cmake {
-          arguments "-DCMAKE_CXX_STANDARD_LIBRARIES=-lc++ -latomic -lm",
-                    "-DCMAKE_JOB_POOLS=compile_pool=2",
-                    "-DCMAKE_JOB_POOL_COMPILE=compile_pool"
-        }
-      }
-    }
-  }
-}
-
-subprojects { subproject ->
-  subproject.plugins.withId('com.android.application') {
-    applyNativeCxxLinkerFix(subproject)
-  }
-  subproject.plugins.withId('com.android.library') {
-    applyNativeCxxLinkerFix(subproject)
-  }
-}
-
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

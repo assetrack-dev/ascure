@@ -19,6 +19,7 @@ export type RootStackParamList = {
   AppDrawer: NavigatorScreenParams<AppDrawerParamList> | undefined;
   CheckIn: undefined;
   VisitDetail: { visitId: string; substationId: string; successMessage?: string };
+  VisitAssets: { visitId: string; substationId: string };
   AssetDetail: {
     visitId?: string;
     substationId?: string;

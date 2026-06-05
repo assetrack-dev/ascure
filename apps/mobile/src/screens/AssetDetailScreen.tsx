@@ -19,7 +19,12 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
-import { Asset, AssetDetailImage, AssetDetailResponse } from '../types';
+import {
+  Asset,
+  AssetDetailImage,
+  AssetDetailResponse,
+  InspectionItemResultValue,
+} from '../types';
 import { formatDateTime } from '../utils';
 import { HeaderIconButton, StatusChip, uiTheme } from '../ui';
 
@@ -350,10 +355,57 @@ export function AssetDetailScreen() {
               <InfoRow label="Cycle" value={`Cycle ${latestInspection.cycleNumber}`} />
               <InfoRow label="Status" value={formatLabel(latestInspection.status)} />
               <InfoRow label="Submitted" value={formatDateTime(latestInspection.submittedAt)} />
+              {latestInspection.createdAt ? (
+                <InfoRow label="Started" value={formatDateTime(latestInspection.createdAt)} />
+              ) : null}
+              <View style={styles.statusLine}>
+                <Text style={styles.infoLabel}>Defects</Text>
+                {latestInspection.totalDefects && latestInspection.totalDefects > 0 ? (
+                  <StatusChip
+                    label={`${latestInspection.totalDefects} defect${
+                      latestInspection.totalDefects > 1 ? 's' : ''
+                    }`}
+                    tone="danger"
+                  />
+                ) : (
+                  <StatusChip label="None" tone="success" />
+                )}
+              </View>
+
               <Text style={styles.fieldLabel}>Remarks</Text>
               <Text style={latestInspection.remarks ? styles.bodyText : styles.placeholderText}>
                 {latestInspection.remarks || 'No remarks recorded.'}
               </Text>
+
+              {latestInspection.items && latestInspection.items.length > 0 ? (
+                <>
+                  <Text style={styles.fieldLabel}>Checklist Answers</Text>
+                  <View style={styles.checklistList}>
+                    {latestInspection.items.map((item) => (
+                      <View
+                        key={item.id}
+                        style={[styles.checklistRow, item.isDefect && styles.checklistRowDefect]}
+                      >
+                        <View style={styles.checklistTextWrap}>
+                          <Text style={styles.checklistLabel}>{item.label}</Text>
+                          {item.remark ? (
+                            <Text style={styles.checklistRemark}>{item.remark}</Text>
+                          ) : null}
+                          {item.isDefect ? (
+                            <Text style={styles.checklistDefectTag}>
+                              {`Defect${item.severity ? ` · ${formatLabel(item.severity)}` : ''}`}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <StatusChip
+                          label={formatResult(item.result)}
+                          tone={getResultTone(item.result)}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
             </>
           ) : (
             <Text style={styles.placeholderText}>No submitted inspection.</Text>
@@ -513,6 +565,26 @@ function getAssetStatusTone(status: Asset['status']) {
   return 'neutral' as const;
 }
 
+function formatResult(result: InspectionItemResultValue) {
+  if (result === 'NA') {
+    return 'N/A';
+  }
+
+  return result === 'PASS' ? 'Pass' : 'Fail';
+}
+
+function getResultTone(result: InspectionItemResultValue): 'success' | 'danger' | 'neutral' {
+  if (result === 'PASS') {
+    return 'success';
+  }
+
+  if (result === 'FAIL') {
+    return 'danger';
+  }
+
+  return 'neutral';
+}
+
 function formatLabel(value: string) {
   return value
     .toLowerCase()
@@ -652,6 +724,44 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     color: uiTheme.colors.textSecondary,
+  },
+  checklistList: {
+    marginTop: 6,
+    gap: 8,
+  },
+  checklistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: uiTheme.radius.control,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.surfaceMuted,
+  },
+  checklistRowDefect: {
+    borderColor: uiTheme.colors.dangerBorder,
+    backgroundColor: uiTheme.colors.dangerSoft,
+  },
+  checklistTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  checklistLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
+  },
+  checklistRemark: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiTheme.colors.textSecondary,
+  },
+  checklistDefectTag: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: uiTheme.colors.danger,
   },
   emptyTitle: {
     fontSize: 20,

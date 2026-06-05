@@ -19,6 +19,13 @@ export interface TemplateSelectOption {
   label: string;
   value: string;
   prefix?: string;
+  /**
+   * When true, selecting this option marks the checklist answer as a defect
+   * (result = FAIL) regardless of the option's wording. This is the
+   * language-independent, explicit signal that replaces keyword guessing for
+   * non-English (e.g. Bahasa Malaysia) and utility-specific option labels.
+   */
+  isDefect?: boolean;
 }
 
 export function isTemplateBuilderInputType(
@@ -60,15 +67,25 @@ export function normalizeTemplateSelectOptions(optionsJson: unknown): TemplateSe
     const maybeLabel = 'label' in option ? option.label : undefined;
     const maybeValue = 'value' in option ? option.value : undefined;
     const maybePrefix = 'prefix' in option ? option.prefix : undefined;
+    const maybeIsDefect = 'isDefect' in option ? option.isDefect : undefined;
     const label = typeof maybeLabel === 'string' ? maybeLabel.trim() : '';
     const value = typeof maybeValue === 'string' ? maybeValue.trim() : '';
     const prefix = typeof maybePrefix === 'string' ? maybePrefix.trim() : '';
+    const isDefect = maybeIsDefect === true;
 
     if (!label || !value || seenValues.has(value)) {
       return null;
     }
 
-    normalizedOptions.push(prefix ? { label, value, prefix } : { label, value });
+    const normalizedOption: TemplateSelectOption = { label, value };
+    if (prefix) {
+      normalizedOption.prefix = prefix;
+    }
+    if (isDefect) {
+      normalizedOption.isDefect = true;
+    }
+
+    normalizedOptions.push(normalizedOption);
     seenValues.add(value);
   }
 

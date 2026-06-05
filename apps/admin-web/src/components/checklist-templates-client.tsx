@@ -268,9 +268,15 @@ function normalizeFieldType(value: string | undefined): ChecklistFieldType {
 function optionLines(options: ChecklistTemplateOption[] | undefined) {
   return (options ?? [])
     .map((option) => {
-      const baseLine = option.label === option.value ? option.label : `${option.label} | ${option.value}`;
+      // When flagging a defect we must emit an explicit value so the trailing
+      // "defect" token is never mistaken for the value when the line is re-parsed.
+      const baseLine =
+        option.label === option.value && !option.isDefect
+          ? option.label
+          : `${option.label} | ${option.value}`;
+      const withPrefix = option.prefix ? `${baseLine} | ${option.prefix}` : baseLine;
 
-      return option.prefix ? `${baseLine} | ${option.prefix}` : baseLine;
+      return option.isDefect ? `${withPrefix} | defect` : withPrefix;
     })
     .join("\n");
 }
@@ -555,10 +561,27 @@ function parseOptions(optionsText: string) {
       continue;
     }
 
-    const [rawLabel, rawValue, rawPrefix] = normalizedLine.split("|");
+    const [rawLabel, rawValue, ...rest] = normalizedLine.split("|");
     const label = rawLabel.trim();
     const value = (rawValue ?? rawLabel).trim();
-    const prefix = rawPrefix?.trim();
+
+    // Trailing tokens after value may be a display prefix and/or the literal
+    // keyword "defect", which flags this option as a defect (result = FAIL).
+    let prefix: string | undefined;
+    let isDefect = false;
+    for (const token of rest) {
+      const normalizedToken = token.trim();
+
+      if (!normalizedToken) {
+        continue;
+      }
+
+      if (normalizedToken.toLowerCase() === "defect") {
+        isDefect = true;
+      } else if (prefix === undefined) {
+        prefix = normalizedToken;
+      }
+    }
 
     if (!label || !value) {
       throw new Error("Dropdown options need a label and value.");
@@ -568,7 +591,15 @@ function parseOptions(optionsText: string) {
       throw new Error(`Dropdown option value "${value}" is duplicated.`);
     }
 
-    options.push(prefix ? { label, value, prefix } : { label, value });
+    const option: ChecklistTemplateOption = { label, value };
+    if (prefix) {
+      option.prefix = prefix;
+    }
+    if (isDefect) {
+      option.isDefect = true;
+    }
+
+    options.push(option);
     seenValues.add(value);
   }
 
@@ -917,8 +948,14 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             value={item.optionsText}
             onChange={(event) => onUpdateItem(item.localId, { optionsText: event.target.value })}
             className={`${textareaClassName} mt-1.5`}
-            placeholder="REPOT/RETAK | REPOT_RETAK | T"
+            placeholder="REPOT/RETAK | REPOT_RETAK | T | defect"
           />
+          <span className="mt-1.5 block text-xs text-slate-500">
+            One option per line: <code>Label | value | prefix</code>. Append{" "}
+            <code>| defect</code> to flag an option as a defect (records FAIL and
+            creates a defect when chosen) — works for any language. Prefix is
+            optional; e.g. <code>Rosak | rosak | defect</code>.
+          </span>
         </label>
       ) : null}
 

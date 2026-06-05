@@ -215,6 +215,19 @@ export class AssetsService {
                 },
               },
             },
+            itemResults: {
+              orderBy: {
+                createdAt: 'asc',
+              },
+              select: {
+                id: true,
+                label: true,
+                result: true,
+                remark: true,
+                isDefect: true,
+                severity: true,
+              },
+            },
           },
         },
       },
@@ -249,7 +262,17 @@ export class AssetsService {
             cycleNumber: latestInspection.inspectionCycle,
             status: latestInspection.completionStatus,
             submittedAt: latestInspection.submittedAt?.toISOString() ?? '',
+            createdAt: latestInspection.createdAt.toISOString(),
             remarks: this.extractRemarks(latestInspection.results),
+            totalDefects: latestInspection.itemResults.filter((item) => item.isDefect).length,
+            items: latestInspection.itemResults.map((item) => ({
+              id: item.id,
+              label: item.label,
+              result: item.result,
+              remark: item.remark,
+              isDefect: item.isDefect,
+              severity: item.severity,
+            })),
             images: latestInspection.inspectionImages.map((image) => ({
               url: image.url,
             })),

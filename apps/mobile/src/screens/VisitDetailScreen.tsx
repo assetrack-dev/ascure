@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
@@ -25,7 +25,10 @@ import {
   isRetryableSyncError,
   SyncQueueSnapshot,
 } from '../syncQueue';
-import { getInspectionQueueStatusGroup } from '../operationalWorkspace';
+import {
+  getAssetRowLabels,
+  getSubmittedInspectionAssetIds,
+} from '../assetDisplay';
 import { Asset, SiteVisit, SiteVisitSummary } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
@@ -54,6 +57,9 @@ type AssetWithOptionalDisplayData = Asset & {
 };
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
+// Keep the Visit Detail asset list compact; the full list (with search and
+// filters) lives on the dedicated VisitAssets screen via "View All Assets".
+const VISIBLE_ASSET_LIMIT = 5;
 const DEFAULT_REGION: Region = {
   latitude: 3.139,
   longitude: 101.6869,
@@ -79,35 +85,49 @@ export function VisitDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const isCompletionQueued = hasQueuedVisitCompletion(syncQueueSnapshot, visitId);
 
-  const loadVisitData = useCallback(async () => {
-    try {
-      setError(null);
-      setIsLoading(true);
+  const hasLoadedRef = useRef(false);
 
-      const [visitResponse, substationAssetList] = await Promise.all([
-        api.getSiteVisit(token, visitId),
-        api.getAssets(token, substationId),
-      ]);
-      const visitAssetList = await loadVisitScopedAssets(token, visitId, substationAssetList);
+  const loadVisitData = useCallback(
+    async (options?: { silent?: boolean }) => {
+      try {
+        setError(null);
+        if (!options?.silent) {
+          setIsLoading(true);
+        }
 
-      setVisit(visitResponse);
-      setAssets(visitAssetList);
-      setAvailableAssets(createAvailableAssetList(substationAssetList, visitAssetList));
-    } catch (loadError) {
-      if (loadError instanceof ApiError && loadError.status === 401) {
-        await handleUnauthorized(loadError);
-        return;
+        const [visitResponse, substationAssetList] = await Promise.all([
+          api.getSiteVisit(token, visitId),
+          api.getAssets(token, substationId),
+        ]);
+        const visitAssetList = await loadVisitScopedAssets(token, visitId, substationAssetList);
+
+        setVisit(visitResponse);
+        setAssets(visitAssetList);
+        setAvailableAssets(createAvailableAssetList(substationAssetList, visitAssetList));
+      } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          await handleUnauthorized(loadError);
+          return;
+        }
+
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load visit details.');
+      } finally {
+        setIsLoading(false);
       }
+    },
+    [handleUnauthorized, substationId, token, visitId],
+  );
 
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load visit details.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleUnauthorized, substationId, token, visitId]);
-
-  useEffect(() => {
-    loadVisitData();
-  }, [loadVisitData]);
+  // Refetch whenever the screen regains focus so visit progress, linked assets
+  // and defect rollups reflect inspections submitted (online) or replayed from
+  // the offline sync queue since we left. The first focus shows the full-screen
+  // loader; subsequent focuses refresh silently to avoid spinner flicker.
+  useFocusEffect(
+    useCallback(() => {
+      loadVisitData({ silent: hasLoadedRef.current });
+      hasLoadedRef.current = true;
+    }, [loadVisitData]),
+  );
 
   async function handleCompleteVisit() {
     if (!visit) {
@@ -277,7 +297,7 @@ export function VisitDetailScreen() {
       }}
       rightAction={{
         icon: 'refresh',
-        onPress: loadVisitData,
+        onPress: () => loadVisitData(),
         accessibilityLabel: 'Refresh',
         disabled: isLoading,
       }}
@@ -350,16 +370,29 @@ export function VisitDetailScreen() {
                 description="Add or inspect an asset."
               />
             ) : (
-              <View style={styles.assetList}>
-                {assets.map((asset) => (
-                  <AssetListRow
-                    key={asset.id}
-                    asset={asset}
-                    visit={visit}
-                    onPress={() => handleOpenAssetDetail(asset)}
-                  />
-                ))}
-              </View>
+              <>
+                <View style={styles.assetList}>
+                  {assets.slice(0, VISIBLE_ASSET_LIMIT).map((asset) => (
+                    <AssetListRow
+                      key={asset.id}
+                      asset={asset}
+                      visit={visit}
+                      onPress={() => handleOpenAssetDetail(asset)}
+                    />
+                  ))}
+                </View>
+                {assets.length > VISIBLE_ASSET_LIMIT ? (
+                  <View style={styles.viewAllAssetsWrap}>
+                    <AppButton
+                      label={`View All Assets (${assets.length})`}
+                      variant="secondary"
+                      onPress={() =>
+                        navigation.navigate('VisitAssets', { visitId, substationId })
+                      }
+                    />
+                  </View>
+                ) : null}
+              </>
             )}
           </Card>
 
@@ -539,7 +572,7 @@ function AssetListRow({
   onPress: () => void;
 }) {
   const thumbnailUri = getAssetThumbnailUri(asset, visit);
-  const noTiangRondaan = getNoTiangRondaan(asset);
+  const { title, subtitle } = getAssetRowLabels(asset);
 
   return (
     <Pressable
@@ -565,11 +598,13 @@ function AssetListRow({
 
       <View style={styles.assetTextWrap}>
         <Text style={styles.assetName} numberOfLines={1}>
-          {asset.name || 'Unnamed asset'}
+          {title}
         </Text>
-        <Text style={styles.assetMeta} numberOfLines={1}>
-          {asset.assetCode} · NTR {noTiangRondaan}
-        </Text>
+        {subtitle ? (
+          <Text style={styles.assetMeta} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
       </View>
 
       <Text style={rightLabel === '>' ? styles.rowArrow : styles.rowActionLabel}>
@@ -672,47 +707,6 @@ function getImageSourceUri(image: ThumbnailImage) {
   return source.startsWith('/') ? `${API_ORIGIN}${source}` : `${API_ORIGIN}/${source}`;
 }
 
-function getNoTiangRondaan(asset: Asset) {
-  const flexibleAsset = asset as AssetWithOptionalDisplayData;
-  const metadata = asset.metadata && typeof asset.metadata === 'object' ? asset.metadata : {};
-  const value =
-    flexibleAsset.noTiangRondaan ??
-    flexibleAsset.no_tiang_rondaan ??
-    getMetadataValue(metadata, [
-      'noTiangRondaan',
-      'no_tiang_rondaan',
-      'No Tiang Rondaan',
-      'noTiang',
-      'poleNumber',
-    ]);
-
-  return normalizeDisplayValue(value) ?? 'Not available';
-}
-
-function getMetadataValue(metadata: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    if (key in metadata) {
-      return metadata[key];
-    }
-  }
-
-  return undefined;
-}
-
-function normalizeDisplayValue(value: unknown) {
-  if (typeof value === 'string') {
-    const trimmedValue = value.trim();
-
-    return trimmedValue || null;
-  }
-
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return String(value);
-  }
-
-  return null;
-}
-
 function createVisitRollup(visit: SiteVisit, assets: Asset[]): SiteVisitSummary {
   const totalAssets =
     getNumericRollupValue(visit.summary?.totalAssets, visit.totalAssets) ?? assets.length;
@@ -734,21 +728,6 @@ function createVisitRollup(visit: SiteVisit, assets: Asset[]): SiteVisitSummary 
     defectsFound,
     completionPercentage,
   };
-}
-
-function getSubmittedInspectionAssetIds(visit: SiteVisit) {
-  const assetIds = new Set<string>();
-
-  for (const inspection of visit.inspections ?? []) {
-    if (
-      getInspectionQueueStatusGroup(inspection.completionStatus) === 'COMPLETED' ||
-      inspection.submittedAt
-    ) {
-      assetIds.add(inspection.assetId);
-    }
-  }
-
-  return assetIds;
 }
 
 function getNumericRollupValue(...values: Array<number | undefined>) {
@@ -1000,6 +979,9 @@ const styles = StyleSheet.create({
   },
   assetList: {
     gap: 8,
+  },
+  viewAllAssetsWrap: {
+    marginTop: uiTheme.spacing.section,
   },
   assetRow: {
     minHeight: 66,

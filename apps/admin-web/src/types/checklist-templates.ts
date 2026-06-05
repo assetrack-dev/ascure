@@ -71,6 +71,13 @@ export interface ChecklistTemplateOption {
   label: string;
   value: string;
   prefix?: string;
+  /**
+   * When true, selecting this option marks the checklist answer as a defect
+   * (result = FAIL) on the mobile app, regardless of the option wording. This is
+   * the explicit, language-independent defect signal for SELECT / MULTI_SELECT
+   * items (replaces fragile keyword guessing for Bahasa Malaysia labels).
+   */
+  isDefect?: boolean;
 }
 
 export type ChecklistShowIfOperator =

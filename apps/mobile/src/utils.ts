@@ -209,9 +209,17 @@ export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
     const label = 'label' in option && typeof option.label === 'string' ? option.label.trim() : '';
     const value = 'value' in option && typeof option.value === 'string' ? option.value.trim() : '';
     const prefix = 'prefix' in option && typeof option.prefix === 'string' ? option.prefix.trim() : '';
+    const isDefect = 'isDefect' in option && option.isDefect === true;
 
     if (label && value) {
-      options.push(prefix ? { label, value, prefix } : { label, value });
+      const normalizedOption: SelectOption = { label, value };
+      if (prefix) {
+        normalizedOption.prefix = prefix;
+      }
+      if (isDefect) {
+        normalizedOption.isDefect = true;
+      }
+      options.push(normalizedOption);
     }
   }
 
@@ -1020,40 +1028,119 @@ function getInspectionItemResultValue(
   return hasInspectionDraftValue(item, rawValue) ? 'PASS' : 'NA';
 }
 
+// Best-effort defect keywords used ONLY when a template item has no option
+// explicitly flagged as a defect (see inferSelectInspectionResult). Covers both
+// English and Bahasa Malaysia / utility-field vocabulary so legacy templates
+// authored before per-option defect flags still surface defects in the field.
+const INSPECTION_DEFECT_KEYWORD_TOKENS = new Set<string>([
+  // English
+  'no',
+  'fail',
+  'failed',
+  'failure',
+  'defect',
+  'defects',
+  'defective',
+  'bad',
+  'poor',
+  'abnormal',
+  'reject',
+  'rejected',
+  'unsatisfactory',
+  'fault',
+  'faulty',
+  'damaged',
+  'damage',
+  'broken',
+  'crack',
+  'cracked',
+  'rust',
+  'rusty',
+  'rusted',
+  'corroded',
+  'corrosion',
+  'leak',
+  'leaking',
+  'missing',
+  'loose',
+  'worn',
+  'burnt',
+  'burned',
+  'overheat',
+  'overheated',
+  'bent',
+  'tilt',
+  'tilted',
+  'ng', // "not good" shorthand commonly used on field forms
+  // Bahasa Malaysia
+  'tidak',
+  'tak',
+  'rosak',
+  'kerosakan',
+  'teruk',
+  'gagal',
+  'bahaya',
+  'merbahaya',
+  'retak',
+  'pecah',
+  'patah',
+  'karat',
+  'berkarat',
+  'hakis',
+  'terhakis',
+  'bocor',
+  'longgar',
+  'kendur',
+  'kotor',
+  'usang',
+  'koyak',
+  'lemah',
+  'condong',
+  'senget',
+]);
+
+function isNotApplicableSelection(normalizedSelection: string): boolean {
+  return (
+    /\bn\/?a\b/.test(normalizedSelection) ||
+    normalizedSelection.includes('not applicable') ||
+    normalizedSelection.includes('not_applicable') ||
+    normalizedSelection.includes('tidak berkenaan') ||
+    normalizedSelection.includes('tidak berkaitan')
+  );
+}
+
 function inferSelectInspectionResult(
   item: InspectionTemplateItem,
   selectedValue: string,
 ): InspectionItemResultValue {
-  const selectedLabel = getSelectOptionLabel(item, selectedValue);
-  const normalizedSelection = [selectedValue, selectedLabel ?? ''].join(' ').toLowerCase();
-  const tokens = normalizedSelection
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
+  const options = normalizeSelectOptions(item.optionsJson);
+  const selectedOption = options.find((option) => option.value === selectedValue);
 
-  if (
-    /\bn\/?a\b/.test(normalizedSelection) ||
-    normalizedSelection.includes('not applicable') ||
-    normalizedSelection.includes('not_applicable')
-  ) {
+  // 1) Explicit, admin-configured defect marker is authoritative and
+  //    language-independent — it always wins over keyword inference.
+  if (selectedOption?.isDefect) {
+    return 'FAIL';
+  }
+
+  const normalizedSelection = [selectedValue, selectedOption?.label ?? '']
+    .join(' ')
+    .toLowerCase();
+
+  // N/A is about applicability, not pass/fail — honour it regardless of config.
+  if (isNotApplicableSelection(normalizedSelection)) {
     return 'NA';
   }
 
-  if (
-    tokens.some((token) =>
-      [
-        'no',
-        'fail',
-        'failed',
-        'defect',
-        'defective',
-        'bad',
-        'abnormal',
-        'reject',
-        'rejected',
-        'unsatisfactory',
-      ].includes(token),
-    )
-  ) {
+  // 2) If the item has ANY explicitly flagged option, trust that configuration
+  //    fully: an unflagged selection is a PASS (no keyword guessing, which could
+  //    otherwise produce false positives against an intentional setup).
+  if (options.some((option) => option.isDefect)) {
+    return 'PASS';
+  }
+
+  // 3) Legacy / unconfigured templates: best-effort EN + Malay keyword inference.
+  const tokens = normalizedSelection.split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokens.some((token) => INSPECTION_DEFECT_KEYWORD_TOKENS.has(token))) {
     return 'FAIL';
   }
 

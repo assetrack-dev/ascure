@@ -54,6 +54,10 @@ export class ChecklistTemplateOptionInputDto {
   @IsString()
   @MaxLength(50)
   prefix?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isDefect?: boolean;
 }
 
 export const CHECKLIST_TEMPLATE_SHOW_IF_OPERATORS = [

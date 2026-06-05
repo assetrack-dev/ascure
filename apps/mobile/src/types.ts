@@ -173,7 +173,10 @@ export interface AssetDetailInspection {
   cycleNumber: number;
   status: string;
   submittedAt: string;
+  createdAt?: string;
   remarks: string;
+  totalDefects?: number;
+  items?: InspectionItemResult[];
   images: AssetDetailImage[];
 }
 
@@ -225,6 +228,7 @@ export interface InspectionSummary {
   asset?: Pick<Asset, 'id' | 'assetCode' | 'name'>;
   inspectionImages?: InspectionImage[];
   images?: InspectionImage[];
+  itemResults?: InspectionItemResult[];
 }
 
 export interface SiteVisitSummary {
@@ -740,6 +744,12 @@ export interface SelectOption {
   label: string;
   value: string;
   prefix?: string;
+  /**
+   * Explicit, language-independent defect marker configured in the admin
+   * template builder. When true, choosing this option records the answer as a
+   * defect (result = FAIL). Takes precedence over keyword inference.
+   */
+  isDefect?: boolean;
 }
 
 export type ChecklistTemplateScopeLevel =
