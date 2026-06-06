@@ -927,8 +927,9 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   async function runGovernanceAction(
     action: (token: string, defectId: string) => Promise<DefectDetail>,
     successMessage: string,
+    canRun: boolean,
   ) {
-    if (!session?.token || !defect || isReadOnly) {
+    if (!session?.token || !defect || !canRun) {
       return;
     }
 
@@ -960,6 +961,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     void runGovernanceAction(
       (token, id) => verifyDefect(token, id, verificationRemarks.trim() || null),
       "Defect verified.",
+      canGovernQa,
     );
   }
 
@@ -967,6 +969,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     void runGovernanceAction(
       (token, id) => rejectDefect(token, id, verificationRemarks.trim() || null),
       "Defect rejected.",
+      canGovernQa,
     );
   }
 
@@ -978,6 +981,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
           maintenanceNotes: completionRemarks.trim() || null,
         }),
       "Maintenance completion recorded.",
+      canCompleteMaintenance,
     );
   }
 
@@ -985,6 +989,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     void runGovernanceAction(
       (token, id) => verifyDefectClosure(token, id, closureRemarks.trim() || null),
       "Closure verified.",
+      canGovernQa,
     );
   }
 
