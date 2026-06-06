@@ -20,5 +20,21 @@ allprojects {
   }
 }
 
+// --- Windows/NDK C++ STL link fix -------------------------------------------
+// The NDK links shared libs with -Wl,--no-undefined but does not auto-add the
+// C++ shared runtime here, so libc++ symbols (__cxa_*, operator new, std::*)
+// come up undefined and the native build fails. Inject CMAKE_PROJECT_INCLUDE
+// into every native build (third-party modules AND the app's generated codegen
+// targets) so force-cxx-shared.cmake adds `link_libraries(c++_shared)` globally.
+def cxxSharedFixFile = new File(rootDir, "force-cxx-shared.cmake").absolutePath.replace("\\", "/")
+def applyCxxSharedFix = { project ->
+  project.android.defaultConfig.externalNativeBuild.cmake.arguments "-DCMAKE_PROJECT_INCLUDE=${cxxSharedFixFile}"
+}
+subprojects { sub ->
+  sub.plugins.withId("com.android.library") { applyCxxSharedFix(sub) }
+  sub.plugins.withId("com.android.application") { applyCxxSharedFix(sub) }
+}
+// ----------------------------------------------------------------------------
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

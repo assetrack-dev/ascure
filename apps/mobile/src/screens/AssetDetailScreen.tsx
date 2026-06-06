@@ -255,6 +255,10 @@ export function AssetDetailScreen() {
   }
 
   const latestInspection = asset.latestInspection;
+  // Show only answered findings — hide N/A and blank/unanswered checklist items.
+  const answeredChecklistItems = (latestInspection?.items ?? []).filter(
+    (item) => item.result === 'PASS' || item.result === 'FAIL',
+  );
   const gpsAccuracyMeters = getMetadataNumber(asset.metadata, 'gpsAccuracyMeters');
 
   return (
@@ -377,11 +381,11 @@ export function AssetDetailScreen() {
                 {latestInspection.remarks || 'No remarks recorded.'}
               </Text>
 
-              {latestInspection.items && latestInspection.items.length > 0 ? (
+              {answeredChecklistItems.length > 0 ? (
                 <>
                   <Text style={styles.fieldLabel}>Checklist Answers</Text>
                   <View style={styles.checklistList}>
-                    {latestInspection.items.map((item) => (
+                    {answeredChecklistItems.map((item) => (
                       <View
                         key={item.id}
                         style={[styles.checklistRow, item.isDefect && styles.checklistRowDefect]}

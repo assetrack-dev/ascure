@@ -58,7 +58,10 @@ export function getNoTiangRondaan(asset: Asset): string | null {
       'NTR',
     ]);
 
-  return normalizeDisplayValue(value);
+  // For SAVR assets NO TIANG RONDAAN is captured in assetCode (see AddAssetScreen:
+  // assetCodeLabel = 'NO TIANG RONDAAN'), so fall back to it when no explicit
+  // field/metadata value exists. This is what makes it the row title.
+  return normalizeDisplayValue(value) ?? normalizeDisplayValue(asset.assetCode);
 }
 
 /**
