@@ -1,6 +1,8 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { isQaActor } from '../common/authorization/qa-actor';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
@@ -42,6 +44,14 @@ export class AuthService {
       role: user.role,
     });
 
+    const canGovernQa = await this.resolveCanGovernQa({
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    });
+
     return {
       access_token: accessToken,
       user: {
@@ -50,8 +60,29 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        canGovernQa,
       },
     };
+  }
+
+  /**
+   * Mirrors the server-side authority enforced for defect QA governance
+   * (verify/reject/closure): the action runs `assertCanMutate` (blocks
+   * VIEWER/CLIENT) AND `assertCanGovernQa` (ADMIN or an ASCURE QA actor with an
+   * active QA_VALIDATION capability). Exposing this as a flag lets the admin UI
+   * enable QA controls exactly when the API would authorize them, instead of
+   * guessing from role. It does NOT change/weaken any API authorization.
+   */
+  private async resolveCanGovernQa(user: RequestUser): Promise<boolean> {
+    if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
+      return false;
+    }
+
+    if (user.role === UserRole.ADMIN) {
+      return true;
+    }
+
+    return isQaActor(this.prisma, user);
   }
 
   async me(user: RequestUser) {
@@ -77,6 +108,9 @@ export class AuthService {
       throw new UnauthorizedException('Unauthorized.');
     }
 
-    return currentUser;
+    return {
+      ...currentUser,
+      canGovernQa: await this.resolveCanGovernQa(user),
+    };
   }
 }

@@ -20,7 +20,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { API_ORIGIN, ApiError } from "@/lib/api";
-import { clearStoredSession, readStoredSession } from "@/lib/auth";
+import { clearStoredSession, readStoredSession, refreshStoredSessionUser } from "@/lib/auth";
 import {
   addDefectComment,
   completeDefectMaintenance,
@@ -745,16 +745,44 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       if (storedSession.user?.role === "ADMIN") {
         void loadAssignmentOptions(storedSession.token);
       }
+
+      // Refresh the current-user payload so newly-granted QA authority
+      // (canGovernQa) takes effect on this page without a full re-login.
+      // Non-fatal: on failure we keep the cached session (loadDefect handles
+      // an invalid token).
+      void refreshStoredSessionUser(storedSession.token)
+        .then((user) => {
+          if (user) {
+            setSession((current) => (current ? { ...current, user } : current));
+          }
+        })
+        .catch(() => {
+          /* keep cached session on transient/offline errors */
+        });
     }
   }, [loadAssignmentOptions, loadDefect]);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
+  // Defect QA governance authority (verify / reject / closure) is provided by the
+  // server (ADMIN, or an ASCURE QA actor holding an active QA_VALIDATION
+  // capability). Role alone is insufficient here because MANAGER is normalized to
+  // VIEWER client-side. ADMIN is OR'd in for resilience against sessions persisted
+  // before the flag existed.
+  const canGovernQa =
+    session?.user?.role === "ADMIN" || Boolean(session?.user?.canGovernQa);
   const canSaveStatus = Boolean(session?.token && defect && !isReadOnly && !isSavingStatus);
   const canSaveAssignment = Boolean(
     session?.token && defect && !isReadOnly && !isSavingAssignment,
   );
   const canSaveDueDate = Boolean(session?.token && defect && !isReadOnly && !isSavingDueDate);
+  // QA governance controls (verify / reject / closure + their notes) follow the
+  // server QA authority so the buttons enable exactly when the API would allow.
   const canSaveGovernance = Boolean(
+    session?.token && defect && canGovernQa && !isSavingGovernance,
+  );
+  // Maintenance completion uses a different API guard (assertCanCompleteMaintenance),
+  // so keep its prior authority and don't enable a button the API would reject.
+  const canCompleteMaintenance = Boolean(
     session?.token && defect && !isReadOnly && !isSavingGovernance,
   );
   const canAddComment = Boolean(
@@ -1009,7 +1037,11 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   <ShieldCheck size={14} />
-                  {isReadOnly ? "Read-only" : "Full access"}
+                  {session?.user?.role === "ADMIN"
+                    ? "Full access"
+                    : canGovernQa
+                      ? "QA access"
+                      : "Read-only"}
                 </span>
                 {defect ? <SeverityBadge severity={defect.severity} /> : null}
                 {defect ? <StatusBadge status={defect.status} /> : null}
@@ -1151,7 +1183,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                         <button
                           type="button"
                           onClick={handleMaintenanceCompletion}
-                          disabled={!canSaveGovernance}
+                          disabled={!canCompleteMaintenance}
                           className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                         >
                           <Wrench size={14} />
@@ -1443,7 +1475,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           <textarea
                             value={verificationRemarks}
                             onChange={(event) => setVerificationRemarks(event.target.value)}
-                            disabled={isReadOnly || isSavingGovernance}
+                            disabled={!canGovernQa || isSavingGovernance}
                             rows={3}
                             className={`mt-2 resize-none ${controlClassName}`}
                           />
@@ -1515,7 +1547,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                         <button
                           type="button"
                           onClick={handleMaintenanceCompletion}
-                          disabled={!canSaveGovernance}
+                          disabled={!canCompleteMaintenance}
                           className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                         >
                           <Wrench size={16} />
@@ -1529,7 +1561,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           <textarea
                             value={closureRemarks}
                             onChange={(event) => setClosureRemarks(event.target.value)}
-                            disabled={isReadOnly || isSavingGovernance}
+                            disabled={!canGovernQa || isSavingGovernance}
                             rows={3}
                             className={`mt-2 resize-none ${controlClassName}`}
                           />

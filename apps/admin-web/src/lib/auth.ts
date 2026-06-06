@@ -2,6 +2,7 @@
 
 import type { ApiUser, AuthSession, AuthUser } from "@/types/auth";
 import { normalizeRole } from "@/lib/roles";
+import { apiRequest } from "@/lib/api";
 
 const TOKEN_STORAGE_KEY = "ascure:admin-web:token";
 const USER_STORAGE_KEY = "ascure:admin-web:user";
@@ -21,7 +22,30 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     name: user.name,
     role: normalizeRole(user.role),
     sourceRole: sourceRole && sourceRole !== normalizeRole(user.role) ? sourceRole : undefined,
+    canGovernQa: "canGovernQa" in user ? user.canGovernQa : undefined,
   };
+}
+
+/**
+ * Re-fetches the current user from /auth/me and updates the stored user, so
+ * server-computed permission flags (e.g. canGovernQa) reflect the latest server
+ * state without a full logout/login. Returns the refreshed user. Throws if the
+ * request fails — callers treat network errors as non-fatal (keep the cached
+ * session); a 401 means the token is no longer valid.
+ */
+export async function refreshStoredSessionUser(token: string): Promise<AuthUser | null> {
+  const apiUser = await apiRequest<ApiUser>("/auth/me", { token });
+  const user = normalizeAuthUser(apiUser);
+
+  if (typeof window !== "undefined") {
+    if (user) {
+      window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    } else {
+      window.localStorage.removeItem(USER_STORAGE_KEY);
+    }
+  }
+
+  return user;
 }
 
 export function readStoredSession(): AuthSession | null {
