@@ -106,3 +106,67 @@ export function login(email: string, password: string) {
     }),
   });
 }
+
+export interface BlobResponse {
+  blob: Blob;
+  filename: string | null;
+}
+
+/**
+ * Like {@link apiRequest} but for binary endpoints (e.g. Excel downloads).
+ * Attaches the bearer token, surfaces API errors as {@link ApiError}, and
+ * returns the response Blob plus the server-suggested filename (parsed from the
+ * Content-Disposition header when exposed).
+ */
+export async function apiRequestBlob(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<BlobResponse> {
+  const headers = new Headers(options.headers);
+
+  if (options.token) {
+    headers.set("Authorization", `Bearer ${options.token}`);
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new ApiError(
+      `Unable to reach the ASCURE API at ${API_BASE_URL}. Make sure the backend is running.`,
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    const payload = await readBody(response);
+    throw new ApiError(errorMessage(payload, "Request failed."), response.status, payload);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: parseContentDispositionFilename(response.headers.get("Content-Disposition")),
+  };
+}
+
+function parseContentDispositionFilename(headerValue: string | null): string | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(headerValue);
+
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}

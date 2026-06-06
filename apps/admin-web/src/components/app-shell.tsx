@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarClock,
   ClipboardList,
+  FileSpreadsheet,
   FolderKanban,
   GitBranch,
   LayoutDashboard,
@@ -19,9 +20,18 @@ import {
   Tags,
   Users,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { AuthUser } from "@/types/auth";
 import { roleLabel } from "@/lib/roles";
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+  requiresReporting?: boolean;
+};
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -31,7 +41,7 @@ interface AppShellProps {
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
-  const navItems = [
+  const navItems: NavItem[] = [
     {
       href: "/dashboard",
       label: "Dashboard",
@@ -111,6 +121,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: Bug,
     },
     {
+      href: "/reports",
+      label: "Reports",
+      icon: FileSpreadsheet,
+      requiresReporting: true,
+    },
+    {
       href: "/checklist-templates",
       label: "Checklists",
       icon: ClipboardList,
@@ -123,7 +139,17 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       adminOnly: true,
     },
   ];
-  const visibleNavItems = navItems.filter((item) => !item.adminOnly || user?.role === "ADMIN");
+  const visibleNavItems = navItems.filter((item) => {
+    if (item.adminOnly && user?.role !== "ADMIN") {
+      return false;
+    }
+
+    if (item.requiresReporting && user?.canReport !== true && user?.role !== "ADMIN") {
+      return false;
+    }
+
+    return true;
+  });
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] lg:grid lg:grid-cols-[272px_1fr]">

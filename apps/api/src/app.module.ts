@@ -13,6 +13,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { EnterpriseModule } from './enterprise/enterprise.module';
 import { TeamsModule } from './teams/teams.module';
 import { OperationalSessionsModule } from './operational-sessions/operational-sessions.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { OperationalSessionsModule } from './operational-sessions/operational-se
     EnterpriseModule,
     TeamsModule,
     OperationalSessionsModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

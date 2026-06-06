@@ -7,6 +7,7 @@ export interface ApiUser {
   name: string;
   role: string;
   canGovernQa?: boolean;
+  canReport?: boolean;
 }
 
 export interface AuthUser {
@@ -23,6 +24,12 @@ export interface AuthUser {
    * MANAGER is normalized to VIEWER client-side, so role alone is insufficient).
    */
   canGovernQa?: boolean;
+  /**
+   * Server-provided authority to access reporting / export features — ADMIN or
+   * a user with an effective REPORTING capability. Mirrors the API gate so the
+   * UI can show the Reports area exactly when the API would authorize it.
+   */
+  canReport?: boolean;
 }
 
 export interface AuthSession {

@@ -3,7 +3,9 @@ import { JwtService } from '@nestjs/jwt';
 import { UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
+import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { PrismaService } from '../prisma/prisma.service';
+import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 
@@ -12,6 +14,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly usersService: UsersService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -44,13 +47,18 @@ export class AuthService {
       role: user.role,
     });
 
-    const canGovernQa = await this.resolveCanGovernQa({
+    const requestUser: RequestUser = {
       id: user.id,
       tenantId: user.tenantId,
       email: user.email,
       name: user.name,
       role: user.role,
-    });
+    };
+
+    const [canGovernQa, canReport] = await Promise.all([
+      this.resolveCanGovernQa(requestUser),
+      resolveCanReport(this.usersService, requestUser),
+    ]);
 
     return {
       access_token: accessToken,
@@ -61,6 +69,7 @@ export class AuthService {
         name: user.name,
         role: user.role,
         canGovernQa,
+        canReport,
       },
     };
   }
@@ -108,9 +117,15 @@ export class AuthService {
       throw new UnauthorizedException('Unauthorized.');
     }
 
+    const [canGovernQa, canReport] = await Promise.all([
+      this.resolveCanGovernQa(user),
+      resolveCanReport(this.usersService, user),
+    ]);
+
     return {
       ...currentUser,
-      canGovernQa: await this.resolveCanGovernQa(user),
+      canGovernQa,
+      canReport,
     };
   }
 }
