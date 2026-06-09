@@ -1,7 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, SwitchState, TieEdgeKind, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { renderNoTiangRondaan } from '../common/rondaan';
+import { CreateTieEdgeDto } from './dto/create-tie-edge.dto';
 
 const MEMBERSHIP_SELECT = {
   sequenceIndex: true,
@@ -15,6 +23,13 @@ type RenderablePole = {
   noTiangLama: string | null;
   feederMemberships: { sequenceIndex: number; branchSuffix: string; feeder: { code: string } }[];
 };
+
+const POLE_SELECT = {
+  id: true,
+  assetCode: true,
+  noTiangLama: true,
+  feederMemberships: { select: MEMBERSHIP_SELECT },
+} as const;
 
 @Injectable()
 export class NetworkService {
@@ -54,7 +69,7 @@ export class NetworkService {
       }),
       this.prisma.networkTieEdge.findMany({
         where: { tenantId: user.tenantId, fromAsset: { substationId } },
-        select: { fromAssetId: true, toAssetId: true, kind: true, switchState: true },
+        select: { id: true, fromAssetId: true, toAssetId: true, kind: true, switchState: true },
       }),
     ]);
 
@@ -82,6 +97,7 @@ export class NetworkService {
       edges: {
         radial,
         tie: tieEdges.map((edge) => ({
+          id: edge.id,
           from: edge.fromAssetId,
           to: edge.toAssetId,
           kind: edge.kind,
@@ -94,19 +110,12 @@ export class NetworkService {
   /**
    * Radial isolation: the poles fed THROUGH `assetId` (its descendants in the
    * fed-from tree) — i.e. what de-energizes if this pole's supply is cut.
-   * Breadth-first with a cycle guard (defensive against bad data). NOP back-feed
-   * is not applied (those points are normally open).
+   * Breadth-first with a cycle guard. NOP back-feed is not applied here.
    */
   async getDownstream(user: RequestUser, assetId: string) {
     const root = await this.prisma.asset.findFirst({
       where: { id: assetId, tenantId: user.tenantId },
-      select: {
-        id: true,
-        substationId: true,
-        assetCode: true,
-        noTiangLama: true,
-        feederMemberships: { select: MEMBERSHIP_SELECT },
-      },
+      select: { ...POLE_SELECT, substationId: true },
     });
     if (!root) {
       throw new NotFoundException('Asset not found.');
@@ -114,13 +123,7 @@ export class NetworkService {
 
     const assets = await this.prisma.asset.findMany({
       where: { substationId: root.substationId },
-      select: {
-        id: true,
-        fedFromAssetId: true,
-        assetCode: true,
-        noTiangLama: true,
-        feederMemberships: { select: MEMBERSHIP_SELECT },
-      },
+      select: { ...POLE_SELECT, fedFromAssetId: true },
     });
 
     const byId = new Map(assets.map((asset) => [asset.id, asset]));
@@ -146,16 +149,146 @@ export class NetworkService {
       queue.push(...(childrenByParent.get(id) ?? []));
     }
 
-    const render = (asset: RenderablePole) => ({
+    return {
+      root: this.renderPole(root),
+      deEnergizedCount: order.length,
+      deEnergized: order.map((id) => this.renderPole(byId.get(id) as RenderablePole)),
+    };
+  }
+
+  /** Capture a tie-edge (a NOP by default) between two poles — the back-feed
+   *  links that make the network more than a set of radial trees (north-star §3). */
+  async createTieEdge(user: RequestUser, dto: CreateTieEdgeDto) {
+    this.assertCanMutate(user);
+
+    if (dto.fromAssetId === dto.toAssetId) {
+      throw new BadRequestException('A tie-edge needs two distinct assets.');
+    }
+    const endpoints = await this.prisma.asset.findMany({
+      where: { id: { in: [dto.fromAssetId, dto.toAssetId] }, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    if (endpoints.length !== 2) {
+      throw new NotFoundException('Both tie-edge assets must exist in your tenant.');
+    }
+    if (dto.deviceAssetId) {
+      const device = await this.prisma.asset.findFirst({
+        where: { id: dto.deviceAssetId, tenantId: user.tenantId },
+        select: { id: true },
+      });
+      if (!device) {
+        throw new NotFoundException('NOP device asset not found.');
+      }
+    }
+
+    try {
+      return await this.prisma.networkTieEdge.create({
+        data: {
+          tenantId: user.tenantId,
+          fromAssetId: dto.fromAssetId,
+          toAssetId: dto.toAssetId,
+          deviceAssetId: dto.deviceAssetId ?? null,
+          kind: dto.kind ?? TieEdgeKind.NOP,
+          switchState: dto.switchState ?? SwitchState.OPEN,
+          notes: dto.notes ?? null,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('A tie-edge of this kind already exists between these assets.');
+      }
+      throw error;
+    }
+  }
+
+  /** Open / close a tie-edge (the switching action that drives back-feed). */
+  async setTieEdgeState(user: RequestUser, id: string, switchState: SwitchState) {
+    this.assertCanMutate(user);
+    const edge = await this.prisma.networkTieEdge.findFirst({
+      where: { id, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    if (!edge) {
+      throw new NotFoundException('Tie-edge not found.');
+    }
+    return this.prisma.networkTieEdge.update({ where: { id }, data: { switchState } });
+  }
+
+  /**
+   * Feeder-level isolation (the "killer" view): opening this feeder's breaker
+   * de-energizes every pole on it (radial), and the NOP tie-edges with exactly
+   * one de-energized endpoint are the back-feed options — closing one re-feeds
+   * the dead section from a still-energized neighbour.
+   */
+  async getFeederIsolation(user: RequestUser, feederId: string) {
+    const feeder = await this.prisma.feeder.findFirst({
+      where: { id: feederId, tenantId: user.tenantId },
+      select: { id: true, code: true, name: true },
+    });
+    if (!feeder) {
+      throw new NotFoundException('Feeder not found.');
+    }
+
+    const memberships = await this.prisma.poleFeederMembership.findMany({
+      where: { feederId },
+      select: { asset: { select: POLE_SELECT } },
+    });
+    const deEnergized = memberships.map((m) => m.asset);
+    const deEnergizedIds = new Set(deEnergized.map((asset) => asset.id));
+
+    const tieEdges = deEnergizedIds.size
+      ? await this.prisma.networkTieEdge.findMany({
+          where: {
+            tenantId: user.tenantId,
+            OR: [
+              { fromAssetId: { in: [...deEnergizedIds] } },
+              { toAssetId: { in: [...deEnergizedIds] } },
+            ],
+          },
+          select: {
+            id: true,
+            kind: true,
+            switchState: true,
+            fromAssetId: true,
+            toAssetId: true,
+            fromAsset: { select: POLE_SELECT },
+            toAsset: { select: POLE_SELECT },
+          },
+        })
+      : [];
+
+    const backfeed = tieEdges
+      .filter((edge) => deEnergizedIds.has(edge.fromAssetId) !== deEnergizedIds.has(edge.toAssetId))
+      .map((edge) => {
+        const fromDead = deEnergizedIds.has(edge.fromAssetId);
+        return {
+          tieEdgeId: edge.id,
+          kind: edge.kind,
+          switchState: edge.switchState,
+          deEnergizedPole: this.renderPole(fromDead ? edge.fromAsset : edge.toAsset),
+          sourcePole: this.renderPole(fromDead ? edge.toAsset : edge.fromAsset),
+        };
+      });
+
+    return {
+      feeder,
+      deEnergizedCount: deEnergized.length,
+      deEnergized: deEnergized.map((asset) => this.renderPole(asset)),
+      backfeed,
+    };
+  }
+
+  private renderPole(asset: RenderablePole) {
+    return {
       id: asset.id,
       noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships) ?? asset.assetCode,
       noTiangLama: asset.noTiangLama,
-    });
-
-    return {
-      root: render(root),
-      deEnergizedCount: order.length,
-      deEnergized: order.map((id) => render(byId.get(id) as RenderablePole)),
     };
+  }
+
+  private assertCanMutate(user: RequestUser) {
+    if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
+      throw new ForbiddenException('This role is read-only for network actions.');
+    }
   }
 }
