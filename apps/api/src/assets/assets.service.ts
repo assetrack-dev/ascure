@@ -19,6 +19,12 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
+import {
+  buildNormalizedKey,
+  formatBranchSuffix,
+  getExpectedParentKey,
+  parsePoleCode,
+} from '@ascure/shared-utils';
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
   'An asset with this code already exists in this Pencawang.';
@@ -146,7 +152,17 @@ export class AssetsService {
           });
         }
 
-        return asset;
+        await this.syncPoleGraph(tx, {
+          tenantId: user.tenantId,
+          substationId: dto.substationId,
+          assetId: asset.id,
+          assetCode,
+        });
+
+        return tx.asset.findUniqueOrThrow({
+          where: { id: asset.id },
+          include: this.assetInclude(),
+        });
       });
 
       return this.attachRondaan(created);
@@ -519,15 +535,26 @@ export class AssetsService {
     }
 
     try {
-      return this.attachRondaan(
-        await this.prisma.asset.update({
-          where: {
-            id,
-          },
-          data,
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await tx.asset.update({ where: { id }, data });
+
+        if (data.assetCode !== undefined) {
+          await tx.poleFeederMembership.deleteMany({ where: { assetId: id } });
+          await this.syncPoleGraph(tx, {
+            tenantId: user.tenantId,
+            substationId: asset.substationId,
+            assetId: id,
+            assetCode: data.assetCode,
+          });
+        }
+
+        return tx.asset.findUniqueOrThrow({
+          where: { id },
           include: this.assetInclude(),
-        }),
-      );
+        });
+      });
+
+      return this.attachRondaan(updated);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -578,6 +605,86 @@ export class AssetsService {
 
   private attachRondaan<T extends { feederMemberships: StoredMembership[] }>(asset: T) {
     return { ...asset, noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships) };
+  }
+
+  /**
+   * Derive + persist the pole's graph structure from its assetCode (the RONDAAN
+   * string) — north-star §3 "store the structure". Parses assetCode via the
+   * shared grammar, upserts a Feeder per feeder token + a PoleFeederMembership
+   * per segment, then best-effort pre-fills the fed-from edge from the primary
+   * segment's parent (which must already exist). A non-pole / unparseable code
+   * yields no memberships. Idempotent (upsert by assetId+feeder).
+   */
+  private async syncPoleGraph(
+    tx: Prisma.TransactionClient,
+    params: { tenantId: string; substationId: string; assetId: string; assetCode: string },
+  ): Promise<void> {
+    const { tenantId, substationId, assetId, assetCode } = params;
+    const memberships = parsePoleCode(assetCode).filter((parsed) => parsed.isValid);
+    if (memberships.length === 0) {
+      return;
+    }
+
+    const feederIdByCode = new Map<string, string>();
+    for (const membership of memberships) {
+      let feederId = feederIdByCode.get(membership.feeder);
+      if (!feederId) {
+        const feeder = await tx.feeder.upsert({
+          where: { substationId_code: { substationId, code: membership.feeder } },
+          create: { tenantId, substationId, code: membership.feeder },
+          update: {},
+        });
+        feederId = feeder.id;
+        feederIdByCode.set(membership.feeder, feederId);
+      }
+      const branchSuffix = formatBranchSuffix(membership.branchParts);
+      await tx.poleFeederMembership.upsert({
+        where: { assetId_feederId: { assetId, feederId } },
+        create: { assetId, feederId, sequenceIndex: membership.baseNumber, branchSuffix },
+        update: { sequenceIndex: membership.baseNumber, branchSuffix },
+      });
+    }
+
+    // Pre-fill fed-from from the primary (lowest) segment's parent. Observed-by-
+    // proxy and best-effort: the parent pole must already exist in this Pencawang.
+    const primary = [...memberships].sort(
+      (a, b) => a.feeder.localeCompare(b.feeder) || a.baseNumber - b.baseNumber,
+    )[0];
+    const parentKey =
+      primary.branchParts.length > 0
+        ? getExpectedParentKey(primary)
+        : primary.baseNumber > 1
+          ? buildNormalizedKey(primary.feeder, primary.baseNumber - 1)
+          : undefined;
+    if (!parentKey) {
+      return;
+    }
+    const parentAssetId = await this.findAssetIdByMembershipKey(tx, substationId, parentKey);
+    if (parentAssetId && parentAssetId !== assetId) {
+      await tx.asset.update({ where: { id: assetId }, data: { fedFromAssetId: parentAssetId } });
+    }
+  }
+
+  /** Resolve an asset by a normalized RONDAAN key (e.g. "A 2", "B 2/1") within a
+   *  Pencawang, via its stored membership. */
+  private async findAssetIdByMembershipKey(
+    tx: Prisma.TransactionClient,
+    substationId: string,
+    normalizedKey: string,
+  ): Promise<string | null> {
+    const [parsed] = parsePoleCode(normalizedKey).filter((entry) => entry.isValid);
+    if (!parsed) {
+      return null;
+    }
+    const membership = await tx.poleFeederMembership.findFirst({
+      where: {
+        sequenceIndex: parsed.baseNumber,
+        branchSuffix: formatBranchSuffix(parsed.branchParts),
+        feeder: { substationId, code: parsed.feeder },
+      },
+      select: { assetId: true },
+    });
+    return membership?.assetId ?? null;
   }
 
   private assetInclude() {
