@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
+import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
   'An asset with this code already exists in this Pencawang.';
@@ -91,7 +92,7 @@ export class AssetsService {
     }
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const created = await this.prisma.$transaction(async (tx) => {
         const existingAsset = await tx.asset.findFirst({
           where: {
             tenantId: user.tenantId,
@@ -147,6 +148,8 @@ export class AssetsService {
 
         return asset;
       });
+
+      return this.attachRondaan(created);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -180,6 +183,13 @@ export class AssetsService {
             code: true,
             name: true,
             location: true,
+          },
+        },
+        feederMemberships: {
+          select: {
+            sequenceIndex: true,
+            branchSuffix: true,
+            feeder: { select: { code: true } },
           },
         },
         inspections: {
@@ -242,6 +252,8 @@ export class AssetsService {
     return {
       id: asset.id,
       assetCode: asset.assetCode,
+      noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships),
+      noTiangLama: asset.noTiangLama,
       name: asset.name,
       assetType: asset.assetType.name,
       assetTypeId: asset.assetType.id,
@@ -389,15 +401,17 @@ export class AssetsService {
       throw new NotFoundException('Asset not found.');
     }
 
-    return this.prisma.asset.update({
-      where: {
-        id,
-      },
-      data: {
-        status: dto.status,
-      },
-      include: this.assetInclude(),
-    });
+    return this.attachRondaan(
+      await this.prisma.asset.update({
+        where: {
+          id,
+        },
+        data: {
+          status: dto.status,
+        },
+        include: this.assetInclude(),
+      }),
+    );
   }
 
   async update(user: RequestUser, id: string, dto: UpdateAssetDto) {
@@ -505,13 +519,15 @@ export class AssetsService {
     }
 
     try {
-      return await this.prisma.asset.update({
-        where: {
-          id,
-        },
-        data,
-        include: this.assetInclude(),
-      });
+      return this.attachRondaan(
+        await this.prisma.asset.update({
+          where: {
+            id,
+          },
+          data,
+          include: this.assetInclude(),
+        }),
+      );
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -560,7 +576,11 @@ export class AssetsService {
     };
   }
 
-  private assetInclude(): Prisma.AssetInclude {
+  private attachRondaan<T extends { feederMemberships: StoredMembership[] }>(asset: T) {
+    return { ...asset, noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships) };
+  }
+
+  private assetInclude() {
     return {
       assetType: {
         select: {
@@ -577,7 +597,14 @@ export class AssetsService {
           name: true,
         },
       },
-    };
+      feederMemberships: {
+        select: {
+          sequenceIndex: true,
+          branchSuffix: true,
+          feeder: { select: { code: true } },
+        },
+      },
+    } satisfies Prisma.AssetInclude;
   }
 
   private extractRemarks(

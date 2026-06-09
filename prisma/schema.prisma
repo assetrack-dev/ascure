@@ -297,6 +297,8 @@ model Tenant {
   operationalSessions OperationalSession[]
   images              Image[]
   operationalRegions  OperationalRegion[]
+  feeders             Feeder[]
+  networkTieEdges     NetworkTieEdge[]
 }
 
 model Department {
@@ -812,6 +814,7 @@ model Substation {
   updatedAt           DateTime    @updatedAt
   tenant              Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assets              Asset[]
+  feeders             Feeder[]
   siteVisits          SiteVisit[]
   fromRouteSiteVisits SiteVisit[] @relation("SiteVisitFromPencawang")
   toRouteSiteVisits   SiteVisit[] @relation("SiteVisitToPencawang")
@@ -851,12 +854,14 @@ model Asset {
   assetTypeId              String                    @db.Uuid
   assetCode                String                    @map("code")
   name                     String?
+  noTiangLama              String?
   latitude                 Float?
   longitude                Float?
   metadata                 Json?
   status                   AssetStatus               @default(ACTIVE)
   createdDuringVisitId     String?                   @db.Uuid
   createdByUserId          String?                   @db.Uuid
+  fedFromAssetId           String?                   @db.Uuid
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -864,6 +869,12 @@ model Asset {
   assetType                AssetType                 @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   createdDuringVisit       SiteVisit?                @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
   createdBy                User?                     @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  fedFrom                  Asset?                    @relation("AssetFedFrom", fields: [fedFromAssetId], references: [id], onDelete: SetNull)
+  fedAssets                Asset[]                   @relation("AssetFedFrom")
+  feederMemberships        PoleFeederMembership[]
+  tieEdgesFrom             NetworkTieEdge[]          @relation("TieEdgeFrom")
+  tieEdgesTo               NetworkTieEdge[]          @relation("TieEdgeTo")
+  tieEdgeDevices           NetworkTieEdge[]          @relation("TieEdgeDevice")
   siteVisitAssets          SiteVisitAsset[]
   operationalSessionAssets OperationalSessionAsset[]
   inspections              Inspection[]
@@ -875,6 +886,7 @@ model Asset {
   @@index([assetTypeId])
   @@index([createdDuringVisitId])
   @@index([createdByUserId])
+  @@index([fedFromAssetId])
 }
 
 model OperationalSessionAsset {
@@ -1138,6 +1150,7 @@ model Inspection {
   operationalScope     OperationalScope?
   requiresQAQC         Boolean?
   reportingGroup       String?
+  externalRef          String?
   submittedAt          DateTime?
   createdAt            DateTime                   @default(now())
   updatedAt            DateTime                   @updatedAt
@@ -1152,6 +1165,7 @@ model Inspection {
   images               Image[]
   inspectionImages     InspectionImage[]
 
+  @@unique([tenantId, externalRef])
   @@index([tenantId])
   @@index([siteVisitId])
   @@index([assetId])
@@ -1344,4 +1358,73 @@ model Image {
   @@index([assetId])
   @@index([inspectionId])
   @@index([inspectionResultId])
+}
+
+enum TieEdgeKind {
+  NOP
+}
+
+enum SwitchState {
+  OPEN
+  CLOSED
+}
+
+// --- Network graph spine (north-star §2-§3; docs/adr/0001-network-graph-storage-model.md) ---
+
+model Feeder {
+  id           String                 @id @default(uuid()) @db.Uuid
+  tenantId     String                 @db.Uuid
+  substationId String                 @db.Uuid
+  code         String
+  name         String?
+  isActive     Boolean                @default(true)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  substation   Substation             @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  memberships  PoleFeederMembership[]
+
+  @@unique([substationId, code])
+  @@index([tenantId])
+  @@index([substationId])
+}
+
+model PoleFeederMembership {
+  id            String   @id @default(uuid()) @db.Uuid
+  assetId       String   @db.Uuid
+  feederId      String   @db.Uuid
+  sequenceIndex Int
+  branchSuffix  String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  feeder        Feeder   @relation(fields: [feederId], references: [id], onDelete: Cascade)
+
+  @@unique([feederId, sequenceIndex, branchSuffix])
+  @@unique([assetId, feederId])
+  @@index([assetId])
+  @@index([feederId])
+}
+
+model NetworkTieEdge {
+  id            String      @id @default(uuid()) @db.Uuid
+  tenantId      String      @db.Uuid
+  fromAssetId   String      @db.Uuid
+  toAssetId     String      @db.Uuid
+  kind          TieEdgeKind @default(NOP)
+  switchState   SwitchState @default(OPEN)
+  deviceAssetId String?     @db.Uuid
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromAsset     Asset       @relation("TieEdgeFrom", fields: [fromAssetId], references: [id], onDelete: Cascade)
+  toAsset       Asset       @relation("TieEdgeTo", fields: [toAssetId], references: [id], onDelete: Cascade)
+  deviceAsset   Asset?      @relation("TieEdgeDevice", fields: [deviceAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([fromAssetId, toAssetId, kind])
+  @@index([tenantId])
+  @@index([fromAssetId])
+  @@index([toAssetId])
+  @@index([deviceAssetId])
 }

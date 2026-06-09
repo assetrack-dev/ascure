@@ -1,0 +1,115 @@
+# ASCURE — Build Sequence
+
+> The re-sequenced build plan. Turns north-star **§9 (codebase verdict)** into a
+> concrete, dependency-ordered roadmap, grounded in the code as it actually is.
+> Drafted 2026-06-09. Companion to [`ASCURE-north-star.md`](./ASCURE-north-star.md);
+> the north-star says *what ASCURE is*, this says *in what order we build it*.
+
+---
+
+## 1. Where the code actually is vs. the spine
+
+The platform shell is real; the **spine is not** — exactly the north-star verdict,
+confirmed by inspection:
+
+- **Pole = `Asset`**, flat under `Substation` — [`prisma/schema.prisma`](../prisma/schema.prisma)
+  `Asset` has no `parentId`, no feeder FK. NO TIANG RONDAAN is just `Asset.assetCode`
+  (a string); NO TIANG LAMA is `Asset.name`/metadata
+  ([`apps/mobile/src/assetDisplay.ts`](../apps/mobile/src/assetDisplay.ts)).
+- **The RONDAAN grammar is already codified** — [`apps/mobile/src/utils/feederSequence.ts`](../apps/mobile/src/utils/feederSequence.ts)
+  parses `<FEEDER> <INDEX>`, multi-feeder `&`, branch `/1`/`/1A`, **derives the
+  `fed-from` parent** (`parentKey`), validates sequences, and **builds the graph
+  edges** (`buildFeederLines`). But it is *ephemeral* — recomputed client-side from
+  the string every render, never persisted. **This is the north-star §3 inversion in
+  the flesh: today the string IS the structure; the north-star wants structure
+  stored, string rendered.**
+- **No `Feeder` model, no persisted edge, no NOP, no isolation.** `feederId` /
+  `feederRouteId` are loose `String?` on `SiteVisit` — not relations.
+- **Cycle is loose ints** — `SiteVisit.cycleNumber` + `Inspection.inspectionCycle`.
+  No first-class survey-cycle, no baseline/delta.
+- **Two heavy governance state machines** that the north-star collapses into one:
+  the `OperationalSession` machine (~1,533-line service, `DRAFT→…→QA_REVIEW→APPROVED`)
+  and the defect-QA apparatus (~3,301-line defects service, 9-state
+  `DefectLifecycleStatus`, `canGovernQa`).
+- **Document factory:** only F1 (Excel export) exists; QR01/02/03, Kelegaan,
+  schematic, isolation, visual reports do not.
+
+## 2. The re-sequenced build
+
+Honours north-star §9's order (**spine → governance → documents**) with one
+refinement the code makes obvious:
+
+> **"Relax governance" is not a standalone delete step.** The relaxed governance
+> *is* the one PE-survey lifecycle, which is also the cycle. North-star §4 says
+> that single machine replaces **both** OperationalSession **and** defect-QA. So
+> we don't delete-first and leave a gap — we **build the replacement lifecycle and
+> migrate onto it**, retiring the old machinery as part of that phase. That folds
+> "relax governance" into the cycle phase rather than floating it separately.
+
+### Phase 0 — Decide & de-risk *(this slice; no prod schema change)*
+The single most consequential decision is the graph storage model. Lock it in an
+ADR, and stand up the canonical RONDAAN grammar as a shared module — the cheapest,
+highest-leverage step, and it makes the Phase 1 migration safe.
+- ✅ This build-sequence doc.
+- ✅ [ADR 0001 — network graph storage model](./adr/0001-network-graph-storage-model.md).
+- ✅ `@ascure/shared-utils` canonical RONDAAN module: proven parser lifted from
+  mobile **+ the new formatter** (`formatRondaan` — structure→string, the "render
+  the label" half of §3 that did not exist anywhere). Compile- and round-trip-
+  verified against every §3 grammar example.
+- ⏳ **Deferred to the Phase 1 opener** (deliberately, to not destabilise the live
+  pilot build): wiring consumers onto the package — API import for the server-side
+  formatter, and the mobile swap (`metro` `watchFolders` + delete the duplicate
+  `feederSequence.ts`). Neither mobile nor admin consumes any workspace package
+  today, so this is net-new cross-toolchain plumbing and gets built + build-verified
+  with its consuming code, not rushed.
+
+### Phase 1 — Network graph *(the keystone, the differentiator)*
+Persist pole structure `(feeder, index, branch)` + LAMA as real fields; persist the
+radial **`fed-from` edge** (pre-filled from the parser, one-tap confirm per §3);
+server-side **canonical RONDAAN formatter** (from `@ascure/shared-utils`) validated
+to reproduce TNB's exact format against live data; **NOP tie-edges + switch state**.
+Unlocks map/schematic/isolation and report "from→to" sections (which *are* edges).
+*Opener: wire the shared module into API + mobile (the Phase 0 deferred item).*
+
+### Phase 2 — Annual cycle + the one lifecycle *(governance relaxes here)*
+Promote the cycle survey to first-class with
+`DALAM RONDAAN → RONDAAN SELESAI ⟲ PERLU PINDAAN → LAPORAN SELESAI → ARKIB`; fold the
+OperationalSession machine into it; demote defect-QA to inspector-owns-the-call + DC
+survey-level amendments; the **maintenance** lifecycle (`Open→In Progress→Repaired` +
+SEBELUM/SEMASA/SELEPAS) survives. Year-N re-survey opens a fresh survey against
+persisted poles and computes the **delta** — only possible *because* Phase 1
+persisted the structure.
+
+### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
+Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
+per-pole + per-defect visual reports; report-gen becomes the gate into
+LAPORAN SELESAI (ties back to Phase 2). Reuse F1's data resolver.
+
+### Deferred *(unchanged from §9)*
+SLA/health dashboards; AI validation (naming checks, anomaly detection,
+completeness, "what changed" diffs) — both get sharper once graph + cycle exist.
+
+## 3. Dependency rationale (why this order)
+
+- **Graph before cycle-delta:** "what changed year over year" (new/removed poles,
+  route/source change) is a diff of *persisted structure*. No persisted edge → no
+  honest delta. (The cycle *lifecycle* state machine could be built in parallel; the
+  cycle's *value* depends on the graph.)
+- **Cycle before/with governance-relax:** they share one state machine (see §2).
+- **Documents last:** schematic, isolation, and report "from→to" sections all render
+  *persisted edges*; report-gen gates the cycle lifecycle. Everything downstream
+  lands on the graph + cycle.
+
+## 4. Open questions / risks (carried into Phase 1)
+
+- **Multi-feeder convergence physical parent.** A pole `E 4 & F 2` has two *naming*
+  predecessors (per feeder) but one *physical* `fed-from` span. Confirm a single
+  `fedFromAssetId` is sufficient, or whether per-membership parents are needed for
+  isolation accuracy. (ADR 0001 §"Open questions".)
+- **Formatter fidelity at corpus scale.** `formatRondaan` reproduces every §3 grammar
+  example, but the combined-`CD` vs `&` collapse rule and converged-feeder ordering
+  (assumed alphabetical) must be re-validated against the **full KL dataset** once it
+  is in the DB (Phase 1 backfill is the moment to do this).
+- **Mobile build is finicky and the pilot is live.** The shared-module wiring touches
+  metro; it is sequenced into Phase 1 precisely so it is done + verified deliberately,
+  not under pilot pressure.
