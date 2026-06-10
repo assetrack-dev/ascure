@@ -17,6 +17,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
+import { inspectorOwnsDefects } from '../common/authorization/defect-governance';
 import {
   buildScopeContext,
   ScopeContext,
@@ -74,6 +75,18 @@ const GOVERNED_LIFECYCLE_TRANSITIONS: Record<
   [DefectLifecycleStatus.VERIFICATION_PENDING]: [DefectLifecycleStatus.CLOSED],
   [DefectLifecycleStatus.CLOSED]: [],
 };
+
+/**
+ * The lifecycle status a freshly-materialized defect opens in. Under the
+ * north-star "inspector owns the call" policy a detected defect is immediately
+ * maintenance-ready (VERIFIED) — no QA review gate. Legacy QA_GATED mode opens
+ * at DETECTED. See common/authorization/defect-governance.ts.
+ */
+function initialDefectLifecycleStatus(): DefectLifecycleStatus {
+  return inspectorOwnsDefects()
+    ? DefectLifecycleStatus.VERIFIED
+    : DefectLifecycleStatus.DETECTED;
+}
 
 const DEFECT_ACTOR_SELECT = {
   id: true,
@@ -1314,9 +1327,9 @@ export class DefectsService {
     dto: VerifyDefectClosureDto,
   ) {
     this.assertCanMutate(user);
-    await this.assertCanGovernQa(user, 'Closure verification');
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    await this.assertCanCloseDefect(user, defect);
     const now = new Date();
     const hasLegacyRemarks = Object.prototype.hasOwnProperty.call(
       dto,
@@ -1459,7 +1472,7 @@ export class DefectsService {
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
         severity: item.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: DefectLifecycleStatus.DETECTED,
+        lifecycleStatus: initialDefectLifecycleStatus(),
         createdAt: now,
         updatedAt: now,
       })),
@@ -1503,7 +1516,7 @@ export class DefectsService {
         inspectionItemResultId: itemResult.id,
         status: DefectStatus.OPEN,
         severity: itemResult.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: DefectLifecycleStatus.DETECTED,
+        lifecycleStatus: initialDefectLifecycleStatus(),
       },
       update: {},
     });
@@ -3214,6 +3227,41 @@ export class DefectsService {
     throw new ForbiddenException(
       `${action} requires ASCURA QA authority (ADMIN or QA validator).`,
     );
+  }
+
+  /**
+   * Authority to close a defect. Under the inspector-owns policy the assigned
+   * maintainer — or a DC / admin — may close: the maintainer's repair IS the
+   * authoritative call, so no separate QA actor is required (north-star §5/§6).
+   * Legacy QA_GATED mode keeps the QA-authority requirement.
+   */
+  private async assertCanCloseDefect(
+    user: RequestUser,
+    defect: {
+      assignedToUserId: string | null;
+      assignedUserId: string | null;
+      assignedToTeamId: string | null;
+      assignedTeamId: string | null;
+    },
+  ) {
+    if (!inspectorOwnsDefects()) {
+      await this.assertCanGovernQa(user, 'Closure verification');
+      return;
+    }
+
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+    if (await isQaActor(this.prisma, user)) {
+      return;
+    }
+    try {
+      await this.assertCanCompleteMaintenance(user, defect);
+    } catch {
+      throw new ForbiddenException(
+        'Closing a defect requires the assigned maintainer, a DC, or an admin.',
+      );
+    }
   }
 
   private assertCanAssignDefect(user: RequestUser) {

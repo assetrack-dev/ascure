@@ -124,6 +124,23 @@ pillar made real, purely additive:
   verify/reject/closure → inspector-owns-the-call); mobile RONDAAN SELESAI; report
   artifact (→ Phase 3).
 
+**Slice 2b.2 — inspector owns the defect call (landed 2026-06-10).** The north-star
+§5/§6/§10 governance relaxation, done *reversibly* (a policy flag, not a delete):
+- ✅ `DEFECT_GOVERNANCE_MODE` env policy (`common/authorization/defect-governance.ts`),
+  default **`INSPECTOR_OWNS`**, legacy **`QA_GATED`** retained.
+- ✅ Under INSPECTOR_OWNS a freshly-materialized defect opens **`VERIFIED`**
+  (maintenance-ready) instead of `DETECTED` — it skips the QA verify/reject gate, so
+  the inspector's detection is the authoritative call. New defects land in
+  "Maintenance Ready", not "Awaiting QA/QC". Verified end-to-end: a fresh `isDefect`
+  item result materialized straight to `VERIFIED`.
+- ✅ Closure no longer needs a separate QA actor — the **assigned maintainer** (or
+  DC / admin) may close (`assertCanCloseDefect`); QA_GATED keeps the QA requirement.
+- The legacy QA verify/reject/closure code paths are intact behind the flag (reversible),
+  and legacy `DETECTED` defects still flow through the QA queue. Nothing deleted.
+- **Still deferred:** formally **fold/retire OperationalSession** (already optional —
+  the survey lifecycle is its replacement); a UI indicator of the governance mode;
+  route/source-change delta; mobile RONDAAN SELESAI; report artifact (→ Phase 3).
+
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
 Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
 per-pole + per-defect visual reports; report-gen becomes the gate into
