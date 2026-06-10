@@ -18,6 +18,7 @@ import {
   PackageCheck,
   ShieldCheck,
   Tags,
+  Upload,
   Users,
   Waypoints,
 } from "lucide-react";
@@ -32,6 +33,7 @@ type NavItem = {
   icon: LucideIcon;
   adminOnly?: boolean;
   requiresReporting?: boolean;
+  requiresImport?: boolean;
 };
 
 interface AppShellProps {
@@ -133,6 +135,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       requiresReporting: true,
     },
     {
+      href: "/imports",
+      label: "Imports",
+      icon: Upload,
+      requiresImport: true,
+    },
+    {
       href: "/checklist-templates",
       label: "Checklists",
       icon: ClipboardList,
@@ -151,6 +159,10 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     }
 
     if (item.requiresReporting && user?.canReport !== true && user?.role !== "ADMIN") {
+      return false;
+    }
+
+    if (item.requiresImport && user?.canImport !== true && user?.role !== "ADMIN") {
       return false;
     }
 

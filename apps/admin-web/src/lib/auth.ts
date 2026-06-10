@@ -24,6 +24,7 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     sourceRole: sourceRole && sourceRole !== normalizeRole(user.role) ? sourceRole : undefined,
     canGovernQa: "canGovernQa" in user ? user.canGovernQa : undefined,
     canReport: "canReport" in user ? user.canReport : undefined,
+    canImport: "canImport" in user ? user.canImport : undefined,
   };
 }
 

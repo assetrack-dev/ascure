@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
+import { resolveCanImport } from '../common/authorization/import-actor';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
@@ -55,9 +56,10 @@ export class AuthService {
       role: user.role,
     };
 
-    const [canGovernQa, canReport] = await Promise.all([
+    const [canGovernQa, canReport, canImport] = await Promise.all([
       this.resolveCanGovernQa(requestUser),
       resolveCanReport(this.usersService, requestUser),
+      resolveCanImport(this.usersService, requestUser),
     ]);
 
     return {
@@ -70,6 +72,7 @@ export class AuthService {
         role: user.role,
         canGovernQa,
         canReport,
+        canImport,
       },
     };
   }
@@ -117,15 +120,17 @@ export class AuthService {
       throw new UnauthorizedException('Unauthorized.');
     }
 
-    const [canGovernQa, canReport] = await Promise.all([
+    const [canGovernQa, canReport, canImport] = await Promise.all([
       this.resolveCanGovernQa(user),
       resolveCanReport(this.usersService, user),
+      resolveCanImport(this.usersService, user),
     ]);
 
     return {
       ...currentUser,
       canGovernQa,
       canReport,
+      canImport,
     };
   }
 }

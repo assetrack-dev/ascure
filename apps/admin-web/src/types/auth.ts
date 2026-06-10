@@ -8,6 +8,7 @@ export interface ApiUser {
   role: string;
   canGovernQa?: boolean;
   canReport?: boolean;
+  canImport?: boolean;
 }
 
 export interface AuthUser {
@@ -30,6 +31,12 @@ export interface AuthUser {
    * UI can show the Reports area exactly when the API would authorize it.
    */
   canReport?: boolean;
+  /**
+   * Server-provided authority to run AppSheet / bulk imports — ADMIN or a user
+   * with an effective IMPORT capability. Mirrors the API gate so the UI shows the
+   * Imports area exactly when the API would authorize it.
+   */
+  canImport?: boolean;
 }
 
 export interface AuthSession {

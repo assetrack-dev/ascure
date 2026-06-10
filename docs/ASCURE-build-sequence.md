@@ -168,6 +168,12 @@ cycle is reframed around dates, not counters:
   first-class `noTiangLama`, and appear on the schematic / map / isolation views.
   Also removed the importer's eager `Defect` creation (it bypassed the materializer
   skip) — completing "imported defects = historical observation, not live work".
+- ✅ **Admin import UI (2026-06-10).** `/imports` page: upload a SAVR KLB `.xlsx`,
+  Validate (dry-run → plan: summary counts, template/file info, user/team/mainhead
+  resolution, per-row issues, blocking errors), then Commit. Multipart upload via a
+  dedicated `lib/imports.ts` (own fetch — `apiRequest` forces JSON). Gated by a new
+  server `canImport` flag (ADMIN or IMPORT capability) on login + `/auth/me`, mirroring
+  `canReport`; nav item gated to match.
 - **Still deferred:** per-pole (vs per-survey) last-inspected; defect-level delta.
 
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
