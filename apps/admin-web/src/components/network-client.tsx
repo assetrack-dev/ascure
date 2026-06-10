@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { GitBranch, Map as MapIcon, Plus, RefreshCw, X, Zap, ZapOff } from "lucide-react";
+import { Download, GitBranch, Map as MapIcon, Plus, RefreshCw, X, Zap, ZapOff } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -12,7 +12,7 @@ import {
   readStoredSession,
   refreshStoredSessionUser,
 } from "@/lib/auth";
-import { fetchReportSubstations } from "@/lib/reports";
+import { downloadSchematicPdf, fetchReportSubstations } from "@/lib/reports";
 import {
   createTieEdge,
   fetchFeederIsolation,
@@ -77,6 +77,10 @@ function NetworkContent() {
   const [newFrom, setNewFrom] = useState("");
   const [newTo, setNewTo] = useState("");
   const [isMutating, setIsMutating] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+  const canReport =
+    session?.user?.canReport === true || session?.user?.role === "ADMIN";
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -195,6 +199,30 @@ function NetworkContent() {
     [session?.token, selectedId, loadNetwork],
   );
 
+  const handleDownloadSchematic = useCallback(async () => {
+    if (!session?.token || !selectedId) {
+      return;
+    }
+    const substation = substations.find((item) => item.id === selectedId);
+    if (!substation) {
+      return;
+    }
+    setIsDownloadingPdf(true);
+    setError("");
+    try {
+      // Pass the isolated feeder (if any) so the PDF matches what's on screen.
+      await downloadSchematicPdf(
+        session.token,
+        { id: substation.id, code: substation.code },
+        isolation?.feeder.id,
+      );
+    } catch (downloadError) {
+      setError(requestErrorMessage(downloadError, "Unable to download the schematic PDF."));
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  }, [session?.token, selectedId, substations, isolation]);
+
   // Tidy left-to-right tree layout from the radial (fed-from) edges: x = depth,
   // y = in-order leaf position (parents centred over their children).
   const layout = useMemo(() => {
@@ -291,15 +319,33 @@ function NetworkContent() {
                 flagged.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => (selectedId ? loadNetwork(selectedId) : undefined)}
-              disabled={!selectedId || isLoadingNetwork}
-              className={secondaryButtonClassName}
-            >
-              <RefreshCw size={16} className={isLoadingNetwork ? "animate-spin" : ""} />
-              Refresh
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {canReport && network ? (
+                <button
+                  type="button"
+                  onClick={handleDownloadSchematic}
+                  disabled={isDownloadingPdf}
+                  className={secondaryButtonClassName}
+                  title={
+                    isolation
+                      ? `Export the schematic with feeder ${isolation.feeder.code} isolated`
+                      : "Export the network schematic as a PDF"
+                  }
+                >
+                  <Download size={16} className={isDownloadingPdf ? "animate-pulse" : ""} />
+                  {isolation ? "Schematic PDF (isolation)" : "Schematic PDF"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => (selectedId ? loadNetwork(selectedId) : undefined)}
+                disabled={!selectedId || isLoadingNetwork}
+                className={secondaryButtonClassName}
+              >
+                <RefreshCw size={16} className={isLoadingNetwork ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
           </div>
 
           {error ? (

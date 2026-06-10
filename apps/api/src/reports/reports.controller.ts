@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   Res,
   StreamableFile,
   UseGuards,
@@ -12,11 +13,15 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PencawangReportParamsDto } from './dto/pencawang-report-params.dto';
 import { ReportsService } from './reports.service';
+import { SchematicPdfService } from './schematic-pdf.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('reports')
 export class ReportsController {
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(
+    private readonly reportsService: ReportsService,
+    private readonly schematicPdfService: SchematicPdfService,
+  ) {}
 
   @Get('substations')
   listSubstations(@CurrentUser() user: RequestUser) {
@@ -44,6 +49,26 @@ export class ReportsController {
       `attachment; filename="${filename}"`,
     );
     // Allow the browser fetch() in admin-web to read the suggested filename.
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
+  @Get('pencawang/:substationId/schematic.pdf')
+  async exportPencawangSchematic(
+    @CurrentUser() user: RequestUser,
+    @Param() params: PencawangReportParamsDto,
+    @Query('feederId') feederId: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.schematicPdfService.buildSchematicPdf(
+      user,
+      params.substationId,
+      feederId,
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
 
     return new StreamableFile(buffer);

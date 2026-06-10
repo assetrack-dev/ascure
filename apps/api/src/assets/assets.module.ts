@@ -7,6 +7,6 @@ import { NetworkService } from './network.service';
 @Module({
   controllers: [AssetsController, NetworkController],
   providers: [AssetsService, NetworkService],
-  exports: [AssetsService],
+  exports: [AssetsService, NetworkService],
 })
 export class AssetsModule {}

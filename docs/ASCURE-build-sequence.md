@@ -181,6 +181,23 @@ Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
 per-pole + per-defect visual reports; report-gen becomes the gate into
 LAPORAN SELESAI (ties back to Phase 2). Reuse F1's data resolver.
 
+**Slice 3a — schematic + isolation PDF (landed 2026-06-11).** First document-factory
+output, format = **generated PDF** (server-side vector via `pdfkit` — no headless
+browser, Docker-safe):
+- ✅ `SchematicPdfService` draws the substation schematic to a vector PDF — the same
+  left-to-right tree layout as the admin view (poles coloured by feeder, solid radial
+  spans, dashed NOP ties, RONDAAN labels, feeder legend, header stats). With
+  `?feederId=` it renders the **isolation** view (de-energized poles red, back-feed
+  ties amber). Reuses `NetworkService` (now exported from `AssetsModule`).
+- ✅ `GET /reports/pencawang/:substationId/schematic.pdf` (StreamableFile, REPORTING-
+  gated). Admin: a "Schematic PDF" button on `/network` (gated by `canReport`) that
+  passes the isolated feeder so the file matches what's on screen.
+- Verified by reading the generated PDFs: the tree, feeder colours, dashed NOP, and
+  the red/amber isolation all render correctly.
+- **Next in Phase 3:** per-pole / per-defect visual reports (PDF, reuse F1 resolver +
+  photos); QR01/02/03 + Kelegaan (likely template-driven once TNB's forms are in hand);
+  attach the generated report to LAPORAN SELESAI (Phase 2 gate).
+
 ### Deferred *(unchanged from §9)*
 SLA/health dashboards; AI validation (naming checks, anomaly detection,
 completeness, "what changed" diffs) — both get sharper once graph + cycle exist.
