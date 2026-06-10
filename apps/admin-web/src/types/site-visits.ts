@@ -183,9 +183,19 @@ export interface CycleDeltaPole {
   status: string;
 }
 
+export type SurveyDueStatus = "ON_TIME" | "DUE_SOON" | "OVERDUE" | "UNKNOWN";
+
+export interface InspectionRecency {
+  lastInspectedAt: string | null;
+  monthsSince: number | null;
+  intervalMonths: number;
+  status: SurveyDueStatus;
+}
+
 export interface CycleDelta {
   isBaseline: boolean;
   cycleNumber: number | null;
+  recency: InspectionRecency;
   priorCycle: {
     id: string;
     startedAt: string | null;

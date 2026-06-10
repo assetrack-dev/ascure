@@ -141,6 +141,29 @@ pillar made real, purely additive:
   the survey lifecycle is its replacement); a UI indicator of the governance mode;
   route/source-change delta; mobile RONDAAN SELESAI; report artifact (→ Phase 3).
 
+**Slice 2b.3 — F2 foundation import + date-driven cadence (landed 2026-06-10).**
+The AppSheet importer becomes the **Year-1 baseline** loader (north-star §8), and the
+cycle is reframed around dates, not counters:
+- ✅ **Importer adopted + foundation-ified.** Each imported survey lands in **ARKIB**,
+  type **DISCOVERY**, dated from the source 2025 inspection — a finished historical
+  cycle the field team re-opens with "Open next cycle."
+- ✅ **Imported defects = unverified historical baseline.** The defect materializer
+  skips AppSheet-import inspections (`reportingGroup` prefixed `APPSHEET:`, null-safe
+  filter in `defects.service`), so 2025 defects are recorded observations, **not live
+  maintenance work**. The 2026 re-inspection establishes current truth, and the delta
+  reconciles (present-2025/not-2026 ⇒ presumed cleared). This respects "provable": a
+  defect cleared by an untracked third party can't be asserted fixed.
+- ✅ **Date-driven cadence.** `common/inspection-cadence.ts` derives *last inspected /
+  months since / on-time·due-soon·overdue* against a configurable statutory interval
+  (`ANNUAL_SURVEY_INTERVAL_MONTHS`, default 12). Surfaced on `cycle-delta` and in the
+  admin ("Last inspected: 14 Mar 2025 · 14 months ago · Overdue") in place of the
+  abstract "Cycle N"; `cycleNumber` stays a quiet internal sequence. Verified:
+  2025-dated → OVERDUE, recent → ON_TIME; foundation defect not materialized while a
+  normal one still is.
+- **Still deferred:** wire imported poles into the **network graph** (so they're
+  map/isolation-visible — needs the Phase 1 backfill or `syncPoleGraph` on import);
+  per-pole (vs per-survey) last-inspected; defect-level delta.
+
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
 Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
 per-pole + per-defect visual reports; report-gen becomes the gate into

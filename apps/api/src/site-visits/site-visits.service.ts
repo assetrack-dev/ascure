@@ -29,6 +29,7 @@ import {
   isSiteVisitOverdue,
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
+import { describeInspectionRecency } from '../common/inspection-cadence';
 import {
   DEFAULT_OPERATION_MODE,
   DEFAULT_OPERATIONAL_SCOPE,
@@ -901,10 +902,19 @@ export class SiteVisitsService {
       select: {
         id: true,
         startedAt: true,
+        completedAt: true,
         cycleNumber: true,
         pencawangCode: true,
       },
     });
+
+    // The annual cadence in human terms: when was this Pencawang last inspected,
+    // and how overdue is it now? Prefer the prior survey's date; for a baseline
+    // (no prior) the survey is itself the only inspection, so use its own date.
+    const lastInspectedAt = prior
+      ? prior.completedAt ?? prior.startedAt
+      : visit.completedAt ?? visit.startedAt;
+    const recency = describeInspectionRecency(lastInspectedAt, new Date());
 
     const thisPoles = await this.observedPoles(visit.id);
     const priorPoles = prior ? await this.observedPoles(prior.id) : new Map();
@@ -942,6 +952,7 @@ export class SiteVisitsService {
     return {
       isBaseline: !prior,
       cycleNumber: visit.cycleNumber,
+      recency,
       priorCycle: prior
         ? {
             id: prior.id,

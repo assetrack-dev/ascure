@@ -37,6 +37,7 @@ import type {
   SiteVisitDetail,
   SiteVisitStatus,
   SiteVisitValidationStatus,
+  SurveyDueStatus,
   SurveyLifecycleStatus,
 } from "@/types/site-visits";
 
@@ -112,6 +113,36 @@ function formatDateTime(date: string | null | undefined) {
 
 function formatNullable(value: string | null | undefined) {
   return value?.trim() || "Not recorded";
+}
+
+function formatMonthsAgo(months: number | null | undefined) {
+  if (months === null || months === undefined) {
+    return "";
+  }
+  if (months < 1) {
+    return "less than a month ago";
+  }
+  const rounded = Math.round(months);
+  return `${rounded} month${rounded === 1 ? "" : "s"} ago`;
+}
+
+function DueBadge({ status }: { status: SurveyDueStatus }) {
+  if (status === "UNKNOWN") {
+    return null;
+  }
+  const { className, label } =
+    status === "OVERDUE"
+      ? { className: "border-red-200 bg-red-50 text-red-700", label: "Overdue" }
+      : status === "DUE_SOON"
+        ? { className: "border-amber-200 bg-amber-50 text-amber-800", label: "Due soon" }
+        : { className: "border-emerald-200 bg-emerald-50 text-emerald-700", label: "On time" };
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase ${className}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 function displayPencawang(visit: SiteVisitDetail) {
@@ -682,22 +713,34 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
     <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
       <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
         <CalendarDays size={17} className="text-[var(--brand)]" />
-        Cycle Comparison
+        Inspection Cycle
       </div>
+
+      {delta.recency.lastInspectedAt ? (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <span className="text-[var(--muted)]">Last inspected:</span>
+          <span className="font-semibold text-slate-900">
+            {formatDateTime(delta.recency.lastInspectedAt)}
+          </span>
+          {delta.recency.monthsSince !== null ? (
+            <span className="text-[var(--muted)]">
+              · {formatMonthsAgo(delta.recency.monthsSince)}
+            </span>
+          ) : null}
+          <DueBadge status={delta.recency.status} />
+        </div>
+      ) : null}
+
       {delta.isBaseline ? (
         <p className="mt-2 text-sm text-[var(--muted)]">
-          Baseline cycle — {delta.summary.observed} pole
-          {delta.summary.observed === 1 ? "" : "s"} surveyed. No prior cycle to
-          compare against; next year&rsquo;s re-survey will show the delta.
+          Foundation survey — {delta.summary.observed} pole
+          {delta.summary.observed === 1 ? "" : "s"} on record. The next
+          re-inspection will compare against this baseline.
         </p>
       ) : (
         <>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            This cycle versus the prior survey
-            {delta.priorCycle?.startedAt
-              ? ` (${formatDateTime(delta.priorCycle.startedAt)})`
-              : ""}
-            .
+            This survey versus the previous inspection:
           </p>
           <div className="mt-4 grid grid-cols-3 gap-3">
             <CycleDeltaStat count={delta.summary.added} label="New" tone="added" />
@@ -1074,7 +1117,18 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                               : formatEnum(visit.operationalDomain)
                           }
                         />
-                        <DetailField label="Cycle" value={visit.cycleNumber === null ? "Not recorded" : String(visit.cycleNumber)} />
+                        <DetailField
+                          label="Last inspected"
+                          value={
+                            cycleDelta?.recency.lastInspectedAt
+                              ? `${formatDateTime(cycleDelta.recency.lastInspectedAt)}${
+                                  cycleDelta.recency.monthsSince !== null
+                                    ? ` · ${formatMonthsAgo(cycleDelta.recency.monthsSince)}`
+                                    : ""
+                                }`
+                              : "Not recorded"
+                          }
+                        />
                         <DetailField label="Team" value={displayTeam(visit)} />
                         <DetailField label="Created By" value={formatNullable(visit.createdBy?.name ?? visit.createdBy?.email)} />
                       </dl>

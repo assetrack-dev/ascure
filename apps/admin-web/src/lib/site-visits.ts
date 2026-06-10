@@ -19,6 +19,7 @@ import type {
   SurveyLifecycleStatus,
   CycleDelta,
   CycleDeltaPole,
+  SurveyDueStatus,
 } from "@/types/site-visits";
 
 type ApiRecord = Record<string, unknown>;
@@ -709,10 +710,20 @@ export async function fetchCycleDelta(
   const record = asRecord(payload);
   const prior = nestedRecord(record, "priorCycle");
   const summary = nestedRecord(record, "summary");
+  const recencyRecord = nestedRecord(record, "recency");
+  const dueStatus = (firstString(recencyRecord, ["status"]) ?? "UNKNOWN") as SurveyDueStatus;
 
   return {
     isBaseline: readBoolean(record, "isBaseline") ?? !prior,
     cycleNumber: readNumber(record, "cycleNumber"),
+    recency: {
+      lastInspectedAt: firstString(recencyRecord, ["lastInspectedAt"]),
+      monthsSince: readNumber(recencyRecord, "monthsSince"),
+      intervalMonths: numberOrZero(recencyRecord?.intervalMonths) || 12,
+      status: ["ON_TIME", "DUE_SOON", "OVERDUE", "UNKNOWN"].includes(dueStatus)
+        ? dueStatus
+        : "UNKNOWN",
+    },
     priorCycle: prior
       ? {
           id: firstString(prior, ["id"]) ?? "",
