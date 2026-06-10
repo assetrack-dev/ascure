@@ -19,6 +19,7 @@ import { buildAppsheetReportingGroup } from '../common/import.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
+import { AssetsService } from '../assets/assets.service';
 import {
   ALL_TEMPLATE_KEYS,
   buildExternalRef,
@@ -56,6 +57,7 @@ export class ImportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
+    private readonly assetsService: AssetsService,
   ) {}
 
   private async assertCanImport(user: RequestUser): Promise<void> {
@@ -301,18 +303,22 @@ export class ImportsService {
           }
 
           let aCount = 0, iCount = 0;
+          const importedPoles: { assetId: string; assetCode: string }[] = [];
           for (const row of rows) {
+            const noTiangLama =
+              row.noTiangLama && row.noTiangLama !== 'TNT' ? row.noTiangLama : null;
             const asset = await tx.asset.upsert({
               where: { tenantId_substationId_assetCode: { tenantId, substationId: substation.id, assetCode: row.assetCode! } },
               create: {
                 tenantId, substationId: substation.id, assetTypeId, assetCode: row.assetCode!,
-                name: row.noTiangLama && row.noTiangLama !== 'TNT' ? row.noTiangLama : null,
+                name: noTiangLama, noTiangLama,
                 latitude: row.latitude ?? undefined, longitude: row.longitude ?? undefined, status: AssetStatus.ACTIVE,
                 createdByUserId, createdDuringVisitId: siteVisit.id,
                 metadata: this.assetMetadata(row, batchId),
               },
               update: { latitude: row.latitude ?? undefined, longitude: row.longitude ?? undefined, metadata: this.assetMetadata(row, batchId) },
             });
+            importedPoles.push({ assetId: asset.id, assetCode: row.assetCode! });
             aCount++;
 
             await tx.siteVisitAsset.upsert({
@@ -362,17 +368,13 @@ export class ImportsService {
               await tx.inspectionItemResult.createMany({ data: itemResultRows });
               applied.itemResults += itemResultRows.length;
             }
-
-            const failItems = await tx.inspectionItemResult.findMany({
-              where: { inspectionId: inspection.id, isDefect: true },
-              select: { id: true, severity: true },
-            });
-            if (failItems.length) {
-              await tx.defect.createMany({
-                data: failItems.map((f) => ({ inspectionItemResultId: f.id, status: 'OPEN' as const, severity: f.severity ?? DefectSeverity.MEDIUM })),
-              });
-              applied.defects += failItems.length;
-            }
+            // Foundation data: the FAIL item-results ARE the historical defect
+            // observations — but we deliberately do NOT create live Defect
+            // work-items from them. The annual re-inspection establishes current
+            // condition (a prior-year defect cleared by an untracked contractor
+            // can't be proven fixed). The materializer also skips these
+            // (reportingGroup APPSHEET:). Count the observations for the report.
+            applied.defects += itemResultRows.filter((row) => row.isDefect).length;
 
             const resultRows: Prisma.InspectionResultCreateManyInput[] = [];
             for (const v of row.values) {
@@ -386,6 +388,17 @@ export class ImportsService {
               applied.inspectionResults += resultRows.length;
             }
           }
+
+          // Wire the imported poles into the network graph (feeders + memberships
+          // + fed-from) so they appear on the schematic / map / isolation views.
+          // Two passes (all memberships, then all fed-from) so every parent's
+          // membership exists before its children resolve their edge.
+          await this.assetsService.syncImportedPolesGraph(
+            tx,
+            tenantId,
+            substation.id,
+            importedPoles,
+          );
 
           return { aCount, iCount };
         }, { timeout: 120_000, maxWait: 15_000 });

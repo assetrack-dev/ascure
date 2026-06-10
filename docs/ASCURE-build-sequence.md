@@ -160,9 +160,15 @@ cycle is reframed around dates, not counters:
   abstract "Cycle N"; `cycleNumber` stays a quiet internal sequence. Verified:
   2025-dated → OVERDUE, recent → ON_TIME; foundation defect not materialized while a
   normal one still is.
-- **Still deferred:** wire imported poles into the **network graph** (so they're
-  map/isolation-visible — needs the Phase 1 backfill or `syncPoleGraph` on import);
-  per-pole (vs per-survey) last-inspected; defect-level delta.
+- ✅ **Imported poles now feed the network graph (2026-06-10).** `AssetsService.
+  syncPoleGraph` was split into `syncPoleMemberships` + `syncPoleFedFrom`, and a
+  batch `syncImportedPolesGraph` (all memberships first, then all fed-from — so a
+  parent's membership exists before its children resolve) runs inside the import
+  transaction. So imported poles get feeders + memberships + fed-from + the
+  first-class `noTiangLama`, and appear on the schematic / map / isolation views.
+  Also removed the importer's eager `Defect` creation (it bypassed the materializer
+  skip) — completing "imported defects = historical observation, not live work".
+- **Still deferred:** per-pole (vs per-survey) last-inspected; defect-level delta.
 
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
 Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,

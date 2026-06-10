@@ -608,14 +608,51 @@ export class AssetsService {
   }
 
   /**
-   * Derive + persist the pole's graph structure from its assetCode (the RONDAAN
-   * string) — north-star §3 "store the structure". Parses assetCode via the
-   * shared grammar, upserts a Feeder per feeder token + a PoleFeederMembership
-   * per segment, then best-effort pre-fills the fed-from edge from the primary
-   * segment's parent (which must already exist). A non-pole / unparseable code
-   * yields no memberships. Idempotent (upsert by assetId+feeder).
+   * Derive + persist a pole's graph structure from its assetCode (north-star §3
+   * "store the structure"): feeders + memberships, then the fed-from edge. Split
+   * into two passes so a batch caller can create every membership before
+   * resolving any fed-from (a parent must already carry its membership).
    */
   private async syncPoleGraph(
+    tx: Prisma.TransactionClient,
+    params: { tenantId: string; substationId: string; assetId: string; assetCode: string },
+  ): Promise<void> {
+    await this.syncPoleMemberships(tx, params);
+    await this.syncPoleFedFrom(tx, params);
+  }
+
+  /**
+   * Batch graph sync for an import: upsert feeders + memberships for every pole
+   * first, then resolve fed-from for every pole — so each parent's membership
+   * exists before its children look it up. Runs inside the caller's transaction.
+   */
+  async syncImportedPolesGraph(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    substationId: string,
+    poles: Array<{ assetId: string; assetCode: string }>,
+  ): Promise<void> {
+    for (const pole of poles) {
+      await this.syncPoleMemberships(tx, {
+        tenantId,
+        substationId,
+        assetId: pole.assetId,
+        assetCode: pole.assetCode,
+      });
+    }
+    for (const pole of poles) {
+      await this.syncPoleFedFrom(tx, {
+        substationId,
+        assetId: pole.assetId,
+        assetCode: pole.assetCode,
+      });
+    }
+  }
+
+  /** Upsert a Feeder per feeder token + a PoleFeederMembership per segment from
+   *  the RONDAAN code. A non-pole / unparseable code yields no memberships.
+   *  Idempotent (upsert by assetId+feeder). */
+  private async syncPoleMemberships(
     tx: Prisma.TransactionClient,
     params: { tenantId: string; substationId: string; assetId: string; assetCode: string },
   ): Promise<void> {
@@ -644,9 +681,20 @@ export class AssetsService {
         update: { sequenceIndex: membership.baseNumber, branchSuffix },
       });
     }
+  }
 
-    // Pre-fill fed-from from the primary (lowest) segment's parent. Observed-by-
-    // proxy and best-effort: the parent pole must already exist in this Pencawang.
+  /** Best-effort pre-fill the fed-from edge from the primary (lowest) segment's
+   *  parent — observed-by-proxy; the parent pole must already exist in this
+   *  Pencawang with its membership. */
+  private async syncPoleFedFrom(
+    tx: Prisma.TransactionClient,
+    params: { substationId: string; assetId: string; assetCode: string },
+  ): Promise<void> {
+    const { substationId, assetId, assetCode } = params;
+    const memberships = parsePoleCode(assetCode).filter((parsed) => parsed.isValid);
+    if (memberships.length === 0) {
+      return;
+    }
     const primary = [...memberships].sort(
       (a, b) => a.feeder.localeCompare(b.feeder) || a.baseNumber - b.baseNumber,
     )[0];
