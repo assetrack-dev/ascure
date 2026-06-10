@@ -45,6 +45,19 @@ enum SiteVisitValidationStatus {
   FAILED
 }
 
+// The one PE-survey lifecycle (north-star §4). Lives on the per-PE, per-cycle
+// SiteVisit — the "cycle survey". Replaces the OperationalSession governance
+// machine and absorbs the survey-level "reject" (PERLU PINDAAN) that the old
+// defect-QA flow used to own.
+//   DALAM_RONDAAN → RONDAAN_SELESAI ⟲ PERLU_PINDAAN → LAPORAN_SELESAI → ARKIB
+enum SurveyLifecycleStatus {
+  DALAM_RONDAAN
+  RONDAAN_SELESAI
+  PERLU_PINDAAN
+  LAPORAN_SELESAI
+  ARKIB
+}
+
 enum InspectionTemplateStatus {
   DRAFT
   ACTIVE
@@ -392,6 +405,7 @@ model User {
   assignedQaSessions        OperationalSession[]          @relation("OperationalSessionAssignedQaUser")
   assignedSessionAssets     OperationalSessionAsset[]     @relation("OperationalSessionAssetAssignedBy")
   removedSessionAssets      OperationalSessionAsset[]     @relation("OperationalSessionAssetRemovedBy")
+  siteVisitLifecycleEvents  SiteVisitLifecycleEvent[]     @relation("SiteVisitLifecycleCreatedBy")
 
   @@index([tenantId])
   @@index([organizationId])
@@ -947,6 +961,12 @@ model SiteVisit {
   validationStatus      SiteVisitValidationStatus?
   validatedAt           DateTime?
   validationSummary     String?
+  lifecycleStatus       SurveyLifecycleStatus?
+  rondaanSelesaiAt      DateTime?
+  amendmentRequestedAt  DateTime?
+  amendmentRemark       String?
+  laporanSelesaiAt      DateTime?
+  archivedAt            DateTime?
   feederId              String?
   feederRouteId         String?
   gisGeometryVersion    String?
@@ -976,9 +996,11 @@ model SiteVisit {
   visitAssets           SiteVisitAsset[]
   inspections           Inspection[]
   images                Image[]
+  lifecycleEvents       SiteVisitLifecycleEvent[]
 
   @@index([tenantId])
   @@index([teamId, status])
+  @@index([lifecycleStatus])
   @@index([substationId])
   @@index([validatedByUserId])
   @@index([organizationId])
@@ -1049,6 +1071,24 @@ model SiteVisitAsset {
   @@index([assetId])
   @@index([addedByUserId])
   @@index([siteVisitId, addedAt])
+}
+
+// Audit trail for the PE-survey lifecycle (one row per transition). The
+// OperationalSession machine never had this; the cycle lifecycle gets it from
+// day one (north-star §4 governance must be provable).
+model SiteVisitLifecycleEvent {
+  id              String                 @id @default(uuid()) @db.Uuid
+  siteVisitId     String                 @db.Uuid
+  fromStatus      SurveyLifecycleStatus?
+  toStatus        SurveyLifecycleStatus
+  remark          String?
+  createdByUserId String?                @db.Uuid
+  createdAt       DateTime               @default(now())
+  siteVisit       SiteVisit              @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  createdBy       User?                  @relation("SiteVisitLifecycleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([siteVisitId, createdAt])
+  @@index([createdByUserId])
 }
 
 model InspectionTemplate {

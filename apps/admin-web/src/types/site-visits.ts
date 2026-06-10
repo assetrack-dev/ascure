@@ -151,6 +151,31 @@ export interface SiteVisitImage {
   createdAt: string | null;
 }
 
+export type SurveyLifecycleStatus =
+  | "DALAM_RONDAAN"
+  | "RONDAAN_SELESAI"
+  | "PERLU_PINDAAN"
+  | "LAPORAN_SELESAI"
+  | "ARKIB";
+
+export interface SurveyLifecycleState {
+  status: SurveyLifecycleStatus | null;
+  rondaanSelesaiAt: string | null;
+  amendmentRequestedAt: string | null;
+  amendmentRemark: string | null;
+  laporanSelesaiAt: string | null;
+  archivedAt: string | null;
+}
+
+export interface SurveyLifecycleEvent {
+  id: string;
+  fromStatus: SurveyLifecycleStatus | null;
+  toStatus: SurveyLifecycleStatus;
+  remark: string | null;
+  createdAt: string | null;
+  createdBy: SiteVisitUser | null;
+}
+
 export interface SiteVisitDetail extends SiteVisitListItem {
   validatedAt: string | null;
   validationSummary: string | null;
@@ -166,4 +191,6 @@ export interface SiteVisitDetail extends SiteVisitListItem {
   linkedAssets: SiteVisitAssetLink[];
   inspections: SiteVisitInspection[];
   images: SiteVisitImage[];
+  lifecycle: SurveyLifecycleState | null;
+  lifecycleEvents: SurveyLifecycleEvent[];
 }

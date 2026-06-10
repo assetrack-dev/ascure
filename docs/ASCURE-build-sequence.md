@@ -80,6 +80,29 @@ SEBELUM/SEMASA/SELEPAS) survives. Year-N re-survey opens a fresh survey against
 persisted poles and computes the **delta** — only possible *because* Phase 1
 persisted the structure.
 
+**Slice 2a — the lifecycle spine (landed 2026-06-10).** The cycle survey lifecycle
+is now first-class on `SiteVisit`:
+- ✅ Schema: `SurveyLifecycleStatus` enum + `SiteVisit.lifecycleStatus`/transition
+  timestamps/`amendmentRemark` + `SiteVisitLifecycleEvent` audit model (one row per
+  transition — the OperationalSession machine never had this). Additive migration
+  `20260610100118_add_survey_lifecycle`; new visits open in `DALAM_RONDAAN`, legacy
+  rows stay `null` and join the lifecycle on their first transition.
+- ✅ API: `SurveyLifecycleService` + `POST /site-visits/:id/lifecycle/{rondaan-selesai,
+  request-amendment,generate-report,archive}`. Role gates map to existing authority:
+  inspector = not-VIEWER/CLIENT (owns RONDAAN SELESAI), **DC = `isQaActor`** (owns
+  PERLU PINDAAN amendment + ARKIB), **report-gen = `REPORTING`** (gate into LAPORAN
+  SELESAI). Each transition is guard-validated and appends an event.
+- ✅ Admin UI: a Survey Lifecycle panel on the site-visit detail (stepper, role-gated
+  actions, PERLU PINDAAN remark box, history timeline).
+- **Demote-not-delete (deliberate, live pilot):** this slice *establishes the
+  replacement spine* and folds the governance relaxation (the DC reject now lives at
+  the survey level as PERLU PINDAAN). It does **not yet retire** the OperationalSession
+  machine or strip the defect-QA verify/reject/closure gates — those migrate onto this
+  lifecycle in a follow-up so the pilot is never left with a gap.
+- **Deferred to Slice 2b:** Year-N re-survey + **delta** (new/removed poles, route/
+  source change); mobile wiring of the inspector's RONDAAN SELESAI; attaching the
+  generated report artifact (ties into Phase 3 document factory).
+
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
 Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
 per-pole + per-defect visual reports; report-gen becomes the gate into

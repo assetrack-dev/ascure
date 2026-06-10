@@ -14,6 +14,7 @@ import {
   Prisma,
   SiteVisitStatus,
   SiteVisitValidationStatus,
+  SurveyLifecycleStatus,
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -335,6 +336,21 @@ const SITE_VISIT_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
       createdAt: 'desc',
     },
   },
+  lifecycleEvents: {
+    include: {
+      createdBy: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  },
 });
 
 const SITE_VISIT_READ_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
@@ -478,6 +494,8 @@ export class SiteVisitsService {
           checkInAccuracyMeters: dto.checkInAccuracyMeters,
           checkInCapturedAt: dto.checkInCapturedAt ? new Date(dto.checkInCapturedAt) : undefined,
           validationStatus: SiteVisitValidationStatus.PENDING,
+          // A new visit opens the cycle survey in DALAM RONDAAN (north-star §4).
+          lifecycleStatus: SurveyLifecycleStatus.DALAM_RONDAAN,
           notes: this.normalizeOperationalString(dto.notes),
           users: {
             create: Array.from(visitUserIds).map((userId) => ({
@@ -587,6 +605,20 @@ export class SiteVisitsService {
       now,
       overdueThresholdHours,
     );
+  }
+
+  /**
+   * Minimal scoped read of a visit's lifecycle state, used by
+   * SurveyLifecycleService to validate a transition's from-status. Enforces
+   * tenant + access scope (throws NotFound if the user can't see the visit).
+   */
+  async getLifecycleState(user: RequestUser, id: string) {
+    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+    return {
+      id: siteVisit.id,
+      status: siteVisit.status,
+      lifecycleStatus: siteVisit.lifecycleStatus,
+    };
   }
 
   async uploadImage(
@@ -1735,6 +1767,22 @@ export class SiteVisitsService {
         feederRouteId: siteVisit.feederRouteId,
         gisGeometryVersion: siteVisit.gisGeometryVersion,
       },
+      lifecycle: {
+        status: siteVisit.lifecycleStatus,
+        rondaanSelesaiAt: siteVisit.rondaanSelesaiAt,
+        amendmentRequestedAt: siteVisit.amendmentRequestedAt,
+        amendmentRemark: siteVisit.amendmentRemark,
+        laporanSelesaiAt: siteVisit.laporanSelesaiAt,
+        archivedAt: siteVisit.archivedAt,
+      },
+      lifecycleEvents: siteVisit.lifecycleEvents.map((event) => ({
+        id: event.id,
+        fromStatus: event.fromStatus,
+        toStatus: event.toStatus,
+        remark: event.remark,
+        createdAt: event.createdAt,
+        createdBy: event.createdBy,
+      })),
     };
   }
 

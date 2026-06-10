@@ -19,7 +19,9 @@ import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
 import { CreateSiteVisitDto } from './dto/create-site-visit.dto';
 import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
+import { RequestSurveyAmendmentDto } from './dto/request-amendment.dto';
 import { SiteVisitsService } from './site-visits.service';
+import { SurveyLifecycleService } from './survey-lifecycle.service';
 
 class SiteVisitIdParamDto {
   @IsUUID()
@@ -29,7 +31,10 @@ class SiteVisitIdParamDto {
 @UseGuards(JwtAuthGuard)
 @Controller('site-visits')
 export class SiteVisitsController {
-  constructor(private readonly siteVisitsService: SiteVisitsService) {}
+  constructor(
+    private readonly siteVisitsService: SiteVisitsService,
+    private readonly surveyLifecycleService: SurveyLifecycleService,
+  ) {}
 
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateSiteVisitDto) {
@@ -94,6 +99,41 @@ export class SiteVisitsController {
     @Body() dto: CancelSiteVisitDto,
   ) {
     return this.siteVisitsService.cancel(user, params.id, dto);
+  }
+
+  // --- Survey lifecycle (north-star §4): DALAM RONDAAN → … → ARKIB ---
+
+  @Post(':id/lifecycle/rondaan-selesai')
+  markRondaanSelesai(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.surveyLifecycleService.markRondaanSelesai(user, params.id);
+  }
+
+  @Post(':id/lifecycle/request-amendment')
+  requestAmendment(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @Body() dto: RequestSurveyAmendmentDto,
+  ) {
+    return this.surveyLifecycleService.requestAmendment(user, params.id, dto.remark);
+  }
+
+  @Post(':id/lifecycle/generate-report')
+  generateReport(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.surveyLifecycleService.generateReport(user, params.id);
+  }
+
+  @Post(':id/lifecycle/archive')
+  archive(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.surveyLifecycleService.archive(user, params.id);
   }
 
   @Get(':id')

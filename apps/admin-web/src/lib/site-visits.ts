@@ -14,6 +14,9 @@ import type {
   SiteVisitType,
   SiteVisitUser,
   SiteVisitValidationStatus,
+  SurveyLifecycleEvent,
+  SurveyLifecycleState,
+  SurveyLifecycleStatus,
 } from "@/types/site-visits";
 
 type ApiRecord = Record<string, unknown>;
@@ -460,6 +463,65 @@ function normalizeImage(rawImage: unknown, index: number): SiteVisitImage | null
   };
 }
 
+function normalizeLifecycleStatus(value: string | null): SurveyLifecycleStatus | null {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "DALAM_RONDAAN" ||
+    normalizedValue === "RONDAAN_SELESAI" ||
+    normalizedValue === "PERLU_PINDAAN" ||
+    normalizedValue === "LAPORAN_SELESAI" ||
+    normalizedValue === "ARKIB"
+  ) {
+    return normalizedValue;
+  }
+
+  return null;
+}
+
+function normalizeLifecycleState(rawState: unknown): SurveyLifecycleState | null {
+  const record = asRecord(rawState);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    status: normalizeLifecycleStatus(firstString(record, ["status"])),
+    rondaanSelesaiAt: firstString(record, ["rondaanSelesaiAt"]),
+    amendmentRequestedAt: firstString(record, ["amendmentRequestedAt"]),
+    amendmentRemark: firstString(record, ["amendmentRemark"]),
+    laporanSelesaiAt: firstString(record, ["laporanSelesaiAt"]),
+    archivedAt: firstString(record, ["archivedAt"]),
+  };
+}
+
+function normalizeLifecycleEvent(
+  rawEvent: unknown,
+  index: number,
+): SurveyLifecycleEvent | null {
+  const record = asRecord(rawEvent);
+
+  if (!record) {
+    return null;
+  }
+
+  const toStatus = normalizeLifecycleStatus(firstString(record, ["toStatus"]));
+
+  if (!toStatus) {
+    return null;
+  }
+
+  return {
+    id: firstString(record, ["id"]) ?? `lifecycle-event-${index}`,
+    fromStatus: normalizeLifecycleStatus(firstString(record, ["fromStatus"])),
+    toStatus,
+    remark: firstString(record, ["remark"]),
+    createdAt: firstString(record, ["createdAt"]),
+    createdBy: normalizeUser(record.createdBy),
+  };
+}
+
 function normalizeSiteVisitDetail(rawVisit: unknown): SiteVisitDetail | null {
   const record = asRecord(rawVisit);
   const baseVisit = normalizeSiteVisit(rawVisit, 0);
@@ -470,6 +532,10 @@ function normalizeSiteVisitDetail(rawVisit: unknown): SiteVisitDetail | null {
 
   return {
     ...baseVisit,
+    lifecycle: normalizeLifecycleState(record.lifecycle),
+    lifecycleEvents: readArray(record, ["lifecycleEvents"])
+      .map(normalizeLifecycleEvent)
+      .filter((event): event is SurveyLifecycleEvent => Boolean(event)),
     validatedAt: firstString(record, ["validatedAt"]),
     validationSummary: firstString(record, ["validationSummary"]),
     validatedBy: normalizeUser(record.validatedBy),
@@ -541,4 +607,51 @@ export async function fetchSiteVisitDetail(
   }
 
   return visit;
+}
+
+async function transitionSurveyLifecycle(
+  token: string,
+  siteVisitId: string,
+  action: "rondaan-selesai" | "request-amendment" | "generate-report" | "archive",
+  body?: Record<string, unknown>,
+): Promise<SiteVisitDetail> {
+  const payload = await apiRequest<unknown>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/lifecycle/${action}`,
+    {
+      method: "POST",
+      token,
+      body: body ? JSON.stringify(body) : undefined,
+    },
+  );
+  const visit = normalizeSiteVisitDetail(payload);
+
+  if (!visit) {
+    throw new Error("Unable to read the updated site visit.");
+  }
+
+  return visit;
+}
+
+/** Inspector marks the walk-through done (→ RONDAAN SELESAI). */
+export function markRondaanSelesai(token: string, siteVisitId: string) {
+  return transitionSurveyLifecycle(token, siteVisitId, "rondaan-selesai");
+}
+
+/** DC sends the survey back for amendments (→ PERLU PINDAAN). */
+export function requestSurveyAmendment(
+  token: string,
+  siteVisitId: string,
+  remark: string,
+) {
+  return transitionSurveyLifecycle(token, siteVisitId, "request-amendment", { remark });
+}
+
+/** DC generates the report — the gate into LAPORAN SELESAI. */
+export function generateSurveyReport(token: string, siteVisitId: string) {
+  return transitionSurveyLifecycle(token, siteVisitId, "generate-report");
+}
+
+/** DC / Admin archives the completed cycle (→ ARKIB). */
+export function archiveSurvey(token: string, siteVisitId: string) {
+  return transitionSurveyLifecycle(token, siteVisitId, "archive");
 }
