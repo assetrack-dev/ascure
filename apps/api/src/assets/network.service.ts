@@ -223,18 +223,51 @@ export class NetworkService {
   async getFeederIsolation(user: RequestUser, feederId: string) {
     const feeder = await this.prisma.feeder.findFirst({
       where: { id: feederId, tenantId: user.tenantId },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, substationId: true },
     });
     if (!feeder) {
       throw new NotFoundException('Feeder not found.');
     }
 
-    const memberships = await this.prisma.poleFeederMembership.findMany({
+    // Opening the feeder breaker de-energizes from the feeder HEAD (its
+    // lowest-indexed pole) DOWN the fed-from tree — the physically-correct set,
+    // which also covers poles fed *through* this feeder on a non-radial run
+    // (a by-membership list would miss those).
+    const head = await this.prisma.poleFeederMembership.findFirst({
       where: { feederId },
-      select: { asset: { select: POLE_SELECT } },
+      orderBy: [{ sequenceIndex: 'asc' }, { branchSuffix: 'asc' }],
+      select: { assetId: true },
     });
-    const deEnergized = memberships.map((m) => m.asset);
-    const deEnergizedIds = new Set(deEnergized.map((asset) => asset.id));
+
+    const assets = await this.prisma.asset.findMany({
+      where: { substationId: feeder.substationId },
+      select: { ...POLE_SELECT, fedFromAssetId: true },
+    });
+    const byId = new Map(assets.map((asset) => [asset.id, asset]));
+    const childrenByParent = new Map<string, string[]>();
+    for (const asset of assets) {
+      if (asset.fedFromAssetId) {
+        const siblings = childrenByParent.get(asset.fedFromAssetId) ?? [];
+        siblings.push(asset.id);
+        childrenByParent.set(asset.fedFromAssetId, siblings);
+      }
+    }
+
+    const deEnergizedIds = new Set<string>();
+    if (head) {
+      const queue = [head.assetId];
+      while (queue.length > 0) {
+        const id = queue.shift() as string;
+        if (deEnergizedIds.has(id)) {
+          continue;
+        }
+        deEnergizedIds.add(id);
+        queue.push(...(childrenByParent.get(id) ?? []));
+      }
+    }
+    const deEnergized = [...deEnergizedIds]
+      .map((id) => byId.get(id))
+      .filter((asset): asset is NonNullable<typeof asset> => asset !== undefined);
 
     const tieEdges = deEnergizedIds.size
       ? await this.prisma.networkTieEdge.findMany({
@@ -271,7 +304,7 @@ export class NetworkService {
       });
 
     return {
-      feeder,
+      feeder: { id: feeder.id, code: feeder.code, name: feeder.name },
       deEnergizedCount: deEnergized.length,
       deEnergized: deEnergized.map((asset) => this.renderPole(asset)),
       backfeed,

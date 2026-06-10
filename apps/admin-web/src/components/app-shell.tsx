@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Tags,
   Users,
+  Waypoints,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -61,6 +62,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/assets",
       label: "Assets",
       icon: Archive,
+    },
+    {
+      href: "/network",
+      label: "Network",
+      icon: Waypoints,
     },
     {
       href: "/asset-types",
