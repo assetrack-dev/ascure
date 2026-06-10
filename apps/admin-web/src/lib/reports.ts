@@ -23,22 +23,30 @@ export async function downloadPencawangReport(
 }
 
 /**
- * Downloads the network schematic as a PDF and triggers a browser save. Pass
- * `feederId` to export the isolation view (de-energized poles in red, back-feed
- * ties in amber) so the file matches what's on screen.
+ * Downloads a network drawing as a PDF and triggers a browser save.
+ * - `layout: "tree"` (default) — the logical schematic (depth/branch tree).
+ * - `layout: "gps"` — pole topology plotted at real GPS positions, no basemap.
+ * Pass `feederId` to export the isolation view (de-energized poles red, back-feed
+ * ties amber) so the file matches what's on screen.
  */
 export async function downloadSchematicPdf(
   token: string,
   substation: { id: string; code: string },
-  feederId?: string,
+  options: { feederId?: string; layout?: "tree" | "gps" } = {},
 ): Promise<void> {
-  const query = feederId ? `?feederId=${encodeURIComponent(feederId)}` : "";
+  const params = new URLSearchParams();
+  if (options.feederId) params.set("feederId", options.feederId);
+  if (options.layout) params.set("layout", options.layout);
+  const query = params.toString() ? `?${params.toString()}` : "";
+
   const { blob, filename } = await apiRequestBlob(
     `/reports/pencawang/${encodeURIComponent(substation.id)}/schematic.pdf${query}`,
     { token },
   );
 
-  const fallbackName = `schematic-${substation.code || "pencawang"}.pdf`;
+  const fallbackName = `${options.layout === "gps" ? "map" : "schematic"}-${
+    substation.code || "pencawang"
+  }.pdf`;
   triggerBrowserDownload(blob, filename ?? fallbackName);
 }
 

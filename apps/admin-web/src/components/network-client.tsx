@@ -77,7 +77,7 @@ function NetworkContent() {
   const [newFrom, setNewFrom] = useState("");
   const [newTo, setNewTo] = useState("");
   const [isMutating, setIsMutating] = useState(false);
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [downloadingLayout, setDownloadingLayout] = useState<"tree" | "gps" | null>(null);
 
   const canReport =
     session?.user?.canReport === true || session?.user?.role === "ADMIN";
@@ -199,29 +199,32 @@ function NetworkContent() {
     [session?.token, selectedId, loadNetwork],
   );
 
-  const handleDownloadSchematic = useCallback(async () => {
-    if (!session?.token || !selectedId) {
-      return;
-    }
-    const substation = substations.find((item) => item.id === selectedId);
-    if (!substation) {
-      return;
-    }
-    setIsDownloadingPdf(true);
-    setError("");
-    try {
-      // Pass the isolated feeder (if any) so the PDF matches what's on screen.
-      await downloadSchematicPdf(
-        session.token,
-        { id: substation.id, code: substation.code },
-        isolation?.feeder.id,
-      );
-    } catch (downloadError) {
-      setError(requestErrorMessage(downloadError, "Unable to download the schematic PDF."));
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  }, [session?.token, selectedId, substations, isolation]);
+  const handleDownloadPdf = useCallback(
+    async (layout: "tree" | "gps") => {
+      if (!session?.token || !selectedId) {
+        return;
+      }
+      const substation = substations.find((item) => item.id === selectedId);
+      if (!substation) {
+        return;
+      }
+      setDownloadingLayout(layout);
+      setError("");
+      try {
+        // Pass the isolated feeder (if any) so the PDF matches what's on screen.
+        await downloadSchematicPdf(
+          session.token,
+          { id: substation.id, code: substation.code },
+          { feederId: isolation?.feeder.id, layout },
+        );
+      } catch (downloadError) {
+        setError(requestErrorMessage(downloadError, "Unable to download the PDF."));
+      } finally {
+        setDownloadingLayout(null);
+      }
+    },
+    [session?.token, selectedId, substations, isolation],
+  );
 
   // Tidy left-to-right tree layout from the radial (fed-from) edges: x = depth,
   // y = in-order leaf position (parents centred over their children).
@@ -321,20 +324,38 @@ function NetworkContent() {
             </div>
             <div className="flex flex-wrap gap-2">
               {canReport && network ? (
-                <button
-                  type="button"
-                  onClick={handleDownloadSchematic}
-                  disabled={isDownloadingPdf}
-                  className={secondaryButtonClassName}
-                  title={
-                    isolation
-                      ? `Export the schematic with feeder ${isolation.feeder.code} isolated`
-                      : "Export the network schematic as a PDF"
-                  }
-                >
-                  <Download size={16} className={isDownloadingPdf ? "animate-pulse" : ""} />
-                  {isolation ? "Schematic PDF (isolation)" : "Schematic PDF"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadPdf("tree")}
+                    disabled={downloadingLayout !== null}
+                    className={secondaryButtonClassName}
+                    title={
+                      isolation
+                        ? `Export the logical schematic with feeder ${isolation.feeder.code} isolated`
+                        : "Export the logical network schematic (depth/branch tree) as a PDF"
+                    }
+                  >
+                    <Download
+                      size={16}
+                      className={downloadingLayout === "tree" ? "animate-pulse" : ""}
+                    />
+                    {isolation ? "Schematic PDF (isolation)" : "Schematic PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadPdf("gps")}
+                    disabled={downloadingLayout !== null}
+                    className={secondaryButtonClassName}
+                    title="Export the pole topology at real GPS positions (no basemap) as a PDF"
+                  >
+                    <MapIcon
+                      size={16}
+                      className={downloadingLayout === "gps" ? "animate-pulse" : ""}
+                    />
+                    {isolation ? "Map PDF (isolation)" : "Map PDF"}
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"

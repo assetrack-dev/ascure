@@ -192,8 +192,13 @@ browser, Docker-safe):
 - ✅ `GET /reports/pencawang/:substationId/schematic.pdf` (StreamableFile, REPORTING-
   gated). Admin: a "Schematic PDF" button on `/network` (gated by `canReport`) that
   passes the isolated feeder so the file matches what's on screen.
-- Verified by reading the generated PDFs: the tree, feeder colours, dashed NOP, and
-  the red/amber isolation all render correctly.
+- ✅ **Map PDF (`?layout=gps`):** the same renderer with a **geographic** layout —
+  poles plotted at their captured GPS (aspect-preserved, north-up), spans/ties/labels/
+  isolation, but **no basemap tiles** (just the pole topology). Second "Map PDF" button
+  on `/network`. The foundation toward a proper TNB-style schematic drawing (refine to
+  the owner's sample format later).
+- Verified by reading the generated PDFs: the tree, the GPS topology, feeder colours,
+  dashed NOP, and the red/amber isolation all render correctly.
 - **Next in Phase 3:** per-pole / per-defect visual reports (PDF, reuse F1 resolver +
   photos); QR01/02/03 + Kelegaan (likely template-driven once TNB's forms are in hand);
   attach the generated report to LAPORAN SELESAI (Phase 2 gate).

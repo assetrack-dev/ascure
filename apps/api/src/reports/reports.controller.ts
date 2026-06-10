@@ -59,12 +59,14 @@ export class ReportsController {
     @CurrentUser() user: RequestUser,
     @Param() params: PencawangReportParamsDto,
     @Query('feederId') feederId: string | undefined,
+    @Query('layout') layout: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const { buffer, filename } = await this.schematicPdfService.buildSchematicPdf(
       user,
       params.substationId,
       feederId,
+      layout === 'gps' ? 'gps' : 'tree',
     );
 
     res.setHeader('Content-Type', 'application/pdf');
