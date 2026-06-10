@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { SubstationNetwork } from "@/lib/network";
 
 interface NetworkMapProps {
@@ -9,15 +12,12 @@ interface NetworkMapProps {
   colorForFeeder: (code: string) => string;
 }
 
-const WIDTH = 760;
-const HEIGHT = 470;
-const PAD = 54;
-
 /**
- * GPS map mode — poles plotted at their captured coordinates using a simple
- * equirectangular projection into the viewport (north up), with the radial
- * spans and NOP ties drawn between them. Dependency-free (a tiled basemap can
- * layer in later); reuses the isolation overlay (red = de-energized, amber =
+ * GPS map mode — a real slippy map: poles plotted at their captured coordinates
+ * over an OpenStreetMap street basemap, with the radial spans and NOP ties drawn
+ * between them. Driven imperatively with plain Leaflet (no react-leaflet) inside
+ * a component the parent loads `ssr: false`, so there is no SSR/peer-version
+ * coupling to fight. Reuses the isolation overlay (red = de-energized, amber =
  * back-feed tie).
  */
 export default function NetworkMap({
@@ -26,11 +26,114 @@ export default function NetworkMap({
   backfeedEdgeIds,
   colorForFeeder,
 }: NetworkMapProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const overlayRef = useRef<L.LayerGroup | null>(null);
+
   const located = network.poles.filter(
     (pole) => pole.latitude != null && pole.longitude != null,
   );
+  const locatedCount = located.length;
 
-  if (located.length === 0) {
+  // Create the map + basemap once, on mount. The parent only mounts this
+  // component when the Map tab is active, so the container already has its
+  // layout size — invalidateSize() on the next tick covers any race.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || mapRef.current) {
+      return;
+    }
+    const map = L.map(container, {
+      zoomControl: true,
+      attributionControl: true,
+      scrollWheelZoom: true,
+    });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(map);
+    overlayRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    const timer = setTimeout(() => map.invalidateSize(), 0);
+    return () => {
+      clearTimeout(timer);
+      map.remove();
+      mapRef.current = null;
+      overlayRef.current = null;
+    };
+  }, []);
+
+  // (Re)draw the network overlay whenever the graph or isolation state changes.
+  useEffect(() => {
+    const map = mapRef.current;
+    const overlay = overlayRef.current;
+    if (!map || !overlay) {
+      return;
+    }
+    overlay.clearLayers();
+
+    const posById = new Map<string, [number, number]>(
+      located.map((pole) => [
+        pole.id,
+        [pole.latitude as number, pole.longitude as number],
+      ]),
+    );
+
+    for (const edge of network.edges.radial) {
+      const a = posById.get(edge.from);
+      const b = posById.get(edge.to);
+      if (!a || !b) continue;
+      L.polyline([a, b], { color: "#64748B", weight: 3, opacity: 0.9 }).addTo(overlay);
+    }
+
+    for (const edge of network.edges.tie) {
+      const a = posById.get(edge.from);
+      const b = posById.get(edge.to);
+      if (!a || !b) continue;
+      const lit = backfeedEdgeIds.has(edge.id);
+      L.polyline([a, b], {
+        color: lit ? "#F59E0B" : "#94A3B8",
+        weight: lit ? 4 : 2.5,
+        opacity: lit ? 1 : 0.8,
+        dashArray: "6 6",
+      }).addTo(overlay);
+    }
+
+    for (const pole of located) {
+      const pos = posById.get(pole.id);
+      if (!pos) continue;
+      const dead = deEnergizedIds.has(pole.id);
+      const color = dead ? "#DC2626" : colorForFeeder(pole.feeders[0] ?? "");
+      L.circleMarker(pos, {
+        radius: 7,
+        fillColor: color,
+        fillOpacity: 1,
+        color: "#ffffff",
+        weight: 2,
+      })
+        .bindTooltip(pole.noTiangRondaan, {
+          permanent: true,
+          direction: "right",
+          offset: [9, 0],
+          className: `ascure-pole-label${dead ? " ascure-pole-label--dead" : ""}`,
+        })
+        .bindPopup(
+          `<strong>${pole.noTiangRondaan}</strong>${
+            pole.noTiangLama ? ` &middot; ${pole.noTiangLama}` : ""
+          }${dead ? "<br/><span style=\"color:#DC2626\">De-energized</span>" : ""}`,
+        )
+        .addTo(overlay);
+    }
+
+    if (locatedCount > 0) {
+      const bounds = L.latLngBounds(
+        located.map((pole) => [pole.latitude as number, pole.longitude as number]),
+      );
+      map.fitBounds(bounds, { padding: [44, 44], maxZoom: 18 });
+    }
+  }, [network, deEnergizedIds, backfeedEdgeIds, colorForFeeder, located, locatedCount]);
+
+  if (locatedCount === 0) {
     return (
       <p className="p-6 text-sm text-[var(--muted)]">
         No poles have GPS coordinates for this Pencawang.
@@ -38,105 +141,31 @@ export default function NetworkMap({
     );
   }
 
-  const lats = located.map((pole) => pole.latitude as number);
-  const lngs = located.map((pole) => pole.longitude as number);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const spanLat = maxLat - minLat || 1;
-  const spanLng = maxLng - minLng || 1;
-
-  const project = (lat: number, lng: number): [number, number] => [
-    PAD + ((lng - minLng) / spanLng) * (WIDTH - 2 * PAD),
-    PAD + ((maxLat - lat) / spanLat) * (HEIGHT - 2 * PAD),
-  ];
-  const posById = new Map<string, [number, number]>(
-    located.map((pole) => [pole.id, project(pole.latitude as number, pole.longitude as number)]),
-  );
-
   return (
-    <div className="overflow-auto p-3">
-      <svg
-        width={WIDTH}
-        height={HEIGHT}
+    <div className="p-3">
+      <style>{`
+        .ascure-pole-label {
+          background: transparent;
+          border: none;
+          box-shadow: none;
+          padding: 0;
+          color: #0F172A;
+          font-weight: 500;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+        .ascure-pole-label::before { display: none; }
+        .ascure-pole-label--dead { color: #DC2626; font-weight: 700; }
+      `}</style>
+      <div
+        ref={containerRef}
+        style={{ height: 480, borderRadius: 12 }}
         role="img"
         aria-label={`GPS map for ${network.substation.code}`}
-        style={{ background: "#EEF2F7", borderRadius: 12 }}
-      >
-        {[0.25, 0.5, 0.75].map((f) => (
-          <g key={f} stroke="#DCE3EC" strokeWidth={1}>
-            <line x1={PAD + f * (WIDTH - 2 * PAD)} y1={PAD} x2={PAD + f * (WIDTH - 2 * PAD)} y2={HEIGHT - PAD} />
-            <line x1={PAD} y1={PAD + f * (HEIGHT - 2 * PAD)} x2={WIDTH - PAD} y2={PAD + f * (HEIGHT - 2 * PAD)} />
-          </g>
-        ))}
-
-        {network.edges.radial.map((edge) => {
-          const a = posById.get(edge.from);
-          const b = posById.get(edge.to);
-          if (!a || !b) return null;
-          return (
-            <line
-              key={`r-${edge.from}-${edge.to}`}
-              x1={a[0]}
-              y1={a[1]}
-              x2={b[0]}
-              y2={b[1]}
-              stroke="#64748B"
-              strokeWidth={2.5}
-            />
-          );
-        })}
-
-        {network.edges.tie.map((edge) => {
-          const a = posById.get(edge.from);
-          const b = posById.get(edge.to);
-          if (!a || !b) return null;
-          const lit = backfeedEdgeIds.has(edge.id);
-          return (
-            <line
-              key={`t-${edge.id}`}
-              x1={a[0]}
-              y1={a[1]}
-              x2={b[0]}
-              y2={b[1]}
-              stroke={lit ? "#F59E0B" : "#94A3B8"}
-              strokeWidth={lit ? 3 : 2}
-              strokeDasharray="6 6"
-            />
-          );
-        })}
-
-        {located.map((pole) => {
-          const pos = posById.get(pole.id);
-          if (!pos) return null;
-          const dead = deEnergizedIds.has(pole.id);
-          return (
-            <g key={pole.id}>
-              <circle
-                cx={pos[0]}
-                cy={pos[1]}
-                r={7}
-                fill={dead ? "#DC2626" : colorForFeeder(pole.feeders[0] ?? "")}
-                stroke="#ffffff"
-                strokeWidth={2}
-              />
-              <text
-                x={pos[0] + 10}
-                y={pos[1] + 4}
-                fontSize={11}
-                fill={dead ? "#DC2626" : "#0F172A"}
-                fontWeight={dead ? 700 : 500}
-              >
-                {pole.noTiangRondaan}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+      />
       <p className="mt-2 px-1 text-xs text-[var(--muted)]">
-        Poles positioned by captured GPS (north up) · {located.length} of {network.poles.length}{" "}
-        located.
+        Poles on an OpenStreetMap basemap, positioned by captured GPS · {locatedCount} of{" "}
+        {network.poles.length} located.
       </p>
     </div>
   );
