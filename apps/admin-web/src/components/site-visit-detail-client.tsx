@@ -21,13 +21,17 @@ import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
+  fetchCycleDelta,
   fetchSiteVisitDetail,
   generateSurveyReport,
   markRondaanSelesai,
+  openNextCycle,
   requestSurveyAmendment,
 } from "@/lib/site-visits";
 import type { AuthSession } from "@/types/auth";
 import type {
+  CycleDelta,
+  CycleDeltaPole,
   OperationalHealthStatus,
   SiteVisitAssetLink,
   SiteVisitDetail,
@@ -40,7 +44,8 @@ type LifecycleAction =
   | "rondaan-selesai"
   | "request-amendment"
   | "generate-report"
-  | "archive";
+  | "archive"
+  | "open-next-cycle";
 
 const LIFECYCLE_MAIN_STEPS: {
   key: SurveyLifecycleStatus;
@@ -364,6 +369,7 @@ interface SurveyLifecyclePanelProps {
   onRequestAmendment: (remark: string) => void;
   onGenerateReport: () => void;
   onArchive: () => void;
+  onOpenNextCycle: () => void;
 }
 
 function SurveyLifecyclePanel({
@@ -377,6 +383,7 @@ function SurveyLifecyclePanel({
   onRequestAmendment,
   onGenerateReport,
   onArchive,
+  onOpenNextCycle,
 }: SurveyLifecyclePanelProps) {
   const [amendmentOpen, setAmendmentOpen] = useState(false);
   const [amendmentRemark, setAmendmentRemark] = useState("");
@@ -463,13 +470,30 @@ function SurveyLifecyclePanel({
           This visit is cancelled — the survey lifecycle is closed.
         </p>
       ) : status === "ARKIB" ? (
-        <p className="mt-4 flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
-          <CheckCircle2 size={15} /> Cycle archived
-          {visit.lifecycle?.archivedAt
-            ? ` · ${formatDateTime(visit.lifecycle.archivedAt)}`
-            : ""}
-          .
-        </p>
+        <div className="mt-4 flex flex-col gap-3">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
+            <CheckCircle2 size={15} /> Cycle archived
+            {visit.lifecycle?.archivedAt
+              ? ` · ${formatDateTime(visit.lifecycle.archivedAt)}`
+              : ""}
+            .
+          </p>
+          {canInspect ? (
+            <button
+              type="button"
+              onClick={onOpenNextCycle}
+              disabled={isBusy}
+              className={subtleBtn}
+            >
+              {pendingAction === "open-next-cycle" ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <CalendarDays size={15} />
+              )}
+              Open next cycle (re-survey)
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="mt-4 flex flex-wrap gap-2">
           {(status === "DALAM_RONDAAN" || status === "PERLU_PINDAAN") && canInspect ? (
@@ -605,6 +629,104 @@ function SurveyLifecyclePanel({
   );
 }
 
+function CycleDeltaStat({
+  count,
+  label,
+  tone,
+}: {
+  count: number;
+  label: string;
+  tone: "added" | "removed" | "carried";
+}) {
+  const className =
+    tone === "added"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : tone === "removed"
+        ? "border-red-200 bg-red-50 text-red-700"
+        : "border-slate-200 bg-slate-50 text-slate-600";
+  return (
+    <div className={`rounded-lg border p-3 text-center ${className}`}>
+      <p className="text-2xl font-bold">{count}</p>
+      <p className="text-xs font-semibold uppercase">{label}</p>
+    </div>
+  );
+}
+
+function CycleDeltaPoleList({
+  poles,
+  emptyText,
+}: {
+  poles: CycleDeltaPole[];
+  emptyText: string;
+}) {
+  if (poles.length === 0) {
+    return <p className="text-sm text-[var(--muted)]">{emptyText}</p>;
+  }
+  return (
+    <ul className="flex flex-wrap gap-1.5">
+      {poles.map((pole) => (
+        <li
+          key={pole.id}
+          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700"
+        >
+          {pole.assetCode}
+          {pole.noTiangLama ? ` · ${pole.noTiangLama}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
+  return (
+    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+        <CalendarDays size={17} className="text-[var(--brand)]" />
+        Cycle Comparison
+      </div>
+      {delta.isBaseline ? (
+        <p className="mt-2 text-sm text-[var(--muted)]">
+          Baseline cycle — {delta.summary.observed} pole
+          {delta.summary.observed === 1 ? "" : "s"} surveyed. No prior cycle to
+          compare against; next year&rsquo;s re-survey will show the delta.
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            This cycle versus the prior survey
+            {delta.priorCycle?.startedAt
+              ? ` (${formatDateTime(delta.priorCycle.startedAt)})`
+              : ""}
+            .
+          </p>
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <CycleDeltaStat count={delta.summary.added} label="New" tone="added" />
+            <CycleDeltaStat count={delta.summary.removed} label="Removed" tone="removed" />
+            <CycleDeltaStat count={delta.summary.carried} label="Carried" tone="carried" />
+          </div>
+          <div className="mt-4 space-y-3">
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase text-emerald-700">
+                New poles
+              </p>
+              <CycleDeltaPoleList poles={delta.newPoles} emptyText="None added this cycle." />
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase text-red-700">
+                Removed / not re-surveyed
+              </p>
+              <CycleDeltaPoleList
+                poles={delta.removedPoles}
+                emptyText="None removed this cycle."
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -615,6 +737,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState("");
+  const [cycleDelta, setCycleDelta] = useState<CycleDelta | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -655,14 +778,27 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [handleLogout, siteVisitId],
   );
 
+  const loadDelta = useCallback(
+    async (token: string) => {
+      try {
+        setCycleDelta(await fetchCycleDelta(token, siteVisitId));
+      } catch {
+        // The delta is a supplementary view — never block the detail on it.
+        setCycleDelta(null);
+      }
+    },
+    [siteVisitId],
+  );
+
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
 
     if (storedSession?.token) {
       void loadVisit(storedSession.token);
+      void loadDelta(storedSession.token);
     }
-  }, [loadVisit]);
+  }, [loadVisit, loadDelta]);
 
   useEffect(() => {
     if (!autoRefresh || !session?.token) {
@@ -739,6 +875,29 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     if (!token) return;
     void runLifecycle("archive", () => archiveSurvey(token, siteVisitId));
   }, [runLifecycle, session?.token, siteVisitId]);
+
+  const handleOpenNextCycle = useCallback(async () => {
+    const token = session?.token;
+    if (!token) return;
+    setPendingAction("open-next-cycle");
+    setLifecycleError("");
+    try {
+      const next = await openNextCycle(token, siteVisitId);
+      // Land on the fresh DALAM RONDAAN survey for the new cycle.
+      router.push(`/site-visits/${next.id}`);
+    } catch (actionError) {
+      if (actionError instanceof ApiError && actionError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setLifecycleError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to open the next cycle.",
+      );
+      setPendingAction(null);
+    }
+  }, [session?.token, siteVisitId, router, handleLogout]);
 
   const submittedInspections = useMemo(
     () => visit?.inspections.filter((inspection) => inspection.completionStatus === "SUBMITTED") ?? [],
@@ -887,7 +1046,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   onRequestAmendment={handleRequestAmendment}
                   onGenerateReport={handleGenerateReport}
                   onArchive={handleArchive}
+                  onOpenNextCycle={handleOpenNextCycle}
                 />
+
+                {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
 
                 <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
                   <div className="space-y-6">

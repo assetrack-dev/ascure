@@ -10,9 +10,11 @@ import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, resolve } from 'path';
 import {
+  AssetStatus,
   InspectionCompletionStatus,
   Prisma,
   SiteVisitStatus,
+  SiteVisitType,
   SiteVisitValidationStatus,
   SurveyLifecycleStatus,
   UserRole,
@@ -376,6 +378,13 @@ type SiteVisitRollup = {
   pendingAssets: number;
   defectsFound: number;
   completionPercentage: number;
+};
+
+type ObservedPole = {
+  id: string;
+  assetCode: string;
+  noTiangLama: string | null;
+  status: AssetStatus;
 };
 
 type UploadedSiteVisitImageFile = {
@@ -808,6 +817,185 @@ export class SiteVisitsService {
     });
 
     return this.getById(user, siteVisit.id);
+  }
+
+  /**
+   * Open the next annual cycle (north-star §2/§4): a fresh survey against the
+   * same persistent poles, mirroring the prior survey's substation / team /
+   * operational links with cycleNumber + 1, opened in DALAM RONDAAN. The poles
+   * (Assets) carry over untouched — archive archived the *cycle*, not the asset.
+   */
+  async openNextCycle(user: RequestUser, id: string) {
+    this.assertCanMutate(user);
+
+    const prior = await this.findAccessibleSiteVisit(user, id);
+
+    const activeTeamMembers = await this.prisma.teamMember.findMany({
+      where: {
+        teamId: prior.teamId,
+        isActive: true,
+        user: { isActive: true },
+      },
+      select: { userId: true },
+    });
+    const visitUserIds = new Set(activeTeamMembers.map((member) => member.userId));
+    visitUserIds.add(user.id);
+
+    const created = await this.prisma.siteVisit.create({
+      data: {
+        tenantId: user.tenantId,
+        teamId: prior.teamId,
+        substationId: prior.substationId,
+        createdByUserId: user.id,
+        organizationId: prior.organizationId,
+        branchId: prior.branchId,
+        mainheadId: prior.mainheadId,
+        projectId: prior.projectId,
+        workPackageId: prior.workPackageId,
+        status: SiteVisitStatus.ACTIVE,
+        cycleNumber: (prior.cycleNumber ?? 1) + 1,
+        // A year-N re-survey of an existing register is, by definition, a re-inspection.
+        visitType: SiteVisitType.REINSPECTION,
+        operationalDomain: prior.operationalDomain,
+        operationMode: prior.operationMode,
+        operationalScope: prior.operationalScope,
+        sessionKind: prior.sessionKind,
+        fromPencawangId: prior.fromPencawangId,
+        toPencawangId: prior.toPencawangId,
+        requiresQAQC: prior.requiresQAQC,
+        reportingGroup: prior.reportingGroup,
+        mainhead: prior.mainhead,
+        pencawangCode: prior.pencawangCode,
+        pencawangName: prior.pencawangName,
+        functionalLocation: prior.functionalLocation,
+        validationStatus: SiteVisitValidationStatus.PENDING,
+        lifecycleStatus: SurveyLifecycleStatus.DALAM_RONDAAN,
+        users: {
+          create: Array.from(visitUserIds).map((userId) => ({ userId })),
+        },
+      },
+    });
+
+    return this.getReadById(user, created.id);
+  }
+
+  /**
+   * The year-over-year delta for a cycle survey (north-star §2): compares the
+   * poles observed in this cycle against the prior cycle for the same Pencawang.
+   * "Observed" = created during, linked to, or inspected in that survey.
+   * Reports new / removed / carried poles. Route/source-change detection needs
+   * per-cycle edge snapshots and is deferred to a later slice.
+   */
+  async getCycleDelta(user: RequestUser, id: string) {
+    const visit = await this.findAccessibleSiteVisit(user, id);
+
+    const prior = await this.prisma.siteVisit.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        substationId: visit.substationId,
+        id: { not: visit.id },
+        status: { not: SiteVisitStatus.CANCELLED },
+        startedAt: { lt: visit.startedAt },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        id: true,
+        startedAt: true,
+        cycleNumber: true,
+        pencawangCode: true,
+      },
+    });
+
+    const thisPoles = await this.observedPoles(visit.id);
+    const priorPoles = prior ? await this.observedPoles(prior.id) : new Map();
+
+    const goneStatuses = new Set<AssetStatus>([
+      AssetStatus.REMOVED,
+      AssetStatus.NOT_FOUND,
+    ]);
+    const newPoles: ObservedPole[] = [];
+    const carriedPoles: ObservedPole[] = [];
+    const removedById = new Map<string, ObservedPole>();
+
+    for (const [assetId, pole] of thisPoles) {
+      if (goneStatuses.has(pole.status)) {
+        removedById.set(assetId, pole);
+      } else if (priorPoles.has(assetId)) {
+        carriedPoles.push(pole);
+      } else {
+        newPoles.push(pole);
+      }
+    }
+    // Poles present last cycle but not re-surveyed this cycle.
+    for (const [assetId, pole] of priorPoles) {
+      if (!thisPoles.has(assetId)) {
+        removedById.set(assetId, pole);
+      }
+    }
+
+    const byCode = (a: ObservedPole, b: ObservedPole) =>
+      a.assetCode.localeCompare(b.assetCode, 'en', { numeric: true });
+    const removedPoles = Array.from(removedById.values()).sort(byCode);
+    newPoles.sort(byCode);
+    carriedPoles.sort(byCode);
+
+    return {
+      isBaseline: !prior,
+      cycleNumber: visit.cycleNumber,
+      priorCycle: prior
+        ? {
+            id: prior.id,
+            startedAt: prior.startedAt,
+            cycleNumber: prior.cycleNumber,
+            pencawangCode: prior.pencawangCode,
+          }
+        : null,
+      summary: {
+        observed: thisPoles.size,
+        added: newPoles.length,
+        removed: removedPoles.length,
+        carried: carriedPoles.length,
+      },
+      newPoles,
+      removedPoles,
+      carriedPoles,
+    };
+  }
+
+  /** Distinct poles a survey touched: created during it, linked to it, or
+   *  inspected in it. Keyed by assetId. */
+  private async observedPoles(
+    siteVisitId: string,
+  ): Promise<Map<string, ObservedPole>> {
+    const poleSelect = {
+      id: true,
+      assetCode: true,
+      noTiangLama: true,
+      status: true,
+    } satisfies Prisma.AssetSelect;
+
+    const [created, linked, inspected] = await Promise.all([
+      this.prisma.asset.findMany({
+        where: { createdDuringVisitId: siteVisitId },
+        select: poleSelect,
+      }),
+      this.prisma.siteVisitAsset.findMany({
+        where: { siteVisitId },
+        select: { asset: { select: poleSelect } },
+      }),
+      this.prisma.inspection.findMany({
+        where: { siteVisitId },
+        select: { asset: { select: poleSelect } },
+        distinct: ['assetId'],
+      }),
+    ]);
+
+    const poles = new Map<string, ObservedPole>();
+    const add = (asset: ObservedPole) => poles.set(asset.id, asset);
+    created.forEach(add);
+    linked.forEach((link) => add(link.asset));
+    inspected.forEach((inspection) => add(inspection.asset));
+    return poles;
   }
 
   private async resolveCreateSubstation(user: RequestUser, dto: CreateSiteVisitDto) {

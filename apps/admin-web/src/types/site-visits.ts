@@ -176,6 +176,28 @@ export interface SurveyLifecycleEvent {
   createdBy: SiteVisitUser | null;
 }
 
+export interface CycleDeltaPole {
+  id: string;
+  assetCode: string;
+  noTiangLama: string | null;
+  status: string;
+}
+
+export interface CycleDelta {
+  isBaseline: boolean;
+  cycleNumber: number | null;
+  priorCycle: {
+    id: string;
+    startedAt: string | null;
+    cycleNumber: number | null;
+    pencawangCode: string | null;
+  } | null;
+  summary: { observed: number; added: number; removed: number; carried: number };
+  newPoles: CycleDeltaPole[];
+  removedPoles: CycleDeltaPole[];
+  carriedPoles: CycleDeltaPole[];
+}
+
 export interface SiteVisitDetail extends SiteVisitListItem {
   validatedAt: string | null;
   validationSummary: string | null;

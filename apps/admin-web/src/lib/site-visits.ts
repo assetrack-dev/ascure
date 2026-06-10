@@ -17,6 +17,8 @@ import type {
   SurveyLifecycleEvent,
   SurveyLifecycleState,
   SurveyLifecycleStatus,
+  CycleDelta,
+  CycleDeltaPole,
 } from "@/types/site-visits";
 
 type ApiRecord = Record<string, unknown>;
@@ -654,4 +656,79 @@ export function generateSurveyReport(token: string, siteVisitId: string) {
 /** DC / Admin archives the completed cycle (→ ARKIB). */
 export function archiveSurvey(token: string, siteVisitId: string) {
   return transitionSurveyLifecycle(token, siteVisitId, "archive");
+}
+
+/** Open the next annual cycle — a fresh survey against the same poles. */
+export async function openNextCycle(
+  token: string,
+  siteVisitId: string,
+): Promise<SiteVisitDetail> {
+  const payload = await apiRequest<unknown>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/open-next-cycle`,
+    { method: "POST", token },
+  );
+  const visit = normalizeSiteVisitDetail(payload);
+
+  if (!visit) {
+    throw new Error("Unable to read the new cycle survey.");
+  }
+
+  return visit;
+}
+
+function normalizeCycleDeltaPole(rawPole: unknown, index: number): CycleDeltaPole | null {
+  const record = asRecord(rawPole);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: firstString(record, ["id"]) ?? `cycle-pole-${index}`,
+    assetCode: firstString(record, ["assetCode", "code", "noTiangRondaan"]) ?? "—",
+    noTiangLama: firstString(record, ["noTiangLama"]),
+    status: firstString(record, ["status"]) ?? "ACTIVE",
+  };
+}
+
+function normalizeCycleDeltaPoles(record: ApiRecord | null, key: string): CycleDeltaPole[] {
+  return readArray(record, [key])
+    .map(normalizeCycleDeltaPole)
+    .filter((pole): pole is CycleDeltaPole => Boolean(pole));
+}
+
+/** The year-over-year delta for a cycle survey (new / removed / carried poles). */
+export async function fetchCycleDelta(
+  token: string,
+  siteVisitId: string,
+): Promise<CycleDelta> {
+  const payload = await apiRequest<unknown>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/cycle-delta`,
+    { token },
+  );
+  const record = asRecord(payload);
+  const prior = nestedRecord(record, "priorCycle");
+  const summary = nestedRecord(record, "summary");
+
+  return {
+    isBaseline: readBoolean(record, "isBaseline") ?? !prior,
+    cycleNumber: readNumber(record, "cycleNumber"),
+    priorCycle: prior
+      ? {
+          id: firstString(prior, ["id"]) ?? "",
+          startedAt: firstString(prior, ["startedAt"]),
+          cycleNumber: readNumber(prior, "cycleNumber"),
+          pencawangCode: firstString(prior, ["pencawangCode"]),
+        }
+      : null,
+    summary: {
+      observed: numberOrZero(summary?.observed),
+      added: numberOrZero(summary?.added),
+      removed: numberOrZero(summary?.removed),
+      carried: numberOrZero(summary?.carried),
+    },
+    newPoles: normalizeCycleDeltaPoles(record, "newPoles"),
+    removedPoles: normalizeCycleDeltaPoles(record, "removedPoles"),
+    carriedPoles: normalizeCycleDeltaPoles(record, "carriedPoles"),
+  };
 }

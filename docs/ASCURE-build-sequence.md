@@ -103,6 +103,27 @@ is now first-class on `SiteVisit`:
   source change); mobile wiring of the inspector's RONDAAN SELESAI; attaching the
   generated report artifact (ties into Phase 3 document factory).
 
+**Slice 2b.1 — year-N re-survey + delta (landed 2026-06-10).** The "perpetual"
+pillar made real, purely additive:
+- ✅ `POST /site-visits/:id/open-next-cycle` — opens a fresh survey against the same
+  persistent poles, mirroring the prior survey's substation/team/links with
+  `cycleNumber + 1`, `visitType = REINSPECTION`, opened in `DALAM_RONDAAN`. Archive
+  archived the *cycle*, not the asset.
+- ✅ `GET /site-visits/:id/cycle-delta` — compares the poles **observed** (created
+  during / linked to / inspected in) this cycle against the prior cycle survey for
+  the same Pencawang → **new / removed / carried** poles. `isBaseline` when there is
+  no prior cycle. Verified end-to-end: a re-survey that dropped one pole and added
+  another reported the delta correctly, including a removed pole observed only via an
+  inspection link in the prior cycle.
+- ✅ Admin UI: an "Open next cycle (re-survey)" action on an archived survey
+  (navigates to the fresh cycle) + a Cycle Comparison card (new/removed/carried
+  counts + pole lists).
+- **Still deferred (Slice 2b.2+):** **route/source-change** detection (needs per-cycle
+  edge snapshots — the current graph stores only *current* fed-from/feeder, not
+  history); **retire the old machines** (fold OperationalSession; strip defect-QA
+  verify/reject/closure → inspector-owns-the-call); mobile RONDAAN SELESAI; report
+  artifact (→ Phase 3).
+
 ### Phase 3 — Document factory + isolation view *(the outputs ARE the product)*
 Schematic (graph render), isolation/switching traversal, QR01/02/03, Kelegaan,
 per-pole + per-defect visual reports; report-gen becomes the gate into

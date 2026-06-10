@@ -136,6 +136,24 @@ export class SiteVisitsController {
     return this.surveyLifecycleService.archive(user, params.id);
   }
 
+  // --- Annual cycle (north-star §2): year-N re-survey + delta ---
+
+  @Post(':id/open-next-cycle')
+  openNextCycle(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.siteVisitsService.openNextCycle(user, params.id);
+  }
+
+  @Get(':id/cycle-delta')
+  getCycleDelta(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.siteVisitsService.getCycleDelta(user, params.id);
+  }
+
   @Get(':id')
   getById(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
     return this.siteVisitsService.getReadById(user, params.id);
