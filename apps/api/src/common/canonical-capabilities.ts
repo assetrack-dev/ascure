@@ -18,6 +18,7 @@ export const CANONICAL_CAPABILITY_CODES: ReadonlySet<string> = new Set([
   // Governance & Reporting
   'QA_VALIDATION',
   'REPORTING',
+  'IMPORT',
   // Asset Domains
   'SAVR',
   'SAVT',

@@ -18,6 +18,7 @@ import {
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { inspectorOwnsDefects } from '../common/authorization/defect-governance';
+import { APPSHEET_IMPORT_REPORTING_GROUP_PREFIX } from '../common/import.constants';
 import {
   buildScopeContext,
   ScopeContext,
@@ -1452,6 +1453,17 @@ export class DefectsService {
         inspection: {
           tenantId: user.tenantId,
           ...this.inspectionAccessScope(user, ctx),
+          // Foundation/baseline imports are historical observations, not live
+          // work — never materialize live Defects from them (null-safe: normal
+          // inspections have a null reportingGroup).
+          OR: [
+            { reportingGroup: null },
+            {
+              reportingGroup: {
+                not: { startsWith: APPSHEET_IMPORT_REPORTING_GROUP_PREFIX },
+              },
+            },
+          ],
         },
       },
       select: {
@@ -1495,6 +1507,15 @@ export class DefectsService {
         inspection: {
           tenantId: user.tenantId,
           ...this.inspectionAccessScope(user, ctx),
+          // Foundation/baseline imports never become live Defects (see list()).
+          OR: [
+            { reportingGroup: null },
+            {
+              reportingGroup: {
+                not: { startsWith: APPSHEET_IMPORT_REPORTING_GROUP_PREFIX },
+              },
+            },
+          ],
         },
       },
       select: {
