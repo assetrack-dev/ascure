@@ -45,8 +45,18 @@ const NETWORK_ERROR_LOG_THROTTLE_MS = 30000;
 
 const networkErrorLogTimes = new Map<string, number>();
 
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL;
+// The base URL is used verbatim as `${API_BASE_URL}${path}`, so it must include
+// the `/api/v1` root. Normalize the bake so EXPO_PUBLIC_API_BASE_URL set to
+// either `https://api.ascure.com.my` or `https://api.ascure.com.my/api/v1`
+// resolves the same — otherwise a bare-origin bake hits `/auth/login` and the
+// API 404s ("Cannot POST /auth/login"). Mirrors the admin-web logic.
+const RAW_API_BASE = (
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
+).replace(/\/+$/, '');
+
+export const API_BASE_URL = RAW_API_BASE.endsWith('/api/v1')
+  ? RAW_API_BASE
+  : `${RAW_API_BASE}/api/v1`;
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
