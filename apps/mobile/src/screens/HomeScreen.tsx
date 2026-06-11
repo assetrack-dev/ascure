@@ -424,48 +424,43 @@ function InspectionWorkspaceView({
         </Card>
       ) : null}
 
-      <Card>
-        <View style={styles.listHeader}>
-          <SectionTitle>Inspection Queue</SectionTitle>
-          <Text style={styles.countText}>{queueItems.length}</Text>
-        </View>
-        {queueItems.length === 0 ? (
+      {/* One card per status group (no "Inspection Queue" wrapper, no per-item
+          status pill — the card header carries the single status chip). */}
+      {queueItems.length === 0 ? (
+        <Card>
           <EmptyState
             icon="clipboard"
             title="No inspection queue"
             description="Create or join a site visit to begin SAVR inspection work."
           />
-        ) : (
-          <View style={styles.queueGrid}>
-            {QUEUE_GROUPS.map((entry) => {
-              const items = queueItems.filter((item) => item.group === entry.group);
+        </Card>
+      ) : (
+        QUEUE_GROUPS.map((entry) => {
+          const items = queueItems.filter((item) => item.group === entry.group);
 
-              if (items.length === 0) {
-                return null;
-              }
+          if (items.length === 0) {
+            return null;
+          }
 
-              return (
-                <View key={entry.group} style={styles.queueGroup}>
-                  <View style={styles.queueGroupHeader}>
-                    <StatusChip label={entry.label} tone={entry.tone} />
-                    <Text style={styles.countText}>{items.length}</Text>
-                  </View>
-                  {items.map((item) => (
-                    <InspectionQueueCard
-                      key={item.id}
-                      item={item}
-                      label={entry.label}
-                      tone={entry.tone}
-                      onOpenItem={onOpenQueueItem}
-                    />
-                  ))}
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </Card>
-
+          return (
+            <Card key={entry.group}>
+              <View style={styles.listHeader}>
+                <StatusChip label={entry.label} tone={entry.tone} />
+                <Text style={styles.countText}>{items.length}</Text>
+              </View>
+              <View style={styles.queueGrid}>
+                {items.map((item) => (
+                  <InspectionQueueCard
+                    key={item.id}
+                    item={item}
+                    onOpenItem={onOpenQueueItem}
+                  />
+                ))}
+              </View>
+            </Card>
+          );
+        })
+      )}
     </>
   );
 }
@@ -498,13 +493,9 @@ function ScopeCard({
 
 function InspectionQueueCard({
   item,
-  label,
-  tone,
   onOpenItem,
 }: {
   item: InspectionQueueItem;
-  label: string;
-  tone: 'info' | 'success' | 'danger';
   onOpenItem: (item: InspectionQueueItem) => void;
 }) {
   return (
@@ -519,12 +510,11 @@ function InspectionQueueCard({
       ]}
     >
       <View style={styles.queueCardHeader}>
-        <StatusChip label={label} tone={tone} />
+        <Text style={[styles.queueTitle, { flex: 1 }]} numberOfLines={1}>
+          {item.title}
+        </Text>
         <Feather name="chevron-right" size={18} color={uiTheme.colors.textMuted} />
       </View>
-      <Text style={styles.queueTitle} numberOfLines={1}>
-        {item.title}
-      </Text>
       <Text style={styles.queueSubtitle} numberOfLines={2}>
         {item.subtitle}
       </Text>
