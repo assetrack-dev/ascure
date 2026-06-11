@@ -735,6 +735,7 @@ export class SiteVisitsService {
     }
 
     await this.assertCanReassignBetween(user, fromTeam, toTeam);
+    await this.assertOutgoingTeamSynced(fromTeam.id);
 
     // Billing snapshot for the OUTGOING team at the handover (ADR 0002 §5).
     const contributionData = await this.buildContributionSnapshot(
@@ -833,6 +834,34 @@ export class SiteVisitsService {
     }
 
     throw new ForbiddenException('You are not allowed to reassign site visits.');
+  }
+
+  /**
+   * Offline handover gate (ADR 0002 §4): the outgoing team's devices must have
+   * flushed their local mutation queue first, so Team B inherits a fully-synced
+   * Pencawang and nothing is lost in transit. Backed by self-reported device
+   * heartbeats (`POST /sync/heartbeat`); a member's count defaults to 0, so
+   * until the mobile app starts reporting this never blocks — purely additive
+   * for the live pilot.
+   */
+  private async assertOutgoingTeamSynced(fromTeamId: string) {
+    const pendingMember = await this.prisma.user.findFirst({
+      where: {
+        isActive: true,
+        syncPendingCount: { gt: 0 },
+        teamMemberships: {
+          some: { teamId: fromTeamId, isActive: true },
+        },
+      },
+      select: { name: true, syncPendingCount: true },
+      orderBy: { syncPendingCount: 'desc' },
+    });
+
+    if (pendingMember) {
+      throw new ConflictException(
+        `Cannot reassign yet — ${pendingMember.name} still has ${pendingMember.syncPendingCount} unsynced change(s) on their device. Wait for the outgoing team's app to finish syncing, then try again.`,
+      );
+    }
   }
 
   /**

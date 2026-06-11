@@ -701,6 +701,19 @@ export const api = {
       token,
     });
   },
+
+  /**
+   * Offline-sync heartbeat (ADR 0002 §4): report how many mutations are still
+   * queued locally so the server can gate reassignment of this team's work
+   * until the device has flushed. Best-effort — callers ignore failures.
+   */
+  reportSyncState(token: string, pendingMutationCount: number) {
+    return request('/sync/heartbeat', {
+      method: 'POST',
+      token,
+      body: { pendingMutationCount },
+    });
+  },
 };
 
 function normalizeSiteVisitAssets(entries: Array<SiteVisitAssetLink | Asset>) {

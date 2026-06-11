@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import NetInfo from '@react-native-community/netinfo';
-import { ApiError } from '../api';
+import { ApiError, api } from '../api';
 import {
   getActiveQueueCount,
   subscribeSyncQueue,
@@ -114,6 +114,20 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
     return unsubscribe;
   }, [runQueueSync, token]);
+
+  // Best-effort offline-sync heartbeat (ADR 0002 §4): whenever the queue size
+  // changes (work queued, or drained by a sync) and we're online, tell the
+  // server how many mutations are still pending so it can gate reassignment of
+  // this team's work until the device has flushed. Never blocks sync — failures
+  // are ignored, and an unreported device simply defaults to 0 (no gate).
+  useEffect(() => {
+    if (!token || isOffline) {
+      return;
+    }
+
+    const pending = getActiveQueueCount(snapshot);
+    void api.reportSyncState(token, pending).catch(() => undefined);
+  }, [snapshot, token, isOffline]);
 
   const value = useMemo<SyncContextValue>(
     () => ({ snapshot, isSyncing, isOffline, runQueueSync }),
