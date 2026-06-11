@@ -391,6 +391,26 @@ export const api = {
     });
   },
 
+  async reassignSiteVisit(
+    token: string,
+    siteVisitId: string,
+    toTeamId: string,
+    reason: string,
+  ) {
+    return request<SiteVisit>(`/site-visits/${siteVisitId}/reassign`, {
+      method: 'POST',
+      token,
+      body: { toTeamId, reason },
+    });
+  },
+
+  async getAllTeams(token: string) {
+    return request<Array<{ id: string; name?: string | null; code?: string | null }>>(
+      '/teams',
+      { token },
+    );
+  },
+
   async getSiteVisitAssets(token: string, siteVisitId: string) {
     const response = await request<Array<SiteVisitAssetLink | Asset>>(
       `/site-visits/${siteVisitId}/assets`,

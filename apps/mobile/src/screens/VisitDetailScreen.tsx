@@ -29,7 +29,7 @@ import {
   getAssetRowLabels,
   getSubmittedInspectionAssetIds,
 } from '../assetDisplay';
-import { Asset, SiteVisit, SiteVisitSummary } from '../types';
+import { Asset, SiteVisit, SiteVisitSummary, UserRole } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -71,7 +71,7 @@ export function VisitDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'VisitDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'VisitDetail'>['route']>();
   const { visitId, substationId, successMessage } = route.params;
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   const { isOffline, snapshot: syncQueueSnapshot } = useSync();
 
   const [visit, setVisit] = useState<SiteVisit | null>(null);
@@ -419,6 +419,13 @@ export function VisitDetailScreen() {
             </Card>
           ) : null}
 
+          <ReassignTeamCard
+            visit={visit}
+            token={token}
+            userRole={user?.role}
+            onReassigned={loadVisitData}
+          />
+
           <Card>
             <SectionTitle>Complete Visit</SectionTitle>
             <TextField
@@ -451,6 +458,144 @@ export function VisitDetailScreen() {
         </>
       ) : null}
     </Screen>
+  );
+}
+
+function ReassignTeamCard({
+  visit,
+  token,
+  userRole,
+  onReassigned,
+}: {
+  visit: SiteVisit;
+  token: string;
+  userRole?: UserRole;
+  onReassigned: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [teams, setTeams] = useState<
+    Array<{ id: string; name?: string | null; code?: string | null }>
+  >([]);
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canReassign =
+    userRole === 'ADMIN' || userRole === 'MANAGER' || userRole === 'SUPERVISOR';
+
+  if (!canReassign || isVisitTerminal(visit.status)) {
+    return null;
+  }
+
+  const currentTeamId = visit.team?.id ?? null;
+  const currentLabel = visit.team?.name || visit.team?.code || 'Unassigned';
+  const options = teams.filter((team) => team.id !== currentTeamId);
+  const canSubmit = Boolean(selectedTeamId) && reason.trim().length > 0 && !submitting;
+
+  const openForm = async () => {
+    setOpen(true);
+    setError(null);
+    if (teamsLoaded) {
+      return;
+    }
+    try {
+      setTeams(await api.getAllTeams(token));
+      setTeamsLoaded(true);
+    } catch {
+      setError('Unable to load the team list.');
+    }
+  };
+
+  const submit = async () => {
+    if (!selectedTeamId || reason.trim().length === 0 || submitting) {
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.reassignSiteVisit(token, visit.id, selectedTeamId, reason.trim());
+      setOpen(false);
+      setSelectedTeamId(null);
+      setReason('');
+      await onReassigned();
+    } catch (reassignError) {
+      if (reassignError instanceof ApiError && reassignError.status === 401) {
+        setError('Your session expired — sign in again.');
+      } else {
+        setError(
+          reassignError instanceof Error
+            ? reassignError.message
+            : 'Unable to reassign this visit.',
+        );
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle>Team Assignment</SectionTitle>
+      <KeyValueRow label="Current team" value={currentLabel} />
+      {error ? <ErrorBanner message={error} /> : null}
+      {!open ? (
+        <AppButton
+          label="Reassign Team"
+          variant="secondary"
+          onPress={() => void openForm()}
+        />
+      ) : (
+        <View style={styles.reassignForm}>
+          <Text style={styles.reassignHint}>
+            Hand this in-progress survey to another team — every inspection, photo and
+            defect transfers.
+          </Text>
+          {!teamsLoaded ? (
+            <Text style={styles.reassignHint}>Loading teams…</Text>
+          ) : options.length === 0 ? (
+            <Text style={styles.reassignHint}>No other team is available.</Text>
+          ) : (
+            options.map((team) => {
+              const selected = team.id === selectedTeamId;
+              return (
+                <Pressable
+                  key={team.id}
+                  onPress={() => setSelectedTeamId(team.id)}
+                  style={[styles.teamRow, selected && styles.teamRowSelected]}
+                >
+                  <Text style={[styles.teamRowText, selected && styles.teamRowTextSelected]}>
+                    {team.name || team.code || team.id}
+                  </Text>
+                </Pressable>
+              );
+            })
+          )}
+          <TextField
+            label="Reason"
+            value={reason}
+            onChangeText={setReason}
+            placeholder="Why is this being reassigned?"
+            multiline
+          />
+          <AppButton
+            label={submitting ? 'Reassigning…' : 'Reassign'}
+            onPress={() => void submit()}
+            loading={submitting}
+            disabled={!canSubmit}
+          />
+          <AppButton
+            label="Cancel"
+            variant="secondary"
+            onPress={() => {
+              setOpen(false);
+              setError(null);
+            }}
+          />
+        </View>
+      )}
+    </Card>
   );
 }
 
@@ -1087,5 +1232,33 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {
     opacity: 0.82,
+  },
+  reassignForm: {
+    gap: 10,
+  },
+  reassignHint: {
+    color: uiTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  teamRow: {
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    backgroundColor: uiTheme.colors.card,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  teamRowSelected: {
+    borderColor: uiTheme.colors.primary,
+    backgroundColor: uiTheme.colors.primarySoft,
+  },
+  teamRowText: {
+    color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  teamRowTextSelected: {
+    color: uiTheme.colors.primaryStrong,
   },
 });
