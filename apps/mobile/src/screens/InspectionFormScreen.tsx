@@ -461,9 +461,13 @@ export function InspectionFormScreen() {
       }
 
       // Tag the photo with its checklist item so the API links it to this
-      // reading's result for the visual report.
+      // reading's result for the visual report. Replace any previous scan for
+      // the same item (a retake) so the inline thumbnail shows the latest.
       const itemPhoto = { ...captured.photo, templateItemId: itemId };
-      setPhotoList((current) => [...current, itemPhoto]);
+      setPhotoList((current) => [
+        ...current.filter((photo) => photo.templateItemId !== itemId),
+        itemPhoto,
+      ]);
       void uploadPhotoInBackground(itemPhoto);
 
       const reading = await recognizeReadingFromImage(captured.originalUri);
@@ -749,6 +753,8 @@ export function InspectionFormScreen() {
                   onUpdateDraftValue={updateDraftValue}
                   onScanReading={handleScanReading}
                   scanningItemId={scanningItemId}
+                  photos={photos}
+                  onPreviewPhoto={(uri) => setSelectedPhotoUri(uri)}
                 />
               ))}
             </View>
@@ -902,6 +908,8 @@ function ChecklistSectionCard({
   onUpdateDraftValue,
   onScanReading,
   scanningItemId,
+  photos,
+  onPreviewPhoto,
 }: {
   section: InspectionTemplateSection;
   sectionIndex: number;
@@ -913,6 +921,8 @@ function ChecklistSectionCard({
   ) => void;
   onScanReading: (itemId: string) => void;
   scanningItemId: string | null;
+  photos: CapturedInspectionPhoto[];
+  onPreviewPhoto: (uri: string) => void;
 }) {
   const normalizedTitle = section.title.trim().toUpperCase();
   const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
@@ -952,6 +962,8 @@ function ChecklistSectionCard({
             onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
             onScanReading={() => onScanReading(item.id)}
             scanning={scanningItemId === item.id}
+            scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
+            onPreviewPhoto={onPreviewPhoto}
           />
         ))}
       </View>
@@ -966,6 +978,8 @@ function ChecklistItemCard({
   onChange,
   onScanReading,
   scanning,
+  scanPhotoUri,
+  onPreviewPhoto,
 }: {
   item: InspectionTemplateItem;
   value: DraftValues[string] | undefined;
@@ -973,6 +987,8 @@ function ChecklistItemCard({
   onChange: (value: DraftValues[string]) => void;
   onScanReading: () => void;
   scanning: boolean;
+  scanPhotoUri?: string;
+  onPreviewPhoto: (uri: string) => void;
 }) {
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
@@ -1033,6 +1049,21 @@ function ChecklistItemCard({
             keyboardType="decimal-pad"
             editable={!disabled}
           />
+          {scanPhotoUri ? (
+            <Pressable
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Smart Sensor photo — tap to enlarge"
+              onPress={() => onPreviewPhoto(scanPhotoUri)}
+              style={styles.scanPhotoThumbWrap}
+            >
+              <Image
+                source={{ uri: scanPhotoUri }}
+                style={styles.scanPhotoThumb}
+                resizeMode="cover"
+              />
+              <Text style={styles.scanPhotoHint}>Tap to enlarge</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={disabled || scanning}
@@ -1049,7 +1080,11 @@ function ChecklistItemCard({
               <Text style={styles.scanButtonIcon}>⌖</Text>
             )}
             <Text style={styles.scanButtonText}>
-              {scanning ? 'Scanning…' : 'Scan with Smart Sensor'}
+              {scanning
+                ? 'Scanning…'
+                : scanPhotoUri
+                  ? 'Retake with Smart Sensor'
+                  : 'Scan with Smart Sensor'}
             </Text>
           </Pressable>
         </>
@@ -2000,6 +2035,29 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  scanPhotoThumbWrap: {
+    marginTop: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  scanPhotoThumb: {
+    width: '100%',
+    height: 170,
+  },
+  scanPhotoHint: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
   previewModalBackdrop: {
     flex: 1,
