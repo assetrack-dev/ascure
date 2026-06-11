@@ -2415,16 +2415,45 @@ export class SiteVisitsService {
       };
     }
 
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
+    // Every actor at minimum sees visits of teams they actively belong to.
+    const ownTeamMembership: Prisma.TeamWhereInput = {
+      members: {
+        some: {
+          userId: user.id,
+          isActive: true,
         },
       },
     };
+
+    // MANAGER: all teams in their own company (Organization), plus any team
+    // they personally belong to. (north-star §5 / ADR 0002 §3)
+    if (user.role === UserRole.MANAGER && user.organizationId) {
+      return {
+        team: {
+          OR: [{ organizationId: user.organizationId }, ownTeamMembership],
+        },
+      };
+    }
+
+    // SUPERVISOR: the teams they are explicitly assigned to via TeamSupervisor
+    // (a company-scoped, geography-independent subset), plus their own teams.
+    if (user.role === UserRole.SUPERVISOR) {
+      return {
+        team: {
+          OR: [
+            {
+              supervisors: {
+                some: { supervisorUserId: user.id, isActive: true },
+              },
+            },
+            ownTeamMembership,
+          ],
+        },
+      };
+    }
+
+    // TECHNICIAN / VIEWER / CLIENT: only their own teams' visits.
+    return { team: ownTeamMembership };
   }
 
   private normalizeOptionalString(value?: string | null) {

@@ -312,6 +312,7 @@ model Tenant {
   operationalRegions  OperationalRegion[]
   feeders             Feeder[]
   networkTieEdges     NetworkTieEdge[]
+  organizations       Organization[]
 }
 
 model Department {
@@ -352,6 +353,7 @@ model Team {
   assignedToDefects     Defect[]         @relation("DefectAssignedToTeam")
   assignedUsers         User[]           @relation("UserOperationalTeam")
   capabilityAssignments TeamCapability[]
+  supervisors           TeamSupervisor[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -406,6 +408,7 @@ model User {
   assignedSessionAssets     OperationalSessionAsset[]     @relation("OperationalSessionAssetAssignedBy")
   removedSessionAssets      OperationalSessionAsset[]     @relation("OperationalSessionAssetRemovedBy")
   siteVisitLifecycleEvents  SiteVisitLifecycleEvent[]     @relation("SiteVisitLifecycleCreatedBy")
+  supervisedTeams           TeamSupervisor[]
 
   @@index([tenantId])
   @@index([organizationId])
@@ -429,15 +432,32 @@ model TeamMember {
   @@index([userId])
 }
 
+model TeamSupervisor {
+  id               String   @id @default(uuid()) @db.Uuid
+  teamId           String   @db.Uuid
+  supervisorUserId String   @db.Uuid
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  team             Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  supervisor       User     @relation(fields: [supervisorUserId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, supervisorUserId])
+  @@index([supervisorUserId])
+  @@index([teamId])
+}
+
 model Organization {
   id                     String                             @id @default(uuid()) @db.Uuid
   name                   String
   code                   String?                            @unique
   type                   OrganizationType
+  tenantId               String?                            @db.Uuid
   parentOrganizationId   String?                            @db.Uuid
   isActive               Boolean                            @default(true)
   createdAt              DateTime                           @default(now())
   updatedAt              DateTime                           @updatedAt
+  tenant                 Tenant?                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   parentOrganization     Organization?                      @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
   childOrganizations     Organization[]                     @relation("OrganizationHierarchy")
   memberships            OrganizationMembership[]
@@ -454,6 +474,7 @@ model Organization {
   assignedSessions       OperationalSession[]               @relation("OperationalSessionAssignedCompany")
 
   @@index([type])
+  @@index([tenantId])
   @@index([parentOrganizationId])
 }
 
@@ -928,26 +949,26 @@ model OperationalSessionAsset {
 }
 
 model SiteVisit {
-  id                    String                     @id @default(uuid()) @db.Uuid
-  tenantId              String                     @db.Uuid
-  teamId                String                     @db.Uuid
-  substationId          String                     @db.Uuid
-  createdByUserId       String                     @db.Uuid
-  validatedByUserId     String?                    @db.Uuid
-  organizationId        String?                    @db.Uuid
-  branchId              String?                    @db.Uuid
-  mainheadId            String?                    @db.Uuid
-  projectId             String?                    @db.Uuid
-  workPackageId         String?                    @db.Uuid
-  status                SiteVisitStatus            @default(ACTIVE)
+  id                    String                      @id @default(uuid()) @db.Uuid
+  tenantId              String                      @db.Uuid
+  teamId                String                      @db.Uuid
+  substationId          String                      @db.Uuid
+  createdByUserId       String                      @db.Uuid
+  validatedByUserId     String?                     @db.Uuid
+  organizationId        String?                     @db.Uuid
+  branchId              String?                     @db.Uuid
+  mainheadId            String?                     @db.Uuid
+  projectId             String?                     @db.Uuid
+  workPackageId         String?                     @db.Uuid
+  status                SiteVisitStatus             @default(ACTIVE)
   cycleNumber           Int?
   visitType             SiteVisitType?
   operationalDomain     OperationalDomain?
   operationMode         OperationMode?
   operationalScope      OperationalScope?
   sessionKind           SessionKind?
-  fromPencawangId       String?                    @db.Uuid
-  toPencawangId         String?                    @db.Uuid
+  fromPencawangId       String?                     @db.Uuid
+  toPencawangId         String?                     @db.Uuid
   requiresQAQC          Boolean?
   reportingGroup        String?
   mainhead              String?
@@ -972,24 +993,24 @@ model SiteVisit {
   gisGeometryVersion    String?
   completionNotes       String?
   cancelReason          String?
-  startedAt             DateTime                   @default(now())
+  startedAt             DateTime                    @default(now())
   completedAt           DateTime?
   endedAt               DateTime?
   notes                 String?
-  createdAt             DateTime                   @default(now())
-  updatedAt             DateTime                   @updatedAt
-  tenant                Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  team                  Team                       @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  substation            Substation                 @relation(fields: [substationId], references: [id], onDelete: Restrict)
-  createdBy             User                       @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  validatedBy           User?                      @relation("SiteVisitValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
-  organization          Organization?              @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  branch                Branch?                    @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  mainheadRecord        Mainhead?                  @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
-  project               Project?                   @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  workPackage           WorkPackage?               @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
-  fromPencawang         Substation?                @relation("SiteVisitFromPencawang", fields: [fromPencawangId], references: [id], onDelete: SetNull)
-  toPencawang           Substation?                @relation("SiteVisitToPencawang", fields: [toPencawangId], references: [id], onDelete: SetNull)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  tenant                Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  team                  Team                        @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  substation            Substation                  @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  createdBy             User                        @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  validatedBy           User?                       @relation("SiteVisitValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
+  organization          Organization?               @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  branch                Branch?                     @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  mainheadRecord        Mainhead?                   @relation(fields: [mainheadId], references: [id], onDelete: SetNull)
+  project               Project?                    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workPackage           WorkPackage?                @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  fromPencawang         Substation?                 @relation("SiteVisitFromPencawang", fields: [fromPencawangId], references: [id], onDelete: SetNull)
+  toPencawang           Substation?                 @relation("SiteVisitToPencawang", fields: [toPencawangId], references: [id], onDelete: SetNull)
   users                 SiteVisitUser[]
   participants          SiteVisitParticipant[]
   createdAssets         Asset[]
@@ -997,6 +1018,8 @@ model SiteVisit {
   inspections           Inspection[]
   images                Image[]
   lifecycleEvents       SiteVisitLifecycleEvent[]
+  reassignments         SiteVisitReassignment[]
+  teamContributions     SiteVisitTeamContribution[]
 
   @@index([tenantId])
   @@index([teamId, status])
@@ -1022,6 +1045,33 @@ model SiteVisit {
   @@index([feederId])
   @@index([feederRouteId])
   @@index([completedAt])
+}
+
+model SiteVisitReassignment {
+  id                 String    @id @default(uuid()) @db.Uuid
+  siteVisitId        String    @db.Uuid
+  fromTeamId         String    @db.Uuid
+  toTeamId           String    @db.Uuid
+  reason             String
+  reassignedByUserId String    @db.Uuid
+  createdAt          DateTime  @default(now())
+  siteVisit          SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+
+  @@index([siteVisitId])
+}
+
+model SiteVisitTeamContribution {
+  id              String    @id @default(uuid()) @db.Uuid
+  siteVisitId     String    @db.Uuid
+  teamId          String    @db.Uuid
+  assetsCompleted Int
+  totalAssets     Int
+  snapshotReason  String
+  createdAt       DateTime  @default(now())
+  siteVisit       SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+
+  @@index([siteVisitId])
+  @@index([teamId])
 }
 
 model SiteVisitUser {

@@ -27,6 +27,7 @@ export class AuthService {
         email: true,
         name: true,
         role: true,
+        organizationId: true,
         isActive: true,
         passwordHash: true,
       },
@@ -54,6 +55,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       role: user.role,
+      organizationId: user.organizationId,
     };
 
     const [canGovernQa, canReport, canImport] = await Promise.all([

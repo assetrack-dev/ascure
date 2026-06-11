@@ -6,4 +6,5 @@ export interface RequestUser {
   email: string;
   name: string;
   role: UserRole;
+  organizationId: string | null;
 }
