@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import { Prisma, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTeamDto, UpdateTeamDto, UpdateTeamStatusDto } from './dto/manage-team.dto';
+import { SetTeamSupervisorsDto } from './dto/team-supervisors.dto';
 
 const TEAM_INCLUDE = Prisma.validator<Prisma.TeamInclude>()({
   organization: {
@@ -62,6 +64,13 @@ const TEAM_INCLUDE = Prisma.validator<Prisma.TeamInclude>()({
       capabilityAssignments: true,
     },
   },
+});
+
+const SUPERVISOR_USER_SELECT = Prisma.validator<Prisma.UserSelect>()({
+  id: true,
+  name: true,
+  email: true,
+  role: true,
 });
 
 @Injectable()
@@ -251,6 +260,150 @@ export class TeamsService {
       },
       include: TEAM_INCLUDE,
     });
+  }
+
+  /**
+   * List the supervisors assigned to a team plus the eligible candidate pool
+   * (ADR 0002 §3). One call so the admin UI can render the picker without a
+   * second round-trip.
+   */
+  async listSupervisors(user: RequestUser, teamId: string) {
+    const team = await this.assertManageableTeam(user, teamId);
+    return this.buildSupervisorView(user, team);
+  }
+
+  /**
+   * Set the full supervisor set for a team — links absent from the list are
+   * removed, present ones created (ADR 0002 §3). The supervisor↔team link is
+   * what grants `accessScope` visibility and supervisor reassign authority, so
+   * without this nothing can populate it but raw DB writes.
+   */
+  async setSupervisors(
+    user: RequestUser,
+    teamId: string,
+    dto: SetTeamSupervisorsDto,
+  ) {
+    const team = await this.assertManageableTeam(user, teamId);
+    const supervisorUserIds = this.normalizeIdList(dto.supervisorUserIds);
+
+    if (supervisorUserIds.length > 0) {
+      await this.assertEligibleSupervisors(user, team, supervisorUserIds);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.teamSupervisor.deleteMany({
+        where: {
+          teamId: team.id,
+          ...(supervisorUserIds.length > 0
+            ? { supervisorUserId: { notIn: supervisorUserIds } }
+            : {}),
+        },
+      });
+
+      for (const supervisorUserId of supervisorUserIds) {
+        await tx.teamSupervisor.upsert({
+          where: {
+            teamId_supervisorUserId: { teamId: team.id, supervisorUserId },
+          },
+          create: { teamId: team.id, supervisorUserId, isActive: true },
+          update: { isActive: true },
+        });
+      }
+    });
+
+    return this.buildSupervisorView(user, team);
+  }
+
+  /**
+   * Resolve a team the actor may manage supervisors for: ADMIN over any team in
+   * their tenant, MANAGER only over teams in their own organization (ADR 0002
+   * §3 — a manager governs their own company).
+   */
+  private async assertManageableTeam(user: RequestUser, teamId: string) {
+    const team = await this.prisma.team.findFirst({
+      where: { id: teamId, tenantId: user.tenantId },
+      select: { id: true, name: true, organizationId: true },
+    });
+
+    if (!team) {
+      throw new NotFoundException('Team not found.');
+    }
+
+    if (user.role === UserRole.ADMIN) {
+      return team;
+    }
+
+    if (
+      user.role === UserRole.MANAGER &&
+      user.organizationId &&
+      team.organizationId === user.organizationId
+    ) {
+      return team;
+    }
+
+    throw new ForbiddenException(
+      'You are not allowed to manage supervisors for this team.',
+    );
+  }
+
+  /**
+   * Eligible supervisors are active SUPERVISOR-role users in the same tenant
+   * and — when the team belongs to an organization — the same company (ADR 0002:
+   * a supervisor's teams are a subset of their own company). Validates the whole
+   * submitted set in one count.
+   */
+  private async assertEligibleSupervisors(
+    user: RequestUser,
+    team: { organizationId: string | null },
+    supervisorUserIds: string[],
+  ) {
+    const eligibleCount = await this.prisma.user.count({
+      where: {
+        id: { in: supervisorUserIds },
+        tenantId: user.tenantId,
+        isActive: true,
+        role: UserRole.SUPERVISOR,
+        ...(team.organizationId ? { organizationId: team.organizationId } : {}),
+      },
+    });
+
+    if (eligibleCount !== supervisorUserIds.length) {
+      throw new BadRequestException(
+        team.organizationId
+          ? 'Every supervisor must be an active supervisor in the same organization as the team.'
+          : 'Every supervisor must be an active supervisor in the same tenant.',
+      );
+    }
+  }
+
+  private async buildSupervisorView(
+    user: RequestUser,
+    team: { id: string; name: string; organizationId: string | null },
+  ) {
+    const [links, candidates] = await Promise.all([
+      this.prisma.teamSupervisor.findMany({
+        where: { teamId: team.id, isActive: true },
+        select: { supervisor: { select: SUPERVISOR_USER_SELECT } },
+        orderBy: { supervisor: { name: 'asc' } },
+      }),
+      this.prisma.user.findMany({
+        where: {
+          tenantId: user.tenantId,
+          isActive: true,
+          role: UserRole.SUPERVISOR,
+          ...(team.organizationId ? { organizationId: team.organizationId } : {}),
+        },
+        select: SUPERVISOR_USER_SELECT,
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    return {
+      teamId: team.id,
+      teamName: team.name,
+      supervisors: links.map((link) => link.supervisor),
+      candidates,
+    };
   }
 
   private async resolveOperationalLinks(

@@ -12,6 +12,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@ascure/admin-web", "dev"],
       "port": 3001
+    },
+    {
+      "name": "api-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@ascure/api", "dev"],
+      "port": 3000
     }
   ]
 }

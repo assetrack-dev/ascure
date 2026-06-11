@@ -26,6 +26,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TeamSupervisorsDialog } from "@/components/team-supervisors-dialog";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
@@ -1089,6 +1090,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   const [isSaving, setIsSaving] = useState(false);
   const [statusRowId, setStatusRowId] = useState<string | null>(null);
   const [statusConfirmRow, setStatusConfirmRow] = useState<EnterpriseListRow | null>(null);
+  const [supervisorsRow, setSupervisorsRow] = useState<EnterpriseListRow | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
   const [search, setSearch] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState<FilterValue>("ALL");
@@ -1335,6 +1337,9 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
     ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(150px,auto))_auto]"
     : "grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(2,minmax(150px,auto))_auto]";
   const isAdmin = session?.user?.role === "ADMIN";
+  // Server flag: ADMIN or MANAGER. Role alone is insufficient because the admin
+  // console collapses MANAGER to VIEWER client-side (ADR 0002 §3).
+  const canManageSupervisors = Boolean(session?.user?.canManageSupervisors);
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -1538,6 +1543,19 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                           </td>
                           <td className="px-5 py-4">
                             <div className="flex flex-wrap justify-end gap-2">
+                              {kind === "teams" && canManageSupervisors ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setSupervisorsRow(row);
+                                  }}
+                                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                                >
+                                  <Users size={14} />
+                                  Supervisors
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 onClick={(event) => openEditModal(row, event)}
@@ -1625,6 +1643,16 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
         onConfirm={confirmStatusToggle}
         onCancel={closeStatusConfirm}
       />
+
+      {supervisorsRow && session?.token ? (
+        <TeamSupervisorsDialog
+          token={session.token}
+          teamId={supervisorsRow.id}
+          teamName={supervisorsRow.name}
+          onClose={() => setSupervisorsRow(null)}
+          onSaved={() => setSuccessMessage("Supervisors updated.")}
+        />
+      ) : null}
     </AppShell>
   );
 }

@@ -10,6 +10,7 @@ export interface ApiUser {
   canReport?: boolean;
   canImport?: boolean;
   canReassign?: boolean;
+  canManageSupervisors?: boolean;
 }
 
 export interface AuthUser {
@@ -45,6 +46,13 @@ export interface AuthUser {
    * to VIEWER client-side.
    */
   canReassign?: boolean;
+  /**
+   * Server-provided authority to manage a team's supervisor links (ADR 0002 §3)
+   * — ADMIN or MANAGER (own company). Mirrors the API gate so the admin console
+   * can show the supervisor-management control even though MANAGER collapses to
+   * VIEWER client-side.
+   */
+  canManageSupervisors?: boolean;
 }
 
 export interface AuthSession {

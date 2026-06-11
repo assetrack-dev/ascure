@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateTeamDto, UpdateTeamDto, UpdateTeamStatusDto } from './dto/manage-team.dto';
 import { TeamIdParamDto } from './dto/team-id-param.dto';
+import { SetTeamSupervisorsDto } from './dto/team-supervisors.dto';
 import { TeamsService } from './teams.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -43,5 +44,24 @@ export class TeamsController {
     @Body() dto: UpdateTeamStatusDto,
   ) {
     return this.teamsService.updateStatus(user, params.id, dto);
+  }
+
+  @Get(':id/supervisors')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  listSupervisors(
+    @CurrentUser() user: RequestUser,
+    @Param() params: TeamIdParamDto,
+  ) {
+    return this.teamsService.listSupervisors(user, params.id);
+  }
+
+  @Put(':id/supervisors')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  setSupervisors(
+    @CurrentUser() user: RequestUser,
+    @Param() params: TeamIdParamDto,
+    @Body() dto: SetTeamSupervisorsDto,
+  ) {
+    return this.teamsService.setSupervisors(user, params.id, dto);
   }
 }

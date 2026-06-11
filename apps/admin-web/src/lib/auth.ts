@@ -26,6 +26,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     canReport: "canReport" in user ? user.canReport : undefined,
     canImport: "canImport" in user ? user.canImport : undefined,
     canReassign: "canReassign" in user ? user.canReassign : undefined,
+    canManageSupervisors:
+      "canManageSupervisors" in user ? user.canManageSupervisors : undefined,
   };
 }
 

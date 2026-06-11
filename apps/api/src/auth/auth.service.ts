@@ -64,6 +64,7 @@ export class AuthService {
       resolveCanImport(this.usersService, requestUser),
     ]);
     const canReassign = this.resolveCanReassign(requestUser);
+    const canManageSupervisors = this.resolveCanManageSupervisors(requestUser);
 
     return {
       access_token: accessToken,
@@ -77,6 +78,7 @@ export class AuthService {
         canReport,
         canImport,
         canReassign,
+        canManageSupervisors,
       },
     };
   }
@@ -115,6 +117,17 @@ export class AuthService {
     );
   }
 
+  /**
+   * Server-provided authority to manage a team's supervisor links (ADR 0002 §3)
+   * — ADMIN (any team) or MANAGER (own company). Exposed as a flag because the
+   * admin console collapses MANAGER to VIEWER client-side, so role alone can't
+   * decide whether to show the supervisor-management control. The endpoints
+   * still enforce the same-organization rule server-side.
+   */
+  private resolveCanManageSupervisors(user: RequestUser): boolean {
+    return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+  }
+
   async me(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -144,6 +157,7 @@ export class AuthService {
       resolveCanImport(this.usersService, user),
     ]);
     const canReassign = this.resolveCanReassign(user);
+    const canManageSupervisors = this.resolveCanManageSupervisors(user);
 
     return {
       ...currentUser,
@@ -151,6 +165,7 @@ export class AuthService {
       canReport,
       canImport,
       canReassign,
+      canManageSupervisors,
     };
   }
 }
