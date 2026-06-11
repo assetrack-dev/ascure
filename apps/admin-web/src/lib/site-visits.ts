@@ -677,6 +677,30 @@ export async function openNextCycle(
   return visit;
 }
 
+/** Supervisor / Manager / Admin reassigns the survey to another team (ADR 0002 §4). */
+export async function reassignSiteVisit(
+  token: string,
+  siteVisitId: string,
+  toTeamId: string,
+  reason: string,
+): Promise<SiteVisitDetail> {
+  const payload = await apiRequest<unknown>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/reassign`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ toTeamId, reason }),
+    },
+  );
+  const visit = normalizeSiteVisitDetail(payload);
+
+  if (!visit) {
+    throw new Error("Unable to read the reassigned site visit.");
+  }
+
+  return visit;
+}
+
 function normalizeCycleDeltaPole(rawPole: unknown, index: number): CycleDeltaPole | null {
   const record = asRecord(rawPole);
 
