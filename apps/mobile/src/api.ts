@@ -405,10 +405,14 @@ export const api = {
   },
 
   async getAllTeams(token: string) {
-    return request<Array<{ id: string; name?: string | null; code?: string | null }>>(
-      '/teams',
-      { token },
-    );
+    return request<
+      Array<{
+        id: string;
+        name?: string | null;
+        code?: string | null;
+        organizationId?: string | null;
+      }>
+    >('/teams', { token });
   },
 
   async getSiteVisitAssets(token: string, siteVisitId: string) {

@@ -831,7 +831,15 @@ function ReassignTeamPanel({
   const currentTeamId = visit.team?.id ?? null;
   const currentTeamLabel =
     visit.team?.name?.trim() || visit.team?.code?.trim() || "Unassigned";
-  const options = teams.filter((team) => team.id !== currentTeamId);
+  // Only same-company teams are valid targets — derive the company from the
+  // current team (the /teams list includes it) and filter to it.
+  const currentTeam = teams.find((team) => team.id === currentTeamId);
+  const options = teams.filter(
+    (team) =>
+      team.id !== currentTeamId &&
+      (!currentTeam ||
+        (team.organizationId ?? null) === (currentTeam.organizationId ?? null)),
+  );
   const canSubmit =
     Boolean(token) && Boolean(toTeamId) && reason.trim().length > 0 && !submitting;
 

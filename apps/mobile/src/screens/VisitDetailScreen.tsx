@@ -474,7 +474,12 @@ function ReassignTeamCard({
 }) {
   const [open, setOpen] = useState(false);
   const [teams, setTeams] = useState<
-    Array<{ id: string; name?: string | null; code?: string | null }>
+    Array<{
+      id: string;
+      name?: string | null;
+      code?: string | null;
+      organizationId?: string | null;
+    }>
   >([]);
   const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -491,7 +496,15 @@ function ReassignTeamCard({
 
   const currentTeamId = visit.team?.id ?? null;
   const currentLabel = visit.team?.name || visit.team?.code || 'Unassigned';
-  const options = teams.filter((team) => team.id !== currentTeamId);
+  // Only same-company teams are valid targets — derive the company from the
+  // current team (the /teams list includes it) and filter to it.
+  const currentTeam = teams.find((team) => team.id === currentTeamId);
+  const options = teams.filter(
+    (team) =>
+      team.id !== currentTeamId &&
+      (!currentTeam ||
+        (team.organizationId ?? null) === (currentTeam.organizationId ?? null)),
+  );
   const canSubmit = Boolean(selectedTeamId) && reason.trim().length > 0 && !submitting;
 
   const openForm = async () => {
