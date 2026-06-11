@@ -30,6 +30,7 @@ export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'GPS',
   'READING',
   'READING_MEASUREMENT',
+  'OCR',
 ] as const;
 
 export type ChecklistTemplateFieldType = (typeof CHECKLIST_TEMPLATE_FIELD_TYPES)[number];
