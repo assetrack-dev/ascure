@@ -20,6 +20,13 @@ export class UpdateAssetDto {
   @IsUUID()
   assetTypeId?: string;
 
+  // Move the pole to a different Pencawang (e.g. it was marked to the wrong
+  // nearby substation). The pole's feeder/fed-from graph is re-synced into the
+  // new substation server-side.
+  @IsOptional()
+  @IsUUID()
+  substationId?: string;
+
   @Transform(trimString)
   @IsOptional()
   @IsString()

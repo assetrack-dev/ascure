@@ -442,6 +442,7 @@ export class AssetsService {
         id: true,
         substationId: true,
         assetTypeId: true,
+        assetCode: true,
       },
     });
 
@@ -468,6 +469,8 @@ export class AssetsService {
 
     const data: {
       assetTypeId?: string;
+      substationId?: string;
+      fedFromAssetId?: string | null;
       assetCode?: string;
       name?: string | null;
       latitude?: number | null;
@@ -491,12 +494,31 @@ export class AssetsService {
       data.assetCode = assetCode;
     }
 
-    if (data.assetCode !== undefined) {
+    if (dto.substationId !== undefined && dto.substationId !== asset.substationId) {
+      const substation = await this.prisma.substation.findFirst({
+        where: { id: dto.substationId, tenantId: user.tenantId },
+        select: { id: true },
+      });
+
+      if (!substation) {
+        throw new NotFoundException('Substation (Pencawang) not found.');
+      }
+
+      data.substationId = dto.substationId;
+      // The old fed-from parent lives in the old substation; clear it so the
+      // graph re-sync resolves a parent within the new substation.
+      data.fedFromAssetId = null;
+    }
+
+    const effectiveSubstationId = data.substationId ?? asset.substationId;
+    const effectiveAssetCode = data.assetCode ?? asset.assetCode;
+
+    if (data.assetCode !== undefined || data.substationId !== undefined) {
       const existingAsset = await this.prisma.asset.findFirst({
         where: {
           tenantId: user.tenantId,
-          substationId: asset.substationId,
-          assetCode: data.assetCode,
+          substationId: effectiveSubstationId,
+          assetCode: effectiveAssetCode,
           id: {
             not: asset.id,
           },
@@ -538,13 +560,13 @@ export class AssetsService {
       const updated = await this.prisma.$transaction(async (tx) => {
         await tx.asset.update({ where: { id }, data });
 
-        if (data.assetCode !== undefined) {
+        if (data.assetCode !== undefined || data.substationId !== undefined) {
           await tx.poleFeederMembership.deleteMany({ where: { assetId: id } });
           await this.syncPoleGraph(tx, {
             tenantId: user.tenantId,
-            substationId: asset.substationId,
+            substationId: effectiveSubstationId,
             assetId: id,
-            assetCode: data.assetCode,
+            assetCode: effectiveAssetCode,
           });
         }
 
@@ -565,6 +587,70 @@ export class AssetsService {
 
       throw error;
     }
+  }
+
+  async delete(user: RequestUser, id: string) {
+    this.assertCanMutate(user);
+
+    const asset = await this.prisma.asset.findFirst({
+      where: { id, tenantId: user.tenantId },
+      select: { id: true },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    await this.hardDeleteAssets(user.tenantId, [asset.id]);
+
+    return { deleted: 1, deletedIds: [asset.id], notFound: [] as string[] };
+  }
+
+  async deleteBulk(user: RequestUser, ids: string[]) {
+    this.assertCanMutate(user);
+
+    const uniqueIds = Array.from(
+      new Set((ids ?? []).filter((value): value is string => Boolean(value))),
+    );
+
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('At least one asset id is required.');
+    }
+
+    const assets = await this.prisma.asset.findMany({
+      where: { id: { in: uniqueIds }, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    const foundIds = assets.map((asset) => asset.id);
+
+    if (foundIds.length === 0) {
+      throw new NotFoundException('No matching assets found.');
+    }
+
+    await this.hardDeleteAssets(user.tenantId, foundIds);
+
+    return {
+      deleted: foundIds.length,
+      deletedIds: foundIds,
+      notFound: uniqueIds.filter((requestedId) => !foundIds.includes(requestedId)),
+    };
+  }
+
+  /**
+   * Hard-delete poles and everything hanging off them. The Asset's inspection /
+   * site-visit / operational-session links are onDelete Restrict, so they're
+   * removed first (each cascades its own children at the DB level: an inspection
+   * → its results / item-results / defects / inspection images); deleting the
+   * asset then cascades its feeder memberships + NOP tie edges, and SetNulls
+   * child fed-from pointers + images. One transaction.
+   */
+  private async hardDeleteAssets(tenantId: string, ids: string[]) {
+    await this.prisma.$transaction([
+      this.prisma.inspection.deleteMany({ where: { assetId: { in: ids }, tenantId } }),
+      this.prisma.siteVisitAsset.deleteMany({ where: { assetId: { in: ids } } }),
+      this.prisma.operationalSessionAsset.deleteMany({ where: { assetId: { in: ids } } }),
+      this.prisma.asset.deleteMany({ where: { id: { in: ids }, tenantId } }),
+    ]);
   }
 
   private siteVisitAccessScope(user: RequestUser) {

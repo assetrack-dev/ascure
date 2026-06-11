@@ -63,6 +63,11 @@ export class InspectionsController {
     return this.inspectionsService.submit(user, params.id);
   }
 
+  @Post(':id/amend')
+  amend(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
+    return this.inspectionsService.amendInspection(user, params.id);
+  }
+
   @Post(':inspectionId/images')
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(

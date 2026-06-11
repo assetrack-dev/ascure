@@ -331,6 +331,69 @@ export class InspectionsService {
     }
   }
 
+  /**
+   * Re-open a SUBMITTED inspection for correction (amend tweak): revert it to
+   * DRAFT so the field user can fix wrongly-entered data and re-submit. Blocked
+   * if any of its defects has already entered maintenance (assigned / in
+   * progress / completed / etc.) — those must be resolved first. The
+   * pre-maintenance auto-created defects are removed so a clean re-submit
+   * regenerates them from the amended results.
+   */
+  async amendInspection(user: RequestUser, inspectionId: string) {
+    this.assertCanMutate(user);
+
+    const inspection = await this.getAccessibleInspection(inspectionId, user);
+
+    if (inspection.completionStatus !== InspectionCompletionStatus.SUBMITTED) {
+      throw new BadRequestException('Only a submitted inspection can be amended.');
+    }
+
+    const itemResults = await this.prisma.inspectionItemResult.findMany({
+      where: { inspectionId: inspection.id },
+      select: { id: true },
+    });
+    const itemResultIds = itemResults.map((result) => result.id);
+
+    if (itemResultIds.length > 0) {
+      const maintainedDefect = await this.prisma.defect.findFirst({
+        where: {
+          inspectionItemResultId: { in: itemResultIds },
+          lifecycleStatus: {
+            in: [
+              DefectLifecycleStatus.ASSIGNED,
+              DefectLifecycleStatus.IN_PROGRESS,
+              DefectLifecycleStatus.COMPLETED,
+              DefectLifecycleStatus.VERIFICATION_PENDING,
+              DefectLifecycleStatus.CLOSED,
+            ],
+          },
+        },
+        select: { id: true },
+      });
+
+      if (maintainedDefect) {
+        throw new BadRequestException(
+          'This inspection has a defect already in maintenance and cannot be amended. Resolve the defect first.',
+        );
+      }
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.defect.deleteMany({
+        where: { inspectionItemResultId: { in: itemResultIds } },
+      }),
+      this.prisma.inspection.update({
+        where: { id: inspection.id },
+        data: {
+          completionStatus: InspectionCompletionStatus.DRAFT,
+          submittedAt: null,
+        },
+      }),
+    ]);
+
+    return this.getForm(user, inspectionId);
+  }
+
   private async saveStructuredItemResults(
     inspection: Awaited<ReturnType<InspectionsService['getAccessibleInspection']>>,
     items: SaveInspectionItemResultDto[],
