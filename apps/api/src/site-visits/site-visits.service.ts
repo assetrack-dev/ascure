@@ -48,6 +48,7 @@ import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
 import { CreateSiteVisitDto } from './dto/create-site-visit.dto';
 import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
+import { ReassignSiteVisitDto } from './dto/reassign-site-visit.dto';
 
 const ACTIVE_SITE_VISIT_STATUSES = [
   SiteVisitStatus.ACTIVE,
@@ -692,6 +693,178 @@ export class SiteVisitsService {
     });
 
     return this.getById(user, siteVisit.id);
+  }
+
+  /**
+   * Reassign a site visit's owning team (ADR 0002 §4). Hands the in-flight
+   * survey from one team to another, preserving all child work (inspections,
+   * photos, defects hang off the SiteVisit), snapshotting the outgoing team's
+   * billing contribution, and writing an audit row — atomically.
+   *
+   * NOTE: the "outgoing team must be fully synced first" rule is enforced at
+   * the client/UI layer — the server cannot see a device's local sync queue.
+   * Late-arriving sync from the outgoing team is reconciled in the sync path
+   * (follow-up), not here.
+   */
+  async reassign(user: RequestUser, id: string, dto: ReassignSiteVisitDto) {
+    this.assertCanMutate(user);
+
+    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+    this.assertReassignable(siteVisit);
+
+    if (siteVisit.teamId === dto.toTeamId) {
+      throw new BadRequestException('Site visit is already assigned to this team.');
+    }
+
+    const [fromTeam, toTeam] = await Promise.all([
+      this.prisma.team.findFirst({
+        where: { id: siteVisit.teamId, tenantId: user.tenantId },
+        select: { id: true, name: true, organizationId: true },
+      }),
+      this.prisma.team.findFirst({
+        where: { id: dto.toTeamId, tenantId: user.tenantId, isActive: true },
+        select: { id: true, name: true, organizationId: true },
+      }),
+    ]);
+
+    if (!fromTeam) {
+      throw new BadRequestException('Current team for this site visit was not found.');
+    }
+    if (!toTeam) {
+      throw new BadRequestException('Target team was not found or is inactive.');
+    }
+
+    await this.assertCanReassignBetween(user, fromTeam, toTeam);
+
+    // Billing snapshot for the OUTGOING team. "Done" = an asset with a SUBMITTED
+    // inspection (domain owner: "inspection done"). Each team is credited the
+    // increment since the previous snapshot, so work split across handovers
+    // bills correctly.
+    const [completedAssetIds, scopeAssetIds, priorContributions] = await Promise.all([
+      this.prisma.inspection.findMany({
+        where: {
+          siteVisitId: siteVisit.id,
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
+        },
+        distinct: ['assetId'],
+        select: { assetId: true },
+      }),
+      this.prisma.inspection.findMany({
+        where: { siteVisitId: siteVisit.id },
+        distinct: ['assetId'],
+        select: { assetId: true },
+      }),
+      this.prisma.siteVisitTeamContribution.findMany({
+        where: { siteVisitId: siteVisit.id },
+        select: { assetsCompleted: true },
+      }),
+    ]);
+
+    const cumulativeCompleted = completedAssetIds.length;
+    const priorCredited = priorContributions.reduce(
+      (sum, row) => sum + row.assetsCompleted,
+      0,
+    );
+    const incrementForOutgoingTeam = Math.max(0, cumulativeCompleted - priorCredited);
+
+    await this.prisma.$transaction([
+      this.prisma.siteVisitTeamContribution.create({
+        data: {
+          siteVisitId: siteVisit.id,
+          teamId: fromTeam.id,
+          assetsCompleted: incrementForOutgoingTeam,
+          totalAssets: scopeAssetIds.length,
+          snapshotReason: 'REASSIGNED',
+        },
+      }),
+      this.prisma.siteVisitReassignment.create({
+        data: {
+          siteVisitId: siteVisit.id,
+          fromTeamId: fromTeam.id,
+          toTeamId: toTeam.id,
+          reason: dto.reason,
+          reassignedByUserId: user.id,
+        },
+      }),
+      this.prisma.siteVisit.update({
+        where: { id: siteVisit.id },
+        data: { teamId: toTeam.id },
+      }),
+    ]);
+
+    return this.getById(user, siteVisit.id);
+  }
+
+  private assertReassignable(siteVisit: {
+    status: SiteVisitStatus;
+    lifecycleStatus: SurveyLifecycleStatus | null;
+  }) {
+    this.assertVisitIsMutable(siteVisit); // blocks COMPLETED / CANCELLED
+
+    // Only work still in the field can move: in progress (DALAM RONDAAN) or
+    // bounced back for amendment (PERLU PINDAAN). A null lifecycle on a live
+    // visit is treated as in-progress. (ADR 0002 §4)
+    const reassignableLifecycle =
+      siteVisit.lifecycleStatus === null ||
+      siteVisit.lifecycleStatus === SurveyLifecycleStatus.DALAM_RONDAAN ||
+      siteVisit.lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN;
+
+    if (!reassignableLifecycle) {
+      throw new BadRequestException(
+        'A site visit can only be reassigned while in progress (DALAM RONDAAN) or pending amendment (PERLU PINDAAN).',
+      );
+    }
+  }
+
+  private async assertCanReassignBetween(
+    user: RequestUser,
+    fromTeam: { id: string; organizationId: string | null },
+    toTeam: { id: string; organizationId: string | null },
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return; // admin can reassign anywhere, including across organizations
+    }
+
+    const crossOrg =
+      (fromTeam.organizationId ?? null) !== (toTeam.organizationId ?? null);
+    if (crossOrg) {
+      throw new ForbiddenException(
+        'Only an administrator can reassign work across organizations.',
+      );
+    }
+
+    if (user.role === UserRole.MANAGER) {
+      // A manager governs their own company: both teams must be in their org.
+      if (
+        user.organizationId &&
+        fromTeam.organizationId === user.organizationId &&
+        toTeam.organizationId === user.organizationId
+      ) {
+        return;
+      }
+      throw new ForbiddenException(
+        'A manager can only reassign between teams in their own organization.',
+      );
+    }
+
+    if (user.role === UserRole.SUPERVISOR) {
+      // A supervisor must be assigned to supervise BOTH the current and target team.
+      const supervisedCount = await this.prisma.teamSupervisor.count({
+        where: {
+          supervisorUserId: user.id,
+          isActive: true,
+          teamId: { in: [fromTeam.id, toTeam.id] },
+        },
+      });
+      if (supervisedCount >= 2) {
+        return;
+      }
+      throw new ForbiddenException(
+        'A supervisor can only reassign between teams they are assigned to supervise.',
+      );
+    }
+
+    throw new ForbiddenException('You are not allowed to reassign site visits.');
   }
 
   async getAssets(user: RequestUser, id: string) {

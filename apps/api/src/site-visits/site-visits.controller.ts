@@ -19,6 +19,7 @@ import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
 import { CreateSiteVisitDto } from './dto/create-site-visit.dto';
 import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
+import { ReassignSiteVisitDto } from './dto/reassign-site-visit.dto';
 import { RequestSurveyAmendmentDto } from './dto/request-amendment.dto';
 import { SiteVisitsService } from './site-visits.service';
 import { SurveyLifecycleService } from './survey-lifecycle.service';
@@ -49,6 +50,15 @@ export class SiteVisitsController {
   @Post(':id/join')
   join(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
     return this.siteVisitsService.join(user, params.id);
+  }
+
+  @Post(':id/reassign')
+  reassign(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @Body() dto: ReassignSiteVisitDto,
+  ) {
+    return this.siteVisitsService.reassign(user, params.id, dto);
   }
 
   @Post(':id/images')
