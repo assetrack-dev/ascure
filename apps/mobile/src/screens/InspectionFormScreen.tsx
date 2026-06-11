@@ -100,6 +100,7 @@ export function InspectionFormScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAmending, setIsAmending] = useState(false);
   const [isCapturingPhoto, setIsCapturingPhoto] = useState(false);
   const [pendingOverlayPhoto, setPendingOverlayPhoto] = useState<PendingOverlayPhoto | null>(null);
   const [selectedPhotoUri, setSelectedPhotoUri] = useState<string | null>(null);
@@ -502,6 +503,37 @@ export function InspectionFormScreen() {
     });
   }
 
+  // Re-open a submitted inspection for correction (tweak B): the API reverts it
+  // to DRAFT and the form becomes editable again so the user can fix + re-submit.
+  async function handleAmendInspection() {
+    if (!form || !isSubmitted) {
+      return;
+    }
+
+    try {
+      setIsAmending(true);
+      setError(null);
+
+      const updatedForm = await api.amendInspection(token, inspectionId);
+      setForm(updatedForm);
+      setDraftValues(createInitialDraftValues(updatedForm));
+      setSaveNotice('Inspection re-opened. Fix the entries, then submit again.');
+    } catch (amendError) {
+      if (amendError instanceof ApiError && amendError.status === 401) {
+        await handleUnauthorized(amendError);
+        return;
+      }
+
+      setError(
+        amendError instanceof Error
+          ? amendError.message
+          : 'Unable to amend this inspection.',
+      );
+    } finally {
+      setIsAmending(false);
+    }
+  }
+
   async function handleSubmitInspection() {
     if (!form || isSubmitted) {
       return;
@@ -671,23 +703,37 @@ export function InspectionFormScreen() {
           {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
           {!isSubmitted ? <SuccessBanner message={saveNotice} /> : null}
           <View style={styles.footerActions}>
-            <View style={styles.footerActionSecondary}>
-              <AppButton
-                label={isSavingDraft ? 'Saving...' : 'Save Draft'}
-                onPress={handleSaveDraft}
-                variant="secondary"
-                loading={isSavingDraft}
-                disabled={isBusy || isSubmitted || isTemplateEmpty}
-              />
-            </View>
-            <View style={styles.footerActionPrimary}>
-              <AppButton
-                label={isSubmitting ? 'Submitting...' : 'Submit'}
-                onPress={handleSubmitInspection}
-                loading={isSubmitting}
-                disabled={isBusy || isSubmitted || isTemplateEmpty}
-              />
-            </View>
+            {isSubmitted ? (
+              <View style={styles.footerActionPrimary}>
+                <AppButton
+                  label={isAmending ? 'Re-opening...' : 'Amend / Edit'}
+                  onPress={handleAmendInspection}
+                  variant="secondary"
+                  loading={isAmending}
+                  disabled={isBusy}
+                />
+              </View>
+            ) : (
+              <>
+                <View style={styles.footerActionSecondary}>
+                  <AppButton
+                    label={isSavingDraft ? 'Saving...' : 'Save Draft'}
+                    onPress={handleSaveDraft}
+                    variant="secondary"
+                    loading={isSavingDraft}
+                    disabled={isBusy || isTemplateEmpty}
+                  />
+                </View>
+                <View style={styles.footerActionPrimary}>
+                  <AppButton
+                    label={isSubmitting ? 'Submitting...' : 'Submit'}
+                    onPress={handleSubmitInspection}
+                    loading={isSubmitting}
+                    disabled={isBusy || isTemplateEmpty}
+                  />
+                </View>
+              </>
+            )}
           </View>
         </View>
       }

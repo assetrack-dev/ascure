@@ -38,6 +38,7 @@ import {
   Substation,
   UpdateChecklistTemplateInput,
   UpdateAssetInput,
+  AssetDeleteResult,
 } from './types';
 
 const DEFAULT_API_BASE_URL = 'http://10.149.246.224:3000/api/v1';
@@ -59,7 +60,7 @@ export const API_BASE_URL = RAW_API_BASE.endsWith('/api/v1')
   : `${RAW_API_BASE}/api/v1`;
 
 type RequestOptions = {
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   token?: string;
   body?: unknown;
 };
@@ -654,6 +655,22 @@ export const api = {
     });
   },
 
+  // Hard-delete a pole (tweak C) — wrong capture / not TNB-owned.
+  deleteAsset(token: string, assetId: string) {
+    return request<AssetDeleteResult>(`/assets/${assetId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  deleteAssetsBulk(token: string, ids: string[]) {
+    return request<AssetDeleteResult>('/assets/bulk-delete', {
+      method: 'POST',
+      token,
+      body: { ids },
+    });
+  },
+
   createInspection(
     token: string,
     input: {
@@ -707,6 +724,15 @@ export const api = {
 
   submitInspection(token: string, inspectionId: string) {
     return request(`/inspections/${inspectionId}/submit`, {
+      method: 'POST',
+      token,
+    });
+  },
+
+  // Re-open a submitted inspection for correction (tweak B). Returns the form,
+  // now back in DRAFT so the checklist is editable again.
+  amendInspection(token: string, inspectionId: string) {
+    return request<InspectionFormResponse>(`/inspections/${inspectionId}/amend`, {
       method: 'POST',
       token,
     });

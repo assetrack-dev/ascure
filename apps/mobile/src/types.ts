@@ -866,11 +866,18 @@ export interface CreateAssetInput {
 
 export interface UpdateAssetInput {
   assetTypeId?: string;
+  substationId?: string;
   assetCode?: string;
   name?: string;
   latitude?: number | null;
   longitude?: number | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface AssetDeleteResult {
+  deleted: number;
+  deletedIds: string[];
+  notFound: string[];
 }
 
 export type DraftValue = string | string[] | boolean | null;

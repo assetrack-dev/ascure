@@ -447,6 +447,8 @@ export function AddAssetScreen() {
       if (assetToEdit) {
         let savedAsset = await api.updateAsset(token, assetToEdit.id, {
           assetTypeId: selectedAssetTypeId,
+          // Allow moving the pole to a different Pencawang (tweak A).
+          substationId: selectedSubstationId || undefined,
           assetCode: normalizedAssetCode,
           name: normalizedAssetName ?? '',
           latitude: latitudeValue,

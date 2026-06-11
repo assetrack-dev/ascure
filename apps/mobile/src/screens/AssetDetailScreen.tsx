@@ -40,6 +40,7 @@ export function AssetDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isStartingInspection, setIsStartingInspection] = useState(false);
   const [isMarkingNotFound, setIsMarkingNotFound] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { width: screenWidth } = useWindowDimensions();
@@ -146,7 +147,9 @@ export function AssetDetailScreen() {
 
     navigation.navigate('AddAsset', {
       visitId,
-      substationId,
+      // No substationId param so the Pencawang picker stays editable — lets the
+      // user move a pole to a different (nearby) Pencawang it was wrongly marked
+      // to (tweak A).
       assetToEdit: editableAsset,
     });
   }
@@ -205,6 +208,47 @@ export function AssetDetailScreen() {
           style: 'destructive',
           onPress: () => {
             void handleMarkAssetNotFound();
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleDeleteAsset() {
+    try {
+      setIsDeleting(true);
+      setActionError(null);
+
+      await api.deleteAsset(token, assetId);
+      navigation.goBack();
+    } catch (error) {
+      console.error('[ASSET DETAIL DELETE ERROR]', error);
+
+      if (error instanceof ApiError && error.status === 401) {
+        await handleUnauthorized(error);
+        return;
+      }
+
+      setActionError(error instanceof Error ? error.message : 'Unable to delete asset.');
+      setIsDeleting(false);
+    }
+  }
+
+  function handleConfirmDeleteAsset() {
+    if (!asset) {
+      return;
+    }
+
+    Alert.alert(
+      'Delete this pole?',
+      `${asset.assetCode || 'This pole'}${asset.name ? ` — ${asset.name}` : ''} and its inspections, photos, and links will be permanently deleted. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void handleDeleteAsset();
           },
         },
       ],
@@ -333,6 +377,20 @@ export function AssetDetailScreen() {
           >
             {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
             <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleConfirmDeleteAsset}
+            disabled={isDeleting}
+            style={({ pressed }) => [
+              styles.actionButton,
+              styles.actionButtonDanger,
+              isDeleting && styles.disabledButton,
+              pressed && !isDeleting && styles.pressedButton,
+            ]}
+          >
+            {isDeleting ? <ActivityIndicator color="#dc2626" /> : null}
+            <Text style={styles.actionButtonDangerText}>Delete</Text>
           </Pressable>
         </View>
 
@@ -837,6 +895,16 @@ const styles = StyleSheet.create({
   },
   actionButtonGhostText: {
     color: uiTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  actionButtonDanger: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  actionButtonDangerText: {
+    color: '#dc2626',
     fontSize: 14,
     fontWeight: '700',
   },

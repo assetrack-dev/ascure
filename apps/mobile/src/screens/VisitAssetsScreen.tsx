@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
 import {
@@ -45,6 +45,9 @@ export function VisitAssetsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<AssetFilter>('ALL');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
   const hasLoadedRef = useRef(false);
 
   const loadData = useCallback(
@@ -139,6 +142,69 @@ export function VisitAssetsScreen() {
     });
   }
 
+  function toggleSelect(assetId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(assetId)) {
+        next.delete(assetId);
+      } else {
+        next.add(assetId);
+      }
+      return next;
+    });
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  async function handleBulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) {
+      return;
+    }
+
+    try {
+      setIsDeleting(true);
+      setError(null);
+      await api.deleteAssetsBulk(token, ids);
+      exitSelectMode();
+      await loadData({ silent: true });
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError && deleteError.status === 401) {
+        await handleUnauthorized(deleteError);
+        return;
+      }
+
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete assets.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  function confirmBulkDelete() {
+    const count = selectedIds.size;
+    if (count === 0) {
+      return;
+    }
+
+    Alert.alert(
+      `Delete ${count} pole${count === 1 ? '' : 's'}?`,
+      'The selected poles and their inspections, photos, and links will be permanently deleted. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Delete ${count}`,
+          style: 'destructive',
+          onPress: () => {
+            void handleBulkDelete();
+          },
+        },
+      ],
+    );
+  }
+
   return (
     <Screen
       title="All Assets"
@@ -190,6 +256,31 @@ export function VisitAssetsScreen() {
         </View>
       </Card>
 
+      <View style={styles.bulkBar}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+          style={({ pressed }) => [styles.bulkToggle, pressed && styles.filterChipPressed]}
+        >
+          <Text style={styles.bulkToggleText}>{selectMode ? 'Cancel' : 'Select'}</Text>
+        </Pressable>
+        {selectMode ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={confirmBulkDelete}
+            disabled={selectedIds.size === 0 || isDeleting}
+            style={({ pressed }) => [
+              styles.bulkDelete,
+              (selectedIds.size === 0 || isDeleting) && styles.bulkDeleteDisabled,
+              pressed && selectedIds.size > 0 && !isDeleting && styles.filterChipPressed,
+            ]}
+          >
+            {isDeleting ? <ActivityIndicator size="small" color="#dc2626" /> : null}
+            <Text style={styles.bulkDeleteText}>Delete ({selectedIds.size})</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
       {isLoading && assets.length === 0 ? (
         <LoadingBlock label="Loading assets…" />
       ) : (
@@ -207,7 +298,9 @@ export function VisitAssetsScreen() {
                   asset={asset}
                   inspected={submittedAssetIds.has(asset.id)}
                   hasDefect={defectAssetIds.has(asset.id)}
-                  onPress={() => openAsset(asset)}
+                  selectMode={selectMode}
+                  selected={selectedIds.has(asset.id)}
+                  onPress={() => (selectMode ? toggleSelect(asset.id) : openAsset(asset))}
                 />
               ))}
             </View>
@@ -223,25 +316,36 @@ function AssetRow({
   inspected,
   hasDefect,
   onPress,
+  selectMode,
+  selected,
 }: {
   asset: Asset;
   inspected: boolean;
   hasDefect: boolean;
   onPress: () => void;
+  selectMode: boolean;
+  selected: boolean;
 }) {
   const { title, subtitle } = getAssetRowLabels(asset);
   const state = getAssetStateChip(asset, inspected, hasDefect);
 
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole={selectMode ? 'checkbox' : 'button'}
+      accessibilityState={selectMode ? { checked: selected } : undefined}
       onPress={onPress}
       style={({ pressed }) => [
         styles.assetRow,
         asset.status === 'NOT_FOUND' && styles.assetRowMuted,
+        selected && styles.assetRowSelected,
         pressed && styles.assetRowPressed,
       ]}
     >
+      {selectMode ? (
+        <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
+          {selected ? <Text style={styles.checkboxTick}>✓</Text> : null}
+        </View>
+      ) : null}
       <View style={styles.assetTextWrap}>
         <Text style={styles.assetTitle} numberOfLines={1}>
           {title}
@@ -365,8 +469,72 @@ const styles = StyleSheet.create({
   assetRowMuted: {
     opacity: 0.6,
   },
+  assetRowSelected: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
   assetRowPressed: {
     backgroundColor: uiTheme.colors.surfacePressed,
+  },
+  bulkBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 2,
+  },
+  bulkToggle: {
+    minHeight: 38,
+    paddingHorizontal: 16,
+    borderRadius: uiTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: uiTheme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bulkToggleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: uiTheme.colors.textPrimary,
+  },
+  bulkDelete: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    borderRadius: uiTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+  },
+  bulkDeleteDisabled: {
+    opacity: 0.5,
+  },
+  bulkDeleteText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#dc2626',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: uiTheme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxChecked: {
+    borderColor: '#dc2626',
+    backgroundColor: '#dc2626',
+  },
+  checkboxTick: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
   },
   assetTextWrap: {
     flex: 1,
