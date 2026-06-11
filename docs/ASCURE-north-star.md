@@ -80,7 +80,7 @@ DALAM RONDAAN  →  RONDAAN SELESAI  ⟲ PERLU PINDAAN  →  LAPORAN SELESAI  �
 
 - **Inspector** owns the **defect call** — competence-based, authoritative on submit. No QA approve/reject step.
 - **DC (Document Controller)** owns **data-quality + document production**. "Reject" exists **at the survey level** (amendments), never at the defect level.
-- **Teams** (buddy system, ~2 people): the Org → Branch → Mainhead → Team hierarchy scopes **visibility**; **work stays fluid** (cross-team handover when a team is short/injured). Structure for permissions, not choreography.
+- **Teams** (buddy system, ~2 people): the **Org (Company) → Team** hierarchy scopes **visibility** (Manager = whole company, Supervisor = their assigned teams); geography is a separate **Region → Mainhead** axis (Branch retired). **Work stays fluid** — controlled cross-team **reassignment** when a team can't finish ([ADR 0002](adr/0002-work-assignment-and-org-hierarchy.md)). Structure for permissions, not choreography.
 
 ## 6. Defects + Maintenance = one system
 
@@ -109,7 +109,7 @@ Reports **arrange by RONDAAN** (so sections/from→to work) and **display LAMA**
 
 ## 9. Codebase verdict (re-centering, not rewrite)
 
-- **Keep:** multi-tenant + Org/Branch/Mainhead hierarchy + capability RBAC; auth/users/teams; asset/PE/AssetType register; dynamic versioned templates; mobile offline + map + timestamp photos + OCR; reports + imports modules.
+- **Keep:** multi-tenant + Org→Team management + Region→Mainhead geography (Branch retired — [ADR 0002](adr/0002-work-assignment-and-org-hierarchy.md)) + capability RBAC; auth/users/teams; asset/PE/AssetType register; dynamic versioned templates; mobile offline + map + timestamp photos + OCR; reports + imports modules.
 - **Reframe:** defect-QA lifecycle → maintenance lifecycle; site-visit "validation" → DC survey-amendment flow; **fold Operational Sessions into the PE-survey lifecycle**; teams → visibility-only.
 - **Build (the real spine, currently missing):** the network **graph** (edges/feeders/NOP), the **cycle** as first-class, the **document factory**, the **isolation view**.
 - **Defer:** SLA/health dashboards; AI validation — both get *more* powerful once graph + cycle exist (naming validation, anomaly detection, completeness, "what changed" diffs).
