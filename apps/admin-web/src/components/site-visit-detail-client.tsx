@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  ArrowLeftRight,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -26,8 +27,10 @@ import {
   generateSurveyReport,
   markRondaanSelesai,
   openNextCycle,
+  reassignSiteVisit,
   requestSurveyAmendment,
 } from "@/lib/site-visits";
+import { fetchTeams, type TeamOption } from "@/lib/teams";
 import type { AuthSession } from "@/types/auth";
 import type {
   CycleDelta,
@@ -770,6 +773,184 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
   );
 }
 
+function ReassignTeamPanel({
+  visit,
+  token,
+  canReassign,
+  onReassigned,
+}: {
+  visit: SiteVisitDetail;
+  token: string | null;
+  canReassign: boolean;
+  onReassigned: (next: SiteVisitDetail) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
+  const [toTeamId, setToTeamId] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open || teamsLoaded || !token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const list = await fetchTeams(token);
+        if (!cancelled) {
+          setTeams(list);
+          setTeamsLoaded(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Unable to load the team list.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, teamsLoaded, token]);
+
+  const status = visit.lifecycle?.status ?? null;
+  const isReassignable =
+    visit.status !== "CANCELLED" &&
+    visit.status !== "COMPLETED" &&
+    (status === null || status === "DALAM_RONDAAN" || status === "PERLU_PINDAAN");
+
+  if (!canReassign || !isReassignable) {
+    return null;
+  }
+
+  const currentTeamId = visit.team?.id ?? null;
+  const currentTeamLabel =
+    visit.team?.name?.trim() || visit.team?.code?.trim() || "Unassigned";
+  const options = teams.filter((team) => team.id !== currentTeamId);
+  const canSubmit =
+    Boolean(token) && Boolean(toTeamId) && reason.trim().length > 0 && !submitting;
+
+  const submit = async () => {
+    if (!token || !toTeamId || reason.trim().length === 0) {
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const next = await reassignSiteVisit(token, visit.id, toTeamId, reason.trim());
+      onReassigned(next);
+      setOpen(false);
+      setToTeamId("");
+      setReason("");
+    } catch (reassignError) {
+      setError(
+        reassignError instanceof Error
+          ? reassignError.message
+          : "Unable to reassign this site visit.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+            <Users size={17} className="text-[var(--brand)]" />
+            Team Assignment
+          </div>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Owned by{" "}
+            <span className="font-semibold text-slate-700">{currentTeamLabel}</span>. Hand the
+            in-progress survey to another team — every inspection, photo and defect transfers.
+          </p>
+        </div>
+        {!open ? (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+          >
+            <ArrowLeftRight size={15} /> Reassign team
+          </button>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      {open ? (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <label className="block text-xs font-semibold uppercase text-slate-600">
+            Reassign to team
+          </label>
+          <select
+            value={toTeamId}
+            onChange={(event) => setToTeamId(event.target.value)}
+            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
+          >
+            <option value="">{teamsLoaded ? "Select a team…" : "Loading teams…"}</option>
+            {options.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name?.trim() || team.code?.trim() || team.id}
+              </option>
+            ))}
+          </select>
+
+          <label className="mt-3 block text-xs font-semibold uppercase text-slate-600">
+            Reason (required)
+          </label>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            placeholder="Why is this being reassigned? (e.g. Team Alpha pulled to an outage — Beta to finish the walk)"
+            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
+          />
+
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              disabled={!canSubmit}
+              onClick={() => void submit()}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {submitting ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <ArrowLeftRight size={15} />
+              )}
+              Reassign
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setError("");
+              }}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -863,6 +1044,11 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const canInspect = isAdmin;
   const canGovern = isAdmin || (session?.user?.canGovernQa ?? false);
   const canReport = isAdmin || (session?.user?.canReport ?? false);
+  // The admin console only models ADMIN/VIEWER/CLIENT client-side (MANAGER/SUPERVISOR
+  // collapse to VIEWER on login), so reassignment is gated to ADMIN here. Supervisor /
+  // manager reassignment lives in the mobile supervisor view; surfacing it in the admin
+  // console for those roles needs a server `canReassign` flag (like canGovernQa) — follow-up.
+  const canReassign = isAdmin;
 
   const runLifecycle = useCallback(
     async (action: LifecycleAction, run: () => Promise<SiteVisitDetail>) => {
@@ -1090,6 +1276,13 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   onGenerateReport={handleGenerateReport}
                   onArchive={handleArchive}
                   onOpenNextCycle={handleOpenNextCycle}
+                />
+
+                <ReassignTeamPanel
+                  visit={visit}
+                  token={session?.token ?? null}
+                  canReassign={canReassign}
+                  onReassigned={setVisit}
                 />
 
                 {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
