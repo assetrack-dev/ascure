@@ -63,6 +63,7 @@ export class AuthService {
       resolveCanReport(this.usersService, requestUser),
       resolveCanImport(this.usersService, requestUser),
     ]);
+    const canReassign = this.resolveCanReassign(requestUser);
 
     return {
       access_token: accessToken,
@@ -75,6 +76,7 @@ export class AuthService {
         canGovernQa,
         canReport,
         canImport,
+        canReassign,
       },
     };
   }
@@ -97,6 +99,20 @@ export class AuthService {
     }
 
     return isQaActor(this.prisma, user);
+  }
+
+  /**
+   * Server-provided authority to reassign a site visit to another team
+   * (ADR 0002 §4). A coarse "can this role reassign at all" gate for the UI —
+   * ADMIN / MANAGER / SUPERVISOR. The reassign endpoint still enforces the full
+   * per-team / cross-org rules; this only decides whether to show the control.
+   */
+  private resolveCanReassign(user: RequestUser): boolean {
+    return (
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.MANAGER ||
+      user.role === UserRole.SUPERVISOR
+    );
   }
 
   async me(user: RequestUser) {
@@ -127,12 +143,14 @@ export class AuthService {
       resolveCanReport(this.usersService, user),
       resolveCanImport(this.usersService, user),
     ]);
+    const canReassign = this.resolveCanReassign(user);
 
     return {
       ...currentUser,
       canGovernQa,
       canReport,
       canImport,
+      canReassign,
     };
   }
 }

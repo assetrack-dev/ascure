@@ -25,6 +25,7 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     canGovernQa: "canGovernQa" in user ? user.canGovernQa : undefined,
     canReport: "canReport" in user ? user.canReport : undefined,
     canImport: "canImport" in user ? user.canImport : undefined,
+    canReassign: "canReassign" in user ? user.canReassign : undefined,
   };
 }
 

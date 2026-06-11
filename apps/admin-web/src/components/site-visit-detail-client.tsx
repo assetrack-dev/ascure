@@ -1044,11 +1044,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const canInspect = isAdmin;
   const canGovern = isAdmin || (session?.user?.canGovernQa ?? false);
   const canReport = isAdmin || (session?.user?.canReport ?? false);
-  // The admin console only models ADMIN/VIEWER/CLIENT client-side (MANAGER/SUPERVISOR
-  // collapse to VIEWER on login), so reassignment is gated to ADMIN here. Supervisor /
-  // manager reassignment lives in the mobile supervisor view; surfacing it in the admin
-  // console for those roles needs a server `canReassign` flag (like canGovernQa) — follow-up.
-  const canReassign = isAdmin;
+  // Server-computed flag (ADMIN / MANAGER / SUPERVISOR) — the admin console can't read
+  // those roles client-side (MANAGER/SUPERVISOR collapse to VIEWER on login), so we mirror
+  // the API's authority. The endpoint still enforces the per-team / cross-org rules.
+  const canReassign = isAdmin || (session?.user?.canReassign ?? false);
 
   const runLifecycle = useCallback(
     async (action: LifecycleAction, run: () => Promise<SiteVisitDetail>) => {

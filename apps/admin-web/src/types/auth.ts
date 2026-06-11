@@ -9,6 +9,7 @@ export interface ApiUser {
   canGovernQa?: boolean;
   canReport?: boolean;
   canImport?: boolean;
+  canReassign?: boolean;
 }
 
 export interface AuthUser {
@@ -37,6 +38,13 @@ export interface AuthUser {
    * Imports area exactly when the API would authorize it.
    */
   canImport?: boolean;
+  /**
+   * Server-provided authority to reassign a site visit to another team
+   * (ADR 0002) — ADMIN / MANAGER / SUPERVISOR. Mirrors the API gate so the admin
+   * console can show the reassign control even though MANAGER/SUPERVISOR collapse
+   * to VIEWER client-side.
+   */
+  canReassign?: boolean;
 }
 
 export interface AuthSession {
