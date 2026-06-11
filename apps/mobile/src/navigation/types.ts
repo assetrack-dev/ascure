@@ -20,6 +20,9 @@ export type RootStackParamList = {
   CheckIn: undefined;
   VisitDetail: { visitId: string; substationId: string; successMessage?: string };
   VisitAssets: { visitId: string; substationId: string };
+  // Full-screen map pushed ON TOP of VisitDetail (root stack) so "back" returns
+  // to the visit, not the drawer's Workspace. Reuses MapScreen (ADR/issue #6).
+  VisitAssetMap: { visitId?: string; substationId?: string } | undefined;
   AssetDetail: {
     visitId?: string;
     substationId?: string;

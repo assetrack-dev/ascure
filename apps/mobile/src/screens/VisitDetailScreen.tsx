@@ -340,10 +340,7 @@ export function VisitDetailScreen() {
             assets={assets}
             onOpenAsset={handleOpenAssetDetail}
             onOpenFullScreen={() =>
-              navigation.navigate('AppDrawer', {
-                screen: 'AssetMap',
-                params: { visitId, substationId },
-              })
+              navigation.navigate('VisitAssetMap', { visitId, substationId })
             }
           />
 

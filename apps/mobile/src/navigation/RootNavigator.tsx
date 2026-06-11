@@ -9,6 +9,7 @@ import { ImagePreviewScreen } from '../screens/ImagePreviewScreen';
 import { InspectionDetailScreen } from '../screens/InspectionDetailScreen';
 import { InspectionFormScreen } from '../screens/InspectionFormScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { MapScreen } from '../screens/MapScreen';
 import { OperationalSessionDetailScreen } from '../screens/OperationalSessionDetailScreen';
 import { OperationalSessionsScreen } from '../screens/OperationalSessionsScreen';
 import { VisitAssetsScreen } from '../screens/VisitAssetsScreen';
@@ -31,6 +32,7 @@ export function RootNavigator() {
           <Stack.Screen name="CheckIn" component={CheckInScreen} />
           <Stack.Screen name="VisitDetail" component={VisitDetailScreen} />
           <Stack.Screen name="VisitAssets" component={VisitAssetsScreen} />
+          <Stack.Screen name="VisitAssetMap" component={MapScreen} />
           <Stack.Screen name="AssetDetail" component={AssetDetailScreen} />
           <Stack.Screen name="AddAsset" component={AddAssetScreen} />
           <Stack.Screen name="OperationalSessions" component={OperationalSessionsScreen} />

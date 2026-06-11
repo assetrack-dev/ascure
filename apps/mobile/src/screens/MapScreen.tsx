@@ -163,6 +163,11 @@ export function MapScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'AssetMap'>['navigation']>();
   const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
   const { visitId, substationId } = route.params ?? {};
+  // This screen is reused both as the drawer's AssetMap and as a root-stack
+  // VisitAssetMap pushed from VisitDetail. Only the drawer instance has
+  // openDrawer; the pushed instance shows a Back button instead (issue #6).
+  const canOpenDrawer =
+    typeof (navigation as { openDrawer?: () => void }).openDrawer === 'function';
   const { token, handleUnauthorized } = useSession();
 
   const handleOpenAssetDetail = useCallback(
@@ -482,9 +487,12 @@ export function MapScreen() {
     <Screen
       title="Map"
       leftAction={{
-        icon: 'menu',
-        onPress: () => navigation.openDrawer(),
-        accessibilityLabel: 'Menu',
+        icon: canOpenDrawer ? 'menu' : 'back',
+        onPress: () =>
+          canOpenDrawer
+            ? (navigation as { openDrawer: () => void }).openDrawer()
+            : navigation.goBack(),
+        accessibilityLabel: canOpenDrawer ? 'Menu' : 'Back',
       }}
       rightAction={{
         icon: 'refresh',
