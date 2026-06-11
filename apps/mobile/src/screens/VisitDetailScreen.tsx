@@ -690,6 +690,7 @@ function VisitAssetMap({
         <View style={styles.mapFrame}>
           <MapView
             provider={PROVIDER_GOOGLE}
+            mapType="satellite"
             style={styles.map}
             initialRegion={region}
             region={region}
