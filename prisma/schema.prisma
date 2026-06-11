@@ -84,6 +84,9 @@ enum InspectionItemInputType {
   IMAGE
   GPS
   READING
+  // Smart Sensor capture (SAVR/SAVT ground clearance): a photo (saved as
+  // timestamped evidence + linked to this result) plus an OCR'd numeric reading.
+  OCR
 }
 
 enum InspectionCompletionStatus {
@@ -1273,20 +1276,25 @@ model Inspection {
 }
 
 model InspectionImage {
-  id           String     @id @default(uuid()) @db.Uuid
-  inspectionId String     @db.Uuid
-  url          String
-  filename     String
-  mimeType     String?
-  sizeBytes    Int?
-  latitude     Float?
-  longitude    Float?
-  timestamp    DateTime?
-  createdAt    DateTime   @default(now())
-  inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  id             String     @id @default(uuid()) @db.Uuid
+  inspectionId   String     @db.Uuid
+  // The checklist item this photo belongs to, when captured for a specific item
+  // (e.g. an OCR / Smart Sensor reading) so the visual report can pair the photo
+  // with that reading. Null for general inspection photos. (ADR/amendment #4)
+  templateItemId String?    @db.Uuid
+  url            String
+  filename       String
+  mimeType       String?
+  sizeBytes      Int?
+  latitude       Float?
+  longitude      Float?
+  timestamp      DateTime?
+  createdAt      DateTime   @default(now())
+  inspection     Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
 
   @@index([inspectionId])
   @@index([inspectionId, createdAt])
+  @@index([templateItemId])
 }
 
 model InspectionItemResult {

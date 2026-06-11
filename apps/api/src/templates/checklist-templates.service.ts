@@ -1172,7 +1172,8 @@ export class ChecklistTemplatesService {
       normalizedInputType === InspectionItemInputType.DATETIME ||
       normalizedInputType === InspectionItemInputType.IMAGE ||
       normalizedInputType === InspectionItemInputType.GPS ||
-      normalizedInputType === InspectionItemInputType.READING
+      normalizedInputType === InspectionItemInputType.READING ||
+      normalizedInputType === InspectionItemInputType.OCR
     ) {
       return normalizedInputType as InspectionItemInputType;
     }

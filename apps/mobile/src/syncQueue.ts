@@ -649,6 +649,7 @@ async function createQueuedPhoto(photo: QueueableInspectionPhoto, queuedAt: stri
     longitude: photo.longitude,
     timestamp: photo.timestamp,
     type: photo.type,
+    templateItemId: photo.templateItemId,
     uploadedImageId: photo.uploadedImageId,
     uploadedUrl: photo.uploadedUrl ?? photo.url,
     uploadError: photo.uploadError,

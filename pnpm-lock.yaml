@@ -172,6 +172,9 @@ importers:
       '@react-native-community/netinfo':
         specifier: 11.5.2
         version: 11.5.2(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+      '@react-native-ml-kit/text-recognition':
+        specifier: ^2.0.0
+        version: 2.0.0(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       '@react-navigation/drawer':
         specifier: ^7.10.2
         version: 7.10.3(0c0d57bbbae1bfc006f966a99abbb512)
@@ -1904,6 +1907,12 @@ packages:
     peerDependencies:
       react: '*'
       react-native: '>=0.59'
+
+  '@react-native-ml-kit/text-recognition@2.0.0':
+    resolution: {integrity: sha512-RHefLYKndSyoDtgqHQptYQe+mftFk6/H30IQDenKX7PgMlJqoDejX+HdZ8gnP1kVNAt3iH+wyl/P6vCOkLMW9Q==}
+    peerDependencies:
+      react: '>=16.8.1'
+      react-native: '>=0.60.0-rc.0 <1.0.x'
 
   '@react-native/assets-registry@0.83.6':
     resolution: {integrity: sha512-iljb4ue1yWJ3EhySz7EjV6CzSVrI2uNtR8BI2jzP5+QS5E4Cl3fdIJRmVwDEx1pu8uE97PGEusGRHnoaZ9Q3jg==}
@@ -7509,6 +7518,11 @@ snapshots:
       react-native: 0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
   '@react-native-community/netinfo@11.5.2(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)':
+    dependencies:
+      react: 19.2.0
+      react-native: 0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
+
+  '@react-native-ml-kit/text-recognition@2.0.0(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)':
     dependencies:
       react: 19.2.0
       react-native: 0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)

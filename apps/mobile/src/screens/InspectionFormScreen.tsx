@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
-import { Image, Modal, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Modal,
+  PixelRatio,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
@@ -40,7 +49,9 @@ import {
   SuccessBanner,
   TextField,
   WarningBanner,
+  uiTheme,
 } from '../ui';
+import { recognizeReadingFromImage } from '../ocr';
 import {
   DraftValues,
   InspectionFormResponse,
@@ -84,6 +95,7 @@ export function InspectionFormScreen() {
 
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
+  const [scanningItemId, setScanningItemId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -379,13 +391,18 @@ export function InspectionFormScreen() {
     });
 
     return {
-      id: photoId,
-      uri: persistedPhoto.uri,
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude,
-      timestamp: photoTimestamp,
-      uploadState: 'uploading',
-    } satisfies CapturedInspectionPhoto;
+      photo: {
+        id: photoId,
+        uri: persistedPhoto.uri,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        timestamp: photoTimestamp,
+        uploadState: 'uploading',
+      } satisfies CapturedInspectionPhoto,
+      // The original (pre-overlay) capture is the clean source for OCR — the
+      // timestamp/GPS badge would otherwise feed stray digits to the parser.
+      originalUri: capturedAsset.uri,
+    };
   }
 
   async function handleTakePhoto() {
@@ -393,14 +410,14 @@ export function InspectionFormScreen() {
       setIsCapturingPhoto(true);
       setError(null);
 
-      const nextPhoto = await captureInspectionPhoto();
+      const captured = await captureInspectionPhoto();
 
-      if (!nextPhoto) {
+      if (!captured) {
         return;
       }
 
-      setPhotoList((current) => [...current, nextPhoto]);
-      void uploadPhotoInBackground(nextPhoto);
+      setPhotoList((current) => [...current, captured.photo]);
+      void uploadPhotoInBackground(captured.photo);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : 'Unable to capture inspection photo.');
     } finally {
@@ -413,18 +430,57 @@ export function InspectionFormScreen() {
       setIsCapturingPhoto(true);
       setError(null);
 
-      const nextPhoto = await captureInspectionPhoto();
+      const captured = await captureInspectionPhoto();
 
-      if (!nextPhoto) {
+      if (!captured) {
         return;
       }
 
-      setPhotoList((current) => current.map((photo) => (photo.id === photoId ? nextPhoto : photo)));
-      void uploadPhotoInBackground(nextPhoto);
+      setPhotoList((current) =>
+        current.map((photo) => (photo.id === photoId ? captured.photo : photo)),
+      );
+      void uploadPhotoInBackground(captured.photo);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : 'Unable to capture inspection photo.');
     } finally {
       setIsCapturingPhoto(false);
+    }
+  }
+
+  // Capture a Smart Sensor photo, save it as inspection evidence, then OCR the
+  // reading on-device and pre-fill the (editable) NUMBER/READING field (#4).
+  async function handleScanReading(itemId: string) {
+    try {
+      setScanningItemId(itemId);
+      setError(null);
+
+      const captured = await captureInspectionPhoto();
+
+      if (!captured) {
+        return;
+      }
+
+      // Tag the photo with its checklist item so the API links it to this
+      // reading's result for the visual report.
+      const itemPhoto = { ...captured.photo, templateItemId: itemId };
+      setPhotoList((current) => [...current, itemPhoto]);
+      void uploadPhotoInBackground(itemPhoto);
+
+      const reading = await recognizeReadingFromImage(captured.originalUri);
+
+      if (reading) {
+        updateDraftValue(itemId, reading);
+      } else {
+        setError('No number detected in the photo — enter the reading manually.');
+      }
+    } catch (scanError) {
+      setError(
+        scanError instanceof Error
+          ? scanError.message
+          : 'Unable to scan the Smart Sensor reading.',
+      );
+    } finally {
+      setScanningItemId(null);
     }
   }
 
@@ -691,6 +747,8 @@ export function InspectionFormScreen() {
                   draftValues={draftValues}
                   isSubmitted={Boolean(isSubmitted)}
                   onUpdateDraftValue={updateDraftValue}
+                  onScanReading={handleScanReading}
+                  scanningItemId={scanningItemId}
                 />
               ))}
             </View>
@@ -842,6 +900,8 @@ function ChecklistSectionCard({
   draftValues,
   isSubmitted,
   onUpdateDraftValue,
+  onScanReading,
+  scanningItemId,
 }: {
   section: InspectionTemplateSection;
   sectionIndex: number;
@@ -851,6 +911,8 @@ function ChecklistSectionCard({
     itemId: string,
     value: DraftValues[string],
   ) => void;
+  onScanReading: (itemId: string) => void;
+  scanningItemId: string | null;
 }) {
   const normalizedTitle = section.title.trim().toUpperCase();
   const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
@@ -888,6 +950,8 @@ function ChecklistSectionCard({
             value={draftValues[item.id]}
             disabled={isSubmitted}
             onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
+            onScanReading={() => onScanReading(item.id)}
+            scanning={scanningItemId === item.id}
           />
         ))}
       </View>
@@ -900,11 +964,15 @@ function ChecklistItemCard({
   value,
   disabled,
   onChange,
+  onScanReading,
+  scanning,
 }: {
   item: InspectionTemplateItem;
   value: DraftValues[string] | undefined;
   disabled: boolean;
   onChange: (value: DraftValues[string]) => void;
+  onScanReading: () => void;
+  scanning: boolean;
 }) {
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
@@ -954,6 +1022,37 @@ function ChecklistItemCard({
           keyboardType="decimal-pad"
           editable={!disabled}
         />
+      ) : null}
+      {inputType === 'OCR' ? (
+        <>
+          <TextField
+            label="Reading"
+            value={typeof value === 'string' ? value : ''}
+            onChangeText={onChange}
+            placeholder="Scan or enter reading"
+            keyboardType="decimal-pad"
+            editable={!disabled}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={disabled || scanning}
+            onPress={onScanReading}
+            style={({ pressed }) => [
+              styles.scanButton,
+              (disabled || scanning) && styles.scanButtonDisabled,
+              pressed && !disabled && !scanning && styles.scanButtonPressed,
+            ]}
+          >
+            {scanning ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.scanButtonIcon}>⌖</Text>
+            )}
+            <Text style={styles.scanButtonText}>
+              {scanning ? 'Scanning…' : 'Scan with Smart Sensor'}
+            </Text>
+          </Pressable>
+        </>
       ) : null}
       {inputType === 'DATE' ? (
         <TextField
@@ -1874,6 +1973,33 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'right',
     color: '#ffffff',
+  },
+  scanButton: {
+    marginTop: 8,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    backgroundColor: uiTheme.colors.primary,
+  },
+  scanButtonDisabled: {
+    opacity: 0.55,
+  },
+  scanButtonPressed: {
+    opacity: 0.85,
+  },
+  scanButtonIcon: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  scanButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   previewModalBackdrop: {
     flex: 1,

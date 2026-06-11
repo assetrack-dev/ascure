@@ -918,6 +918,10 @@ function createUploadParameters(photo: InspectionImageUploadInput) {
     parameters.type = type;
   }
 
+  if (photo.templateItemId) {
+    parameters.templateItemId = photo.templateItemId;
+  }
+
   return parameters;
 }
 

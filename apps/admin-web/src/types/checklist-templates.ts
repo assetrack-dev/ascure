@@ -16,7 +16,8 @@ export type ChecklistFieldType =
   | "DATE"
   | "DATETIME"
   | "GPS"
-  | "READING";
+  | "READING"
+  | "OCR";
 
 export type DefectSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 

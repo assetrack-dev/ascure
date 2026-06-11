@@ -11,6 +11,7 @@ export const TEMPLATE_BUILDER_INPUT_TYPES = [
   InspectionItemInputType.IMAGE,
   InspectionItemInputType.GPS,
   InspectionItemInputType.READING,
+  InspectionItemInputType.OCR,
 ] as const;
 
 export type TemplateBuilderInputType = (typeof TEMPLATE_BUILDER_INPUT_TYPES)[number];

@@ -121,7 +121,7 @@ export function createInitialDraftValues(form: InspectionFormResponse): DraftVal
         continue;
       }
 
-      if (inputType === 'NUMBER') {
+      if (inputType === 'NUMBER' || inputType === 'OCR') {
         values[item.id] =
           item.value?.valueNumber === null || item.value?.valueNumber === undefined
             ? ''
@@ -551,7 +551,7 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
           }
         }
 
-        if (inputType === 'NUMBER' || inputType === 'READING') {
+        if (inputType === 'NUMBER' || inputType === 'READING' || inputType === 'OCR') {
           const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
           if (!normalized) {
@@ -581,7 +581,7 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
         }
       }
 
-      if (inputType !== 'NUMBER' && inputType !== 'READING') {
+      if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
         continue;
       }
 
@@ -618,7 +618,7 @@ export function validateInspectionDraftForSave(
     for (const item of section.items) {
       const inputType = normalizeInspectionInputType(item.inputType);
 
-      if (inputType !== 'NUMBER' && inputType !== 'READING') {
+      if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
         continue;
       }
 
@@ -663,7 +663,7 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
-      if (inputType === 'NUMBER') {
+      if (inputType === 'NUMBER' || inputType === 'OCR') {
         const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
         supportedResults.push({
           templateItemId: item.id,
@@ -868,7 +868,8 @@ export function hasInspectionDraftValue(
     inputType === 'DATE' ||
     inputType === 'DATETIME' ||
     inputType === 'GPS' ||
-    inputType === 'READING'
+    inputType === 'READING' ||
+    inputType === 'OCR'
   ) {
     return typeof rawValue === 'string' && rawValue.trim() !== '';
   }
@@ -909,7 +910,8 @@ export function normalizeInspectionInputType(inputType: string) {
     normalizedInputType === 'DATE' ||
     normalizedInputType === 'DATETIME' ||
     normalizedInputType === 'GPS' ||
-    normalizedInputType === 'READING'
+    normalizedInputType === 'READING' ||
+    normalizedInputType === 'OCR'
   ) {
     return normalizedInputType;
   }

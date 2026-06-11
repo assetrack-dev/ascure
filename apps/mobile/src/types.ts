@@ -414,6 +414,7 @@ export type InspectionItemInputType =
   | 'DATETIME'
   | 'GPS'
   | 'READING'
+  | 'OCR'
   | 'JSON';
 
 export interface InspectionValue {
@@ -535,6 +536,9 @@ export interface InspectionImageUploadInput {
   longitude: number;
   timestamp: string;
   type?: string | null;
+  // The checklist item this photo belongs to (e.g. an OCR Smart Sensor reading),
+  // so the API can link it to that result for the visual report. (#4)
+  templateItemId?: string;
 }
 
 export interface SiteVisitImageUploadInput {

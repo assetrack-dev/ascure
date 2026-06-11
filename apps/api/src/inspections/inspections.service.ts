@@ -527,6 +527,7 @@ export class InspectionsService {
     const image = await this.prisma.inspectionImage.create({
       data: {
         inspectionId: inspection.id,
+        templateItemId: dto.templateItemId ?? null,
         url: buildInspectionImageUrl(inspection.id, filename),
         filename,
         mimeType: file.mimetype || null,
@@ -1069,6 +1070,16 @@ export class InspectionsService {
         return {
           ...baseValueData,
           valueNumber: input.valueNumber,
+          valueJson: Prisma.DbNull,
+        };
+
+      case InspectionItemInputType.OCR:
+        // Smart Sensor reading (#4): stores the OCR'd / manually-entered number.
+        // Lenient on null so a missing reading never blocks submission — the
+        // captured photo is the evidence and the value stays editable.
+        return {
+          ...baseValueData,
+          valueNumber: input.valueNumber ?? null,
           valueJson: Prisma.DbNull,
         };
 

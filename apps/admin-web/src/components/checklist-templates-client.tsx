@@ -108,6 +108,7 @@ const FIELD_TYPES: Array<{ label: string; value: ChecklistFieldType }> = [
   { label: "Date Time", value: "DATETIME" },
   { label: "GPS", value: "GPS" },
   { label: "Reading / Measurement", value: "READING" },
+  { label: "OCR / Smart Sensor", value: "OCR" },
 ];
 const SHOW_IF_OPERATORS: Array<{ label: string; value: ChecklistShowIfOperator }> = [
   { label: "Equals", value: "equals" },
@@ -257,7 +258,8 @@ function normalizeFieldType(value: string | undefined): ChecklistFieldType {
     value === "DATE" ||
     value === "DATETIME" ||
     value === "GPS" ||
-    value === "READING"
+    value === "READING" ||
+    value === "OCR"
   ) {
     return value;
   }
