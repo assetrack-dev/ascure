@@ -20,6 +20,10 @@ import type {
   CycleDelta,
   CycleDeltaPole,
   SurveyDueStatus,
+  SiteVisitContributions,
+  TeamContributionShare,
+  TeamContributionSnapshot,
+  ReassignmentRecord,
 } from "@/types/site-visits";
 
 type ApiRecord = Record<string, unknown>;
@@ -765,5 +769,75 @@ export async function fetchCycleDelta(
     newPoles: normalizeCycleDeltaPoles(record, "newPoles"),
     removedPoles: normalizeCycleDeltaPoles(record, "removedPoles"),
     carriedPoles: normalizeCycleDeltaPoles(record, "carriedPoles"),
+  };
+}
+
+function normalizeContributionSnapshot(raw: unknown): TeamContributionSnapshot {
+  const record = asRecord(raw);
+
+  return {
+    reason: firstString(record, ["reason"]) ?? "",
+    assetsCompleted: numberOrZero(record?.assetsCompleted),
+    totalAssets: numberOrZero(record?.totalAssets),
+    at: firstString(record, ["at"]),
+  };
+}
+
+function normalizeContributionTeam(raw: unknown): TeamContributionShare | null {
+  const record = asRecord(raw);
+  const teamId = firstString(record, ["teamId"]);
+
+  if (!record || !teamId) {
+    return null;
+  }
+
+  return {
+    teamId,
+    teamName: firstString(record, ["teamName"]),
+    assetsCompleted: numberOrZero(record.assetsCompleted),
+    isCurrent: readBoolean(record, "isCurrent") ?? false,
+    snapshots: readArray(record, ["snapshots"]).map(normalizeContributionSnapshot),
+  };
+}
+
+function normalizeReassignmentRecord(raw: unknown): ReassignmentRecord | null {
+  const record = asRecord(raw);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    fromTeamId: firstString(record, ["fromTeamId"]) ?? "",
+    fromTeamName: firstString(record, ["fromTeamName"]),
+    toTeamId: firstString(record, ["toTeamId"]) ?? "",
+    toTeamName: firstString(record, ["toTeamName"]),
+    reason: firstString(record, ["reason"]) ?? "",
+    at: firstString(record, ["at"]),
+  };
+}
+
+/** Per-team billing contribution ledger for a Pencawang (ADR 0002 §5). */
+export async function fetchSiteVisitContributions(
+  token: string,
+  siteVisitId: string,
+): Promise<SiteVisitContributions> {
+  const payload = await apiRequest<unknown>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/contributions`,
+    { token },
+  );
+  const record = asRecord(payload);
+
+  return {
+    siteVisitId: firstString(record, ["siteVisitId"]) ?? siteVisitId,
+    currentTeamId: firstString(record, ["currentTeamId"]) ?? "",
+    totalAssets: numberOrZero(record?.totalAssets),
+    totalCompleted: numberOrZero(record?.totalCompleted),
+    teams: readArray(record, ["teams"])
+      .map(normalizeContributionTeam)
+      .filter((team): team is TeamContributionShare => Boolean(team)),
+    reassignments: readArray(record, ["reassignments"])
+      .map(normalizeReassignmentRecord)
+      .filter((entry): entry is ReassignmentRecord => Boolean(entry)),
   };
 }

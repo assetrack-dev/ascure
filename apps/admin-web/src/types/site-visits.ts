@@ -208,6 +208,40 @@ export interface CycleDelta {
   carriedPoles: CycleDeltaPole[];
 }
 
+export interface TeamContributionSnapshot {
+  reason: string;
+  assetsCompleted: number;
+  totalAssets: number;
+  at: string | null;
+}
+
+export interface TeamContributionShare {
+  teamId: string;
+  teamName: string | null;
+  assetsCompleted: number;
+  isCurrent: boolean;
+  snapshots: TeamContributionSnapshot[];
+}
+
+export interface ReassignmentRecord {
+  fromTeamId: string;
+  fromTeamName: string | null;
+  toTeamId: string;
+  toTeamName: string | null;
+  reason: string;
+  at: string | null;
+}
+
+/** Per-team billing contribution for a Pencawang (ADR 0002 §5). */
+export interface SiteVisitContributions {
+  siteVisitId: string;
+  currentTeamId: string;
+  totalAssets: number;
+  totalCompleted: number;
+  teams: TeamContributionShare[];
+  reassignments: ReassignmentRecord[];
+}
+
 export interface SiteVisitDetail extends SiteVisitListItem {
   validatedAt: string | null;
   validationSummary: string | null;

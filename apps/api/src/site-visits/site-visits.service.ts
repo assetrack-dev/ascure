@@ -736,47 +736,15 @@ export class SiteVisitsService {
 
     await this.assertCanReassignBetween(user, fromTeam, toTeam);
 
-    // Billing snapshot for the OUTGOING team. "Done" = an asset with a SUBMITTED
-    // inspection (domain owner: "inspection done"). Each team is credited the
-    // increment since the previous snapshot, so work split across handovers
-    // bills correctly.
-    const [completedAssetIds, scopeAssetIds, priorContributions] = await Promise.all([
-      this.prisma.inspection.findMany({
-        where: {
-          siteVisitId: siteVisit.id,
-          completionStatus: InspectionCompletionStatus.SUBMITTED,
-        },
-        distinct: ['assetId'],
-        select: { assetId: true },
-      }),
-      this.prisma.inspection.findMany({
-        where: { siteVisitId: siteVisit.id },
-        distinct: ['assetId'],
-        select: { assetId: true },
-      }),
-      this.prisma.siteVisitTeamContribution.findMany({
-        where: { siteVisitId: siteVisit.id },
-        select: { assetsCompleted: true },
-      }),
-    ]);
-
-    const cumulativeCompleted = completedAssetIds.length;
-    const priorCredited = priorContributions.reduce(
-      (sum, row) => sum + row.assetsCompleted,
-      0,
+    // Billing snapshot for the OUTGOING team at the handover (ADR 0002 §5).
+    const contributionData = await this.buildContributionSnapshot(
+      siteVisit.id,
+      fromTeam.id,
+      'REASSIGNED',
     );
-    const incrementForOutgoingTeam = Math.max(0, cumulativeCompleted - priorCredited);
 
     await this.prisma.$transaction([
-      this.prisma.siteVisitTeamContribution.create({
-        data: {
-          siteVisitId: siteVisit.id,
-          teamId: fromTeam.id,
-          assetsCompleted: incrementForOutgoingTeam,
-          totalAssets: scopeAssetIds.length,
-          snapshotReason: 'REASSIGNED',
-        },
-      }),
+      this.prisma.siteVisitTeamContribution.create({ data: contributionData }),
       this.prisma.siteVisitReassignment.create({
         data: {
           siteVisitId: siteVisit.id,
@@ -867,6 +835,163 @@ export class SiteVisitsService {
     throw new ForbiddenException('You are not allowed to reassign site visits.');
   }
 
+  /**
+   * Build a billing contribution snapshot (ADR 0002 §5) for a team — at a
+   * handover (REASSIGNED) or at completion (COMPLETED). "Done" = an asset with a
+   * SUBMITTED inspection. The team is credited only the increment since the
+   * previous snapshots, so a Pencawang split across teams sums to its total
+   * completed assets across all contribution rows (no double-counting).
+   */
+  private async buildContributionSnapshot(
+    siteVisitId: string,
+    teamId: string,
+    snapshotReason: 'REASSIGNED' | 'COMPLETED',
+  ): Promise<Prisma.SiteVisitTeamContributionUncheckedCreateInput> {
+    const [completedAssetIds, scopeAssetIds, priorContributions] =
+      await Promise.all([
+        this.prisma.inspection.findMany({
+          where: {
+            siteVisitId,
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+          },
+          distinct: ['assetId'],
+          select: { assetId: true },
+        }),
+        this.prisma.inspection.findMany({
+          where: { siteVisitId },
+          distinct: ['assetId'],
+          select: { assetId: true },
+        }),
+        this.prisma.siteVisitTeamContribution.findMany({
+          where: { siteVisitId },
+          select: { assetsCompleted: true },
+        }),
+      ]);
+
+    const cumulativeCompleted = completedAssetIds.length;
+    const priorCredited = priorContributions.reduce(
+      (sum, row) => sum + row.assetsCompleted,
+      0,
+    );
+
+    return {
+      siteVisitId,
+      teamId,
+      assetsCompleted: Math.max(0, cumulativeCompleted - priorCredited),
+      totalAssets: scopeAssetIds.length,
+      snapshotReason,
+    };
+  }
+
+  /**
+   * Per-team billing contribution for a Pencawang (ADR 0002 §5). Aggregates the
+   * contribution ledger — a row per handover (REASSIGNED) and at completion
+   * (COMPLETED) — into each team's share of the completed assets, alongside the
+   * reassignment trail. Sum of the shares = the survey's completed-asset count,
+   * which is the basis for contractor billing when work is split across teams.
+   */
+  async getContributions(user: RequestUser, id: string) {
+    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+
+    const [contributions, reassignments] = await Promise.all([
+      this.prisma.siteVisitTeamContribution.findMany({
+        where: { siteVisitId: siteVisit.id },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.siteVisitReassignment.findMany({
+        where: { siteVisitId: siteVisit.id },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const teamIds = new Set<string>([siteVisit.teamId]);
+    for (const row of contributions) {
+      teamIds.add(row.teamId);
+    }
+    for (const row of reassignments) {
+      teamIds.add(row.fromTeamId);
+      teamIds.add(row.toTeamId);
+    }
+
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: Array.from(teamIds) } },
+      select: { id: true, name: true },
+    });
+    const teamNameById = new Map(teams.map((team) => [team.id, team.name]));
+
+    const byTeam = new Map<
+      string,
+      {
+        teamId: string;
+        teamName: string | null;
+        assetsCompleted: number;
+        isCurrent: boolean;
+        snapshots: {
+          reason: string;
+          assetsCompleted: number;
+          totalAssets: number;
+          at: Date;
+        }[];
+      }
+    >();
+
+    const ensureTeam = (teamId: string) => {
+      let entry = byTeam.get(teamId);
+      if (!entry) {
+        entry = {
+          teamId,
+          teamName: teamNameById.get(teamId) ?? null,
+          assetsCompleted: 0,
+          isCurrent: teamId === siteVisit.teamId,
+          snapshots: [],
+        };
+        byTeam.set(teamId, entry);
+      }
+      return entry;
+    };
+
+    let totalAssets = 0;
+    for (const row of contributions) {
+      const entry = ensureTeam(row.teamId);
+      entry.assetsCompleted += row.assetsCompleted;
+      entry.snapshots.push({
+        reason: row.snapshotReason,
+        assetsCompleted: row.assetsCompleted,
+        totalAssets: row.totalAssets,
+        at: row.createdAt,
+      });
+      totalAssets = Math.max(totalAssets, row.totalAssets);
+    }
+
+    // Always surface the current team, even before its first snapshot (an
+    // in-progress visit that was handed over has no COMPLETED row yet).
+    ensureTeam(siteVisit.teamId);
+
+    const totalCompleted = contributions.reduce(
+      (sum, row) => sum + row.assetsCompleted,
+      0,
+    );
+
+    return {
+      siteVisitId: siteVisit.id,
+      currentTeamId: siteVisit.teamId,
+      totalAssets,
+      totalCompleted,
+      teams: Array.from(byTeam.values()).sort(
+        (a, b) => b.assetsCompleted - a.assetsCompleted,
+      ),
+      reassignments: reassignments.map((row) => ({
+        fromTeamId: row.fromTeamId,
+        fromTeamName: teamNameById.get(row.fromTeamId) ?? null,
+        toTeamId: row.toTeamId,
+        toTeamName: teamNameById.get(row.toTeamId) ?? null,
+        reason: row.reason,
+        at: row.createdAt,
+        byUserId: row.reassignedByUserId,
+      })),
+    };
+  }
+
   async getAssets(user: RequestUser, id: string) {
     const siteVisit = await this.findAccessibleSiteVisit(user, id);
 
@@ -948,22 +1073,34 @@ export class SiteVisitsService {
 
     const completedAt = dto.completedAt ? this.parseDate(dto.completedAt, 'Completed at') : new Date();
 
-    await this.prisma.siteVisit.update({
-      where: {
-        id: siteVisit.id,
-      },
-      data: {
-        status: SiteVisitStatus.COMPLETED,
-        completedAt,
-        endedAt: completedAt,
-        validationStatus: SiteVisitValidationStatus.PENDING,
-        completionNotes:
-          dto.completionNotes === undefined
-            ? undefined
-            : this.normalizeOperationalString(dto.completionNotes),
-        ...this.buildSnapshotBackfill(siteVisit),
-      },
-    });
+    // Billing snapshot for the FINAL team at completion (ADR 0002 §5) — credited
+    // the increment since any earlier handover snapshots, so the team that
+    // finished gets its share even when the work was reassigned mid-survey.
+    const contributionData = await this.buildContributionSnapshot(
+      siteVisit.id,
+      siteVisit.teamId,
+      'COMPLETED',
+    );
+
+    await this.prisma.$transaction([
+      this.prisma.siteVisit.update({
+        where: {
+          id: siteVisit.id,
+        },
+        data: {
+          status: SiteVisitStatus.COMPLETED,
+          completedAt,
+          endedAt: completedAt,
+          validationStatus: SiteVisitValidationStatus.PENDING,
+          completionNotes:
+            dto.completionNotes === undefined
+              ? undefined
+              : this.normalizeOperationalString(dto.completionNotes),
+          ...this.buildSnapshotBackfill(siteVisit),
+        },
+      }),
+      this.prisma.siteVisitTeamContribution.create({ data: contributionData }),
+    ]);
 
     return this.getById(user, siteVisit.id);
   }

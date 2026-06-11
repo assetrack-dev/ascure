@@ -23,6 +23,7 @@ import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
   fetchCycleDelta,
+  fetchSiteVisitContributions,
   fetchSiteVisitDetail,
   generateSurveyReport,
   markRondaanSelesai,
@@ -37,6 +38,7 @@ import type {
   CycleDeltaPole,
   OperationalHealthStatus,
   SiteVisitAssetLink,
+  SiteVisitContributions,
   SiteVisitDetail,
   SiteVisitStatus,
   SiteVisitValidationStatus,
@@ -773,6 +775,114 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
   );
 }
 
+function ContributionsPanel({
+  contributions,
+}: {
+  contributions: SiteVisitContributions;
+}) {
+  const { teams, reassignments, totalAssets, totalCompleted } = contributions;
+
+  return (
+    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+        <Users size={17} className="text-[var(--brand)]" />
+        Team Contributions
+      </div>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        Each team&apos;s share of completed inspections — the basis for contractor
+        billing when a Pencawang is split across teams (ADR 0002 §5).
+        {totalAssets > 0 ? (
+          <>
+            {" "}
+            <span className="font-semibold text-slate-700">
+              {totalCompleted} of {totalAssets}
+            </span>{" "}
+            assets completed.
+          </>
+        ) : null}
+      </p>
+
+      <div className="mt-4 space-y-3">
+        {teams.map((team) => {
+          const pct =
+            totalAssets > 0
+              ? Math.round((team.assetsCompleted / totalAssets) * 100)
+              : 0;
+
+          return (
+            <div key={team.teamId} className="rounded-lg border border-slate-200 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  {team.teamName ?? "Unknown team"}
+                  {team.isCurrent ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+                      Current
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {team.assetsCompleted}
+                  {totalAssets > 0 ? ` / ${totalAssets}` : ""}
+                  <span className="ml-1 text-xs text-[var(--muted)]">({pct}%)</span>
+                </span>
+              </div>
+              <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full rounded-full bg-[var(--brand)]"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              {team.snapshots.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {team.snapshots.map((snapshot, index) => (
+                    <span
+                      key={index}
+                      className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600"
+                    >
+                      {snapshot.reason === "COMPLETED" ? "Completed" : "Handover"}:{" "}
+                      {snapshot.assetsCompleted}
+                      {snapshot.at ? ` · ${formatDateTime(snapshot.at)}` : ""}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {reassignments.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-1.5 text-xs font-semibold uppercase text-[var(--muted)]">
+            Handover history
+          </p>
+          <ul className="space-y-2">
+            {reassignments.map((entry, index) => (
+              <li key={index} className="text-sm text-slate-700">
+                <span className="flex flex-wrap items-center gap-x-1.5">
+                  <span className="font-semibold">{entry.fromTeamName ?? "—"}</span>
+                  <ArrowLeftRight size={13} className="text-[var(--muted)]" />
+                  <span className="font-semibold">{entry.toTeamName ?? "—"}</span>
+                  {entry.at ? (
+                    <span className="text-xs text-[var(--muted)]">
+                      · {formatDateTime(entry.at)}
+                    </span>
+                  ) : null}
+                </span>
+                {entry.reason ? (
+                  <span className="mt-0.5 block text-xs italic text-[var(--muted)]">
+                    “{entry.reason}”
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ReassignTeamPanel({
   visit,
   token,
@@ -970,6 +1080,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState("");
   const [cycleDelta, setCycleDelta] = useState<CycleDelta | null>(null);
+  const [contributions, setContributions] = useState<SiteVisitContributions | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1022,6 +1133,18 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [siteVisitId],
   );
 
+  const loadContributions = useCallback(
+    async (token: string) => {
+      try {
+        setContributions(await fetchSiteVisitContributions(token, siteVisitId));
+      } catch {
+        // Supplementary billing view — never block the detail on it.
+        setContributions(null);
+      }
+    },
+    [siteVisitId],
+  );
+
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
@@ -1029,8 +1152,9 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     if (storedSession?.token) {
       void loadVisit(storedSession.token);
       void loadDelta(storedSession.token);
+      void loadContributions(storedSession.token);
     }
-  }, [loadVisit, loadDelta]);
+  }, [loadVisit, loadDelta, loadContributions]);
 
   useEffect(() => {
     if (!autoRefresh || !session?.token) {
@@ -1289,8 +1413,19 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   visit={visit}
                   token={session?.token ?? null}
                   canReassign={canReassign}
-                  onReassigned={setVisit}
+                  onReassigned={(next) => {
+                    setVisit(next);
+                    if (session?.token) {
+                      void loadContributions(session.token);
+                    }
+                  }}
                 />
+
+                {contributions &&
+                (contributions.reassignments.length > 0 ||
+                  contributions.teams.some((team) => team.snapshots.length > 0)) ? (
+                  <ContributionsPanel contributions={contributions} />
+                ) : null}
 
                 {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
 

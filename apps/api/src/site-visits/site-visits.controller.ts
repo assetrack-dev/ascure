@@ -164,6 +164,14 @@ export class SiteVisitsController {
     return this.siteVisitsService.getCycleDelta(user, params.id);
   }
 
+  @Get(':id/contributions')
+  getContributions(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.siteVisitsService.getContributions(user, params.id);
+  }
+
   @Get(':id')
   getById(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
     return this.siteVisitsService.getReadById(user, params.id);
