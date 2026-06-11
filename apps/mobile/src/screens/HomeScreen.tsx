@@ -394,22 +394,17 @@ function InspectionWorkspaceView({
 }) {
   return (
     <>
-      <Card>
-        <View style={styles.listHeader}>
-          <SectionTitle>Inspection Scope</SectionTitle>
-          <StatusChip label={SCOPE_LABELS[selectedScope]} tone="info" />
-        </View>
-        <View style={styles.scopeGrid}>
-          {availableScopes.map((scope) => (
-            <ScopeCard
-              key={scope}
-              scope={scope}
-              selected={scope === selectedScope}
-              onPress={() => onSelectScope(scope)}
-            />
-          ))}
-        </View>
-      </Card>
+      {/* Scope selector — a compact pill row at the top instead of a full card. */}
+      <View style={styles.scopeGrid}>
+        {availableScopes.map((scope) => (
+          <ScopeCard
+            key={scope}
+            scope={scope}
+            selected={scope === selectedScope}
+            onPress={() => onSelectScope(scope)}
+          />
+        ))}
+      </View>
 
       {showOperationalSessions ? (
         <Card>
