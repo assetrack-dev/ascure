@@ -396,6 +396,16 @@ export function MapScreen() {
     }));
   }
 
+  // Drop a draggable pin at the current map centre (region tracks the centre via
+  // onRegionChangeComplete) so adding an asset is "drop + drag to place" rather
+  // than hunting for a spot to long-press. Long-press still works as a shortcut.
+  function handleDropPinAtCentre() {
+    setSelectedCoordinate({
+      latitude: region.latitude,
+      longitude: region.longitude,
+    });
+  }
+
   const mapMarkers = useMemo(() => {
     const markers = filteredAssets.flatMap((asset) => {
       const coordinate = getAssetCoordinate(asset);
@@ -604,6 +614,12 @@ export function MapScreen() {
               variant="ghost"
               onPress={() => setSelectedCoordinate(null)}
             />
+          </View>
+        ) : null}
+
+        {!isLoading && !selectedCoordinate ? (
+          <View style={styles.selectedPinPanel}>
+            <AppButton label="Drop Pin to Add Asset" onPress={handleDropPinAtCentre} />
           </View>
         ) : null}
       </View>
