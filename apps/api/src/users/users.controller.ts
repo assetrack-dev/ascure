@@ -42,13 +42,13 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   list(@CurrentUser() user: RequestUser) {
     return this.usersService.list(user);
   }
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateUserDto) {
     return this.usersService.create(user, dto);
   }
@@ -64,7 +64,7 @@ export class UsersController {
   }
 
   @Patch(':id/password')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   updatePassword(
     @CurrentUser() user: RequestUser,
     @Param() params: UserIdParamDto,

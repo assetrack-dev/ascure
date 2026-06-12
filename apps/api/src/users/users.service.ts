@@ -1,10 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { MainheadAccessRole, OrganizationType, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -15,6 +16,46 @@ import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const PASSWORD_SALT_ROUNDS = 10;
+
+// Roles a MANAGER may provision / reset within their own company (ADR 0002 §3).
+// ADMIN is deliberately excluded — managers can never mint or manage admins.
+const MANAGER_ASSIGNABLE_ROLES: UserRole[] = [
+  UserRole.TECHNICIAN,
+  UserRole.SUPERVISOR,
+  UserRole.MANAGER,
+];
+
+/**
+ * Crypto-strong temporary password for admin/manager-provisioned accounts.
+ * ~14 chars, guaranteed one of each class, ambiguous characters (0/O/1/l/I)
+ * removed so it can be read aloud / typed without confusion. Always paired with
+ * mustChangePassword=true so it only survives until the user's first login.
+ */
+function generateTemporaryPassword(): string {
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const symbols = '!@#$%*?';
+  const all = lower + upper + digits + symbols;
+  const bytes = randomBytes(14);
+  const pick = (set: string, byte: number) => set[byte % set.length];
+  const chars = [
+    pick(lower, bytes[0]),
+    pick(upper, bytes[1]),
+    pick(digits, bytes[2]),
+    pick(symbols, bytes[3]),
+  ];
+  for (let index = 4; index < bytes.length; index += 1) {
+    chars.push(pick(all, bytes[index]));
+  }
+  // Fisher–Yates shuffle so the guaranteed-class chars aren't always leading.
+  const shuffle = randomBytes(chars.length);
+  for (let index = chars.length - 1; index > 0; index -= 1) {
+    const swap = shuffle[index] % (index + 1);
+    [chars[index], chars[swap]] = [chars[swap], chars[index]];
+  }
+  return chars.join('');
+}
 
 export type CapabilitySource =
   | { scope: 'ADMIN' }
@@ -37,27 +78,32 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(user: RequestUser) {
+    const where: Prisma.UserWhereInput = { tenantId: user.tenantId };
+
+    // MANAGER (the controller gates this endpoint to ADMIN | MANAGER) sees only
+    // their own company's roster; ADMIN sees the whole tenant.
+    if (user.role !== UserRole.ADMIN) {
+      if (!user.organizationId) {
+        return [];
+      }
+      where.organizationId = user.organizationId;
+    }
+
     return this.prisma.user.findMany({
-      where: {
-        tenantId: user.tenantId,
-      },
-      orderBy: [
-        {
-          name: 'asc',
-        },
-        {
-          email: 'asc',
-        },
-      ],
+      where,
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
       select: this.userSelect(),
     });
   }
 
-  async create(user: RequestUser, dto: CreateUserDto) {
-    const passwordHash = await bcrypt.hash(dto.password, PASSWORD_SALT_ROUNDS);
+  async create(user: RequestUser, inputDto: CreateUserDto) {
+    const dto = this.resolveCreateScope(user, inputDto);
+    const generated = !dto.password;
+    const plainPassword = dto.password ?? generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(plainPassword, PASSWORD_SALT_ROUNDS);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         await this.assertDepartmentBelongsToTenant(
           tx,
           user.tenantId,
@@ -90,6 +136,7 @@ export class UsersService {
             email: dto.email,
             name: dto.name,
             passwordHash,
+            mustChangePassword: true,
             role: dto.role,
             isActive: dto.isActive ?? true,
           },
@@ -156,9 +203,91 @@ export class UsersService {
 
         return createdUser;
       });
+
+      // Surface the temp password ONCE, only when the server generated it, so
+      // the creator can relay it. When the creator typed a password we don't
+      // echo it back.
+      return generated
+        ? { ...result, temporaryPassword: plainPassword }
+        : result;
     } catch (error) {
       this.throwConflictForDuplicateEmail(error);
       throw error;
+    }
+  }
+
+  /**
+   * Manager-scope guard for user creation (ADR 0002 §3). ADMIN is unrestricted.
+   * A MANAGER may only create TECHNICIAN/SUPERVISOR/MANAGER accounts inside their
+   * own company, and never grant advanced access (MAINHEAD/Region/Capability/
+   * Branch) — those stay ADMIN-only to avoid privilege escalation. Returns the
+   * sanitized DTO the create transaction should act on.
+   */
+  private resolveCreateScope(
+    actor: RequestUser,
+    dto: CreateUserDto,
+  ): CreateUserDto {
+    if (actor.role === UserRole.ADMIN) {
+      return dto;
+    }
+
+    if (actor.role !== UserRole.MANAGER) {
+      throw new ForbiddenException('You are not allowed to create users.');
+    }
+
+    if (!actor.organizationId) {
+      throw new ForbiddenException(
+        'Your account is not linked to a company, so you cannot create users.',
+      );
+    }
+
+    if (!MANAGER_ASSIGNABLE_ROLES.includes(dto.role)) {
+      throw new ForbiddenException(
+        'Managers can only create Technician, Supervisor, or Manager accounts.',
+      );
+    }
+
+    return {
+      ...dto,
+      // Force the new user into the manager's own company; strip every advanced
+      // grant a simplified manager form never sends anyway.
+      organizationId: actor.organizationId,
+      branchId: null,
+      mainheadId: null,
+      capabilityIds: undefined,
+      mainheadAccessIds: undefined,
+      operationalRegionAccessIds: undefined,
+      accessRole: undefined,
+    };
+  }
+
+  /**
+   * Manager-scope guard for acting on an existing user (e.g. password reset).
+   * ADMIN unrestricted; MANAGER limited to TECHNICIAN/SUPERVISOR/MANAGER targets
+   * inside their own company.
+   */
+  private assertCanManageTarget(
+    actor: RequestUser,
+    target: { role: UserRole; organizationId: string | null },
+  ) {
+    if (actor.role === UserRole.ADMIN) {
+      return;
+    }
+
+    if (actor.role !== UserRole.MANAGER) {
+      throw new ForbiddenException('You are not allowed to manage this user.');
+    }
+
+    if (!actor.organizationId || target.organizationId !== actor.organizationId) {
+      throw new ForbiddenException(
+        'You can only manage users in your own company.',
+      );
+    }
+
+    if (!MANAGER_ASSIGNABLE_ROLES.includes(target.role)) {
+      throw new ForbiddenException(
+        'Managers cannot manage administrator accounts.',
+      );
     }
   }
 
@@ -332,6 +461,8 @@ export class UsersService {
       },
       select: {
         id: true,
+        role: true,
+        organizationId: true,
       },
     });
 
@@ -339,17 +470,27 @@ export class UsersService {
       throw new NotFoundException('User not found.');
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, PASSWORD_SALT_ROUNDS);
+    this.assertCanManageTarget(user, targetUser);
 
-    return this.prisma.user.update({
+    const generated = !dto.password;
+    const plainPassword = dto.password ?? generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(plainPassword, PASSWORD_SALT_ROUNDS);
+
+    const updated = await this.prisma.user.update({
       where: {
         id,
       },
       data: {
         passwordHash,
+        // A reset password is temporary — force the user to set their own again.
+        mustChangePassword: true,
       },
       select: this.userSelect(),
     });
+
+    return generated
+      ? { ...updated, temporaryPassword: plainPassword }
+      : updated;
   }
 
   async updateStatus(
@@ -981,6 +1122,7 @@ export class UsersService {
       name: true,
       role: true,
       isActive: true,
+      mustChangePassword: true,
       createdAt: true,
       updatedAt: true,
       department: {

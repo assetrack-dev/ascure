@@ -41,10 +41,11 @@ export class CreateUserDto {
   @MaxLength(320)
   email!: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(8)
   @MaxLength(128)
-  password!: string;
+  password?: string;
 
   @IsEnum(UserRole)
   role!: UserRole;

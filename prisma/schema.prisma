@@ -376,6 +376,10 @@ model User {
   email                     String                        @unique
   name                      String
   passwordHash              String
+  // Forced password rotation: set true when an admin/manager provisions the
+  // account or resets the password (the creator-set password is temporary);
+  // cleared when the user changes it via PATCH /auth/change-password.
+  mustChangePassword        Boolean                       @default(false)
   role                      UserRole
   isActive                  Boolean                       @default(true)
   createdAt                 DateTime                      @default(now())

@@ -8,7 +8,10 @@ import { resolveCanImport } from '../common/authorization/import-actor';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
+import { ChangeOwnPasswordDto } from './dto/change-own-password.dto';
 import * as bcrypt from 'bcryptjs';
+
+const PASSWORD_SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
@@ -29,6 +32,7 @@ export class AuthService {
         role: true,
         organizationId: true,
         isActive: true,
+        mustChangePassword: true,
         passwordHash: true,
       },
     });
@@ -65,6 +69,7 @@ export class AuthService {
     ]);
     const canReassign = this.resolveCanReassign(requestUser);
     const canManageSupervisors = this.resolveCanManageSupervisors(requestUser);
+    const canManageUsers = this.resolveCanManageUsers(requestUser);
 
     return {
       access_token: accessToken,
@@ -74,11 +79,14 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        organizationId: user.organizationId,
+        mustChangePassword: user.mustChangePassword,
         canGovernQa,
         canReport,
         canImport,
         canReassign,
         canManageSupervisors,
+        canManageUsers,
       },
     };
   }
@@ -128,6 +136,17 @@ export class AuthService {
     return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
   }
 
+  /**
+   * Server-provided authority to provision/manage users (create + reset
+   * password + view their company's roster). ADMIN (all users) or MANAGER (own
+   * company only). Exposed as a flag because the admin console collapses MANAGER
+   * to VIEWER client-side; the /users endpoints still enforce the same-company
+   * scope + role-whitelist server-side.
+   */
+  private resolveCanManageUsers(user: RequestUser): boolean {
+    return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+  }
+
   async me(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -141,7 +160,9 @@ export class AuthService {
         email: true,
         name: true,
         role: true,
+        organizationId: true,
         departmentId: true,
+        mustChangePassword: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -158,6 +179,7 @@ export class AuthService {
     ]);
     const canReassign = this.resolveCanReassign(user);
     const canManageSupervisors = this.resolveCanManageSupervisors(user);
+    const canManageUsers = this.resolveCanManageUsers(user);
 
     return {
       ...currentUser,
@@ -166,6 +188,42 @@ export class AuthService {
       canImport,
       canReassign,
       canManageSupervisors,
+      canManageUsers,
     };
+  }
+
+  /**
+   * Self-service password change. Verifies the current password, sets the new
+   * hash, and clears the forced-change flag. Works WHILE mustChangePassword is
+   * true — that's the whole point of the first-login flow. Returns the refreshed
+   * /me payload so the client can drop the flag without a re-login.
+   */
+  async changeOwnPassword(user: RequestUser, dto: ChangeOwnPasswordDto) {
+    const existing = await this.prisma.user.findFirst({
+      where: { id: user.id, tenantId: user.tenantId, isActive: true },
+      select: { id: true, passwordHash: true },
+    });
+
+    if (!existing) {
+      throw new UnauthorizedException('Unauthorized.');
+    }
+
+    const matches = await bcrypt.compare(
+      dto.currentPassword,
+      existing.passwordHash,
+    );
+
+    if (!matches) {
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, PASSWORD_SALT_ROUNDS);
+
+    await this.prisma.user.update({
+      where: { id: existing.id },
+      data: { passwordHash, mustChangePassword: false },
+    });
+
+    return this.me(user);
   }
 }
