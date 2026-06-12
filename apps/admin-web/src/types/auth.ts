@@ -7,6 +7,7 @@ export interface ApiUser {
   name: string;
   role: string;
   organizationId?: string | null;
+  organizationName?: string | null;
   mustChangePassword?: boolean;
   canGovernQa?: boolean;
   canReport?: boolean;
@@ -26,6 +27,8 @@ export interface AuthUser {
   /** The user's own company (Organization) — used to scope/lock a manager's
    *  user-provisioning form to their own company. */
   organizationId?: string | null;
+  /** The user's company display name — shown in the app shell. */
+  organizationName?: string | null;
   /** First-login / post-reset forced password change. When true the client
    *  routes the user to the change-password screen before anything else. */
   mustChangePassword?: boolean;

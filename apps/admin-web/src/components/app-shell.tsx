@@ -252,6 +252,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             </div>
             <p className="mt-3 truncate text-sm font-semibold">{user?.name ?? "ASCURE User"}</p>
             <p className="mt-1 truncate text-xs text-slate-300">{user?.email ?? "Signed in"}</p>
+            {user?.organizationName ? (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-slate-200">
+                <Building2 size={14} className="shrink-0 text-slate-300" />
+                <span className="truncate" title={user.organizationName}>
+                  {user.organizationName}
+                </span>
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={onLogout}

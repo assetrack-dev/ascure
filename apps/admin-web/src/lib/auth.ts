@@ -23,6 +23,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     role: normalizeRole(user.role),
     sourceRole: sourceRole && sourceRole !== normalizeRole(user.role) ? sourceRole : undefined,
     organizationId: "organizationId" in user ? user.organizationId : undefined,
+    organizationName:
+      "organizationName" in user ? user.organizationName : undefined,
     mustChangePassword:
       "mustChangePassword" in user ? user.mustChangePassword : undefined,
     canGovernQa: "canGovernQa" in user ? user.canGovernQa : undefined,
