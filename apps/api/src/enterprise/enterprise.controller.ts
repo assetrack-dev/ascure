@@ -8,8 +8,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { IsUUID } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
@@ -47,7 +50,12 @@ class EnterpriseIdParamDto {
   id!: string;
 }
 
-@UseGuards(JwtAuthGuard)
+// Enterprise config (organizations, branches, regions, capabilities, mainheads,
+// projects, work packages) is ADMIN-managed. Reads stay open to any
+// authenticated user (the admin console + pickers rely on them); every
+// create/update/status mutation is gated to ADMIN via @Roles below — without
+// this, any authenticated user could mutate tenant-wide reference data.
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('enterprise')
 export class EnterpriseController {
   constructor(private readonly enterpriseService: EnterpriseService) {}
@@ -58,6 +66,7 @@ export class EnterpriseController {
   }
 
   @Post('organizations')
+  @Roles(UserRole.ADMIN)
   createOrganization(@Body() dto: CreateOrganizationDto) {
     return this.enterpriseService.createOrganization(dto);
   }
@@ -68,6 +77,7 @@ export class EnterpriseController {
   }
 
   @Patch('organizations/:id')
+  @Roles(UserRole.ADMIN)
   updateOrganization(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateOrganizationDto,
@@ -76,6 +86,7 @@ export class EnterpriseController {
   }
 
   @Patch('organizations/:id/status')
+  @Roles(UserRole.ADMIN)
   updateOrganizationActive(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateEnterpriseActiveDto,
@@ -94,11 +105,13 @@ export class EnterpriseController {
   }
 
   @Post('branches')
+  @Roles(UserRole.ADMIN)
   createBranch(@Body() dto: CreateBranchDto) {
     return this.enterpriseService.createBranch(dto);
   }
 
   @Patch('branches/:id')
+  @Roles(UserRole.ADMIN)
   updateBranch(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateBranchDto,
@@ -107,6 +120,7 @@ export class EnterpriseController {
   }
 
   @Patch('branches/:id/status')
+  @Roles(UserRole.ADMIN)
   updateBranchActive(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateEnterpriseActiveDto,
@@ -128,6 +142,7 @@ export class EnterpriseController {
   }
 
   @Post('operational-regions')
+  @Roles(UserRole.ADMIN)
   createOperationalRegion(
     @CurrentUser() user: RequestUser,
     @Body() dto: CreateOperationalRegionDto,
@@ -136,6 +151,7 @@ export class EnterpriseController {
   }
 
   @Patch('operational-regions/:id')
+  @Roles(UserRole.ADMIN)
   updateOperationalRegion(
     @CurrentUser() user: RequestUser,
     @Param() params: EnterpriseIdParamDto,
@@ -145,6 +161,7 @@ export class EnterpriseController {
   }
 
   @Patch('operational-regions/:id/status')
+  @Roles(UserRole.ADMIN)
   updateOperationalRegionActive(
     @CurrentUser() user: RequestUser,
     @Param() params: EnterpriseIdParamDto,
@@ -171,11 +188,13 @@ export class EnterpriseController {
   }
 
   @Post('capabilities')
+  @Roles(UserRole.ADMIN)
   createCapability(@Body() dto: CreateCapabilityDto) {
     return this.enterpriseService.createCapability(dto);
   }
 
   @Patch('capabilities/:id')
+  @Roles(UserRole.ADMIN)
   updateCapability(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateCapabilityDto,
@@ -184,6 +203,7 @@ export class EnterpriseController {
   }
 
   @Patch('capabilities/:id/status')
+  @Roles(UserRole.ADMIN)
   updateCapabilityActive(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateEnterpriseActiveDto,
@@ -197,6 +217,7 @@ export class EnterpriseController {
   }
 
   @Post('mainheads')
+  @Roles(UserRole.ADMIN)
   createMainhead(@CurrentUser() user: RequestUser, @Body() dto: CreateMainheadDto) {
     return this.enterpriseService.createMainhead(user, dto);
   }
@@ -207,6 +228,7 @@ export class EnterpriseController {
   }
 
   @Patch('mainheads/:id')
+  @Roles(UserRole.ADMIN)
   updateMainhead(
     @CurrentUser() user: RequestUser,
     @Param() params: EnterpriseIdParamDto,
@@ -216,6 +238,7 @@ export class EnterpriseController {
   }
 
   @Patch('mainheads/:id/status')
+  @Roles(UserRole.ADMIN)
   updateMainheadActive(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateEnterpriseActiveDto,
@@ -229,6 +252,7 @@ export class EnterpriseController {
   }
 
   @Post('projects')
+  @Roles(UserRole.ADMIN)
   createProject(@Body() dto: CreateProjectDto) {
     return this.enterpriseService.createProject(dto);
   }
@@ -239,6 +263,7 @@ export class EnterpriseController {
   }
 
   @Patch('projects/:id')
+  @Roles(UserRole.ADMIN)
   updateProject(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateProjectDto,
@@ -247,6 +272,7 @@ export class EnterpriseController {
   }
 
   @Patch('projects/:id/status')
+  @Roles(UserRole.ADMIN)
   updateProjectStatus(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateProjectLifecycleStatusDto,
@@ -260,6 +286,7 @@ export class EnterpriseController {
   }
 
   @Post('work-packages')
+  @Roles(UserRole.ADMIN)
   createWorkPackage(@Body() dto: CreateWorkPackageDto) {
     return this.enterpriseService.createWorkPackage(dto);
   }
@@ -270,6 +297,7 @@ export class EnterpriseController {
   }
 
   @Patch('work-packages/:id')
+  @Roles(UserRole.ADMIN)
   updateWorkPackage(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateWorkPackageDto,
@@ -278,6 +306,7 @@ export class EnterpriseController {
   }
 
   @Patch('work-packages/:id/status')
+  @Roles(UserRole.ADMIN)
   updateWorkPackageStatus(
     @Param() params: EnterpriseIdParamDto,
     @Body() dto: UpdateWorkPackageLifecycleStatusDto,
