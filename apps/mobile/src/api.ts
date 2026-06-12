@@ -279,6 +279,14 @@ export const api = {
     return request<SessionUser>('/auth/me', { token });
   },
 
+  changePassword(token: string, currentPassword: string, newPassword: string) {
+    return request<SessionUser>('/auth/change-password', {
+      method: 'PATCH',
+      token,
+      body: { currentPassword, newPassword },
+    });
+  },
+
   getTeams(token: string) {
     return request<Team[]>('/users/me/teams', { token });
   },

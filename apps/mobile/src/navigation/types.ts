@@ -16,6 +16,7 @@ export type AppDrawerParamList = {
 
 export type RootStackParamList = {
   Login: undefined;
+  ChangePassword: undefined;
   AppDrawer: NavigatorScreenParams<AppDrawerParamList> | undefined;
   CheckIn: undefined;
   VisitDetail: { visitId: string; substationId: string; successMessage?: string };

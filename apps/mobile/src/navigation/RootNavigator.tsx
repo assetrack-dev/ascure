@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { AddAssetScreen } from '../screens/AddAssetScreen';
 import { AssetDetailScreen } from '../screens/AssetDetailScreen';
 import { AssetInspectionHistoryScreen } from '../screens/AssetInspectionHistoryScreen';
+import { ChangePasswordScreen } from '../screens/ChangePasswordScreen';
 import { CheckInScreen } from '../screens/CheckInScreen';
 import { DefectDetailScreen } from '../screens/DefectDetailScreen';
 import { ImagePreviewScreen } from '../screens/ImagePreviewScreen';
@@ -20,12 +21,15 @@ import type { RootStackParamList } from './types';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {token === null ? (
         <Stack.Screen name="Login" component={LoginScreen} />
+      ) : user?.mustChangePassword ? (
+        // Forced first-login / post-reset password change gates the whole app.
+        <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
       ) : (
         <Stack.Group>
           <Stack.Screen name="AppDrawer" component={AppDrawer} />

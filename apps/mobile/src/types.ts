@@ -13,6 +13,9 @@ export interface SessionUser {
   name: string;
   role: UserRole;
   departmentId?: string;
+  /** First-login / post-reset forced password change. When true the app routes
+   *  the user to the change-password screen before the rest of the app. */
+  mustChangePassword?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
