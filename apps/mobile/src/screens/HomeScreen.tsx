@@ -39,7 +39,6 @@ import {
   InspectionSummary,
   OperationalScope,
   SiteVisit,
-  UserRole,
 } from '../types';
 
 type InspectionQueueItem = {
@@ -108,7 +107,6 @@ export function HomeScreen() {
     () => buildInspectionQueueItems(activeVisits, completedVisits, selectedScope),
     [activeVisits, completedVisits, selectedScope],
   );
-  const showOperationalSessionsCard = canShowOperationalSessionsInWorkspace(user.role);
 
   const loadHomeData = useCallback(async () => {
     try {
@@ -294,8 +292,6 @@ export function HomeScreen() {
           queueItems={queueItems}
           onSelectScope={setSelectedScope}
           onOpenQueueItem={handleOpenQueueItem}
-          showOperationalSessions={showOperationalSessionsCard}
-          onOpenSessions={() => navigation.navigate('OperationalSessions')}
         />
       ) : null}
 
@@ -381,16 +377,12 @@ function InspectionWorkspaceView({
   queueItems,
   onSelectScope,
   onOpenQueueItem,
-  showOperationalSessions,
-  onOpenSessions,
 }: {
   availableScopes: OperationalScope[];
   selectedScope: OperationalScope;
   queueItems: InspectionQueueItem[];
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
-  showOperationalSessions: boolean;
-  onOpenSessions: () => void;
 }) {
   return (
     <>
@@ -405,19 +397,6 @@ function InspectionWorkspaceView({
           />
         ))}
       </View>
-
-      {showOperationalSessions ? (
-        <Card>
-          <View style={styles.listHeader}>
-            <SectionTitle>Operational Sessions</SectionTitle>
-            <StatusChip label="Sessions" tone="info" />
-          </View>
-          <BodyText muted>
-            Open assigned inspection sessions without changing the current visit queue.
-          </BodyText>
-          <AppButton label="Open Sessions" variant="secondary" onPress={onOpenSessions} />
-        </Card>
-      ) : null}
 
       {/* One card per status group (no "Inspection Queue" wrapper, no per-item
           status pill — the card header carries the single status chip). */}
@@ -686,10 +665,6 @@ function formatVisitProgress(visit: SiteVisit) {
   }
 
   return `${inspectedAssets} / ${totalAssets} assets inspected`;
-}
-
-function canShowOperationalSessionsInWorkspace(role: UserRole) {
-  return role === 'ADMIN' || role === 'MANAGER' || role === 'SUPERVISOR';
 }
 
 function isCompletedVisit(visit: SiteVisit) {
