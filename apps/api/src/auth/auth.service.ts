@@ -34,6 +34,7 @@ export class AuthService {
         isActive: true,
         mustChangePassword: true,
         passwordHash: true,
+        organization: { select: { name: true } },
       },
     });
 
@@ -80,6 +81,7 @@ export class AuthService {
         name: user.name,
         role: user.role,
         organizationId: user.organizationId,
+        organizationName: user.organization?.name ?? null,
         mustChangePassword: user.mustChangePassword,
         canGovernQa,
         canReport,
@@ -165,6 +167,7 @@ export class AuthService {
         mustChangePassword: true,
         createdAt: true,
         updatedAt: true,
+        organization: { select: { name: true } },
       },
     });
 
@@ -180,9 +183,11 @@ export class AuthService {
     const canReassign = this.resolveCanReassign(user);
     const canManageSupervisors = this.resolveCanManageSupervisors(user);
     const canManageUsers = this.resolveCanManageUsers(user);
+    const { organization, ...currentUserFields } = currentUser;
 
     return {
-      ...currentUser,
+      ...currentUserFields,
+      organizationName: organization?.name ?? null,
       canGovernQa,
       canReport,
       canImport,
