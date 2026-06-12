@@ -7,6 +7,7 @@ import {
   ChecklistTemplate,
   CreateChecklistTemplateInput,
   CreateAssetInput,
+  DailyTeamActivity,
   DashboardData,
   DefectDetail,
   DefectEvidenceImage,
@@ -494,6 +495,10 @@ export const api = {
 
   getDashboard(token: string) {
     return request<DashboardData>('/dashboard', { token });
+  },
+
+  getDailyTeamActivity(token: string) {
+    return request<DailyTeamActivity>('/dashboard/daily-team-activity', { token });
   },
 
   getChecklistTemplateByAssetType(token: string, assetType: string) {

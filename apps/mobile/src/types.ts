@@ -640,6 +640,21 @@ export type DashboardData = {
   recentDefects: DashboardRecentDefect[];
 };
 
+export type DailyTeamActivityTeam = {
+  teamId: string;
+  teamName: string;
+  teamCode: string | null;
+  assetsInspectedToday: number;
+};
+
+export type DailyTeamActivity = {
+  date: string;
+  totalAssetsInspectedToday: number;
+  activeTeamCount: number;
+  teams: DailyTeamActivityTeam[];
+  generatedAt: string;
+};
+
 export type InspectionDetail = {
   id: string;
   assetId: string;

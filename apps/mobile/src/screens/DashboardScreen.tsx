@@ -4,7 +4,13 @@ import { useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
-import { DashboardData, DashboardRecentDefect, DefectStatus } from '../types';
+import {
+  DailyTeamActivity,
+  DailyTeamActivityTeam,
+  DashboardData,
+  DashboardRecentDefect,
+  DefectStatus,
+} from '../types';
 import { formatDateTime } from '../utils';
 import {
   AppButton,
@@ -20,18 +26,42 @@ import {
 
 export function DashboardScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'Dashboard'>['navigation']>();
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [teamActivity, setTeamActivity] = useState<DailyTeamActivity | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Daily per-team activity is a Manager/Supervisor monitoring view; technicians
+  // don't see the card (and the API would only ever return their own team).
+  const canSeeTeamActivity =
+    user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'SUPERVISOR';
 
   const loadDashboard = useCallback(async () => {
     try {
       setError(null);
       setIsLoading(true);
 
-      const response = await api.getDashboard(token);
+      const activityRequest = canSeeTeamActivity
+        ? api.getDailyTeamActivity(token).catch((activityError) => {
+            // A 401 must still sign the user out; any other failure (e.g. an
+            // older API without this endpoint) just hides the card rather than
+            // breaking the whole dashboard.
+            if (activityError instanceof ApiError && activityError.status === 401) {
+              throw activityError;
+            }
+            console.warn('[DASHBOARD] team activity unavailable', activityError);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      const [response, activity] = await Promise.all([
+        api.getDashboard(token),
+        activityRequest,
+      ]);
+
       setDashboard(response);
+      setTeamActivity(activity);
     } catch (loadError) {
       console.error('[DASHBOARD LOAD ERROR]', loadError);
 
@@ -41,11 +71,12 @@ export function DashboardScreen() {
       }
 
       setDashboard(null);
+      setTeamActivity(null);
       setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard.');
     } finally {
       setIsLoading(false);
     }
-  }, [handleUnauthorized, token]);
+  }, [canSeeTeamActivity, handleUnauthorized, token]);
 
   useEffect(() => {
     loadDashboard();
@@ -91,6 +122,10 @@ export function DashboardScreen() {
             />
             <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
           </View>
+
+          {canSeeTeamActivity && teamActivity ? (
+            <TeamActivityCard activity={teamActivity} />
+          ) : null}
 
           <Card>
             <SectionTitle>Recent Defects</SectionTitle>
@@ -168,6 +203,101 @@ function RecentDefectRow({
   );
 }
 
+function TeamActivityCard({ activity }: { activity: DailyTeamActivity }) {
+  const maxValue = activity.teams.reduce(
+    (max, team) => Math.max(max, team.assetsInspectedToday),
+    0,
+  );
+
+  return (
+    <Card>
+      <SectionTitle>Today's Team Activity</SectionTitle>
+      <Text style={styles.teamActivityDate}>{formatActivityDate(activity.date)}</Text>
+
+      <View style={styles.teamActivitySummary}>
+        <Text style={styles.teamActivityTotalValue}>
+          {formatNumber(activity.totalAssetsInspectedToday)}
+        </Text>
+        <Text style={styles.teamActivityTotalLabel}>
+          {activity.totalAssetsInspectedToday === 1 ? 'pole inspected' : 'poles inspected'}
+          {activity.activeTeamCount > 0
+            ? ` · ${activity.activeTeamCount} ${
+                activity.activeTeamCount === 1 ? 'team' : 'teams'
+              } active`
+            : ''}
+        </Text>
+      </View>
+
+      {activity.teams.length === 0 ? (
+        <BodyText muted>No inspections submitted today yet.</BodyText>
+      ) : (
+        <View style={styles.teamActivityList}>
+          {activity.teams.map((team) => (
+            <TeamActivityRow key={team.teamId} team={team} maxValue={maxValue} />
+          ))}
+        </View>
+      )}
+    </Card>
+  );
+}
+
+function TeamActivityRow({
+  team,
+  maxValue,
+}: {
+  team: DailyTeamActivityTeam;
+  maxValue: number;
+}) {
+  // Floor non-zero bars at a sliver so a team with work always reads as > 0.
+  const fraction =
+    maxValue > 0 && team.assetsInspectedToday > 0
+      ? Math.max(team.assetsInspectedToday / maxValue, 0.06)
+      : 0;
+
+  return (
+    <View style={styles.teamActivityRow}>
+      <View style={styles.teamActivityRowTop}>
+        <Text style={styles.teamActivityTeamName} numberOfLines={1}>
+          {team.teamName}
+        </Text>
+        <Text style={styles.teamActivityCount}>
+          {formatNumber(team.assetsInspectedToday)}
+        </Text>
+      </View>
+      <View style={styles.teamActivityTrack}>
+        <View
+          style={[styles.teamActivityFill, { width: `${Math.round(fraction * 100)}%` }]}
+        />
+      </View>
+    </View>
+  );
+}
+
+const MONTH_LABELS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function formatActivityDate(isoDate: string) {
+  const [year, month, day] = isoDate.split('-').map((part) => Number.parseInt(part, 10));
+
+  if (!year || !month || !day || month < 1 || month > 12) {
+    return isoDate;
+  }
+
+  return `${day} ${MONTH_LABELS[month - 1]} ${year}`;
+}
+
 function getStatusTone(status: DefectStatus) {
   if (status === 'CLOSED') {
     return 'success';
@@ -241,6 +371,70 @@ const styles = StyleSheet.create({
     lineHeight: 32,
     fontWeight: '700',
     color: uiTheme.colors.textPrimary,
+  },
+  teamActivityDate: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: uiTheme.colors.textSecondary,
+    marginTop: -4,
+  },
+  teamActivitySummary: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  teamActivityTotalValue: {
+    fontSize: 30,
+    lineHeight: 34,
+    fontWeight: '700',
+    color: uiTheme.colors.primary,
+  },
+  teamActivityTotalLabel: {
+    flexShrink: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: uiTheme.colors.textSecondary,
+  },
+  teamActivityList: {
+    gap: 12,
+    marginTop: 2,
+  },
+  teamActivityRow: {
+    gap: 6,
+  },
+  teamActivityRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  teamActivityTeamName: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: uiTheme.colors.textPrimary,
+  },
+  teamActivityCount: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: uiTheme.colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  teamActivityTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: uiTheme.colors.primarySoft,
+    overflow: 'hidden',
+  },
+  teamActivityFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: uiTheme.colors.primary,
   },
   recentDefectRow: {
     borderRadius: uiTheme.radius.card,
