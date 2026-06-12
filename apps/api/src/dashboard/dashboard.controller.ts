@@ -13,4 +13,9 @@ export class DashboardController {
   getDashboard(@CurrentUser() user: RequestUser) {
     return this.dashboardService.getDashboard(user);
   }
+
+  @Get('daily-team-activity')
+  getDailyTeamActivity(@CurrentUser() user: RequestUser) {
+    return this.dashboardService.getDailyTeamActivity(user);
+  }
 }

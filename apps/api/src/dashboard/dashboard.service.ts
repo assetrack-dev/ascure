@@ -4,10 +4,12 @@ import {
   DefectLifecycleStatus,
   DefectSeverity,
   DefectStatus,
+  InspectionCompletionStatus,
   Prisma,
   SiteVisitStatus,
   SiteVisitType,
   SiteVisitValidationStatus,
+  UserRole,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -560,6 +562,191 @@ export class DashboardService {
         };
       }),
     };
+  }
+
+  /**
+   * Daily per-team activity (#7) — a Manager/Supervisor monitoring view of how
+   * many poles each team submitted today. "Done" = an asset with a SUBMITTED
+   * inspection, matching the contribution-ledger billing metric (ADR 0002 §5 /
+   * site-visits.service.ts buildContributionSnapshot). Counts distinct assets per
+   * team so re-submitting the same pole isn't double-counted.
+   *
+   * Scope is role-aware (NOT the narrower team-membership scope used by the main
+   * dashboard reads): ADMIN sees every team, MANAGER their whole company, a
+   * SUPERVISOR the teams they are assigned via TeamSupervisor — mirroring
+   * site-visits.service.ts accessScope so the monitoring view spans the teams a
+   * manager actually oversees, not just the ones they personally belong to.
+   */
+  async getDailyTeamActivity(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const { start, end, dateLabel } = this.reportingDayBounds(new Date());
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+        submittedAt: {
+          gte: start,
+          lt: end,
+        },
+        siteVisit: this.teamActivityVisitScope(user, ctx),
+      },
+      select: {
+        assetId: true,
+        siteVisit: {
+          select: {
+            teamId: true,
+          },
+        },
+      },
+    });
+
+    // Distinct assets per team — an asset re-submitted (e.g. after an amend)
+    // counts once, and a pole handed between teams credits each team that
+    // submitted it.
+    const assetsByTeam = new Map<string, Set<string>>();
+    for (const row of inspections) {
+      const teamId = row.siteVisit.teamId;
+      let assets = assetsByTeam.get(teamId);
+      if (!assets) {
+        assets = new Set<string>();
+        assetsByTeam.set(teamId, assets);
+      }
+      assets.add(row.assetId);
+    }
+
+    const teamIds = Array.from(assetsByTeam.keys());
+    const teams =
+      teamIds.length > 0
+        ? await this.prisma.team.findMany({
+            where: { id: { in: teamIds } },
+            select: { id: true, name: true, code: true },
+          })
+        : [];
+    const teamById = new Map(teams.map((team) => [team.id, team]));
+
+    const teamRows = teamIds
+      .map((teamId) => {
+        const team = teamById.get(teamId);
+        return {
+          teamId,
+          teamName:
+            team?.name?.trim() || team?.code?.trim() || 'Unknown team',
+          teamCode: team?.code ?? null,
+          assetsInspectedToday: assetsByTeam.get(teamId)?.size ?? 0,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.assetsInspectedToday - left.assetsInspectedToday ||
+          left.teamName.localeCompare(right.teamName),
+      );
+
+    const totalAssetsInspectedToday = teamRows.reduce(
+      (total, row) => total + row.assetsInspectedToday,
+      0,
+    );
+
+    return {
+      date: dateLabel,
+      totalAssetsInspectedToday,
+      activeTeamCount: teamRows.length,
+      teams: teamRows,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Role-aware site-visit scope for the daily team activity monitoring view.
+   * Mirrors site-visits.service.ts accessScope (ADR 0002 §3) rather than the
+   * team-membership scope the main dashboard uses, so managers/supervisors see
+   * across the teams they oversee.
+   */
+  private teamActivityVisitScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.SiteVisitWhereInput {
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+      return {};
+    }
+
+    if (ctx?.isQa) {
+      return {
+        mainheadId: { in: ctx.qaMainheadIds },
+      };
+    }
+
+    const ownTeamMembership: Prisma.TeamWhereInput = {
+      members: {
+        some: {
+          userId: user.id,
+          isActive: true,
+        },
+      },
+    };
+
+    if (user.role === UserRole.MANAGER && user.organizationId) {
+      return {
+        team: {
+          OR: [{ organizationId: user.organizationId }, ownTeamMembership],
+        },
+      };
+    }
+
+    if (user.role === UserRole.SUPERVISOR) {
+      return {
+        team: {
+          OR: [
+            {
+              supervisors: {
+                some: { supervisorUserId: user.id, isActive: true },
+              },
+            },
+            ownTeamMembership,
+          ],
+        },
+      };
+    }
+
+    return { team: ownTeamMembership };
+  }
+
+  /**
+   * Start/end UTC instants for "today" in the tenant's reporting time zone, plus
+   * the YYYY-MM-DD label of that day. Defaults to Malaysia (UTC+8, no DST) since
+   * every target utility (TNB/SESB/SESCO/TM) is Malaysian; override with
+   * REPORTING_TIME_ZONE_OFFSET_MINUTES for productization. submittedAt is stored
+   * in UTC, so a fixed offset gives the correct local-day window regardless of
+   * the server's own time zone.
+   */
+  private reportingDayBounds(now: Date): {
+    start: Date;
+    end: Date;
+    dateLabel: string;
+  } {
+    const offsetMs = this.getReportingOffsetMinutes() * 60 * 1000;
+    const shifted = new Date(now.getTime() + offsetMs);
+    const year = shifted.getUTCFullYear();
+    const month = shifted.getUTCMonth();
+    const day = shifted.getUTCDate();
+    const startMs = Date.UTC(year, month, day) - offsetMs;
+
+    return {
+      start: new Date(startMs),
+      end: new Date(startMs + 24 * 60 * 60 * 1000),
+      dateLabel: `${year}-${String(month + 1).padStart(2, '0')}-${String(
+        day,
+      ).padStart(2, '0')}`,
+    };
+  }
+
+  private getReportingOffsetMinutes(): number {
+    const raw = this.configService.get<string>(
+      'REPORTING_TIME_ZONE_OFFSET_MINUTES',
+    );
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+
+    return Number.isFinite(parsed) ? parsed : 8 * 60;
   }
 
   private async ensureDefectsForAccessibleItems(
