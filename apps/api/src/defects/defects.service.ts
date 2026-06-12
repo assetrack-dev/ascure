@@ -3197,11 +3197,17 @@ export class DefectsService {
   }
 
   /**
-   * Governance Fix Package G3 — QA bypass on inspection reads.
+   * Inspection read scope for defects.
    *
-   * - ADMIN     : empty filter.
-   * - QA actor  : inspection's site visit must belong to a QA-accessible MAINHEAD.
-   * - Other     : legacy team membership.
+   * - ADMIN      : empty filter.
+   * - QA actor   : inspection's site visit must belong to a QA-accessible MAINHEAD.
+   * - MANAGER    : every team in their own company (+ their own teams).
+   * - SUPERVISOR : the teams they are assigned via TeamSupervisor (+ their own).
+   * - Other      : team membership only.
+   *
+   * The MANAGER/SUPERVISOR branches mirror site-visits.service accessScope
+   * (ADR 0002 §3) so a manager monitors their whole company's defects, not only
+   * the teams they personally sit on.
    */
   private inspectionAccessScope(user: RequestUser, ctx?: ScopeContext) {
     if (user.role === 'ADMIN' || ctx?.isAdmin) {
@@ -3216,16 +3222,45 @@ export class DefectsService {
       };
     }
 
-    return {
-      siteVisit: {
-        team: {
-          members: {
-            some: {
-              userId: user.id,
-              isActive: true,
-            },
+    const ownTeamMembership = {
+      members: {
+        some: {
+          userId: user.id,
+          isActive: true,
+        },
+      },
+    };
+
+    if (user.role === UserRole.MANAGER && user.organizationId) {
+      return {
+        siteVisit: {
+          team: {
+            OR: [{ organizationId: user.organizationId }, ownTeamMembership],
           },
         },
+      };
+    }
+
+    if (user.role === UserRole.SUPERVISOR) {
+      return {
+        siteVisit: {
+          team: {
+            OR: [
+              {
+                supervisors: {
+                  some: { supervisorUserId: user.id, isActive: true },
+                },
+              },
+              ownTeamMembership,
+            ],
+          },
+        },
+      };
+    }
+
+    return {
+      siteVisit: {
+        team: ownTeamMembership,
       },
     };
   }
