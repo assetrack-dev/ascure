@@ -34,6 +34,7 @@ type NavItem = {
   adminOnly?: boolean;
   requiresReporting?: boolean;
   requiresImport?: boolean;
+  requiresManageUsers?: boolean;
 };
 
 interface AppShellProps {
@@ -150,7 +151,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/users",
       label: "Users",
       icon: Users,
-      adminOnly: true,
+      requiresManageUsers: true,
     },
   ];
   const visibleNavItems = navItems.filter((item) => {
@@ -163,6 +164,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     }
 
     if (item.requiresImport && user?.canImport !== true && user?.role !== "ADMIN") {
+      return false;
+    }
+
+    if (
+      item.requiresManageUsers &&
+      user?.canManageUsers !== true &&
+      user?.role !== "ADMIN"
+    ) {
       return false;
     }
 

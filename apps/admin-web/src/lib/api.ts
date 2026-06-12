@@ -1,4 +1,4 @@
-import type { LoginResponse } from "@/types/auth";
+import type { ApiUser, LoginResponse } from "@/types/auth";
 
 const DEFAULT_API_ORIGIN = "http://localhost:3000";
 
@@ -104,6 +104,22 @@ export function login(email: string, password: string) {
       email,
       password,
     }),
+  });
+}
+
+/**
+ * Self-service password change (used by the forced first-login flow). Returns
+ * the refreshed /me user so the caller can drop the mustChangePassword flag.
+ */
+export function changePassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string,
+) {
+  return apiRequest<ApiUser>("/auth/change-password", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ currentPassword, newPassword }),
   });
 }
 

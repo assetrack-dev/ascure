@@ -3,6 +3,7 @@ import type {
   CreateUserPayload,
   ManagedTeam,
   ManagedUser,
+  ProvisionedUser,
   UpdateUserPayload,
 } from "@/types/users";
 
@@ -29,13 +30,14 @@ export function fetchTeams(token: string) {
 }
 
 export function createUser(token: string, payload: CreateUserPayload) {
-  return apiRequest<ManagedUser>("/users", {
+  return apiRequest<ProvisionedUser>("/users", {
     method: "POST",
     token,
     body: JSON.stringify({
       name: payload.name,
       email: payload.email,
-      password: payload.password,
+      // Omitted when blank ⇒ the server generates + returns a temporary password.
+      password: payload.password ? payload.password : undefined,
       role: payload.role,
       isActive: payload.isActive ?? true,
       departmentId: normalizeDepartmentId(payload.departmentId),
@@ -68,11 +70,12 @@ export function updateUser(token: string, userId: string, payload: UpdateUserPay
   });
 }
 
-export function resetUserPassword(token: string, userId: string, password: string) {
-  return apiRequest<ManagedUser>(`/users/${encodeURIComponent(userId)}/password`, {
+export function resetUserPassword(token: string, userId: string, password?: string) {
+  return apiRequest<ProvisionedUser>(`/users/${encodeURIComponent(userId)}/password`, {
     method: "PATCH",
     token,
-    body: JSON.stringify({ password }),
+    // Blank ⇒ the server generates + returns a temporary password to relay.
+    body: JSON.stringify(password ? { password } : {}),
   });
 }
 

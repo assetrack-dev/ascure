@@ -4,7 +4,9 @@ import type { Dispatch, FormEvent, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Check,
   CheckCircle2,
+  Copy,
   KeyRound,
   Pencil,
   Plus,
@@ -44,6 +46,12 @@ import { USER_ROLES } from "@/types/users";
 type RoleFilter = "ALL" | UserRole;
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
 type ModalMode = "create" | "edit";
+
+// Roles a MANAGER may provision (mirrors the API allow-list in users.service).
+// ADMIN is never offered to a manager.
+const MANAGER_ASSIGNABLE_ROLES: UserRole[] = ["TECHNICIAN", "SUPERVISOR", "MANAGER"];
+
+type CredentialResult = { name: string; email: string; password: string };
 
 interface UserFormState {
   name: string;
@@ -428,6 +436,8 @@ function UserFormModal({
   teams,
   error,
   isSaving,
+  isManagerOnly,
+  managerOrgId,
   onChange,
   onClose,
   onSubmit,
@@ -438,6 +448,8 @@ function UserFormModal({
   teams: ManagedTeam[];
   error: string;
   isSaving: boolean;
+  isManagerOnly: boolean;
+  managerOrgId: string | null;
   onChange: <K extends keyof UserFormState>(field: K, value: UserFormState[K]) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -445,6 +457,12 @@ function UserFormModal({
   const isCreateMode = mode === "create";
   const activeMainheads = enterpriseOptions?.mainheads ?? [];
   const activeOperationalRegions = enterpriseOptions?.operationalRegions ?? [];
+  // Managers get a simplified, company-locked form: a restricted role list, no
+  // advanced grants, and teams scoped to their own company.
+  const roleOptions = isManagerOnly ? MANAGER_ASSIGNABLE_ROLES : USER_ROLES;
+  const visibleTeams = isManagerOnly
+    ? teams.filter((team) => !managerOrgId || team.organizationId === managerOrgId)
+    : teams;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
@@ -507,7 +525,7 @@ function UserFormModal({
               onChange={(event) => onChange("role", event.target.value as UserRole)}
               className={`${inputClassName} mt-1.5`}
             >
-              {USER_ROLES.map((role) => (
+              {roleOptions.map((role) => (
                 <option key={role} value={role}>
                   {roleLabel(role)}
                 </option>
@@ -515,37 +533,7 @@ function UserFormModal({
             </select>
           </label>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Organization</span>
-              <select
-                value={values.organizationId}
-                onChange={(event) => onChange("organizationId", event.target.value)}
-                className={`${inputClassName} mt-1.5`}
-              >
-                <option value="">No organization</option>
-                {enterpriseOptions?.organizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
-                    {optionLabel(organization)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Branch</span>
-              <select
-                value={values.branchId}
-                onChange={(event) => onChange("branchId", event.target.value)}
-                className={`${inputClassName} mt-1.5`}
-              >
-                <option value="">No branch</option>
-                {enterpriseOptions?.branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {optionLabel(branch)}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {isManagerOnly ? (
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">Team</span>
               <select
@@ -554,60 +542,115 @@ function UserFormModal({
                 className={`${inputClassName} mt-1.5`}
               >
                 <option value="">No team</option>
-                {/*
-                  Governance Fix Package G3 — Team filtered by Organization.
-                  If the form has an Organization selection, only show teams
-                  that belong to that organization. When no organization is
-                  picked, fall through to the full list so admins can still
-                  see every team.
-                */}
-                {teams
-                  .filter(
-                    (team) =>
-                      !values.organizationId ||
-                      !team.organizationId ||
-                      team.organizationId === values.organizationId,
-                  )
-                  .map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {optionLabel(team)}
+                {visibleTeams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {optionLabel(team)}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1.5 block text-xs text-slate-500">
+                New users are added to your company automatically.
+              </span>
+            </label>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Organization</span>
+                <select
+                  value={values.organizationId}
+                  onChange={(event) => onChange("organizationId", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">No organization</option>
+                  {enterpriseOptions?.organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {optionLabel(organization)}
                     </option>
                   ))}
-              </select>
-            </label>
-          </div>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Branch</span>
+                <select
+                  value={values.branchId}
+                  onChange={(event) => onChange("branchId", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">No branch</option>
+                  {enterpriseOptions?.branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {optionLabel(branch)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Team</span>
+                <select
+                  value={values.teamId}
+                  onChange={(event) => onChange("teamId", event.target.value)}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">No team</option>
+                  {/*
+                    Governance Fix Package G3 — Team filtered by Organization.
+                    If the form has an Organization selection, only show teams
+                    that belong to that organization. When no organization is
+                    picked, fall through to the full list so admins can still
+                    see every team.
+                  */}
+                  {teams
+                    .filter(
+                      (team) =>
+                        !values.organizationId ||
+                        !team.organizationId ||
+                        team.organizationId === values.organizationId,
+                    )
+                    .map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {optionLabel(team)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+          )}
 
-          <UserAccessPicker
-            title="MAINHEAD Access"
-            values={values.mainheadAccessIds}
-            options={activeMainheads}
-            onChange={(nextValues) => {
-              onChange("mainheadAccessIds", nextValues);
-              onChange("mainheadId", nextValues[0] ?? "");
-            }}
-          />
+          {!isManagerOnly ? (
+            <>
+              <UserAccessPicker
+                title="MAINHEAD Access"
+                values={values.mainheadAccessIds}
+                options={activeMainheads}
+                onChange={(nextValues) => {
+                  onChange("mainheadAccessIds", nextValues);
+                  onChange("mainheadId", nextValues[0] ?? "");
+                }}
+              />
 
-          <UserAccessPicker
-            title="Region Access"
-            values={values.operationalRegionAccessIds}
-            options={activeOperationalRegions}
-            onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
-          />
+              <UserAccessPicker
+                title="Region Access"
+                values={values.operationalRegionAccessIds}
+                options={activeOperationalRegions}
+                onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
+              />
 
-          <EffectiveMainheadPreview
-            directIds={values.mainheadAccessIds}
-            regionIds={values.operationalRegionAccessIds}
-            enterpriseOptions={enterpriseOptions}
-            role={values.role}
-          />
+              <EffectiveMainheadPreview
+                directIds={values.mainheadAccessIds}
+                regionIds={values.operationalRegionAccessIds}
+                enterpriseOptions={enterpriseOptions}
+                role={values.role}
+              />
 
-          <UserCapabilityPicker
-            values={values.capabilityIds}
-            options={enterpriseOptions}
-            onChange={(nextValues) => onChange("capabilityIds", nextValues)}
-          />
+              <UserCapabilityPicker
+                values={values.capabilityIds}
+                options={enterpriseOptions}
+                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
+            </>
+          ) : null}
 
-          {isCreateMode ? (
+          {isCreateMode && !isManagerOnly ? (
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">Password</span>
               <input
@@ -616,11 +659,20 @@ function UserFormModal({
                 onChange={(event) => onChange("password", event.target.value)}
                 autoComplete="new-password"
                 className={`${inputClassName} mt-1.5`}
-                required
                 minLength={8}
                 maxLength={128}
               />
+              <span className="mt-1.5 block text-xs text-slate-500">
+                Leave blank to generate a temporary password. Either way, the user
+                must change it at first login.
+              </span>
             </label>
+          ) : null}
+          {isCreateMode && isManagerOnly ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              A temporary password will be generated for the new user. Share it
+              with them — they must change it at first login.
+            </p>
           ) : null}
 
           {isCreateMode ? (
@@ -702,10 +754,13 @@ function PasswordModal({
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="new-password"
               className={`${inputClassName} mt-1.5`}
-              required
               minLength={8}
               maxLength={128}
             />
+            <span className="mt-1.5 block text-xs text-slate-500">
+              Leave blank to generate a temporary password. The user must change
+              it at next login.
+            </span>
           </label>
 
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
@@ -718,6 +773,82 @@ function PasswordModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function CredentialResultModal({
+  credential,
+  onClose,
+}: {
+  credential: CredentialResult;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(credential.password);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
+              Temporary password
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">{credential.name}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+            aria-label="Close"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          <p className="text-sm text-slate-600">
+            Share these credentials with{" "}
+            <span className="font-semibold">{credential.email}</span>. They must set
+            a new password at first login. This password is shown only once.
+          </p>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Temporary password
+            </p>
+            <div className="mt-1.5 flex items-center justify-between gap-3">
+              <code className="break-all font-mono text-base font-semibold text-slate-900">
+                {credential.password}
+              </code>
+              <button
+                type="button"
+                onClick={copy}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+              >
+                {copied ? <Check size={14} /> : <Copy size={14} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end border-t border-slate-200 pt-4">
+            <button type="button" onClick={onClose} className={primaryButtonClassName}>
+              Done
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -745,6 +876,7 @@ function UsersContent() {
   const [statusUserId, setStatusUserId] = useState<string | null>(null);
   const [statusConfirmUser, setStatusConfirmUser] = useState<ManagedUser | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
+  const [credential, setCredential] = useState<CredentialResult | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -794,8 +926,12 @@ function UsersContent() {
       return;
     }
 
-    if (storedSession.user && storedSession.user.role !== "ADMIN") {
-      setError("ADMIN role is required to manage users.");
+    const canManage =
+      storedSession.user?.role === "ADMIN" ||
+      storedSession.user?.canManageUsers === true;
+
+    if (storedSession.user && !canManage) {
+      setError("You do not have permission to manage users.");
       setIsLoading(false);
       return;
     }
@@ -847,6 +983,9 @@ function UsersContent() {
   }, [roleFilter, search, statusFilter, users]);
 
   const isAdmin = session?.user?.role === "ADMIN";
+  const canManageUsers = isAdmin || session?.user?.canManageUsers === true;
+  const isManagerOnly = canManageUsers && !isAdmin;
+  const managerOrgId = session?.user?.organizationId ?? null;
   const activeUserCount = users.filter((user) => user.isActive).length;
   const activeAdminCount = users.filter(
     (user) => user.isActive && user.role === "ADMIN",
@@ -937,42 +1076,51 @@ function UsersContent() {
     try {
       const trimmedName = userForm.name.trim();
       const trimmedEmail = userForm.email.trim();
-      const updatedUser =
-        modalMode === "create"
-          ? await createUser(session.token, {
-              name: trimmedName,
-              email: trimmedEmail,
-              password: userForm.password,
-              role: userForm.role,
-              isActive: userForm.isActive,
-              organizationId: userForm.organizationId,
-              branchId: userForm.branchId,
-              mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
-              teamId: userForm.teamId,
-              capabilityIds: userForm.capabilityIds,
-              mainheadAccessIds: userForm.mainheadAccessIds,
-              operationalRegionAccessIds: userForm.operationalRegionAccessIds,
-            })
-          : selectedUser
-            ? await updateUser(session.token, selectedUser.id, {
-                name: trimmedName,
-                email: trimmedEmail,
-                role: userForm.role,
-                organizationId: userForm.organizationId,
-                branchId: userForm.branchId,
-                mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
-                teamId: userForm.teamId,
-                capabilityIds: userForm.capabilityIds,
-                mainheadAccessIds: userForm.mainheadAccessIds,
-                operationalRegionAccessIds: userForm.operationalRegionAccessIds,
-              })
-            : null;
 
-      if (updatedUser) {
+      if (modalMode === "create") {
+        const { temporaryPassword, ...managed } = await createUser(session.token, {
+          name: trimmedName,
+          email: trimmedEmail,
+          password: userForm.password,
+          role: userForm.role,
+          isActive: userForm.isActive,
+          organizationId: userForm.organizationId,
+          branchId: userForm.branchId,
+          mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
+          teamId: userForm.teamId,
+          capabilityIds: userForm.capabilityIds,
+          mainheadAccessIds: userForm.mainheadAccessIds,
+          operationalRegionAccessIds: userForm.operationalRegionAccessIds,
+        });
+        upsertUser(managed);
+        closeUserModal();
+        if (temporaryPassword) {
+          setCredential({
+            name: managed.name,
+            email: managed.email,
+            password: temporaryPassword,
+          });
+        } else {
+          setSuccessMessage(`${managed.name} created.`);
+        }
+      } else if (selectedUser) {
+        const updatedUser = await updateUser(session.token, selectedUser.id, {
+          name: trimmedName,
+          email: trimmedEmail,
+          role: userForm.role,
+          organizationId: userForm.organizationId,
+          branchId: userForm.branchId,
+          mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
+          teamId: userForm.teamId,
+          capabilityIds: userForm.capabilityIds,
+          mainheadAccessIds: userForm.mainheadAccessIds,
+          operationalRegionAccessIds: userForm.operationalRegionAccessIds,
+        });
         upsertUser(updatedUser);
+        closeUserModal();
+      } else {
+        closeUserModal();
       }
-
-      closeUserModal();
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         handleLogout();
@@ -996,9 +1144,22 @@ function UsersContent() {
     setPasswordError("");
 
     try {
-      const updatedUser = await resetUserPassword(session.token, passwordUser.id, password);
-      upsertUser(updatedUser);
+      const { temporaryPassword, ...managed } = await resetUserPassword(
+        session.token,
+        passwordUser.id,
+        password || undefined,
+      );
+      upsertUser(managed);
       closePasswordModal();
+      if (temporaryPassword) {
+        setCredential({
+          name: managed.name,
+          email: managed.email,
+          password: temporaryPassword,
+        });
+      } else {
+        setSuccessMessage(`Password updated for ${managed.name}.`);
+      }
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         handleLogout();
@@ -1077,7 +1238,7 @@ function UsersContent() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   <ShieldCheck size={14} />
-                  {isAdmin ? "Admin access" : "Restricted"}
+                  {isAdmin ? "Admin access" : isManagerOnly ? "Manager access" : "Restricted"}
                 </span>
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   {users.length} total
@@ -1095,7 +1256,7 @@ function UsersContent() {
               <button
                 type="button"
                 onClick={() => (session?.token ? loadUsers(session.token) : undefined)}
-                disabled={isLoading || !session?.token || !isAdmin}
+                disabled={isLoading || !session?.token || !canManageUsers}
                 className={secondaryButtonClassName}
               >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
@@ -1104,7 +1265,7 @@ function UsersContent() {
               <button
                 type="button"
                 onClick={openCreateModal}
-                disabled={!isAdmin}
+                disabled={!canManageUsers}
                 className={primaryButtonClassName}
               >
                 <Plus size={16} />
@@ -1263,14 +1424,16 @@ function UsersContent() {
                             </td>
                             <td className="px-5 py-4">
                               <div className="flex flex-wrap justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => openEditModal(user)}
-                                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-                                >
-                                  <Pencil size={14} />
-                                  Edit
-                                </button>
+                                {isAdmin ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditModal(user)}
+                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                                  >
+                                    <Pencil size={14} />
+                                    Edit
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   onClick={() => openPasswordModal(user)}
@@ -1279,20 +1442,22 @@ function UsersContent() {
                                   <KeyRound size={14} />
                                   Password
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => requestStatusToggle(user)}
-                                  disabled={disableDeactivate || statusUserId === user.id}
-                                  title={
-                                    disableDeactivate
-                                      ? "You cannot deactivate your own account"
-                                      : undefined
-                                  }
-                                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                                >
-                                  <Power size={14} />
-                                  {user.isActive ? "Deactivate" : "Activate"}
-                                </button>
+                                {isAdmin ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestStatusToggle(user)}
+                                    disabled={disableDeactivate || statusUserId === user.id}
+                                    title={
+                                      disableDeactivate
+                                        ? "You cannot deactivate your own account"
+                                        : undefined
+                                    }
+                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                                  >
+                                    <Power size={14} />
+                                    {user.isActive ? "Deactivate" : "Activate"}
+                                  </button>
+                                ) : null}
                               </div>
                             </td>
                           </tr>
@@ -1330,9 +1495,18 @@ function UsersContent() {
           teams={teams}
           error={modalError}
           isSaving={isSaving}
+          isManagerOnly={isManagerOnly}
+          managerOrgId={managerOrgId}
           onChange={updateForm}
           onClose={closeUserModal}
           onSubmit={handleUserSubmit}
+        />
+      ) : null}
+
+      {credential ? (
+        <CredentialResultModal
+          credential={credential}
+          onClose={() => setCredential(null)}
         />
       ) : null}
 

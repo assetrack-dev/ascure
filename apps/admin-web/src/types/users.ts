@@ -80,6 +80,7 @@ export interface ManagedUser {
   name: string;
   role: UserRole;
   isActive: boolean;
+  mustChangePassword?: boolean;
   createdAt: string;
   updatedAt: string;
   department: UserDepartment | null;
@@ -92,10 +93,19 @@ export interface ManagedUser {
   operationalRegionAccesses?: UserOperationalRegionAccess[];
 }
 
+/**
+ * The create/reset endpoints return the user plus a one-time `temporaryPassword`
+ * when the server generated it (blank password ⇒ auto-generated temp the
+ * provisioner must relay). It is never echoed when the provisioner typed a
+ * password.
+ */
+export type ProvisionedUser = ManagedUser & { temporaryPassword?: string };
+
 export interface CreateUserPayload {
   name: string;
   email: string;
-  password: string;
+  /** Optional — leave blank to have the server generate a temporary password. */
+  password?: string;
   role: UserRole;
   isActive?: boolean;
   departmentId?: string | null;

@@ -6,11 +6,14 @@ export interface ApiUser {
   email: string;
   name: string;
   role: string;
+  organizationId?: string | null;
+  mustChangePassword?: boolean;
   canGovernQa?: boolean;
   canReport?: boolean;
   canImport?: boolean;
   canReassign?: boolean;
   canManageSupervisors?: boolean;
+  canManageUsers?: boolean;
 }
 
 export interface AuthUser {
@@ -20,6 +23,12 @@ export interface AuthUser {
   name: string;
   role: AppRole;
   sourceRole?: string;
+  /** The user's own company (Organization) — used to scope/lock a manager's
+   *  user-provisioning form to their own company. */
+  organizationId?: string | null;
+  /** First-login / post-reset forced password change. When true the client
+   *  routes the user to the change-password screen before anything else. */
+  mustChangePassword?: boolean;
   /**
    * Server-provided authority to perform defect QA governance
    * (verify/reject/closure) — ADMIN or an ASCURE QA actor with QA_VALIDATION.
@@ -53,6 +62,14 @@ export interface AuthUser {
    * VIEWER client-side.
    */
   canManageSupervisors?: boolean;
+  /**
+   * Server-provided authority to provision/manage users — ADMIN (all users) or
+   * MANAGER (own company). Mirrors the API gate so the console can show the
+   * Users area + provisioning controls even though MANAGER collapses to VIEWER
+   * client-side. The /users endpoints still enforce the company scope + role
+   * allow-list server-side.
+   */
+  canManageUsers?: boolean;
 }
 
 export interface AuthSession {

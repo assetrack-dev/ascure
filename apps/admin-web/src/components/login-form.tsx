@@ -24,7 +24,9 @@ export function LoginForm() {
     setEmail(readLastLoginEmail());
 
     if (session?.token) {
-      router.replace("/dashboard");
+      router.replace(
+        session.user?.mustChangePassword ? "/change-password" : "/dashboard",
+      );
     }
   }, [router]);
 
@@ -42,12 +44,15 @@ export function LoginForm() {
       }
 
       persistLastLoginEmail(trimmedEmail);
+      const normalizedUser = normalizeAuthUser(payload.user);
       persistSession({
         token: payload.access_token,
-        user: normalizeAuthUser(payload.user),
+        user: normalizedUser,
       });
 
-      router.replace("/dashboard");
+      router.replace(
+        normalizedUser?.mustChangePassword ? "/change-password" : "/dashboard",
+      );
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed.");
     } finally {
