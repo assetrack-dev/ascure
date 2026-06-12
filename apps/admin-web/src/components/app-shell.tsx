@@ -60,6 +60,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/operational-sessions",
       label: "Operations / Sessions",
       icon: CalendarClock,
+      adminOnly: true,
     },
     {
       href: "/assets",
@@ -86,11 +87,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/organizations",
       label: "Organizations",
       icon: Building2,
+      adminOnly: true,
     },
     {
       href: "/branches",
       label: "Branches",
       icon: GitBranch,
+      adminOnly: true,
     },
     {
       href: "/operational-regions",
@@ -102,11 +105,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/capabilities",
       label: "Capabilities",
       icon: Tags,
+      adminOnly: true,
     },
     {
       href: "/mainheads",
       label: "Mainheads",
       icon: Network,
+      adminOnly: true,
     },
     {
       href: "/teams",
@@ -118,11 +123,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/projects",
       label: "Projects",
       icon: FolderKanban,
+      adminOnly: true,
     },
     {
       href: "/work-packages",
       label: "Work Packages",
       icon: PackageCheck,
+      adminOnly: true,
     },
     {
       href: "/defects",
