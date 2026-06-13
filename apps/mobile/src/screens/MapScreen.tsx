@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import ClusteredMapView from 'react-native-map-clustering';
-import { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
-import type MapView from 'react-native-maps';
+import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { LongPressEvent, Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
@@ -111,8 +109,6 @@ const DEFAULT_REGION: Region = {
 };
 
 const CURRENT_LOCATION_REGION_DELTA = 0.005;
-const CLUSTER_EDGE_PADDING = { top: 80, left: 80, right: 80, bottom: 80 };
-const NON_CLUSTERED_MARKER_PROPS = { cluster: false } as const;
 const DEFECT_HEATMAP_RADIUS = 42;
 const DEFECT_HEATMAP_OPACITY = 0.78;
 const DEFECT_HEATMAP_GRADIENT = {
@@ -452,7 +448,6 @@ export function MapScreen() {
         ...sequenceWarningMarkers.map((warning) => (
           <Marker
             key={`sequence-warning-${warning.assetId}`}
-            {...NON_CLUSTERED_MARKER_PROPS}
             coordinate={warning.coordinate}
             anchor={{ x: 0.5, y: 1 }}
             centerOffset={{ x: 0, y: -18 }}
@@ -470,7 +465,6 @@ export function MapScreen() {
       markers.push(
         <Marker
           key="temporary-add-asset-pin"
-          {...NON_CLUSTERED_MARKER_PROPS}
           coordinate={selectedCoordinate}
           draggable
           title="New asset location"
@@ -529,17 +523,12 @@ export function MapScreen() {
             <LoadingBlock label="Loading asset map..." />
           </View>
         ) : (
-          <ClusteredMapView
-            mapRef={setMapReference}
+          <MapView
+            ref={setMapReference}
             provider={PROVIDER_GOOGLE}
             style={{ flex: 1 }}
             region={region}
             mapType={mapType}
-            radius={44}
-            minPoints={2}
-            clusterColor="#334155"
-            clusterTextColor="#ffffff"
-            edgePadding={CLUSTER_EDGE_PADDING}
             showsUserLocation={true}
             showsMyLocationButton={false}
             followsUserLocation={false}
@@ -565,7 +554,7 @@ export function MapScreen() {
                 />
               ))}
             {mapMarkers}
-          </ClusteredMapView>
+          </MapView>
         )}
 
         {!isLoading ? (
