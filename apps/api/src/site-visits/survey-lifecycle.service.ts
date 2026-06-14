@@ -8,6 +8,7 @@ import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReportGenerationService } from '../report-generation/report-generation.service';
 import { UsersService } from '../users/users.service';
 import { SiteVisitsService } from './site-visits.service';
 
@@ -28,6 +29,15 @@ interface TransitionOptions {
   data: Prisma.SiteVisitUpdateInput;
   /** Remark stored on the lifecycle event (e.g. the amendment reason). */
   remark?: string | null;
+  /**
+   * Run after the transition is validated but before the status is committed.
+   * If it throws, the lifecycle status is left unchanged. Any Prisma operations
+   * it returns are appended to the status-commit `$transaction`, so a side
+   * effect (e.g. persisting the compiled report) is atomic with the status
+   * change — no orphaned rows if the commit fails. Used as the gate into
+   * LAPORAN SELESAI.
+   */
+  beforeCommit?: () => Promise<Prisma.PrismaPromise<unknown>[] | void>;
 }
 
 /**
@@ -52,6 +62,7 @@ export class SurveyLifecycleService {
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
     private readonly siteVisits: SiteVisitsService,
+    private readonly reportGeneration: ReportGenerationService,
   ) {}
 
   /** Inspector marks the walk-through done. */
@@ -83,13 +94,25 @@ export class SurveyLifecycleService {
     });
   }
 
-  /** DC generates the report — the gate into LAPORAN SELESAI. */
+  /** DC generates the report — the gate into LAPORAN SELESAI. The frozen
+   *  compiled PDF is produced as part of this transition; if compilation fails
+   *  the survey stays in RONDAAN SELESAI so it can be retried. */
   async generateReport(user: RequestUser, id: string) {
     await this.assertReporting(user);
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.LAPORAN_SELESAI,
       allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
       data: { laporanSelesaiAt: new Date() },
+      // Compile the frozen report, then persist its row INSIDE the status-commit
+      // transaction, so the report and the LAPORAN SELESAI status are atomic
+      // (no orphaned report row if the commit fails).
+      beforeCommit: async () => {
+        const data = await this.reportGeneration.buildSiteVisitReportData(
+          user,
+          id,
+        );
+        return [this.prisma.siteVisitReport.create({ data })];
+      },
     });
   }
 
@@ -126,7 +149,11 @@ export class SurveyLifecycleService {
       );
     }
 
-    await this.prisma.$transaction([
+    const extraOps = options.beforeCommit
+      ? await options.beforeCommit()
+      : undefined;
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.siteVisit.update({
         where: { id },
         data: { lifecycleStatus: options.to, ...options.data },
@@ -140,7 +167,12 @@ export class SurveyLifecycleService {
           createdByUserId: user.id,
         },
       }),
-    ]);
+    ];
+    if (extraOps) {
+      ops.push(...extraOps);
+    }
+
+    await this.prisma.$transaction(ops);
 
     return this.siteVisits.getReadById(user, id);
   }

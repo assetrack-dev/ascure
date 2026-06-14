@@ -10,6 +10,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Download,
   MapPin,
   Radio,
   RefreshCw,
@@ -31,6 +32,7 @@ import {
   reassignSiteVisit,
   requestSurveyAmendment,
 } from "@/lib/site-visits";
+import { downloadCompiledReport } from "@/lib/report-templates";
 import { fetchTeams, type TeamOption } from "@/lib/teams";
 import type { AuthSession } from "@/types/auth";
 import type {
@@ -401,10 +403,12 @@ interface SurveyLifecyclePanelProps {
   canReport: boolean;
   pendingAction: LifecycleAction | null;
   error: string;
+  downloadingReport: boolean;
   onRondaanSelesai: () => void;
   onRequestAmendment: (remark: string) => void;
   onGenerateReport: () => void;
   onArchive: () => void;
+  onDownloadReport: () => void;
   onOpenNextCycle: () => void;
 }
 
@@ -415,10 +419,12 @@ function SurveyLifecyclePanel({
   canReport,
   pendingAction,
   error,
+  downloadingReport,
   onRondaanSelesai,
   onRequestAmendment,
   onGenerateReport,
   onArchive,
+  onDownloadReport,
   onOpenNextCycle,
 }: SurveyLifecyclePanelProps) {
   const [amendmentOpen, setAmendmentOpen] = useState(false);
@@ -514,6 +520,21 @@ function SurveyLifecyclePanel({
               : ""}
             .
           </p>
+          {canReport ? (
+            <button
+              type="button"
+              onClick={onDownloadReport}
+              disabled={isBusy || downloadingReport}
+              className={subtleBtn}
+            >
+              {downloadingReport ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <Download size={15} />
+              )}
+              Download compiled report
+            </button>
+          ) : null}
           {canInspect ? (
             <button
               type="button"
@@ -574,6 +595,22 @@ function SurveyLifecyclePanel({
               className={amberBtn}
             >
               <AlertTriangle size={15} /> Request amendment
+            </button>
+          ) : null}
+
+          {status === "LAPORAN_SELESAI" && canReport ? (
+            <button
+              type="button"
+              onClick={onDownloadReport}
+              disabled={isBusy || downloadingReport}
+              className={subtleBtn}
+            >
+              {downloadingReport ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <Download size={15} />
+              )}
+              Download compiled report
             </button>
           ) : null}
 
@@ -1236,6 +1273,32 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     void runLifecycle("archive", () => archiveSurvey(token, siteVisitId));
   }, [runLifecycle, session?.token, siteVisitId]);
 
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const handleDownloadReport = useCallback(async () => {
+    const token = session?.token;
+    if (!token || !visit) return;
+    setDownloadingReport(true);
+    setLifecycleError("");
+    try {
+      await downloadCompiledReport(token, {
+        id: visit.id,
+        pencawangCode: visit.pencawangCode ?? undefined,
+      });
+    } catch (downloadError) {
+      if (downloadError instanceof ApiError && downloadError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setLifecycleError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "Unable to download the compiled report.",
+      );
+    } finally {
+      setDownloadingReport(false);
+    }
+  }, [session?.token, visit, handleLogout]);
+
   const handleOpenNextCycle = useCallback(async () => {
     const token = session?.token;
     if (!token) return;
@@ -1404,8 +1467,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   error={lifecycleError}
                   onRondaanSelesai={handleRondaanSelesai}
                   onRequestAmendment={handleRequestAmendment}
+                  downloadingReport={downloadingReport}
                   onGenerateReport={handleGenerateReport}
                   onArchive={handleArchive}
+                  onDownloadReport={handleDownloadReport}
                   onOpenNextCycle={handleOpenNextCycle}
                 />
 

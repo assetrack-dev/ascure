@@ -14,6 +14,7 @@ import { EnterpriseModule } from './enterprise/enterprise.module';
 import { TeamsModule } from './teams/teams.module';
 import { OperationalSessionsModule } from './operational-sessions/operational-sessions.module';
 import { ReportsModule } from './reports/reports.module';
+import { ReportGenerationModule } from './report-generation/report-generation.module';
 import { ImportsModule } from './imports/imports.module';
 import { SyncModule } from './sync/sync.module';
 
@@ -37,6 +38,7 @@ import { SyncModule } from './sync/sync.module';
     TeamsModule,
     OperationalSessionsModule,
     ReportsModule,
+    ReportGenerationModule,
     ImportsModule,
     SyncModule,
   ],

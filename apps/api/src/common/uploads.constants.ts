@@ -43,3 +43,38 @@ export function buildDefectEvidenceImagePath(defectId: string, filename: string)
 export function buildDefectEvidenceImageUrl(defectId: string, filename: string) {
   return `${DEFECT_EVIDENCE_IMAGES_URL_PREFIX}/${defectId}/${filename}`;
 }
+
+export const REPORT_TEMPLATES_URL_PREFIX = '/uploads/report-templates';
+export const SITE_VISIT_REPORTS_URL_PREFIX = '/uploads/reports';
+
+export function buildReportTemplatesDirectory() {
+  return resolve(UPLOADS_DIRECTORY, 'report-templates');
+}
+
+export function buildReportTemplatePath(filename: string) {
+  return `report-templates/${filename}`;
+}
+
+export function buildReportTemplateUrl(filename: string) {
+  return `${REPORT_TEMPLATES_URL_PREFIX}/${filename}`;
+}
+
+export function buildSiteVisitReportsDirectory(siteVisitId: string) {
+  return resolve(UPLOADS_DIRECTORY, 'reports', siteVisitId);
+}
+
+export function buildSiteVisitReportPath(siteVisitId: string, filename: string) {
+  return `reports/${siteVisitId}/${filename}`;
+}
+
+export function buildSiteVisitReportUrl(siteVisitId: string, filename: string) {
+  return `${SITE_VISIT_REPORTS_URL_PREFIX}/${siteVisitId}/${filename}`;
+}
+
+/**
+ * Absolute on-disk path for a stored `storageKey` (e.g. an inspection photo or a
+ * report template) so generators can read the bytes to embed/convert.
+ */
+export function resolveUploadPath(storageKey: string) {
+  return resolve(UPLOADS_DIRECTORY, storageKey.replace(/^\/+/, ''));
+}

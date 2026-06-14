@@ -8,6 +8,7 @@ import {
   CalendarClock,
   ClipboardList,
   FileSpreadsheet,
+  FileText,
   FolderKanban,
   GitBranch,
   LayoutDashboard,
@@ -141,6 +142,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       label: "Reports",
       icon: FileSpreadsheet,
       requiresReporting: true,
+    },
+    {
+      href: "/report-templates",
+      label: "Report Templates",
+      icon: FileText,
+      adminOnly: true,
     },
     {
       href: "/imports",

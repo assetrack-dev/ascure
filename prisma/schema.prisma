@@ -1032,6 +1032,7 @@ model SiteVisit {
   lifecycleEvents       SiteVisitLifecycleEvent[]
   reassignments         SiteVisitReassignment[]
   teamContributions     SiteVisitTeamContribution[]
+  reports               SiteVisitReport[]
 
   @@index([tenantId])
   @@index([teamId, status])
@@ -1534,4 +1535,47 @@ model NetworkTieEdge {
   @@index([fromAssetId])
   @@index([toAssetId])
   @@index([deviceAssetId])
+}
+
+// Admin-uploaded .docx report template, one active version per (tenant,
+// operationalScope). The asset's scope selects which template renders its
+// visual report. Versioned: uploading a new one supersedes the prior active.
+model ReportTemplate {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  name             String
+  operationalScope OperationalScope
+  fileName         String
+  storageKey       String
+  url              String
+  version          Int              @default(1)
+  isActive         Boolean          @default(true)
+  uploadedByUserId String?          @db.Uuid
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, operationalScope, isActive])
+}
+
+// The frozen compiled PDF for a Pencawang survey, produced when it reaches
+// LAPORAN SELESAI (cover + each asset's report, merged). Versioned so a
+// re-approval after PERLU PINDAAN produces a new immutable record.
+model SiteVisitReport {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  siteVisitId      String    @db.Uuid
+  version          Int       @default(1)
+  fileName         String
+  storageKey       String
+  url              String
+  status           String    @default("COMPLETED")
+  compiledByUserId String?   @db.Uuid
+  compiledAt       DateTime  @default(now())
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+  siteVisit        SiteVisit @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+
+  @@unique([siteVisitId, version])
+  @@index([tenantId])
 }

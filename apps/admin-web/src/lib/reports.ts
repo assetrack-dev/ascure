@@ -50,7 +50,7 @@ export async function downloadSchematicPdf(
   triggerBrowserDownload(blob, filename ?? fallbackName);
 }
 
-function triggerBrowserDownload(blob: Blob, filename: string): void {
+export function triggerBrowserDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
