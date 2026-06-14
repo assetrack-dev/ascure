@@ -7,6 +7,7 @@ import {
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import { SurveyLifecycleStatus } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -14,6 +15,19 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PencawangReportParamsDto } from './dto/pencawang-report-params.dto';
 import { ReportsService } from './reports.service';
 import { SchematicPdfService } from './schematic-pdf.service';
+
+/** Map a `status` query value to a lifecycle status; unknown/empty = no filter. */
+function parseLifecycleStatus(
+  value: string | undefined,
+): SurveyLifecycleStatus | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.toUpperCase();
+  return (Object.values(SurveyLifecycleStatus) as string[]).includes(normalized)
+    ? (normalized as SurveyLifecycleStatus)
+    : undefined;
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('reports')
@@ -26,6 +40,30 @@ export class ReportsController {
   @Get('substations')
   listSubstations(@CurrentUser() user: RequestUser) {
     return this.reportsService.listSubstations(user);
+  }
+
+  @Get('pencawang/:substationId/masterlist.xlsx')
+  async exportPencawangMasterlist(
+    @CurrentUser() user: RequestUser,
+    @Param() params: PencawangReportParamsDto,
+    @Query('status') status: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } =
+      await this.reportsService.buildPencawangMasterlist(
+        user,
+        params.substationId,
+        parseLifecycleStatus(status),
+      );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
   }
 
   @Get('pencawang/:substationId/inspections.xlsx')

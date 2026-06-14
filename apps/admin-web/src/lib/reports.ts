@@ -23,6 +23,29 @@ export async function downloadPencawangReport(
 }
 
 /**
+ * Downloads the per-Pencawang SAVR masterlist (.xlsx, 1 pole per row, checklist
+ * items as columns). `status` filters by survey lifecycle status; "ALL"/omitted
+ * = no filter. The server names the file `[NAMA PENCAWANG]_MASTERLIST.xlsx`.
+ */
+export async function downloadPencawangMasterlist(
+  token: string,
+  substation: Pick<ReportSubstation, "id" | "code" | "name">,
+  status?: string,
+): Promise<void> {
+  const query =
+    status && status !== "ALL" ? `?status=${encodeURIComponent(status)}` : "";
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/pencawang/${encodeURIComponent(substation.id)}/masterlist.xlsx${query}`,
+    { token },
+  );
+
+  const fallbackBase = (substation.name || substation.code || "PENCAWANG")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  triggerBrowserDownload(blob, filename ?? `${fallbackBase}_MASTERLIST.xlsx`);
+}
+
+/**
  * Downloads a network drawing as a PDF and triggers a browser save.
  * - `layout: "tree"` (default) — the logical schematic (depth/branch tree).
  * - `layout: "gps"` — pole topology plotted at real GPS positions, no basemap.

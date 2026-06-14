@@ -11,7 +11,7 @@ import {
   readStoredSession,
   refreshStoredSessionUser,
 } from "@/lib/auth";
-import { downloadPencawangReport, fetchReportSubstations } from "@/lib/reports";
+import { downloadPencawangMasterlist, fetchReportSubstations } from "@/lib/reports";
 import type { AuthSession } from "@/types/auth";
 import type { ReportSubstation } from "@/types/reports";
 
@@ -22,11 +22,13 @@ const primaryButtonClassName =
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 
-const REPORT_SHEETS = [
-  "Asset Summary",
-  "Inspection Results",
-  "Defects",
-  "Photo URLs",
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "ALL", label: "All statuses" },
+  { value: "DALAM_RONDAAN", label: "Dalam Rondaan" },
+  { value: "RONDAAN_SELESAI", label: "Rondaan Selesai" },
+  { value: "PERLU_PINDAAN", label: "Perlu Pindaan" },
+  { value: "LAPORAN_SELESAI", label: "Laporan Selesai" },
+  { value: "ARKIB", label: "Arkib" },
 ];
 
 function requestErrorMessage(error: unknown, fallback: string) {
@@ -38,6 +40,7 @@ function ReportsContent() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [substations, setSubstations] = useState<ReportSubstation[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [status, setStatus] = useState("ALL");
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
@@ -110,9 +113,9 @@ function ReportsContent() {
     setNotice("");
 
     try {
-      await downloadPencawangReport(session.token, selectedSubstation);
+      await downloadPencawangMasterlist(session.token, selectedSubstation, status);
       setNotice(
-        `Excel report generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
+        `Masterlist generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
       );
     } catch (downloadError) {
       if (downloadError instanceof ApiError && downloadError.status === 401) {
@@ -147,9 +150,9 @@ function ReportsContent() {
               </p>
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Reports</h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-                Download a per-Pencawang (substation) inspection workbook. Each export
-                includes four sheets: Asset Summary, Inspection Results, Defects, and Photo
-                URLs.
+                Download a per-Pencawang SAVR <strong>masterlist</strong> (.xlsx) — one
+                pole per row, checklist items as columns. Filter by survey status, then
+                arrange the QR01/02/03 / KELEGAAN reports from it.
               </p>
             </div>
 
@@ -176,7 +179,7 @@ function ReportsContent() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,210px)_auto] sm:items-end">
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Pencawang</span>
                 <select
@@ -203,6 +206,24 @@ function ReportsContent() {
                 </select>
               </label>
 
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Status</span>
+                <select
+                  value={status}
+                  onChange={(event) => {
+                    setStatus(event.target.value);
+                    setNotice("");
+                  }}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <button
                 type="button"
                 onClick={handleDownload}
@@ -210,7 +231,7 @@ function ReportsContent() {
                 className={primaryButtonClassName}
               >
                 <Download size={16} />
-                {isDownloading ? "Generating…" : "Download Excel"}
+                {isDownloading ? "Generating…" : "Download Masterlist"}
               </button>
             </div>
 
@@ -224,19 +245,13 @@ function ReportsContent() {
             ) : null}
 
             <div className="mt-6 border-t border-slate-200 pt-5">
-              <p className="text-xs font-semibold uppercase text-slate-500">
-                Workbook contents
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {REPORT_SHEETS.map((sheet) => (
-                  <div
-                    key={sheet}
-                    className="flex items-center gap-2.5 rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-[var(--shadow-soft)]"
-                  >
-                    <FileSpreadsheet size={16} className="text-[var(--brand)]" />
-                    {sheet}
-                  </div>
-                ))}
+              <div className="flex items-start gap-2.5 rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-[var(--shadow-soft)]">
+                <FileSpreadsheet size={16} className="mt-0.5 shrink-0 text-[var(--brand)]" />
+                <span>
+                  SAVR masterlist — one row per pole, checklist items as columns
+                  (matches the AppSheet import layout). Saved as{" "}
+                  <span className="font-semibold">[NAMA PENCAWANG]_MASTERLIST.xlsx</span>.
+                </span>
               </div>
             </div>
           </section>

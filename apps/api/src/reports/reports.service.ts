@@ -3,12 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DefectStatus, Prisma } from '@prisma/client';
+import {
+  DefectStatus,
+  OperationalScope,
+  Prisma,
+  SurveyLifecycleStatus,
+} from '@prisma/client';
 import { Workbook, Worksheet } from 'exceljs';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
+import {
+  buildMasterlistFilename,
+  buildMasterlistWorkbook,
+  type MasterlistRawValue,
+  type MasterlistRow,
+} from './savr-masterlist';
 
 const UPLOADS_URL_PREFIX = '/uploads';
 
@@ -148,9 +160,170 @@ export class ReportsService {
   }
 
   /**
+   * Builds the per-Pencawang SAVR **masterlist** (wide format: metadata columns
+   * + one column per checklist item, 1 pole = 1 row) — the inverse of the F2
+   * AppSheet importer, so the file round-trips back through it. Read-only,
+   * tenant scoped, SAVR assets only, optionally filtered by the survey
+   * lifecycle status of the asset's visit.
+   */
+  async buildPencawangMasterlist(
+    user: RequestUser,
+    substationId: string,
+    lifecycleStatus?: SurveyLifecycleStatus,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const substation = await this.prisma.substation.findFirst({
+      where: { id: substationId, tenantId: user.tenantId },
+      select: { id: true, code: true, name: true },
+    });
+    if (!substation) {
+      throw new NotFoundException('Pencawang (substation) not found.');
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        asset: { substationId },
+        ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        templateId: true,
+        externalRef: true,
+        operationalScope: true,
+        submittedAt: true,
+        createdAt: true,
+        createdBy: { select: { email: true } },
+        siteVisit: {
+          select: {
+            pencawangName: true,
+            pencawangCode: true,
+            functionalLocation: true,
+            mainhead: true,
+            team: { select: { name: true, code: true } },
+          },
+        },
+        asset: {
+          select: {
+            assetCode: true,
+            noTiangLama: true,
+            latitude: true,
+            longitude: true,
+            assetType: { select: { operationalScope: true, code: true } },
+          },
+        },
+        itemResults: {
+          select: { checklistItemId: true, label: true, isDefect: true },
+        },
+        results: {
+          select: {
+            templateItemId: true,
+            valueText: true,
+            valueNumber: true,
+            valueBoolean: true,
+            valueJson: true,
+          },
+        },
+      },
+    });
+
+    // SAVR only — resolve scope the same way the rest of the system does
+    // (inspection → asset type's scope → inferred from the type code), since an
+    // asset type may not have operationalScope set explicitly.
+    const savrInspections = inspections.filter(
+      (insp) =>
+        (insp.operationalScope ??
+          insp.asset.assetType?.operationalScope ??
+          inferOperationalScopeFromAssetTypeCode(
+            insp.asset.assetType?.code,
+          )) === OperationalScope.SAVR,
+    );
+
+    // One row per asset = its latest matching inspection (list is newest-first).
+    const latestByAsset = new Map<string, (typeof savrInspections)[number]>();
+    for (const insp of savrInspections) {
+      if (!latestByAsset.has(insp.assetId)) {
+        latestByAsset.set(insp.assetId, insp);
+      }
+    }
+    const chosen = [...latestByAsset.values()];
+
+    // Map template-item id/label → key across every referenced template version.
+    const templateIds = [...new Set(chosen.map((i) => i.templateId))];
+    const templateItems = templateIds.length
+      ? await this.prisma.inspectionTemplateItem.findMany({
+          where: { templateId: { in: templateIds } },
+          select: { id: true, key: true, label: true },
+        })
+      : [];
+    const keyById = new Map(templateItems.map((i) => [i.id, i.key]));
+    const keyByLabel = new Map(
+      templateItems.map((i) => [normLabel(i.label), i.key]),
+    );
+
+    const rows: MasterlistRow[] = chosen
+      .map((insp): MasterlistRow => {
+        const defectKeys = new Set<string>();
+        for (const ir of insp.itemResults) {
+          if (!ir.isDefect) {
+            continue;
+          }
+          const key =
+            (ir.checklistItemId
+              ? keyById.get(ir.checklistItemId)
+              : undefined) ?? keyByLabel.get(normLabel(ir.label));
+          if (key) {
+            defectKeys.add(key);
+          }
+        }
+
+        const valuesByKey = new Map<string, MasterlistRawValue>();
+        for (const r of insp.results) {
+          const key = keyById.get(r.templateItemId);
+          if (!key) {
+            continue;
+          }
+          valuesByKey.set(key, {
+            text: r.valueText ?? null,
+            number: r.valueNumber != null ? r.valueNumber.toNumber() : null,
+            bool: r.valueBoolean ?? null,
+            json: r.valueJson ?? null,
+          });
+        }
+
+        const lat = insp.asset.latitude;
+        const lng = insp.asset.longitude;
+        return {
+          uniqueId: reverseExternalRef(insp.externalRef),
+          userEmail: insp.createdBy?.email ?? '',
+          mainhead: insp.siteVisit?.mainhead ?? '',
+          team: insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
+          functionalLocation: insp.siteVisit?.functionalLocation ?? '',
+          location: lat != null && lng != null ? `${lat}, ${lng}` : '',
+          pencawangName: insp.siteVisit?.pencawangName ?? substation.name,
+          pencawangCode: insp.siteVisit?.pencawangCode ?? substation.code,
+          assetCode: insp.asset.assetCode,
+          noTiangLama: insp.asset.noTiangLama ?? '',
+          date: insp.submittedAt ?? insp.createdAt ?? null,
+          dateTime: insp.submittedAt ?? insp.createdAt ?? null,
+          defectKeys,
+          valuesByKey,
+        };
+      })
+      .sort((a, b) => a.assetCode.localeCompare(b.assetCode));
+
+    const buffer = await buildMasterlistWorkbook(rows);
+    const filename = buildMasterlistFilename(substation.name || substation.code);
+    return { buffer, filename };
+  }
+
+  /**
    * Builds the per-Pencawang inspection workbook (Asset Summary, Inspection
    * Results, Defects, Photo URLs). Read-only and tenant scoped. Inspections are
    * anchored to the substation through the inspected asset's substationId.
+   * Retained as a detailed alternative; the UI download now uses the masterlist.
    */
   async buildPencawangWorkbook(user: RequestUser, substationId: string) {
     await this.assertCanReport(user);
@@ -517,6 +690,20 @@ function styleHeader(sheet: Worksheet): void {
   header.alignment = { vertical: 'middle' };
   header.commit();
   sheet.views = [{ state: 'frozen', ySplit: 1 }];
+}
+
+/** Normalise a label for matching (same scheme as the importer's header match). */
+function normLabel(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+}
+
+/** Recover the original AppSheet UNIQUEID from a stored externalRef. */
+function reverseExternalRef(ref: string | null | undefined): string {
+  if (!ref) {
+    return '';
+  }
+  const prefix = 'appsheet:savr-klb:';
+  return ref.startsWith(prefix) ? ref.slice(prefix.length) : ref;
 }
 
 function buildFilename(code: string): string {

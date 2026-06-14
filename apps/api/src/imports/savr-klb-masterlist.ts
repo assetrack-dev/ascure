@@ -53,7 +53,7 @@ export interface ParseResult {
 
 // --- Column map (raw human headers; normalised at match time) ---------------
 
-const META = {
+export const META = {
   uniqueId: 'UNIQUEID',
   inspectorEmail: 'USER EMAIL',
   mainheadText: 'MAINHEAD',
