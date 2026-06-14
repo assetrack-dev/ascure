@@ -13,6 +13,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
+import { Theme, useTheme } from '../theme';
 import { InspectionDetail, InspectionImage, InspectionItemResult } from '../types';
 import { formatDateTime } from '../utils';
 
@@ -22,6 +23,7 @@ const IMAGE_GROUPS = ['BEFORE', 'DURING', 'AFTER', 'OTHER'] as const;
 type ImageGroup = (typeof IMAGE_GROUPS)[number];
 
 export function InspectionDetailScreen() {
+  const theme = useTheme();
   const navigation = useNavigation<RootStackScreenProps<'InspectionDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'InspectionDetail'>['route']>();
   const { inspectionId, assetCode } = route.params;
@@ -65,7 +67,7 @@ export function InspectionDetailScreen() {
     <View
       style={{
         flex: 1,
-        backgroundColor: '#f4f7fb',
+        backgroundColor: theme.colors.background,
         paddingTop: Platform.OS === 'android' ? 24 : 16,
       }}
     >
@@ -80,15 +82,15 @@ export function InspectionDetailScreen() {
         }}
       >
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a' }}>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: theme.colors.textPrimary }}>
             Inspection Detail
           </Text>
           {assetCode ? (
-            <Text style={{ fontSize: 15, lineHeight: 22, color: '#526277' }}>{assetCode}</Text>
+            <Text style={{ fontSize: 15, lineHeight: 22, color: theme.colors.textSecondary }}>{assetCode}</Text>
           ) : null}
         </View>
         <Pressable onPress={() => navigation.goBack()} style={{ paddingVertical: 6 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f5cd8' }}>Back</Text>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.info }}>Back</Text>
         </Pressable>
       </View>
 
@@ -102,23 +104,23 @@ export function InspectionDetailScreen() {
       >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 36, gap: 12 }}>
-            <ActivityIndicator size="large" color="#0f5cd8" />
-            <Text style={{ fontSize: 15, color: '#526277' }}>Loading inspection detail...</Text>
+            <ActivityIndicator size="large" color={theme.colors.info} />
+            <Text style={{ fontSize: 15, color: theme.colors.textSecondary }}>Loading inspection detail...</Text>
           </View>
         ) : null}
 
         {!isLoading && error ? (
           <View
             style={{
-              backgroundColor: '#fee2e2',
+              backgroundColor: theme.colors.dangerSoft,
               borderRadius: 14,
               borderWidth: 1,
-              borderColor: '#fecaca',
+              borderColor: theme.colors.dangerBorder,
               padding: 14,
               gap: 12,
             }}
           >
-            <Text style={{ fontSize: 14, lineHeight: 20, color: '#991b1b', fontWeight: '600' }}>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: theme.colors.dangerText, fontWeight: '600' }}>
               {error}
             </Text>
             <Pressable
@@ -128,11 +130,11 @@ export function InspectionDetailScreen() {
                 borderRadius: 14,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#991b1b' }}>Try Again</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.dangerText }}>Try Again</Text>
             </Pressable>
           </View>
         ) : null}
@@ -141,27 +143,27 @@ export function InspectionDetailScreen() {
           <>
             <View
               style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 borderRadius: 16,
                 padding: 16,
                 gap: 12,
                 borderWidth: 1,
-                borderColor: '#dce5f1',
+                borderColor: theme.colors.border,
               }}
             >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>Summary</Text>
+              <Text style={{ fontSize: 19, fontWeight: '700', color: theme.colors.textPrimary }}>Summary</Text>
               <InfoRow label="Cycle" value={`Cycle ${inspection.cycleNumber}`} />
               <InfoRow label="Status" value={formatStatus(inspection.status)} />
               <InfoRow label="Submitted" value={formatDateTime(inspection.submittedAt)} />
               <InfoRow label="Images" value={String(images.length)} />
               <InfoRow label="Total Defects" value={String(totalDefects)} />
               <View style={{ gap: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>Remarks</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary }}>Remarks</Text>
                 <Text
                   style={{
                     fontSize: 15,
                     lineHeight: 22,
-                    color: inspection.remarks ? '#10233d' : '#607086',
+                    color: inspection.remarks ? theme.colors.textPrimary : theme.colors.textSecondary,
                   }}
                 >
                   {inspection.remarks || 'No remarks recorded.'}
@@ -171,20 +173,20 @@ export function InspectionDetailScreen() {
 
             <View
               style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 borderRadius: 16,
                 padding: 16,
                 gap: 14,
                 borderWidth: 1,
-                borderColor: '#dce5f1',
+                borderColor: theme.colors.border,
               }}
             >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+              <Text style={{ fontSize: 19, fontWeight: '700', color: theme.colors.textPrimary }}>
                 Checklist Results
               </Text>
 
               {checklistItems.length === 0 ? (
-                <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
+                <Text style={{ fontSize: 14, lineHeight: 21, color: theme.colors.textSecondary }}>
                   No checklist results recorded.
                 </Text>
               ) : (
@@ -194,20 +196,20 @@ export function InspectionDetailScreen() {
 
             <View
               style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 borderRadius: 16,
                 padding: 16,
                 gap: 14,
                 borderWidth: 1,
-                borderColor: '#dce5f1',
+                borderColor: theme.colors.border,
               }}
             >
-              <Text style={{ fontSize: 19, fontWeight: '700', color: '#0f172a' }}>
+              <Text style={{ fontSize: 19, fontWeight: '700', color: theme.colors.textPrimary }}>
                 Inspection Images
               </Text>
 
               {images.length === 0 ? (
-                <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
+                <Text style={{ fontSize: 14, lineHeight: 21, color: theme.colors.textSecondary }}>
                   No inspection images yet.
                 </Text>
               ) : (
@@ -220,7 +222,7 @@ export function InspectionDetailScreen() {
 
                   return (
                     <View key={group} style={{ gap: 10 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#607086' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: theme.colors.textSecondary }}>
                         {group}
                       </Text>
                       {groupImages.map((image, index) => {
@@ -244,7 +246,7 @@ export function InspectionDetailScreen() {
                                     width: '100%',
                                     height: 220,
                                     borderRadius: 14,
-                                    backgroundColor: '#e5edf8',
+                                    backgroundColor: theme.colors.surfaceMuted,
                                   }}
                                   resizeMode="cover"
                                 />
@@ -256,12 +258,12 @@ export function InspectionDetailScreen() {
                                   borderRadius: 14,
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  backgroundColor: '#eef4fb',
+                                  backgroundColor: theme.colors.surfaceMuted,
                                   borderWidth: 1,
-                                  borderColor: '#d9e4f2',
+                                  borderColor: theme.colors.border,
                                 }}
                               >
-                                <Text style={{ fontSize: 14, lineHeight: 21, color: '#607086' }}>
+                                <Text style={{ fontSize: 14, lineHeight: 21, color: theme.colors.textSecondary }}>
                                   Image unavailable.
                                 </Text>
                               </View>
@@ -282,15 +284,17 @@ export function InspectionDetailScreen() {
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
-      <Text style={{ flex: 1, fontSize: 14, color: '#607086' }}>{label}</Text>
+      <Text style={{ flex: 1, fontSize: 14, color: theme.colors.textSecondary }}>{label}</Text>
       <Text
         style={{
           flex: 1.2,
           fontSize: 14,
           fontWeight: '600',
-          color: '#0f172a',
+          color: theme.colors.textPrimary,
           textAlign: 'right',
         }}
       >
@@ -301,33 +305,36 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function ChecklistResultRow({ item }: { item: InspectionItemResult }) {
+  const theme = useTheme();
+
   return (
     <View
       style={{
         borderTopWidth: 1,
-        borderTopColor: '#dce5f1',
+        borderTopColor: theme.colors.border,
         paddingTop: 12,
         gap: 8,
       }}
     >
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
-        <Text style={{ flex: 1, fontSize: 15, lineHeight: 22, fontWeight: '700', color: '#10233d' }}>
+        <Text style={{ flex: 1, fontSize: 15, lineHeight: 22, fontWeight: '700', color: theme.colors.textPrimary }}>
           {item.label}
         </Text>
         <ResultBadge result={item.result} />
         {item.isDefect ? <DefectBadge /> : null}
       </View>
       {item.remark ? (
-        <Text style={{ fontSize: 14, lineHeight: 21, color: '#526277' }}>{item.remark}</Text>
+        <Text style={{ fontSize: 14, lineHeight: 21, color: theme.colors.textSecondary }}>{item.remark}</Text>
       ) : (
-        <Text style={{ fontSize: 14, lineHeight: 21, color: '#8a98aa' }}>No remark.</Text>
+        <Text style={{ fontSize: 14, lineHeight: 21, color: theme.colors.textMuted }}>No remark.</Text>
       )}
     </View>
   );
 }
 
 function ResultBadge({ result }: { result: InspectionItemResult['result'] }) {
-  const style = getResultBadgeStyle(result);
+  const theme = useTheme();
+  const style = getResultBadgeStyle(result, theme);
 
   return (
     <View
@@ -344,16 +351,18 @@ function ResultBadge({ result }: { result: InspectionItemResult['result'] }) {
 }
 
 function DefectBadge() {
+  const theme = useTheme();
+
   return (
     <View
       style={{
         borderRadius: 999,
         paddingHorizontal: 10,
         paddingVertical: 5,
-        backgroundColor: '#fee2e2',
+        backgroundColor: theme.colors.dangerSoft,
       }}
     >
-      <Text style={{ fontSize: 12, fontWeight: '800', color: '#b91c1c' }}>DEFECT</Text>
+      <Text style={{ fontSize: 12, fontWeight: '800', color: theme.colors.dangerText }}>DEFECT</Text>
     </View>
   );
 }
@@ -373,24 +382,24 @@ function groupInspectionImages(images: InspectionImage[]) {
   return groups;
 }
 
-function getResultBadgeStyle(result: InspectionItemResult['result']) {
+function getResultBadgeStyle(result: InspectionItemResult['result'], t: Theme) {
   if (result === 'PASS') {
     return {
-      backgroundColor: '#dcfce7',
-      color: '#166534',
+      backgroundColor: t.colors.successSoft,
+      color: t.colors.successText,
     };
   }
 
   if (result === 'FAIL') {
     return {
-      backgroundColor: '#fee2e2',
-      color: '#b91c1c',
+      backgroundColor: t.colors.dangerSoft,
+      color: t.colors.dangerText,
     };
   }
 
   return {
-    backgroundColor: '#e5e7eb',
-    color: '#374151',
+    backgroundColor: t.colors.surfaceMuted,
+    color: t.colors.textSecondary,
   };
 }
 

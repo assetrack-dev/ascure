@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
 import { login } from "@/lib/api";
+import { ThemeToggle } from "./theme-toggle";
 import {
   normalizeAuthUser,
   persistLastLoginEmail,
@@ -62,41 +63,43 @@ export function LoginForm() {
 
   return (
     <main className="grid min-h-screen bg-[var(--background)] lg:grid-cols-[minmax(360px,0.85fr)_1.15fr]">
-      <section className="flex items-center justify-center border-b border-slate-800 bg-slate-950 px-6 py-10 text-white lg:border-b-0 lg:border-r">
+      <section className="flex items-center justify-center border-b border-[var(--chrome-line)] bg-[var(--chrome)] px-6 py-10 text-[var(--on-chrome)] lg:border-b-0 lg:border-r">
         <div className="w-full max-w-md">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--brand)] shadow-sm">
-              <svg width="27" height="27" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-                <rect x="15.5" y="13" width="33" height="38" rx="8.5" stroke="#ECFEFF" strokeWidth="3.3" />
-                <circle cx="32" cy="21" r="2.7" stroke="#ECFEFF" strokeWidth="2.2" />
-                <path d="M26 46 L32 31 L38 46" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M28.3 40 H35.7" stroke="#ECFEFF" strokeWidth="3.4" strokeLinecap="round" />
-                <circle cx="32" cy="30.7" r="3" fill="#FFFFFF" />
-              </svg>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/monogram.png"
+              alt="ASCURE"
+              width={48}
+              height={48}
+              className="h-12 w-12 rounded-xl shadow-sm"
+            />
             <div>
-              <p className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)" }}>ASCURE</p>
-              <p className="text-sm text-slate-300">Asset Inspection Platform</p>
+              <p className="text-2xl font-bold tracking-wide" style={{ fontFamily: "var(--font-display)" }}>ASCURE</p>
+              <p className="text-sm text-[var(--on-chrome-muted)]">Asset Inspection Platform</p>
             </div>
           </div>
           <h1 className="mt-12 text-4xl font-bold">Admin operations console</h1>
-          <div className="mt-8 grid gap-3 text-sm text-slate-200">
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-              <ShieldCheck size={18} className="text-green-300" />
+          <div className="mt-8 grid gap-3 text-sm text-[var(--on-chrome-muted)]">
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--chrome-line)] bg-[var(--chrome-active)] p-3">
+              <ShieldCheck size={18} className="text-[var(--on-chrome)]" />
               Role foundation: ADMIN, TECHNICIAN, VIEWER, CLIENT
             </div>
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-              <LockKeyhole size={18} className="text-amber-300" />
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--chrome-line)] bg-[var(--chrome-active)] p-3">
+              <LockKeyhole size={18} className="text-[var(--on-chrome)]" />
               Connected to the local NestJS API
             </div>
           </div>
         </div>
       </section>
 
-      <section className="flex items-center justify-center px-6 py-10">
+      <section className="relative flex items-center justify-center px-6 py-10">
+        <div className="absolute right-4 top-4">
+          <ThemeToggle variant="icon" />
+        </div>
         <form
           onSubmit={handleSubmit}
-          className="w-full max-w-md rounded-xl border border-[var(--line)] bg-white p-6 shadow-[var(--shadow-card)]"
+          className="w-full max-w-md rounded-xl border border-[var(--line)] bg-[var(--panel)] p-6 shadow-[var(--shadow-card)]"
         >
           <div>
             <p className="text-sm font-semibold uppercase text-[var(--brand)]">

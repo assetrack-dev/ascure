@@ -1,52 +1,42 @@
-/* ASCURE brand tokens — canonical source for the admin web (apps/admin-web).
-   Direction: "operational instrument". Drop these into globals.css :root.
-   Pair with next/font loading of Space Grotesk + Inter + JetBrains Mono. */
+/* ASCURE brand tokens — "Ink on Mist" (v2). Canonical reference mirror.
+   LIVE source for the admin web is apps/admin-web/src/app/globals.css
+   (this file is kept in sync as documentation). Monochrome: ink on mist,
+   light + dark. Pair with next/font: Space Grotesk + Inter + JetBrains Mono. */
 
 :root {
-  /* Brand */
-  --brand: #0F766E;          /* teal-700 — primary on light surfaces */
-  --brand-strong: #115E59;   /* teal-800 — pressed/hover */
-  --brand-bright: #14B8A6;   /* teal-500 — primary on dark surfaces */
-  --brand-soft: #CCFBF1;     /* teal-100 — tints */
-  --accent: #06B6D4;         /* cyan-500 — signal accent on light */
-  --accent-bright: #22D3EE;  /* cyan-400 — signal accent on dark */
+  /* Neutral ink ramp (cool) */
+  --ink-950: #0B0E12; --ink-900: #11151A; --ink-850: #161A1F; --ink-800: #1D222A;
+  --ink-700: #2A313B; --ink-600: #3A434F; --ink-500: #566373; --ink-400: #828E9C;
+  --ink-300: #A2ADB9; --ink-200: #CDD4DB; --ink-150: #D7DCE2; --ink-100: #E9ECEF;
+  --ink-75: #F1F3F5; --ink-50: #F7F8FA; --ink-0: #FFFFFF;
 
-  /* Ink — dark "control-room" surfaces (dashboards, ops board, map) */
-  --ink-950: #0A0F1A;
-  --ink-900: #0F172A;
-  --ink-850: #162236;
-  --ink-800: #1E293B;
-  --ink-700: #334155;
-  --on-ink: #E2E8F0;         /* primary text on ink */
-  --on-ink-muted: #94A3B8;   /* secondary text on ink */
+  /* Brand = ink */
+  --brand: #161A1F; --brand-strong: #2A313B; --brand-soft: #DDE2E8; --on-brand: #F7F8FA;
 
-  /* Light surfaces (forms, lists) */
-  --background: #F6F8FB;
-  --panel: #FFFFFF;
-  --panel-muted: #F8FAFC;
-  --line: #D9E1EC;
-  --foreground: #0F172A;
-  --muted: #667085;
+  /* Light surfaces */
+  --background: #E9ECEF; --panel: #FFFFFF; --panel-muted: #F4F6F8;
+  --foreground: #161A1F; --muted: #566373; --line: #D7DCE2; --line-strong: #C5CCD4;
 
-  /* Status language — vivid & consistent with mobile */
-  --critical: #EF4444;
-  --high: #F97316;
-  --medium: #F59E0B;
-  --low: #38BDF8;
-  --verified: #10B981;
-  --info: #3B82F6;
-  --warning: #B45309;
-  --danger: #EF4444;
+  /* Dark "chrome" (sidebar/drawer — dark in both modes) */
+  --chrome: #11151A; --on-chrome: #E9ECEF; --on-chrome-muted: #9AA4B0; --chrome-accent: #E9ECEF;
 
-  /* Typography */
+  /* Status — functional (light) */
+  --critical: #DC2626; --high: #EA580C; --medium: #B45309; --low: #2563EB;
+  --info: #2563EB; --verified: #16A34A; --warning: #B45309; --danger: #DC2626;
+
+  /* Type / shape */
   --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --radius-card: 14px; --radius-control: 9px; --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(11,14,18,0.05), 0 12px 32px rgba(11,14,18,0.07);
+}
 
-  /* Shape & elevation */
-  --radius-card: 12px;
-  --radius-control: 10px;
-  --radius-pill: 999px;
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.06);
-  --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.04);
+:root[data-theme="dark"] {
+  --brand: #E9ECEF; --brand-strong: #FFFFFF; --brand-soft: #1E2630; --on-brand: #11151A;
+  --background: #0E1116; --panel: #181D24; --panel-muted: #11151A;
+  --foreground: #E9ECEF; --muted: #9AA4B0; --line: #262D36; --line-strong: #3A434F;
+  --chrome: #0B0E12;
+  --critical: #F87171; --high: #FB923C; --medium: #F5B544; --low: #60A5FA;
+  --info: #60A5FA; --verified: #4ADE80; --warning: #F5B544; --danger: #F87171;
 }

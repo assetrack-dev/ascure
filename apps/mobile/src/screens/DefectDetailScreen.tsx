@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
@@ -25,7 +25,8 @@ import {
   InspectionImage,
 } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
-import { Screen, uiTheme } from '../ui';
+import { Screen } from '../ui';
+import { Theme, useTheme } from '../theme';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 const MAINTENANCE_OUTCOMES: DefectResolutionOutcome[] = [
@@ -54,6 +55,8 @@ type PendingMaintenanceProofOverlayPhoto = Omit<CapturedMaintenanceProofPhoto, '
 };
 
 export function DefectDetailScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<RootStackScreenProps<'DefectDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'DefectDetail'>['route']>();
   const { defectId } = route.params;
@@ -376,23 +379,23 @@ export function DefectDetailScreen() {
     >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 36, gap: 12 }}>
-            <ActivityIndicator size="large" color="#0f5cd8" />
-            <Text style={{ fontSize: 15, color: '#526277' }}>Loading defect detail...</Text>
+            <ActivityIndicator size="large" color={theme.colors.info} />
+            <Text style={{ fontSize: 15, color: theme.colors.textSecondary }}>Loading defect detail...</Text>
           </View>
         ) : null}
 
         {!isLoading && error ? (
           <View
             style={{
-              backgroundColor: '#fee2e2',
+              backgroundColor: theme.colors.dangerSoft,
               borderRadius: 14,
               borderWidth: 1,
-              borderColor: '#fecaca',
+              borderColor: theme.colors.dangerBorder,
               padding: 14,
               gap: 12,
             }}
           >
-            <Text style={{ fontSize: 14, lineHeight: 20, color: '#991b1b', fontWeight: '600' }}>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: theme.colors.dangerText, fontWeight: '600' }}>
               {error}
             </Text>
             <Pressable
@@ -402,11 +405,11 @@ export function DefectDetailScreen() {
                 borderRadius: 14,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#991b1b' }}>Try Again</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.dangerText }}>Try Again</Text>
             </Pressable>
           </View>
         ) : null}
@@ -414,14 +417,14 @@ export function DefectDetailScreen() {
         {!isLoading && !error && !defect ? (
           <View
             style={{
-              backgroundColor: '#eef4fb',
+              backgroundColor: theme.colors.background,
               borderRadius: 16,
               padding: 18,
               borderWidth: 1,
-              borderColor: '#d9e4f2',
+              borderColor: theme.colors.border,
             }}
           >
-            <Text style={{ fontSize: 17, fontWeight: '700', color: '#0f172a' }}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: theme.colors.textPrimary }}>
               Defect not found.
             </Text>
           </View>
@@ -479,7 +482,7 @@ export function DefectDetailScreen() {
                   value={maintenanceNote}
                   onChangeText={setMaintenanceNote}
                   placeholder="Add maintenance note"
-                  placeholderTextColor="#7b8aa3"
+                  placeholderTextColor={theme.colors.textMuted}
                   multiline
                   autoCapitalize="characters"
                   textAlignVertical="top"
@@ -569,7 +572,7 @@ export function DefectDetailScreen() {
                       pressed && !savingMaintenanceAction && styles.pressedButton,
                     ]}
                   >
-                    {savingMaintenanceAction === 'start' ? <ActivityIndicator color="#1d4ed8" /> : null}
+                    {savingMaintenanceAction === 'start' ? <ActivityIndicator color={theme.colors.info} /> : null}
                     <Text style={styles.maintenanceButtonBlueText}>
                       {savingMaintenanceAction === 'start' ? 'Saving...' : 'Mark In Progress'}
                     </Text>
@@ -585,7 +588,7 @@ export function DefectDetailScreen() {
                       pressed && !savingMaintenanceAction && styles.pressedButton,
                     ]}
                   >
-                    {savingMaintenanceAction === 'capture' ? <ActivityIndicator color="#10233d" /> : null}
+                    {savingMaintenanceAction === 'capture' ? <ActivityIndicator color={theme.colors.textPrimary} /> : null}
                     <Text style={styles.maintenanceButtonNeutralText}>
                       {savingMaintenanceAction === 'capture'
                         ? 'Opening Camera...'
@@ -605,7 +608,7 @@ export function DefectDetailScreen() {
                       pressed && !savingMaintenanceAction && styles.pressedButton,
                     ]}
                   >
-                    {savingMaintenanceAction === 'complete' ? <ActivityIndicator color="#166534" /> : null}
+                    {savingMaintenanceAction === 'complete' ? <ActivityIndicator color={theme.colors.success} /> : null}
                     <Text style={styles.maintenanceButtonGreenText}>
                       {savingMaintenanceAction === 'complete'
                         ? 'Completing...'
@@ -689,7 +692,7 @@ export function DefectDetailScreen() {
                 value={actionRemark}
                 onChangeText={setActionRemark}
                 placeholder="Add action taken or follow-up note"
-                placeholderTextColor="#7b8aa3"
+                placeholderTextColor={theme.colors.textMuted}
                 multiline
                 autoCapitalize="characters"
                 textAlignVertical="top"
@@ -736,6 +739,8 @@ export function DefectDetailScreen() {
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -745,6 +750,8 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function CompactFact({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.compactFact}>
       <Text style={styles.compactFactLabel}>{label}</Text>
@@ -756,6 +763,8 @@ function CompactFact({ label, value }: { label: string; value: string }) {
 }
 
 function NoteBlock({ label, value }: { label: string; value?: string | null }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.noteBlock}>
       <Text style={styles.noteLabel}>{label}</Text>
@@ -779,6 +788,8 @@ function EvidenceGrid({
   titlePrefix: string;
   onOpenImagePreview: (params: { uri: string; title?: string }) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.proofSection}>
       <View style={styles.sectionHeaderRow}>
@@ -835,6 +846,8 @@ function EvidenceGrid({
 }
 
 function StatusBadge({ status }: { status: DefectStatus }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const style = getStatusStyle(status);
 
   return (
@@ -867,6 +880,8 @@ function StatusButton({
   savingStatus: DefectStatus | null;
   onPress: (status: DefectStatus) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const isSaving = savingStatus === status;
   const isDisabled = savingStatus !== null;
   const isCurrent = currentStatus === status;
@@ -879,15 +894,15 @@ function StatusButton({
       style={({ pressed }) => [
         styles.statusButton,
         {
-          backgroundColor: isCurrent ? style.backgroundColor : '#f1f5f9',
-          borderColor: isCurrent ? style.borderColor : '#dbe3ee',
+          backgroundColor: isCurrent ? style.backgroundColor : theme.colors.surfaceMuted,
+          borderColor: isCurrent ? style.borderColor : theme.colors.border,
         },
         isDisabled && !isSaving && styles.disabledButton,
         pressed && !isDisabled && styles.pressedButton,
       ]}
     >
       {isSaving ? <ActivityIndicator color={style.color} /> : null}
-      <Text style={[styles.statusButtonText, { color: isCurrent ? style.color : '#10233d' }]}>
+      <Text style={[styles.statusButtonText, { color: isCurrent ? style.color : theme.colors.textPrimary }]}>
         {isSaving ? 'Saving...' : label}
       </Text>
     </Pressable>
@@ -903,6 +918,8 @@ function OutcomeButton({
   selectedOutcome: DefectResolutionOutcome;
   onPress: (outcome: DefectResolutionOutcome) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const isSelected = selectedOutcome === outcome;
 
   return (
@@ -1119,14 +1136,15 @@ function getImageSourceUri(image: InspectionImage | DefectEvidenceImage) {
   return source;
 }
 
-const styles = StyleSheet.create({
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
   card: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: uiTheme.radius.card,
+    backgroundColor: t.colors.card,
+    borderRadius: t.radius.card,
     padding: 12,
     gap: 10,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
+    borderColor: t.colors.border,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -1139,19 +1157,19 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   assetCodeText: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 17,
     lineHeight: 22,
     fontWeight: '800',
   },
   mutedText: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '600',
   },
   sectionTitle: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
@@ -1165,23 +1183,23 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: '47%',
     minWidth: 136,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 2,
   },
   compactFactLabel: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 10,
     lineHeight: 14,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   compactFactValue: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '700',
@@ -1193,13 +1211,13 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     flex: 1,
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 13,
     lineHeight: 18,
   },
   infoValue: {
     flex: 1.2,
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700',
@@ -1209,34 +1227,34 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   noteLabel: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
   },
   noteValue: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 14,
     lineHeight: 20,
   },
   noteValueMuted: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
   },
   noteInput: {
     minHeight: 78,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.card,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
     lineHeight: 21,
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
   },
   controlLabel: {
     flex: 1,
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
@@ -1247,26 +1265,26 @@ const styles = StyleSheet.create({
   },
   outcomeButton: {
     minHeight: 40,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    backgroundColor: uiTheme.colors.surfaceMuted,
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
+    borderColor: t.colors.border,
   },
   outcomeButtonSelected: {
-    backgroundColor: uiTheme.colors.successSoft,
-    borderColor: '#bbf7d0',
+    backgroundColor: t.colors.successSoft,
+    borderColor: t.colors.successBorder,
   },
   outcomeButtonText: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '800',
   },
   outcomeButtonTextSelected: {
-    color: uiTheme.colors.success,
+    color: t.colors.success,
   },
   proofSection: {
     gap: 8,
@@ -1282,11 +1300,11 @@ const styles = StyleSheet.create({
     minWidth: 28,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
@@ -1301,66 +1319,66 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: '47%',
     minWidth: 146,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     overflow: 'hidden',
   },
   evidenceImage: {
     width: '100%',
     height: 126,
-    backgroundColor: '#e5edf8',
+    backgroundColor: t.colors.surfaceMuted,
   },
   evidenceUnavailable: {
     height: 126,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef4fb',
+    backgroundColor: t.colors.surfaceMuted,
   },
   evidenceMeta: {
     padding: 8,
     gap: 4,
   },
   evidenceTitle: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
   },
   evidenceMetaText: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '600',
   },
   compactEmptyPanel: {
     minHeight: 48,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 10,
   },
   uploadText: {
-    color: uiTheme.colors.textSecondary,
+    color: t.colors.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '700',
   },
   smallDangerButton: {
     minHeight: 32,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff7f7',
+    backgroundColor: t.colors.dangerSoft,
     borderWidth: 1,
-    borderColor: '#fecaca',
+    borderColor: t.colors.dangerBorder,
   },
   smallDangerButtonText: {
-    color: uiTheme.colors.danger,
+    color: t.colors.danger,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
@@ -1370,7 +1388,7 @@ const styles = StyleSheet.create({
   },
   maintenanceButton: {
     minHeight: 44,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -1378,28 +1396,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   maintenanceButtonBlue: {
-    backgroundColor: '#dbeafe',
+    backgroundColor: t.colors.infoSoft,
   },
   maintenanceButtonNeutral: {
-    backgroundColor: '#e5edf8',
+    backgroundColor: t.colors.surfaceMuted,
   },
   maintenanceButtonGreen: {
-    backgroundColor: uiTheme.colors.successSoft,
+    backgroundColor: t.colors.successSoft,
   },
   maintenanceButtonBlueText: {
-    color: '#1d4ed8',
+    color: t.colors.info,
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '800',
   },
   maintenanceButtonNeutralText: {
-    color: '#10233d',
+    color: t.colors.textPrimary,
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '800',
   },
   maintenanceButtonGreenText: {
-    color: uiTheme.colors.success,
+    color: t.colors.success,
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '800',
@@ -1418,7 +1436,7 @@ const styles = StyleSheet.create({
   },
   statusButton: {
     minHeight: 42,
-    borderRadius: uiTheme.radius.card,
+    borderRadius: t.radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -1432,7 +1450,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   defectLabel: {
-    color: uiTheme.colors.textPrimary,
+    color: t.colors.textPrimary,
     fontSize: 15,
     lineHeight: 21,
     fontWeight: '800',

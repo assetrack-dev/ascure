@@ -32,8 +32,8 @@ import {
   SkeletonCard,
   StatusChip,
   WarningBanner,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import {
   EffectiveCapability,
   InspectionSummary,
@@ -313,6 +313,9 @@ function WorkspaceEntry({
   selectedWorkspaceId: MobileWorkspaceId | null;
   onSelectWorkspace: (workspaceId: MobileWorkspaceId) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   if (workspaces.length <= 1) {
     return null;
   }
@@ -346,6 +349,8 @@ function WorkspaceCard({
   selected: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const iconName = workspace.id === 'INSPECTION' ? 'clipboard' : 'tool';
 
   return (
@@ -359,7 +364,7 @@ function WorkspaceCard({
       ]}
     >
       <View style={styles.workspaceIcon}>
-        <Feather name={iconName} size={17} color={uiTheme.colors.primary} />
+        <Feather name={iconName} size={17} color={theme.colors.primary} />
       </View>
       <View style={styles.workspaceTextWrap}>
         <Text style={styles.workspaceTitle}>{workspace.label}</Text>
@@ -384,6 +389,9 @@ function InspectionWorkspaceView({
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
     <>
       {/* Scope selector — a compact pill row at the top instead of a full card. */}
@@ -448,6 +456,9 @@ function ScopeCard({
   selected: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -472,6 +483,9 @@ function InspectionQueueCard({
   item: InspectionQueueItem;
   onOpenItem: (item: InspectionQueueItem) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -487,7 +501,7 @@ function InspectionQueueCard({
         <Text style={[styles.queueTitle, { flex: 1 }]} numberOfLines={1}>
           {item.title}
         </Text>
-        <Feather name="chevron-right" size={18} color={uiTheme.colors.textMuted} />
+        <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
       </View>
       <Text style={styles.queueSubtitle} numberOfLines={2}>
         {item.subtitle}
@@ -497,6 +511,9 @@ function InspectionQueueCard({
 }
 
 function MaintenanceWorkspacePlaceholder({ onOpenDefects }: { onOpenDefects: () => void }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
     <Card>
       <View style={styles.listHeader}>
@@ -680,6 +697,8 @@ function SyncQueueSummaryCard({
   isSyncing: boolean;
   onOpen: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const activeCount = getActiveQueueCount(snapshot);
 
   if (activeCount === 0) {
@@ -704,177 +723,178 @@ function SyncQueueSummaryCard({
           {pendingCount} pending, {syncingCount} syncing, {failedCount} failed
         </Text>
       </View>
-      <Feather name="chevron-right" size={20} color={uiTheme.colors.textMuted} />
+      <Feather name="chevron-right" size={20} color={theme.colors.textMuted} />
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  listHeader: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  syncSummaryCard: {
-    minHeight: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    backgroundColor: uiTheme.colors.warningSoft,
-    padding: 14,
-  },
-  syncSummaryTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  syncSummaryTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  syncSummaryMeta: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  countText: {
-    minWidth: 36,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  workspaceGrid: {
-    gap: 10,
-  },
-  workspaceCard: {
-    minHeight: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 12,
-  },
-  workspaceCardSelected: {
-    borderColor: uiTheme.colors.primary,
-    backgroundColor: uiTheme.colors.primarySoft,
-  },
-  workspaceIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  workspaceTextWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  workspaceTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  workspaceMeta: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  scopeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  scopeCard: {
-    minHeight: 42,
-    minWidth: 88,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    paddingHorizontal: 12,
-  },
-  scopeCardSelected: {
-    borderColor: uiTheme.colors.primary,
-    backgroundColor: uiTheme.colors.primarySoft,
-  },
-  scopeTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  scopeTitleSelected: {
-    color: uiTheme.colors.primaryStrong,
-  },
-  queueGrid: {
-    gap: 10,
-  },
-  queueGroup: {
-    gap: 8,
-  },
-  queueGroupHeader: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  queueCard: {
-    minHeight: 104,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 12,
-    gap: 8,
-  },
-  queueCardHeader: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  queueTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700',
-  },
-  queueSubtitle: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  visitRowPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-    transform: [{ scale: 0.995 }],
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    listHeader: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    syncSummaryCard: {
+      minHeight: 72,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.warningBorder,
+      backgroundColor: t.colors.warningSoft,
+      padding: 14,
+    },
+    syncSummaryTextWrap: {
+      flex: 1,
+      gap: 4,
+    },
+    syncSummaryTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+    },
+    syncSummaryMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    countText: {
+      minWidth: 36,
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    workspaceGrid: {
+      gap: 10,
+    },
+    workspaceCard: {
+      minHeight: 72,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+    },
+    workspaceCardSelected: {
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.primarySoft,
+    },
+    workspaceIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    workspaceTextWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    workspaceTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+    },
+    workspaceMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    scopeGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    scopeCard: {
+      minHeight: 42,
+      minWidth: 88,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      paddingHorizontal: 12,
+    },
+    scopeCardSelected: {
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.primarySoft,
+    },
+    scopeTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    scopeTitleSelected: {
+      color: t.colors.primaryStrong,
+    },
+    queueGrid: {
+      gap: 10,
+    },
+    queueGroup: {
+      gap: 8,
+    },
+    queueGroupHeader: {
+      minHeight: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    queueCard: {
+      minHeight: 104,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+      gap: 8,
+    },
+    queueCardHeader: {
+      minHeight: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    queueTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    queueSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '500',
+    },
+    visitRowPressed: {
+      backgroundColor: t.colors.surfacePressed,
+      transform: [{ scale: 0.995 }],
+    },
+  });

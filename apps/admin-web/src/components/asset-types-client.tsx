@@ -133,7 +133,7 @@ function AssetTypeModal({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[var(--scrim)] px-4 py-6">
       <div className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>

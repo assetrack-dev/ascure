@@ -738,14 +738,14 @@ export class ReportGenerationService {
       y,
       size: 22,
       font: bold,
-      color: rgb(0.1, 0.1, 0.1),
+      color: rgb(0.086, 0.102, 0.122), // ASCURE ink #161A1F
     });
     y -= 14;
     page.drawLine({
       start: { x: left, y },
       end: { x: A4_PORTRAIT[0] - left, y },
       thickness: 1,
-      color: rgb(0.7, 0.7, 0.7),
+      color: rgb(0.773, 0.8, 0.831), // mist line #C5CCD4
     });
     y -= 40;
 

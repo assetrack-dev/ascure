@@ -1303,7 +1303,7 @@ function TemplateFormModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[var(--scrim)] px-4 py-6">
       <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
         <form onSubmit={onSubmit} className="flex min-h-0 flex-col">
           <div className="sticky top-0 z-20 border-b border-slate-200 bg-white">
@@ -1633,7 +1633,7 @@ function DuplicateTemplateModal({
   const sourceStatus = resolveTemplateStatus(template);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div className="min-w-0">

@@ -10,8 +10,8 @@ import {
   Screen,
   StatusChip,
   TextField,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import {
   getAssetRowLabels,
   getDefectAssetIds,
@@ -38,6 +38,8 @@ export function VisitAssetsScreen() {
   const route = useRoute<RootStackScreenProps<'VisitAssets'>['route']>();
   const { visitId, substationId } = route.params;
   const { token, handleUnauthorized } = useSession();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [visit, setVisit] = useState<SiteVisit | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -275,7 +277,7 @@ export function VisitAssetsScreen() {
               pressed && selectedIds.size > 0 && !isDeleting && styles.filterChipPressed,
             ]}
           >
-            {isDeleting ? <ActivityIndicator size="small" color="#dc2626" /> : null}
+            {isDeleting ? <ActivityIndicator size="small" color={theme.colors.danger} /> : null}
             <Text style={styles.bulkDeleteText}>Delete ({selectedIds.size})</Text>
           </Pressable>
         ) : null}
@@ -326,6 +328,8 @@ function AssetRow({
   selectMode: boolean;
   selected: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { title, subtitle } = getAssetRowLabels(asset);
   const state = getAssetStateChip(asset, inspected, hasDefect);
 
@@ -421,132 +425,133 @@ function matchesSearch(asset: Asset, query: string): boolean {
   return haystack.includes(normalizedQuery);
 }
 
-const styles = StyleSheet.create({
-  filterRow: {
-    marginTop: uiTheme.spacing.section,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: uiTheme.radius.pill,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  filterChipActive: {
-    borderColor: uiTheme.colors.primary,
-    backgroundColor: uiTheme.colors.primarySoft,
-  },
-  filterChipPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-  },
-  filterChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-  },
-  filterChipTextActive: {
-    color: uiTheme.colors.primaryStrong,
-  },
-  assetList: {
-    gap: 8,
-  },
-  assetRow: {
-    minHeight: 60,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-  },
-  assetRowMuted: {
-    opacity: 0.6,
-  },
-  assetRowSelected: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-  },
-  assetRowPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-  },
-  bulkBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingHorizontal: 2,
-  },
-  bulkToggle: {
-    minHeight: 38,
-    paddingHorizontal: 16,
-    borderRadius: uiTheme.radius.pill,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bulkToggleText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  bulkDelete: {
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    borderRadius: uiTheme.radius.pill,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fef2f2',
-  },
-  bulkDeleteDisabled: {
-    opacity: 0.5,
-  },
-  bulkDeleteText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#dc2626',
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: uiTheme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  checkboxChecked: {
-    borderColor: '#dc2626',
-    backgroundColor: '#dc2626',
-  },
-  checkboxTick: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  assetTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  assetTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  assetSubtitle: {
-    fontSize: 13,
-    color: uiTheme.colors.textSecondary,
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    filterRow: {
+      marginTop: t.spacing.section,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    filterChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    filterChipActive: {
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.primarySoft,
+    },
+    filterChipPressed: {
+      backgroundColor: t.colors.surfacePressed,
+    },
+    filterChipText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+    },
+    filterChipTextActive: {
+      color: t.colors.primaryStrong,
+    },
+    assetList: {
+      gap: 8,
+    },
+    assetRow: {
+      minHeight: 60,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+    },
+    assetRowMuted: {
+      opacity: 0.6,
+    },
+    assetRowSelected: {
+      backgroundColor: t.colors.dangerSoft,
+      borderColor: t.colors.dangerBorder,
+    },
+    assetRowPressed: {
+      backgroundColor: t.colors.surfacePressed,
+    },
+    bulkBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      paddingHorizontal: 2,
+    },
+    bulkToggle: {
+      minHeight: 38,
+      paddingHorizontal: 16,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    bulkToggleText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    bulkDelete: {
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 16,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+    },
+    bulkDeleteDisabled: {
+      opacity: 0.5,
+    },
+    bulkDeleteText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: t.colors.danger,
+    },
+    checkbox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: t.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 10,
+    },
+    checkboxChecked: {
+      borderColor: t.colors.danger,
+      backgroundColor: t.colors.danger,
+    },
+    checkboxTick: {
+      color: t.colors.onStatus,
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    assetTextWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    assetTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    assetSubtitle: {
+      fontSize: 13,
+      color: t.colors.textSecondary,
+    },
+  });

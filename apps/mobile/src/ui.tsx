@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -17,6 +17,10 @@ import {
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
+import { Theme, uiTheme, useTheme } from './theme';
+
+export { uiTheme } from './theme';
+export type { Theme, ThemeMode } from './theme';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
@@ -28,60 +32,11 @@ type HeaderAction = {
   disabled?: boolean;
 };
 
-export const uiTheme = {
-  colors: {
-    primary: '#0F766E',
-    primaryStrong: '#115E59',
-    primarySoft: '#CCFBF1',
-    background: '#F5F7FA',
-    card: '#FFFFFF',
-    border: '#E5E7EB',
-    textPrimary: '#111827',
-    textSecondary: '#6B7280',
-    textMuted: '#9CA3AF',
-    textOnPrimary: '#FFFFFF',
-    surfaceMuted: '#F9FAFB',
-    surfacePressed: '#F3F4F6',
-    danger: '#B91C1C',
-    dangerSoft: '#FEF2F2',
-    dangerBorder: '#FECACA',
-    success: '#166534',
-    successSoft: '#ECFDF5',
-    successBorder: '#BBF7D0',
-    warning: '#92400E',
-    warningSoft: '#FFFBEB',
-    warningBorder: '#FDE68A',
-    info: '#1D4ED8',
-    infoSoft: '#EFF6FF',
-    infoBorder: '#BFDBFE',
-  },
-  radius: {
-    card: 12,
-    control: 10,
-    pill: 999,
-  },
-  spacing: {
-    screen: 16,
-    section: 12,
-    card: 12,
-  },
-  shadow: {
-    card: {
-      shadowColor: '#0F172A',
-      shadowOpacity: 0.06,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 2,
-    },
-    raised: {
-      shadowColor: '#0F172A',
-      shadowOpacity: 0.1,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 6,
-    },
-  },
-} as const;
+function useStyles() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return { theme, styles };
+}
 
 export function Screen({
   title,
@@ -106,6 +61,7 @@ export function Screen({
   scroll?: boolean;
   keyboardAware?: boolean;
 }) {
+  const { theme, styles } = useStyles();
   const headerRightActions = rightActions ?? (rightAction ? [rightAction] : []);
   const content = scroll ? (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -117,7 +73,7 @@ export function Screen({
 
   const body = (
     <SafeAreaView style={styles.safeArea}>
-      <ExpoStatusBar style="dark" />
+      <ExpoStatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
       <View style={styles.screen}>
         <View style={styles.header}>
           <View style={styles.topBar}>
@@ -164,6 +120,7 @@ export function HeaderIconButton({
   accessibilityLabel,
   disabled = false,
 }: HeaderAction) {
+  const { styles } = useStyles();
   return (
     <Pressable
       accessibilityRole="button"
@@ -190,22 +147,27 @@ const HEADER_ICON_GLYPHS: Record<HeaderIconName, keyof typeof Feather.glyphMap> 
 };
 
 function HeaderIcon({ name }: { name: HeaderIconName }) {
-  return <Feather name={HEADER_ICON_GLYPHS[name]} size={22} color={uiTheme.colors.textPrimary} />;
+  const theme = useTheme();
+  return <Feather name={HEADER_ICON_GLYPHS[name]} size={22} color={theme.colors.textPrimary} />;
 }
 
 export function Card({ children }: { children: ReactNode }) {
+  const { styles } = useStyles();
   return <View style={styles.card}>{children}</View>;
 }
 
 export function SectionTitle({ children }: { children: ReactNode }) {
+  const { styles } = useStyles();
   return <Text style={styles.sectionTitle}>{children}</Text>;
 }
 
 export function BodyText({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
+  const { styles } = useStyles();
   return <Text style={muted ? styles.bodyMuted : styles.bodyText}>{children}</Text>;
 }
 
 export function ErrorBanner({ message }: { message?: string | null }) {
+  const { styles } = useStyles();
   if (!message) {
     return null;
   }
@@ -218,6 +180,7 @@ export function ErrorBanner({ message }: { message?: string | null }) {
 }
 
 export function SuccessBanner({ message }: { message?: string | null }) {
+  const { styles } = useStyles();
   if (!message) {
     return null;
   }
@@ -230,6 +193,7 @@ export function SuccessBanner({ message }: { message?: string | null }) {
 }
 
 export function WarningBanner({ message }: { message?: string | null }) {
+  const { styles } = useStyles();
   if (!message) {
     return null;
   }
@@ -242,19 +206,21 @@ export function WarningBanner({ message }: { message?: string | null }) {
 }
 
 export function LoadingBlock({ label }: { label: string }) {
+  const { theme, styles } = useStyles();
   return (
     <View style={styles.loadingBlock}>
-      <ActivityIndicator size="large" color={uiTheme.colors.primary} />
+      <ActivityIndicator size="large" color={theme.colors.primary} />
       <Text style={styles.loadingText}>{label}</Text>
     </View>
   );
 }
 
 export function LoadingScreen({ label }: { label: string }) {
+  const { theme, styles } = useStyles();
   return (
     <SafeAreaView style={styles.loadingScreen}>
-      <ExpoStatusBar style="dark" />
-      <ActivityIndicator size="large" color={uiTheme.colors.primary} />
+      <ExpoStatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
+      <ActivityIndicator size="large" color={theme.colors.primary} />
       <Text style={styles.loadingScreenText}>{label}</Text>
     </SafeAreaView>
   );
@@ -263,12 +229,13 @@ export function LoadingScreen({ label }: { label: string }) {
 export function Skeleton({
   height = 14,
   width = '100%',
-  radius = uiTheme.radius.control,
+  radius,
 }: {
   height?: number;
   width?: DimensionValue;
   radius?: number;
 }) {
+  const theme = useTheme();
   const pulse = useRef(new Animated.Value(0.5)).current;
 
   useEffect(() => {
@@ -289,8 +256,8 @@ export function Skeleton({
       style={{
         height,
         width,
-        borderRadius: radius,
-        backgroundColor: uiTheme.colors.surfacePressed,
+        borderRadius: radius ?? theme.radius.control,
+        backgroundColor: theme.colors.surfacePressed,
         opacity: pulse,
       }}
     />
@@ -298,6 +265,7 @@ export function Skeleton({
 }
 
 export function SkeletonCard() {
+  const { styles } = useStyles();
   return (
     <View style={styles.card}>
       <Skeleton height={16} width="55%" />
@@ -316,11 +284,12 @@ export function EmptyState({
   description: string;
   icon?: keyof typeof Feather.glyphMap;
 }) {
+  const { theme, styles } = useStyles();
   return (
     <View style={styles.emptyState}>
       {icon ? (
         <View style={styles.emptyIconCircle}>
-          <Feather name={icon} size={22} color={uiTheme.colors.textSecondary} />
+          <Feather name={icon} size={22} color={theme.colors.textSecondary} />
         </View>
       ) : null}
       <Text style={styles.emptyTitle}>{title}</Text>
@@ -342,6 +311,7 @@ export function AppButton({
   disabled?: boolean;
   loading?: boolean;
 }) {
+  const { theme, styles } = useStyles();
   return (
     <Pressable
       disabled={disabled || loading}
@@ -356,7 +326,11 @@ export function AppButton({
     >
       {loading ? (
         <ActivityIndicator
-          color={variant === 'secondary' || variant === 'ghost' ? uiTheme.colors.primary : '#ffffff'}
+          color={
+            variant === 'secondary' || variant === 'ghost'
+              ? theme.colors.primary
+              : theme.colors.textOnPrimary
+          }
         />
       ) : null}
       <Text style={[styles.buttonText, styles[buttonLabelStyles[variant]]]}>{label}</Text>
@@ -373,6 +347,7 @@ export function InlineButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { styles } = useStyles();
   return (
     <Pressable disabled={disabled} onPress={onPress} style={styles.inlineButton}>
       <Text style={[styles.inlineButtonText, disabled && styles.inlineButtonDisabled]}>{label}</Text>
@@ -401,6 +376,7 @@ export function TextField({
   multiline?: boolean;
   autoCapitalize?: TextInputProps['autoCapitalize'];
 }) {
+  const { theme, styles } = useStyles();
   return (
     <View style={styles.fieldWrap}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -409,7 +385,7 @@ export function TextField({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={uiTheme.colors.textMuted}
+        placeholderTextColor={theme.colors.textMuted}
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         editable={editable}
@@ -443,6 +419,7 @@ export function Dropdown({
   onSelect: (value: string) => void;
   disabled?: boolean;
 }) {
+  const { theme, styles } = useStyles();
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -482,7 +459,7 @@ export function Dropdown({
         <Feather
           name={isOpen ? 'chevron-up' : 'chevron-down'}
           size={18}
-          color={uiTheme.colors.textSecondary}
+          color={theme.colors.textSecondary}
         />
       </Pressable>
 
@@ -490,13 +467,13 @@ export function Dropdown({
         <View style={styles.dropdownPanel}>
           {showSearch ? (
             <View style={styles.dropdownSearchWrap}>
-              <Feather name="search" size={16} color={uiTheme.colors.textMuted} />
+              <Feather name="search" size={16} color={theme.colors.textMuted} />
               <TextInput
                 style={styles.dropdownSearchInput}
                 value={query}
                 onChangeText={setQuery}
                 placeholder="Search..."
-                placeholderTextColor={uiTheme.colors.textMuted}
+                placeholderTextColor={theme.colors.textMuted}
                 autoCapitalize="none"
               />
             </View>
@@ -534,7 +511,7 @@ export function Dropdown({
                       ) : null}
                     </View>
                     {isSelected ? (
-                      <Feather name="check" size={16} color={uiTheme.colors.primary} />
+                      <Feather name="check" size={16} color={theme.colors.primary} />
                     ) : null}
                   </Pressable>
                 );
@@ -554,6 +531,7 @@ export function KeyValueRow({
   label: string;
   value: ReactNode;
 }) {
+  const { styles } = useStyles();
   return (
     <View style={styles.keyValueRow}>
       <Text style={styles.keyValueLabel}>{label}</Text>
@@ -571,6 +549,7 @@ export function StatusChip({
   label: string;
   tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 }) {
+  const { styles } = useStyles();
   return (
     <View
       style={[
@@ -607,6 +586,7 @@ export function SelectCard({
   onPress: () => void;
   description?: string | null;
 }) {
+  const { styles } = useStyles();
   return (
     <Pressable
       onPress={onPress}
@@ -639,503 +619,506 @@ const buttonLabelStyles = {
   ghost: 'buttonTextGhost',
 } as const;
 
-const styles = StyleSheet.create({
-  keyboardRoot: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-  },
-  safeArea: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-  },
-  header: {
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 8,
-    gap: 6,
-  },
-  topBar: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerSide: {
-    width: 84,
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-  },
-  headerTextWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerSideRight: {
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  title: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: uiTheme.colors.textSecondary,
-    textAlign: 'center',
-  },
-  scrollContent: {
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 128,
-    gap: uiTheme.spacing.section,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: uiTheme.spacing.screen,
-    gap: uiTheme.spacing.section,
-  },
-  footer: {
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.background,
-    gap: 12,
-  },
-  card: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: uiTheme.radius.card,
-    padding: 14,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    ...uiTheme.shadow.card,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  bodyText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: uiTheme.colors.textPrimary,
-  },
-  bodyMuted: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: uiTheme.colors.textSecondary,
-  },
-  errorBanner: {
-    backgroundColor: uiTheme.colors.dangerSoft,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    padding: 14,
-  },
-  errorText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#991b1b',
-    fontWeight: '600',
-  },
-  successBanner: {
-    backgroundColor: uiTheme.colors.successSoft,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    padding: 14,
-  },
-  successText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#166534',
-    fontWeight: '600',
-  },
-  warningBanner: {
-    backgroundColor: uiTheme.colors.warningSoft,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    padding: 14,
-  },
-  warningText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#92400e',
-    fontWeight: '600',
-  },
-  loadingBlock: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 24,
-    gap: 12,
-  },
-  loadingText: {
-    fontSize: 15,
-    color: uiTheme.colors.textSecondary,
-  },
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    paddingHorizontal: 24,
-  },
-  loadingScreenText: {
-    fontSize: 16,
-    color: uiTheme.colors.textSecondary,
-    textAlign: 'center',
-  },
-  emptyState: {
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderRadius: uiTheme.radius.card,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    gap: 8,
-  },
-  emptyIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    marginBottom: 2,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  emptyDescription: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: uiTheme.colors.textSecondary,
-  },
-  button: {
-    minHeight: 46,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-  },
-  buttonPrimary: {
-    backgroundColor: uiTheme.colors.primary,
-  },
-  buttonSecondary: {
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  buttonDanger: {
-    backgroundColor: uiTheme.colors.danger,
-  },
-  buttonGhost: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonPressed: {
-    transform: [{ scale: 0.99 }],
-  },
-  buttonPrimaryPressed: {
-    backgroundColor: uiTheme.colors.primaryStrong,
-  },
-  buttonText: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  buttonTextPrimary: {
-    color: '#ffffff',
-  },
-  buttonTextSecondary: {
-    color: uiTheme.colors.textPrimary,
-  },
-  buttonTextGhost: {
-    color: uiTheme.colors.textPrimary,
-  },
-  inlineButton: {
-    minHeight: 36,
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-  },
-  inlineButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: uiTheme.colors.primary,
-  },
-  inlineButtonDisabled: {
-    color: uiTheme.colors.textMuted,
-  },
-  fieldWrap: {
-    gap: 6,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-  },
-  textInput: {
-    minHeight: 46,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: uiTheme.colors.textPrimary,
-  },
-  textArea: {
-    minHeight: 78,
-    textAlignVertical: 'top',
-  },
-  inputDisabled: {
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    color: uiTheme.colors.textSecondary,
-  },
-  keyValueRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  keyValueLabel: {
-    flex: 1,
-    fontSize: 13,
-    color: uiTheme.colors.textSecondary,
-  },
-  keyValueValueWrap: {
-    flex: 1.2,
-    alignItems: 'flex-end',
-  },
-  keyValueValue: {
-    fontSize: 13,
-    color: uiTheme.colors.textPrimary,
-    fontWeight: '500',
-    textAlign: 'right',
-  },
-  chip: {
-    alignSelf: 'flex-start',
-    borderRadius: uiTheme.radius.pill,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  chipSuccess: {
-    backgroundColor: uiTheme.colors.successSoft,
-    borderColor: '#BBF7D0',
-  },
-  chipWarning: {
-    backgroundColor: uiTheme.colors.warningSoft,
-    borderColor: '#FDE68A',
-  },
-  chipDanger: {
-    backgroundColor: uiTheme.colors.dangerSoft,
-    borderColor: uiTheme.colors.dangerBorder,
-  },
-  chipInfo: {
-    backgroundColor: uiTheme.colors.infoSoft,
-    borderColor: uiTheme.colors.infoBorder,
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  chipTextSuccess: {
-    color: '#166534',
-  },
-  chipTextWarning: {
-    color: '#92400e',
-  },
-  chipTextDanger: {
-    color: uiTheme.colors.danger,
-  },
-  chipTextInfo: {
-    color: uiTheme.colors.info,
-  },
-  selectCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 10,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-  },
-  selectCardSelected: {
-    borderColor: uiTheme.colors.primary,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  selectCardPressed: {
-    opacity: 0.92,
-  },
-  selectIndicator: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: uiTheme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  selectIndicatorInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: uiTheme.colors.primary,
-  },
-  selectTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  selectTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  selectDescription: {
-    fontSize: 12,
-    color: uiTheme.colors.textSecondary,
-  },
-  dropdownControl: {
-    minHeight: 46,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  dropdownControlOpen: {
-    borderColor: uiTheme.colors.primary,
-  },
-  dropdownControlPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-  },
-  dropdownValue: {
-    flex: 1,
-    fontSize: 15,
-    color: uiTheme.colors.textPrimary,
-    fontWeight: '600',
-  },
-  dropdownPlaceholder: {
-    color: uiTheme.colors.textMuted,
-    fontWeight: '400',
-  },
-  dropdownPanel: {
-    marginTop: 6,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    overflow: 'hidden',
-    ...uiTheme.shadow.card,
-  },
-  dropdownSearchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  dropdownSearchInput: {
-    flex: 1,
-    minHeight: 42,
-    fontSize: 14,
-    color: uiTheme.colors.textPrimary,
-    paddingVertical: 8,
-  },
-  dropdownList: {
-    maxHeight: 250,
-  },
-  dropdownEmptyText: {
-    fontSize: 13,
-    color: uiTheme.colors.textSecondary,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-  },
-  dropdownOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: uiTheme.colors.surfaceMuted,
-  },
-  dropdownOptionSelected: {
-    backgroundColor: uiTheme.colors.primarySoft,
-  },
-  dropdownOptionPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-  },
-  dropdownOptionTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  dropdownOptionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  dropdownOptionDescription: {
-    fontSize: 12,
-    color: uiTheme.colors.textSecondary,
-  },
-  headerIconButton: {
-    minWidth: 38,
-    minHeight: 38,
-    width: 38,
-    height: 38,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  headerIconButtonPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-    borderColor: uiTheme.colors.border,
-  },
-  headerIconButtonDisabled: {
-    opacity: 0.48,
-  },
-});
+function createStyles(t: Theme) {
+  const c = t.colors;
+  return StyleSheet.create({
+    keyboardRoot: {
+      flex: 1,
+      backgroundColor: c.background,
+    },
+    safeArea: {
+      flex: 1,
+      backgroundColor: c.background,
+      paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+    },
+    screen: {
+      flex: 1,
+      backgroundColor: c.background,
+    },
+    header: {
+      paddingHorizontal: t.spacing.screen,
+      paddingBottom: 8,
+      gap: 6,
+    },
+    topBar: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    headerSide: {
+      width: 84,
+      flexDirection: 'row',
+      gap: 6,
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+    headerTextWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerSideRight: {
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+    },
+    headerActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    title: {
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '700',
+      color: c.textPrimary,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontSize: 12,
+      lineHeight: 16,
+      color: c.textSecondary,
+      textAlign: 'center',
+    },
+    scrollContent: {
+      paddingHorizontal: t.spacing.screen,
+      paddingBottom: 128,
+      gap: t.spacing.section,
+    },
+    content: {
+      flex: 1,
+      paddingHorizontal: t.spacing.screen,
+      gap: t.spacing.section,
+    },
+    footer: {
+      paddingHorizontal: t.spacing.screen,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+      backgroundColor: c.background,
+      gap: 12,
+    },
+    card: {
+      backgroundColor: c.card,
+      borderRadius: t.radius.card,
+      padding: 14,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: c.border,
+      ...t.shadow.card,
+    },
+    sectionTitle: {
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '600',
+      color: c.textPrimary,
+    },
+    bodyText: {
+      fontSize: 15,
+      lineHeight: 22,
+      color: c.textPrimary,
+    },
+    bodyMuted: {
+      fontSize: 14,
+      lineHeight: 21,
+      color: c.textSecondary,
+    },
+    errorBanner: {
+      backgroundColor: c.dangerSoft,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: c.dangerBorder,
+      padding: 14,
+    },
+    errorText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: c.dangerText,
+      fontWeight: '600',
+    },
+    successBanner: {
+      backgroundColor: c.successSoft,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: c.successBorder,
+      padding: 14,
+    },
+    successText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: c.successText,
+      fontWeight: '600',
+    },
+    warningBanner: {
+      backgroundColor: c.warningSoft,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: c.warningBorder,
+      padding: 14,
+    },
+    warningText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: c.warningText,
+      fontWeight: '600',
+    },
+    loadingBlock: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 24,
+      gap: 12,
+    },
+    loadingText: {
+      fontSize: 15,
+      color: c.textSecondary,
+    },
+    loadingScreen: {
+      flex: 1,
+      backgroundColor: c.background,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 16,
+      paddingHorizontal: 24,
+    },
+    loadingScreenText: {
+      fontSize: 16,
+      color: c.textSecondary,
+      textAlign: 'center',
+    },
+    emptyState: {
+      backgroundColor: c.surfaceMuted,
+      borderRadius: t.radius.card,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: c.border,
+      gap: 8,
+    },
+    emptyIconCircle: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      marginBottom: 2,
+    },
+    emptyTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: c.textPrimary,
+    },
+    emptyDescription: {
+      fontSize: 14,
+      lineHeight: 21,
+      color: c.textSecondary,
+    },
+    button: {
+      minHeight: 46,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 10,
+      paddingHorizontal: 16,
+    },
+    buttonPrimary: {
+      backgroundColor: c.primary,
+    },
+    buttonSecondary: {
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    buttonDanger: {
+      backgroundColor: c.danger,
+    },
+    buttonGhost: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    buttonDisabled: {
+      opacity: 0.6,
+    },
+    buttonPressed: {
+      transform: [{ scale: 0.99 }],
+    },
+    buttonPrimaryPressed: {
+      backgroundColor: c.primaryStrong,
+    },
+    buttonText: {
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    buttonTextPrimary: {
+      color: c.textOnPrimary,
+    },
+    buttonTextSecondary: {
+      color: c.textPrimary,
+    },
+    buttonTextGhost: {
+      color: c.textPrimary,
+    },
+    inlineButton: {
+      minHeight: 36,
+      justifyContent: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 6,
+    },
+    inlineButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: c.primary,
+    },
+    inlineButtonDisabled: {
+      color: c.textMuted,
+    },
+    fieldWrap: {
+      gap: 6,
+    },
+    fieldLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: c.textSecondary,
+    },
+    textInput: {
+      minHeight: 46,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.card,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 15,
+      color: c.textPrimary,
+    },
+    textArea: {
+      minHeight: 78,
+      textAlignVertical: 'top',
+    },
+    inputDisabled: {
+      backgroundColor: c.surfaceMuted,
+      color: c.textSecondary,
+    },
+    keyValueRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    keyValueLabel: {
+      flex: 1,
+      fontSize: 13,
+      color: c.textSecondary,
+    },
+    keyValueValueWrap: {
+      flex: 1.2,
+      alignItems: 'flex-end',
+    },
+    keyValueValue: {
+      fontSize: 13,
+      color: c.textPrimary,
+      fontWeight: '500',
+      textAlign: 'right',
+    },
+    chip: {
+      alignSelf: 'flex-start',
+      borderRadius: t.radius.pill,
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+      backgroundColor: c.surfaceMuted,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    chipSuccess: {
+      backgroundColor: c.successSoft,
+      borderColor: c.successBorder,
+    },
+    chipWarning: {
+      backgroundColor: c.warningSoft,
+      borderColor: c.warningBorder,
+    },
+    chipDanger: {
+      backgroundColor: c.dangerSoft,
+      borderColor: c.dangerBorder,
+    },
+    chipInfo: {
+      backgroundColor: c.infoSoft,
+      borderColor: c.infoBorder,
+    },
+    chipText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: c.textPrimary,
+    },
+    chipTextSuccess: {
+      color: c.successText,
+    },
+    chipTextWarning: {
+      color: c.warningText,
+    },
+    chipTextDanger: {
+      color: c.dangerText,
+    },
+    chipTextInfo: {
+      color: c.infoText,
+    },
+    selectCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 10,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.card,
+    },
+    selectCardSelected: {
+      borderColor: c.primary,
+      backgroundColor: c.surfaceMuted,
+    },
+    selectCardPressed: {
+      opacity: 0.92,
+    },
+    selectIndicator: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 2,
+      borderColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    selectIndicatorInner: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: c.primary,
+    },
+    selectTextWrap: {
+      flex: 1,
+      gap: 4,
+    },
+    selectTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: c.textPrimary,
+    },
+    selectDescription: {
+      fontSize: 12,
+      color: c.textSecondary,
+    },
+    dropdownControl: {
+      minHeight: 46,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.card,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    dropdownControlOpen: {
+      borderColor: c.primary,
+    },
+    dropdownControlPressed: {
+      backgroundColor: c.surfacePressed,
+    },
+    dropdownValue: {
+      flex: 1,
+      fontSize: 15,
+      color: c.textPrimary,
+      fontWeight: '600',
+    },
+    dropdownPlaceholder: {
+      color: c.textMuted,
+      fontWeight: '400',
+    },
+    dropdownPanel: {
+      marginTop: 6,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.card,
+      overflow: 'hidden',
+      ...t.shadow.card,
+    },
+    dropdownSearchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: c.border,
+      backgroundColor: c.surfaceMuted,
+    },
+    dropdownSearchInput: {
+      flex: 1,
+      minHeight: 42,
+      fontSize: 14,
+      color: c.textPrimary,
+      paddingVertical: 8,
+    },
+    dropdownList: {
+      maxHeight: 250,
+    },
+    dropdownEmptyText: {
+      fontSize: 13,
+      color: c.textSecondary,
+      paddingHorizontal: 12,
+      paddingVertical: 14,
+    },
+    dropdownOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: c.surfaceMuted,
+    },
+    dropdownOptionSelected: {
+      backgroundColor: c.primarySoft,
+    },
+    dropdownOptionPressed: {
+      backgroundColor: c.surfacePressed,
+    },
+    dropdownOptionTextWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    dropdownOptionLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: c.textPrimary,
+    },
+    dropdownOptionDescription: {
+      fontSize: 12,
+      color: c.textSecondary,
+    },
+    headerIconButton: {
+      minWidth: 38,
+      minHeight: 38,
+      width: 38,
+      height: 38,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: 'transparent',
+    },
+    headerIconButtonPressed: {
+      backgroundColor: c.surfacePressed,
+      borderColor: c.border,
+    },
+    headerIconButtonDisabled: {
+      opacity: 0.48,
+    },
+  });
+}

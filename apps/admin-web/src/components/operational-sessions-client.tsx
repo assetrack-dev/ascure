@@ -338,7 +338,7 @@ function SessionCreateModal({
   );
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/45 px-4 py-6">
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-[var(--scrim)] px-4 py-6">
       <div className="mx-auto w-full max-w-4xl rounded-lg border border-slate-200 bg-white shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>

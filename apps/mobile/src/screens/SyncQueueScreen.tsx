@@ -14,8 +14,8 @@ import {
   SectionTitle,
   SuccessBanner,
   WarningBanner,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import {
   CompletedInspectionSyncRecord,
   CompletedVisitCompletionSyncRecord,
@@ -30,6 +30,8 @@ import {
 import { formatDateTime } from '../utils';
 
 export function SyncQueueScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<AppDrawerScreenProps<'SyncQueue'>['navigation']>();
   const { snapshot, isSyncing, isOffline, runQueueSync } = useSync();
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +174,8 @@ function QueueSection({
   emptyText: string;
   children: ReactNode;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const hasChildren = Children.count(children) > 0;
 
   return (
@@ -185,6 +189,8 @@ function QueueSection({
 }
 
 function QueueItemCard({ item }: { item: OfflineInspectionQueueItem }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.queueCard}>
       <View style={styles.itemHeader}>
@@ -212,6 +218,8 @@ function QueueItemCard({ item }: { item: OfflineInspectionQueueItem }) {
 }
 
 function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueItem }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.queueCard}>
       <View style={styles.itemHeader}>
@@ -240,6 +248,8 @@ function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueI
 }
 
 function CompletedQueueCard({ record }: { record: CompletedInspectionSyncRecord }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.queueCard}>
       <View style={styles.itemHeader}>
@@ -263,6 +273,8 @@ function CompletedVisitCompletionCard({
 }: {
   record: CompletedVisitCompletionSyncRecord;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.queueCard}>
       <View style={styles.itemHeader}>
@@ -281,6 +293,8 @@ function CompletedVisitCompletionCard({
 }
 
 function QueueStat({ label, value }: { label: string; value: number }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.statBox}>
       <Text style={styles.statValue}>{value}</Text>
@@ -290,6 +304,8 @@ function QueueStat({ label, value }: { label: string; value: number }) {
 }
 
 function StatusBadge({ status }: { status: SyncQueueDisplayStatus }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View
       style={[
@@ -345,138 +361,139 @@ function getQueueSummaryStatus({
   return 'COMPLETED';
 }
 
-const styles = StyleSheet.create({
-  statusCard: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    padding: 20,
-    paddingBottom: 22,
-  },
-  summaryHeader: {
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 20,
-    alignItems: 'stretch',
-  },
-  retryActionWrap: {
-    minHeight: 52,
-    marginTop: 20,
-    width: '100%',
-  },
-  statBox: {
-    width: '47%',
-    minHeight: 96,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    padding: 12,
-    justifyContent: 'center',
-    gap: 3,
-  },
-  statValue: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  statLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  queueList: {
-    gap: 10,
-  },
-  queueCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 12,
-    gap: 10,
-  },
-  itemHeader: {
-    minHeight: 42,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  itemTitleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  assetCode: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  assetName: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-    color: uiTheme.colors.textSecondary,
-  },
-  inlineError: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: uiTheme.colors.dangerSoft,
-    padding: 10,
-  },
-  inlineErrorText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-    color: '#991B1B',
-  },
-  statusBadge: {
-    borderRadius: uiTheme.radius.pill,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    backgroundColor: uiTheme.colors.warningSoft,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusCompleted: {
-    borderColor: '#BBF7D0',
-    backgroundColor: uiTheme.colors.successSoft,
-  },
-  statusSyncing: {
-    borderColor: '#C7D2FE',
-    backgroundColor: '#EEF2FF',
-  },
-  statusFailed: {
-    borderColor: '#FECACA',
-    backgroundColor: uiTheme.colors.dangerSoft,
-  },
-  statusText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: uiTheme.colors.warning,
-  },
-  statusTextCompleted: {
-    color: uiTheme.colors.success,
-  },
-  statusTextSyncing: {
-    color: '#3730A3',
-  },
-  statusTextFailed: {
-    color: uiTheme.colors.danger,
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    statusCard: {
+      backgroundColor: t.colors.card,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: 20,
+      paddingBottom: 22,
+    },
+    summaryHeader: {
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    statsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      marginTop: 20,
+      alignItems: 'stretch',
+    },
+    retryActionWrap: {
+      minHeight: 52,
+      marginTop: 20,
+      width: '100%',
+    },
+    statBox: {
+      width: '47%',
+      minHeight: 96,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      padding: 12,
+      justifyContent: 'center',
+      gap: 3,
+    },
+    statValue: {
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    statLabel: {
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+      textTransform: 'uppercase',
+    },
+    queueList: {
+      gap: 10,
+    },
+    queueCard: {
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+      gap: 10,
+    },
+    itemHeader: {
+      minHeight: 42,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    itemTitleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    assetCode: {
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    assetName: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '500',
+      color: t.colors.textSecondary,
+    },
+    inlineError: {
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+      padding: 10,
+    },
+    inlineErrorText: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+      color: t.colors.dangerText,
+    },
+    statusBadge: {
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.warningBorder,
+      backgroundColor: t.colors.warningSoft,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    statusCompleted: {
+      borderColor: t.colors.successBorder,
+      backgroundColor: t.colors.successSoft,
+    },
+    statusSyncing: {
+      borderColor: t.colors.infoBorder,
+      backgroundColor: t.colors.infoSoft,
+    },
+    statusFailed: {
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+    },
+    statusText: {
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+      color: t.colors.warningText,
+    },
+    statusTextCompleted: {
+      color: t.colors.successText,
+    },
+    statusTextSyncing: {
+      color: t.colors.infoText,
+    },
+    statusTextFailed: {
+      color: t.colors.dangerText,
+    },
+  });

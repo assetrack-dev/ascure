@@ -7,7 +7,8 @@ export default {
     scheme: 'ascure',
     version: '1.1.0',
     orientation: 'portrait',
-    userInterfaceStyle: 'light',
+    userInterfaceStyle: 'automatic',
+    icon: './assets/brand/monogram.png',
 
     extra: {
       eas: {
@@ -16,8 +17,16 @@ export default {
     },
 
     splash: {
+      image: './assets/brand/monogram.png',
+      imageWidth: 160,
       resizeMode: 'contain',
-      backgroundColor: '#f4f7fb',
+      backgroundColor: '#E9ECEF',
+      dark: {
+        image: './assets/brand/monogram.png',
+        imageWidth: 160,
+        resizeMode: 'contain',
+        backgroundColor: '#0E1116',
+      },
     },
 
     assetBundlePatterns: ['**/*'],
@@ -49,6 +58,10 @@ export default {
       package: 'local.ascure.field',
       versionCode: 2,
       usesCleartextTraffic: true,
+      adaptiveIcon: {
+        foregroundImage: './assets/brand/monogram.png',
+        backgroundColor: '#E9ECEF',
+      },
       permissions: ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION'],
       config: {
         googleMaps: {

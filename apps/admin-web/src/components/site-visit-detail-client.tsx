@@ -337,21 +337,21 @@ function GisPanel({ visit }: { visit: SiteVisitDetail }) {
           </span>
         </div>
 
-        <div className="mt-5 h-56 overflow-hidden rounded-lg border border-slate-200 bg-slate-950">
+        <div className="mt-5 h-56 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--chrome)]">
           <div
             className="h-full w-full"
             style={{
               backgroundImage:
-                "linear-gradient(rgba(20,184,166,0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(20,184,166,0.2) 1px, transparent 1px)",
+                "linear-gradient(rgba(233,236,239,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(233,236,239,0.12) 1px, transparent 1px)",
               backgroundSize: "28px 28px",
             }}
           >
             <div className="flex h-full items-center justify-center px-5 text-center">
               <div>
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-teal-300/40 bg-teal-300/10 text-teal-100">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--chrome-line-strong)] bg-[var(--chrome-active)] text-[var(--on-chrome)]">
                   <MapPin size={20} />
                 </div>
-                <p className="mt-3 text-sm font-semibold text-teal-50">
+                <p className="mt-3 text-sm font-semibold text-[var(--on-chrome)]">
                   {hasCoordinates
                     ? `${visit.checkInLatitude?.toFixed(5)}, ${visit.checkInLongitude?.toFixed(5)}`
                     : "No check-in coordinate"}

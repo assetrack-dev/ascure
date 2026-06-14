@@ -17,8 +17,8 @@ import {
   SectionTitle,
   StatusChip,
   TextField,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 
 export function DefectListScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'DefectList'>['navigation']>();
@@ -153,6 +153,8 @@ function DefectCard({
   onOpenDefect: () => void;
   onOpenInspection: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       onPress={onOpenDefect}
@@ -238,73 +240,74 @@ function createRemarkPreview(remark?: string | null) {
   return normalized.length > 120 ? `${normalized.slice(0, 117).trim()}...` : normalized;
 }
 
-const styles = StyleSheet.create({
-  defectCard: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: uiTheme.radius.card,
-    padding: 14,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  defectCardPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-  },
-  defectHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  defectTitleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  defectAssetCode: {
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  defectAssetType: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: uiTheme.colors.textSecondary,
-  },
-  detailGroup: {
-    gap: 5,
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-  },
-  detailValue: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  remarkText: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: uiTheme.colors.textSecondary,
-  },
-  remarkTextMuted: {
-    color: uiTheme.colors.textMuted,
-  },
-  inspectionButton: {
-    minHeight: 48,
-    borderRadius: uiTheme.radius.control,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.primary,
-  },
-  inspectionButtonPressed: {
-    opacity: 0.9,
-  },
-  inspectionButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    defectCard: {
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.card,
+      padding: 14,
+      gap: 12,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    defectCardPressed: {
+      backgroundColor: t.colors.surfacePressed,
+    },
+    defectHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    defectTitleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    defectAssetCode: {
+      fontSize: 16,
+      lineHeight: 21,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    defectAssetType: {
+      fontSize: 13,
+      lineHeight: 18,
+      color: t.colors.textSecondary,
+    },
+    detailGroup: {
+      gap: 5,
+    },
+    detailLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+    },
+    detailValue: {
+      fontSize: 15,
+      lineHeight: 22,
+      fontWeight: '600',
+      color: t.colors.textPrimary,
+    },
+    remarkText: {
+      fontSize: 14,
+      lineHeight: 21,
+      color: t.colors.textSecondary,
+    },
+    remarkTextMuted: {
+      color: t.colors.textMuted,
+    },
+    inspectionButton: {
+      minHeight: 48,
+      borderRadius: t.radius.control,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.primary,
+    },
+    inspectionButtonPressed: {
+      opacity: 0.9,
+    },
+    inspectionButtonText: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: t.colors.textOnPrimary,
+    },
+  });

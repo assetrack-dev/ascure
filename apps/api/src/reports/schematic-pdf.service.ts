@@ -7,7 +7,7 @@ import { NetworkService } from '../assets/network.service';
 
 // Same palette as the admin schematic, so the PDF reads like the on-screen view.
 const FEEDER_COLORS = [
-  '#0F766E',
+  '#2DD4BF',
   '#2563EB',
   '#9333EA',
   '#C026D3',

@@ -1,56 +1,51 @@
-// ASCURE brand tokens — canonical source for the mobile app (apps/mobile).
-// Direction: "operational instrument". Shaped to drop into apps/mobile/src/ui.tsx `uiTheme`.
-// Fonts require loading via expo-font (e.g. @expo-google-fonts/space-grotesk, /inter, /jetbrains-mono).
+// ASCURE brand tokens — "Ink on Mist" (v2). Canonical reference mirror.
+// LIVE source for mobile is apps/mobile/src/theme/index.tsx (light + dark
+// palettes, system-aware, persisted). This file documents the palette.
 
 export const ascureTokens = {
-  colors: {
-    // Brand
-    primary: '#0F766E',        // teal-700 — primary on light surfaces
-    primaryStrong: '#115E59',  // pressed/hover
-    primaryBright: '#14B8A6',  // teal-500 — primary on dark surfaces
-    primarySoft: '#CCFBF1',
-    accent: '#06B6D4',         // cyan signal accent (light)
-    accentBright: '#22D3EE',   // cyan signal accent (dark)
-
-    // Ink — dark "control-room" surfaces
-    ink950: '#0A0F1A',
-    ink900: '#0F172A',
-    ink800: '#1E293B',
-    ink700: '#334155',
-    onInk: '#E2E8F0',
-    onInkMuted: '#94A3B8',
-
-    // Light surfaces
-    background: '#F5F7FA',
+  light: {
+    // Brand = ink
+    primary: '#161A1F',
+    primaryStrong: '#2A313B',
+    primarySoft: '#DDE2E8',
+    // Surfaces (mist)
+    background: '#E9ECEF',
     card: '#FFFFFF',
-    surfaceMuted: '#F9FAFB',
-    surfacePressed: '#F3F4F6',
-    border: '#E5E7EB',
-    textPrimary: '#111827',
-    textSecondary: '#6B7280',
-    textMuted: '#9CA3AF',
-    textOnPrimary: '#FFFFFF',
-
-    // Status language — vivid & consistent with admin
-    critical: '#EF4444',
-    high: '#F97316',
-    medium: '#F59E0B',
-    low: '#38BDF8',
-    verified: '#10B981',
-    info: '#1D4ED8',
-    // soft/border tints kept for chips & banners on light surfaces
-    dangerSoft: '#FEF2F2', dangerBorder: '#FECACA',
-    successSoft: '#ECFDF5', successBorder: '#BBF7D0',
-    warningSoft: '#FFFBEB', warningBorder: '#FDE68A',
-    infoSoft: '#EFF6FF', infoBorder: '#BFDBFE',
+    surfaceMuted: '#F4F6F8',
+    surfacePressed: '#ECEEF1',
+    border: '#D7DCE2',
+    borderStrong: '#C5CCD4',
+    textPrimary: '#161A1F',
+    textSecondary: '#566373',
+    textMuted: '#828E9C',
+    textOnPrimary: '#F7F8FA',
+    // Status — functional
+    danger: '#DC2626', success: '#16A34A', warning: '#B45309', info: '#2563EB',
   },
-  // Font family keys resolved after expo-font loads them.
+  dark: {
+    primary: '#E9ECEF',
+    primaryStrong: '#FFFFFF',
+    primarySoft: '#1E2630',
+    background: '#0E1116',
+    card: '#181D24',
+    surfaceMuted: '#11151A',
+    surfacePressed: '#222932',
+    border: '#262D36',
+    borderStrong: '#3A434F',
+    textPrimary: '#E9ECEF',
+    textSecondary: '#9AA4B0',
+    textMuted: '#66717F',
+    textOnPrimary: '#11151A',
+    danger: '#F87171', success: '#4ADE80', warning: '#F5B544', info: '#60A5FA',
+  },
+  // Dark "chrome" surfaces (drawer/map panels) — dark in BOTH modes
+  chrome: { surface: '#11151A', panel: '#1B212A', onChrome: '#E9ECEF', onChromeMuted: '#9AA4B0', accent: '#E9ECEF' },
   fonts: {
     display: 'SpaceGrotesk_700Bold',
     body: 'Inter_400Regular',
     bodyMedium: 'Inter_600SemiBold',
-    mono: 'JetBrainsMono_500Medium', // asset codes, GPS, readings
+    mono: 'JetBrainsMono_500Medium',
   },
-  radius: { card: 12, control: 10, pill: 999 },
+  radius: { card: 14, control: 10, pill: 999 },
   spacing: { screen: 16, section: 12, card: 12 },
 } as const;

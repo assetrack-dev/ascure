@@ -1,11 +1,14 @@
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { AppButton, Card, ErrorBanner, Screen, TextField, uiTheme } from '../ui';
+import { AppButton, Card, ErrorBanner, Screen, TextField } from '../ui';
+import { Theme, useTheme } from '../theme';
 
 export function LoginScreen() {
   const { signIn } = useAuth();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -32,9 +35,12 @@ export function LoginScreen() {
       keyboardAware
     >
       <View style={styles.brandLockup}>
-        <View style={styles.brandMark}>
-          <Text style={styles.brandMarkText}>A</Text>
-        </View>
+        <Image
+          source={require('../../assets/brand/monogram.png')}
+          style={styles.brandMark}
+          resizeMode="contain"
+          accessibilityLabel="ASCURE"
+        />
         <Text style={styles.brandWordmark}>ASCURE</Text>
         <Text style={styles.brandTagline}>Asset Inspection Platform</Text>
       </View>
@@ -65,35 +71,27 @@ export function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  brandLockup: {
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-  },
-  brandMark: {
-    width: 60,
-    height: 60,
-    borderRadius: 18,
-    backgroundColor: uiTheme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...uiTheme.shadow.card,
-  },
-  brandMarkText: {
-    color: uiTheme.colors.textOnPrimary,
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  brandWordmark: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 3,
-    color: uiTheme.colors.textPrimary,
-  },
-  brandTagline: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: uiTheme.colors.textSecondary,
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    brandLockup: {
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 12,
+    },
+    brandMark: {
+      width: 72,
+      height: 72,
+      borderRadius: 20,
+    },
+    brandWordmark: {
+      fontSize: 22,
+      fontWeight: '800',
+      letterSpacing: 3,
+      color: t.colors.textPrimary,
+    },
+    brandTagline: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: t.colors.textSecondary,
+    },
+  });

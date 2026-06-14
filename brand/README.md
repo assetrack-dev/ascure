@@ -1,47 +1,58 @@
-# ASCURE Brand — v1 ("Operational Instrument")
+# ASCURE Brand — v2 ("Ink on Mist")
 
 The assured, verifiable record of every utility asset — from field inspection through maintenance closure.
 **ASCURA** (company) · **ASCURE** (product). Tagline: **Survey. Verify. Resolve.**
 
 ## Logo
 
-Primary mark: **Asset Tag + Node** — a hang-tag (with eyelet) carrying a survey-node "A".
-It nods to ASCURE's origin as an asset-tagging tool, reads as the letter A, and makes a clean app icon.
+Primary mark: **the survey monogram** — an "A" peak fused with a map-pin/location silhouette
+and a pen-nib/survey-needle (the dot-and-line). It reads as precision mapping + surveying +
+infrastructure: exactly what ASCURE does.
 
 | File | Use |
 |---|---|
-| `assets/ascure-mark.svg` | Primary mark, teal/cyan — on light surfaces |
-| `assets/ascure-mark-white.svg` | Reverse mark — on brand/ink surfaces |
-| `assets/ascure-app-icon.svg` | App icon (teal gradient tile, white mark) — 128 grid |
-| `assets/ascure-favicon.svg` | Favicon (teal tile, white mark) — legible to 16px |
-| `assets/ascure-logo-horizontal.svg` | Mark + wordmark, horizontal lockup |
-| `assets/ascure-logo-stacked.svg` | Mark over wordmark, stacked lockup |
+| `logo/monogram_03_ink_on_mist.png` | Primary mark / app icon — ink mark on a mist tile |
+| `logo/lockup_03_ink_on_mist.png` | Mark + wordmark, stacked lockup |
 
-**Clear space:** keep padding ≥ the eyelet diameter around the mark. **Don't:** recolor outside the palette,
-add the old red, stretch, add shadows/gradients to the mark, or place the color mark on busy photos (use the white mark).
-Wordmark is **Space Grotesk 700**; outline to paths for print/portable assets.
+In-app the monogram PNG ships at `apps/admin-web/public/brand/monogram.png`,
+`apps/admin-web/src/app/icon.png` (favicon), and `apps/mobile/assets/brand/monogram.png`.
+Wordmark is **Space Grotesk 700**. The older teal `assets/*.svg` marks are **superseded** by this monogram.
 
-## Color
+## Color — monochrome
 
-**Brand** — teal `#0F766E` (light) / `#14B8A6` (dark) · cyan accent `#06B6D4` (light) / `#22D3EE` (dark)
-**Ink (dark control-room surfaces)** — `#0A0F1A` `#0F172A` `#1E293B` `#334155` · text `#E2E8F0` / `#94A3B8`
-**Light surfaces** — bg `#F6F8FB` · panel `#FFFFFF` · line `#D9E1EC` · text `#0F172A` · muted `#667085`
-**Status** — Critical `#EF4444` · High `#F97316` · Medium `#F59E0B` · Low/Info `#38BDF8` · Verified `#10B981`
+The brand **is the ink**. Primary actions are solid ink on a mist canvas (light) or
+solid mist on an ink canvas (dark). No teal, no cyan — color is reserved for *status*.
 
-> Note: red is reserved for **Critical** status — it is not a brand color. (This is why we retired the old red/blue.)
+**Ink** `#161A1F` (the logo ink) · **Mist** `#E9ECEF` (the canvas)
+
+Neutral ramp (cool, anchored ink→mist): `#0B0E12` `#11151A` `#161A1F` `#1D222A` `#2A313B`
+`#3A434F` `#566373` `#828E9C` `#A2ADB9` `#CDD4DB` `#D7DCE2` `#E9ECEF` `#F4F6F8` `#FFFFFF`.
+
+**Light** — bg `#E9ECEF` · panel `#FFFFFF` · line `#D7DCE2` · text `#161A1F` · muted `#566373` · primary `#161A1F`
+**Dark** — bg `#0E1116` · panel `#181D24` · line `#262D36` · text `#E9ECEF` · muted `#9AA4B0` · primary `#E9ECEF`
+**Chrome** (dark sidebar/drawer in both modes) — surface `#11151A` · on-chrome `#E9ECEF` · accent `#E9ECEF`
+
+**Status — functional, not brand.** Critical `#DC2626` · High `#EA580C` · Medium `#B45309` ·
+Info/Low `#2563EB` · Verified `#16A34A`. (Each has soft/border/text variants per theme;
+dark mode uses lighter on-dark variants. Red is reserved for **Critical**, never brand.)
 
 ## Typography
 
-- **Display / headings:** Space Grotesk (technical, precise)
-- **Body / UI:** Inter (calm and legible in dense lists and sunlight)
+- **Display / headings:** Space Grotesk (technical, precise — echoes the wordmark)
+- **Body / UI:** Inter (calm, legible in dense lists and sunlight)
 - **Mono:** JetBrains Mono — asset codes, GPS, readings, IDs (the "instrument" signal)
 
 ## Tokens & wiring
 
-- `tokens.css` → drop into `apps/admin-web/src/app/globals.css` `:root`; load fonts via `next/font`.
-- `tokens.ts` → align `apps/mobile/src/ui.tsx` `uiTheme`; load fonts via `expo-font`.
+- **Admin web** — live source is `apps/admin-web/src/app/globals.css`: `:root` (light) +
+  `:root[data-theme="dark"]` semantic vars, plus a Tailwind v4 `@theme inline` block that
+  rebinds the `teal-*`/`slate-*`/status scales to the semantic tokens so every utility class
+  flips with the theme. Toggle via `components/theme-toggle.tsx`; no-flash script in `layout.tsx`.
+- **Mobile** — live source is `apps/mobile/src/theme/index.tsx`: `ThemeProvider` + `useTheme()`
+  with light/dark palettes (system-aware, persisted). Screens build styles via
+  `createStyles(theme)`. See `apps/mobile/src/theme/MIGRATION-GUIDE.md`.
+- `tokens.css` / `tokens.ts` here are the canonical reference mirrors of the above.
 
 ## Preview
 
-Concept board: `ascure-brand-concepts.html`. Run `node brand/serve-brand.js` (or the `ascure-brand`
-config in `.claude/launch.json`) and open http://localhost:4789.
+`brand/ascure-brand-concepts.html` is the **archived v1 (teal)** concept board.

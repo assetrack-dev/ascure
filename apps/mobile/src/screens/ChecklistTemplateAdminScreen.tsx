@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { api, ApiError } from '../api';
+import { useTheme } from '../theme';
 import {
   AssetType,
   ChecklistTemplate,
@@ -39,6 +40,7 @@ export function ChecklistTemplateAdminScreen({
   onBack: () => void;
   onUnauthorized: (error?: unknown) => Promise<void>;
 }) {
+  const theme = useTheme();
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [draft, setDraft] = useState<TemplateDraft>(() => createEmptyDraft());
@@ -219,14 +221,14 @@ export function ChecklistTemplateAdminScreen({
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f4f7fb', paddingTop: 24 }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: 24 }}>
       <View style={{ paddingHorizontal: 20, paddingBottom: 12, gap: 12 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
           <View style={{ flex: 1, gap: 4 }}>
-            <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a' }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: theme.colors.textPrimary }}>
               Checklist Templates
             </Text>
-            <Text style={{ fontSize: 14, lineHeight: 20, color: '#526277' }}>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: theme.colors.textSecondary }}>
               Manage checklist rows by asset type.
             </Text>
           </View>
@@ -242,14 +244,14 @@ export function ChecklistTemplateAdminScreen({
         keyboardShouldPersistTaps="handled"
       >
         {error ? (
-          <View style={{ backgroundColor: '#fee2e2', borderColor: '#fecaca', borderWidth: 1, borderRadius: 14, padding: 14 }}>
-            <Text style={{ color: '#991b1b', fontSize: 14, fontWeight: '700', lineHeight: 20 }}>{error}</Text>
+          <View style={{ backgroundColor: theme.colors.dangerSoft, borderColor: theme.colors.dangerBorder, borderWidth: 1, borderRadius: 14, padding: 14 }}>
+            <Text style={{ color: theme.colors.dangerText, fontSize: 14, fontWeight: '700', lineHeight: 20 }}>{error}</Text>
           </View>
         ) : null}
 
         {successMessage ? (
-          <View style={{ backgroundColor: '#dcfce7', borderColor: '#bbf7d0', borderWidth: 1, borderRadius: 14, padding: 14 }}>
-            <Text style={{ color: '#166534', fontSize: 14, fontWeight: '700', lineHeight: 20 }}>
+          <View style={{ backgroundColor: theme.colors.successSoft, borderColor: theme.colors.successBorder, borderWidth: 1, borderRadius: 14, padding: 14 }}>
+            <Text style={{ color: theme.colors.successText, fontSize: 14, fontWeight: '700', lineHeight: 20 }}>
               {successMessage}
             </Text>
           </View>
@@ -257,40 +259,40 @@ export function ChecklistTemplateAdminScreen({
 
         {isLoading ? (
           <View style={{ paddingVertical: 32, alignItems: 'center', gap: 12 }}>
-            <ActivityIndicator size="large" color="#0f5cd8" />
-            <Text style={{ color: '#526277', fontSize: 15 }}>Loading checklist templates...</Text>
+            <ActivityIndicator size="large" color={theme.colors.info} />
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 15 }}>Loading checklist templates...</Text>
           </View>
         ) : null}
 
         {!isLoading ? (
           <>
-            <View style={{ backgroundColor: '#ffffff', borderColor: '#dce5f1', borderWidth: 1, borderRadius: 16, padding: 16, gap: 14 }}>
+            <View style={{ backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 16, padding: 16, gap: 14 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-                <Text style={{ color: '#0f172a', fontSize: 19, fontWeight: '800' }}>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 19, fontWeight: '800' }}>
                   {draft.templateId ? 'Edit Template' : 'Add New Template'}
                 </Text>
                 <Pressable onPress={() => startNewTemplate()} disabled={isSaving}>
-                  <Text style={{ color: '#0f5cd8', fontSize: 14, fontWeight: '800' }}>New</Text>
+                  <Text style={{ color: theme.colors.info, fontSize: 14, fontWeight: '800' }}>New</Text>
                 </Pressable>
               </View>
 
-              <Text style={{ color: '#10233d', fontSize: 14, fontWeight: '700' }}>Asset Type</Text>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 14, fontWeight: '700' }}>Asset Type</Text>
               <TextInput
                 value={draft.assetType}
                 onChangeText={(assetType) => setDraft((current) => ({ ...current, assetType }))}
                 placeholder="Example: SAVR"
-                placeholderTextColor="#7b8aa3"
+                placeholderTextColor={theme.colors.textMuted}
                 autoCapitalize="characters"
                 editable={!draft.templateId && !isSaving}
                 style={{
                   minHeight: 52,
                   borderRadius: 12,
                   borderWidth: 1,
-                  borderColor: '#c7d5e8',
-                  backgroundColor: draft.templateId ? '#edf2f8' : '#ffffff',
+                  borderColor: theme.colors.border,
+                  backgroundColor: draft.templateId ? theme.colors.surfaceMuted : theme.colors.card,
                   paddingHorizontal: 14,
                   fontSize: 16,
-                  color: '#0f172a',
+                  color: theme.colors.textPrimary,
                 }}
               />
 
@@ -303,13 +305,13 @@ export function ChecklistTemplateAdminScreen({
                       style={{
                         borderRadius: 999,
                         borderWidth: 1,
-                        borderColor: draft.assetType === assetType.code ? '#0f5cd8' : '#c7d5e8',
-                        backgroundColor: draft.assetType === assetType.code ? '#eef4ff' : '#ffffff',
+                        borderColor: draft.assetType === assetType.code ? theme.colors.info : theme.colors.border,
+                        backgroundColor: draft.assetType === assetType.code ? theme.colors.infoSoft : theme.colors.card,
                         paddingHorizontal: 12,
                         paddingVertical: 8,
                       }}
                     >
-                      <Text style={{ color: '#10233d', fontSize: 13, fontWeight: '700' }}>
+                      <Text style={{ color: theme.colors.textPrimary, fontSize: 13, fontWeight: '700' }}>
                         {assetType.code}
                       </Text>
                     </Pressable>
@@ -317,33 +319,33 @@ export function ChecklistTemplateAdminScreen({
                 </View>
               ) : null}
 
-              <Text style={{ color: '#10233d', fontSize: 14, fontWeight: '700' }}>Template Name</Text>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 14, fontWeight: '700' }}>Template Name</Text>
               <TextInput
                 value={draft.name}
                 onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
                 placeholder="Example: SAVR Inspection Checklist"
-                placeholderTextColor="#7b8aa3"
+                placeholderTextColor={theme.colors.textMuted}
                 editable={!isSaving}
                 style={{
                   minHeight: 52,
                   borderRadius: 12,
                   borderWidth: 1,
-                  borderColor: '#c7d5e8',
-                  backgroundColor: '#ffffff',
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.card,
                   paddingHorizontal: 14,
                   fontSize: 16,
-                  color: '#0f172a',
+                  color: theme.colors.textPrimary,
                 }}
               />
 
               <View style={{ gap: 10 }}>
-                <Text style={{ color: '#0f172a', fontSize: 16, fontWeight: '800' }}>Items</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: '800' }}>Items</Text>
                 {draft.items.map((item, index) => (
                   <View
                     key={item.localId}
                     style={{
                       borderTopWidth: index === 0 ? 0 : 1,
-                      borderTopColor: '#dce5f1',
+                      borderTopColor: theme.colors.border,
                       paddingTop: index === 0 ? 0 : 12,
                       gap: 10,
                     }}
@@ -352,17 +354,17 @@ export function ChecklistTemplateAdminScreen({
                       value={item.label}
                       onChangeText={(label) => updateDraftItem(item.localId, { label })}
                       placeholder={`Item ${index + 1} label`}
-                      placeholderTextColor="#7b8aa3"
+                      placeholderTextColor={theme.colors.textMuted}
                       editable={!isSaving}
                       style={{
                         minHeight: 52,
                         borderRadius: 12,
                         borderWidth: 1,
-                        borderColor: item.isActive ? '#c7d5e8' : '#e5e7eb',
-                        backgroundColor: item.isActive ? '#ffffff' : '#f8fafc',
+                        borderColor: item.isActive ? theme.colors.border : theme.colors.border,
+                        backgroundColor: item.isActive ? theme.colors.card : theme.colors.surfaceMuted,
                         paddingHorizontal: 14,
                         fontSize: 16,
-                        color: item.isActive ? '#0f172a' : '#64748b',
+                        color: item.isActive ? theme.colors.textPrimary : theme.colors.textSecondary,
                       }}
                     />
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -388,14 +390,14 @@ export function ChecklistTemplateAdminScreen({
                   minHeight: 48,
                   borderRadius: 12,
                   borderWidth: 1,
-                  borderColor: '#c8d6e8',
+                  borderColor: theme.colors.border,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: '#ffffff',
+                  backgroundColor: theme.colors.card,
                   opacity: isSaving ? 0.6 : 1,
                 }}
               >
-                <Text style={{ color: '#0f172a', fontSize: 15, fontWeight: '800' }}>Add Item</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '800' }}>Add Item</Text>
               </Pressable>
 
               <Pressable
@@ -404,25 +406,25 @@ export function ChecklistTemplateAdminScreen({
                 style={{
                   minHeight: 54,
                   borderRadius: 14,
-                  backgroundColor: '#0f5cd8',
+                  backgroundColor: theme.colors.info,
                   alignItems: 'center',
                   justifyContent: 'center',
                   opacity: isSaving ? 0.65 : 1,
                 }}
               >
-                {isSaving ? <ActivityIndicator color="#ffffff" /> : null}
-                <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '800' }}>
+                {isSaving ? <ActivityIndicator color={theme.colors.onStatus} /> : null}
+                <Text style={{ color: theme.colors.onStatus, fontSize: 16, fontWeight: '800' }}>
                   {isSaving ? 'Saving...' : 'Save Template'}
                 </Text>
               </Pressable>
             </View>
 
             {groupedTemplates.length === 0 ? (
-              <View style={{ backgroundColor: '#eef4fb', borderColor: '#d9e4f2', borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 }}>
-                <Text style={{ color: '#0f172a', fontSize: 17, fontWeight: '800' }}>
+              <View style={{ backgroundColor: theme.colors.background, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 }}>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 17, fontWeight: '800' }}>
                   No templates yet
                 </Text>
-                <Text style={{ color: '#526277', fontSize: 14, lineHeight: 21 }}>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 14, lineHeight: 21 }}>
                   Create the first checklist template for an asset type.
                 </Text>
               </View>
@@ -430,7 +432,7 @@ export function ChecklistTemplateAdminScreen({
 
             {groupedTemplates.map(([assetType, groupTemplates]) => (
               <View key={assetType} style={{ gap: 10 }}>
-                <Text style={{ color: '#0f172a', fontSize: 20, fontWeight: '800' }}>{assetType}</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 20, fontWeight: '800' }}>{assetType}</Text>
                 {groupTemplates.map((template) => (
                   <TemplateCard
                     key={template.id}
@@ -457,6 +459,7 @@ function TemplateCard({
   isSelected: boolean;
   onEdit: () => void;
 }) {
+  const theme = useTheme();
   const activeItems = template.items
     .filter((item) => item.isActive)
     .sort((left, right) => left.sortOrder - right.sortOrder);
@@ -465,8 +468,8 @@ function TemplateCard({
   return (
     <View
       style={{
-        backgroundColor: '#ffffff',
-        borderColor: isSelected ? '#0f5cd8' : '#dce5f1',
+        backgroundColor: theme.colors.card,
+        borderColor: isSelected ? theme.colors.info : theme.colors.border,
         borderWidth: 1,
         borderRadius: 16,
         padding: 16,
@@ -475,10 +478,10 @@ function TemplateCard({
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ color: '#0f172a', fontSize: 17, fontWeight: '800' }}>
+          <Text style={{ color: theme.colors.textPrimary, fontSize: 17, fontWeight: '800' }}>
             {template.assetTypeCode || template.assetType}
           </Text>
-          <Text style={{ color: '#10233d', fontSize: 15, fontWeight: '700' }}>
+          <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700' }}>
             {template.name} v{template.version}
           </Text>
         </View>
@@ -486,14 +489,14 @@ function TemplateCard({
           style={{
             alignSelf: 'flex-start',
             borderRadius: 999,
-            backgroundColor: template.isActive ? '#dcfce7' : '#e5edf8',
+            backgroundColor: template.isActive ? theme.colors.successSoft : theme.colors.surfaceMuted,
             paddingHorizontal: 10,
             paddingVertical: 6,
           }}
         >
           <Text
             style={{
-              color: template.isActive ? '#166534' : '#1e293b',
+              color: template.isActive ? theme.colors.successText : theme.colors.textSecondary,
               fontSize: 12,
               fontWeight: '800',
             }}
@@ -502,10 +505,10 @@ function TemplateCard({
           </Text>
         </View>
       </View>
-      <Text style={{ color: '#607086', fontSize: 14, lineHeight: 20 }}>
+      <Text style={{ color: theme.colors.textSecondary, fontSize: 14, lineHeight: 20 }}>
         {activeItems.length} active item{activeItems.length === 1 ? '' : 's'}
       </Text>
-      <Text style={{ color: '#10233d', fontSize: 14, lineHeight: 21 }}>
+      <Text style={{ color: theme.colors.textPrimary, fontSize: 14, lineHeight: 21 }}>
         {preview || 'No active items'}
       </Text>
       <Pressable
@@ -513,12 +516,12 @@ function TemplateCard({
         style={{
           minHeight: 46,
           borderRadius: 12,
-          backgroundColor: '#e5edf8',
+          backgroundColor: theme.colors.surfaceMuted,
           alignItems: 'center',
           justifyContent: 'center',
         }}
       >
-        <Text style={{ color: '#10233d', fontSize: 15, fontWeight: '800' }}>Edit</Text>
+        <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '800' }}>Edit</Text>
       </Pressable>
     </View>
   );
@@ -533,9 +536,10 @@ function HeaderButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const theme = useTheme();
   return (
     <Pressable onPress={onPress} disabled={disabled}>
-      <Text style={{ color: disabled ? '#94a3b8' : '#0f5cd8', fontSize: 15, fontWeight: '800' }}>
+      <Text style={{ color: disabled ? theme.colors.textMuted : theme.colors.info, fontSize: 15, fontWeight: '800' }}>
         {label}
       </Text>
     </Pressable>
@@ -551,6 +555,7 @@ function SmallButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -558,14 +563,14 @@ function SmallButton({
       style={{
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: '#c7d5e8',
-        backgroundColor: '#ffffff',
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.card,
         paddingHorizontal: 12,
         paddingVertical: 8,
         opacity: disabled ? 0.55 : 1,
       }}
     >
-      <Text style={{ color: '#10233d', fontSize: 13, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: theme.colors.textPrimary, fontSize: 13, fontWeight: '800' }}>{label}</Text>
     </Pressable>
   );
 }

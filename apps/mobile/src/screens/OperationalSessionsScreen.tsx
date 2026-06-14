@@ -27,10 +27,12 @@ import {
   Screen,
   SectionTitle,
   StatusChip,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 
 export function OperationalSessionsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation =
     useNavigation<RootStackScreenProps<'OperationalSessions'>['navigation']>();
   const { token, handleUnauthorized } = useSession();
@@ -171,6 +173,8 @@ function SessionGroup({
   sessions: OperationalSession[];
   onOpen: (session: OperationalSession) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Card>
       <View style={styles.listHeader}>
@@ -198,6 +202,8 @@ function SessionCard({
   session: OperationalSession;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -233,13 +239,15 @@ function SessionCard({
         <Text style={styles.updatedText} numberOfLines={1}>
           Updated {formatSessionDate(session.updatedAt)}
         </Text>
-        <Feather name="chevron-right" size={18} color={uiTheme.colors.textMuted} />
+        <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
       </View>
     </Pressable>
   );
 }
 
 function SessionMeta({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.metaItem}>
       <Text style={styles.metaLabel}>{label}</Text>
@@ -273,168 +281,169 @@ function groupSessions(sessions: OperationalSession[], showFinalItems: boolean) 
   return grouped;
 }
 
-const styles = StyleSheet.create({
-  listHeader: {
-    minHeight: 36,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  headerTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  countText: {
-    minWidth: 38,
-    borderRadius: 19,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  toggleRow: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  pressedRow: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-    transform: [{ scale: 0.995 }],
-  },
-  toggleTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  toggleTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700',
-  },
-  toggleMeta: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  switchTrack: {
-    width: 44,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: uiTheme.colors.border,
-    padding: 3,
-  },
-  switchTrackOn: {
-    backgroundColor: uiTheme.colors.primary,
-  },
-  switchThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: uiTheme.colors.card,
-  },
-  switchThumbOn: {
-    transform: [{ translateX: 18 }],
-  },
-  emptyGroupText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-  },
-  sessionList: {
-    gap: 10,
-  },
-  sessionCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 12,
-    gap: 9,
-  },
-  sessionHeader: {
-    minHeight: 32,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  sessionTitleWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  sessionNo: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '800',
-  },
-  sessionScope: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  locationText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  metaGrid: {
-    gap: 7,
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  metaLabel: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  metaValue: {
-    flex: 1,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
-  cardFooter: {
-    minHeight: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: uiTheme.colors.surfaceMuted,
-    paddingTop: 8,
-  },
-  updatedText: {
-    flex: 1,
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    listHeader: {
+      minHeight: 36,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    headerTextWrap: {
+      flex: 1,
+      gap: 4,
+    },
+    countText: {
+      minWidth: 38,
+      borderRadius: 19,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    toggleRow: {
+      minHeight: 58,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    pressedRow: {
+      backgroundColor: t.colors.surfacePressed,
+      transform: [{ scale: 0.995 }],
+    },
+    toggleTextWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    toggleTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    toggleMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '500',
+    },
+    switchTrack: {
+      width: 44,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: t.colors.border,
+      padding: 3,
+    },
+    switchTrackOn: {
+      backgroundColor: t.colors.primary,
+    },
+    switchThumb: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: t.colors.card,
+    },
+    switchThumbOn: {
+      transform: [{ translateX: 18 }],
+    },
+    emptyGroupText: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '500',
+    },
+    sessionList: {
+      gap: 10,
+    },
+    sessionCard: {
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+      gap: 9,
+    },
+    sessionHeader: {
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    sessionTitleWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    sessionNo: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '800',
+    },
+    sessionScope: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
+    locationText: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+    },
+    metaGrid: {
+      gap: 7,
+    },
+    metaItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    metaLabel: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    metaValue: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+      textAlign: 'right',
+    },
+    cardFooter: {
+      minHeight: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.surfaceMuted,
+      paddingTop: 8,
+    },
+    updatedText: {
+      flex: 1,
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '500',
+    },
+  });

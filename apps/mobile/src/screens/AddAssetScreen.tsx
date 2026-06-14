@@ -27,8 +27,8 @@ import {
   SelectCard,
   StatusChip,
   TextField,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import { Asset, AssetStatus, AssetType, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 
@@ -93,6 +93,8 @@ export function AddAssetScreen() {
     initialLongitude,
   } = route.params;
   const { token, handleUnauthorized } = useSession();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   function goToSavedAsset(asset: Asset) {
     navigation.replace('AssetDetail', {
@@ -786,6 +788,8 @@ function MapCoordinatePicker({
   onCancel: () => void;
   onConfirm: (params: { coordinate: Coordinate; accuracyMeters: number | null }) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [coordinate, setCoordinate] = useState(initialCoordinate);
   const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
 
@@ -1072,218 +1076,219 @@ function getMetadataCoordinateSource(
   return null;
 }
 
-const styles = StyleSheet.create({
-  dropdownField: {
-    minHeight: 52,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    alignItems: 'center',
-  },
-  dropdownFieldOpen: {
-    borderColor: '#111827',
-    backgroundColor: '#f8fafc',
-  },
-  dropdownFieldPressed: {
-    opacity: 0.94,
-  },
-  pressedButton: {
-    opacity: 0.82,
-  },
-  dropdownLabelWrap: {
-    flex: 1,
-    gap: 5,
-  },
-  dropdownLabel: {
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
-    color: uiTheme.colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  dropdownValue: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  dropdownCaret: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  dropdownOptions: {
-    paddingTop: 8,
-    gap: 8,
-  },
-  statusOptionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingTop: 8,
-  },
-  statusOptionButton: {
-    minHeight: 38,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    flexGrow: 1,
-    flexBasis: '47%',
-  },
-  statusOptionButtonSelected: {
-    borderColor: '#111827',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  coordinateSummaryRow: {
-    minHeight: 38,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  coordinateSummaryText: {
-    flex: 1,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  coordinateAccuracyText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
-  coordinateSourceText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-  },
-  coordinateInputRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  coordinateInputCell: {
-    flex: 1,
-  },
-  coordinateActionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  coordinateActionCell: {
-    flex: 1,
-  },
-  mapPickerSafeArea: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
-  },
-  mapPickerScreen: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-  },
-  mapPickerHeader: {
-    minHeight: 54,
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  mapPickerHeaderButton: {
-    minWidth: 72,
-    minHeight: 40,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.card,
-    paddingHorizontal: 12,
-  },
-  mapPickerHeaderButtonText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700',
-  },
-  mapPickerHeaderTitleWrap: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 2,
-  },
-  mapPickerTitle: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  mapPickerSubtitle: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  mapPickerHeaderSide: {
-    width: 72,
-  },
-  mapPickerMapShell: {
-    flex: 1,
-    backgroundColor: '#e5e7eb',
-  },
-  mapPickerFooter: {
-    borderTopWidth: 1,
-    borderTopColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.background,
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingVertical: 14,
-    gap: 12,
-  },
-  mapPickerCoordinatePanel: {
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 12,
-    gap: 4,
-  },
-  mapPickerCoordinateLabel: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-  },
-  mapPickerCoordinateValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '800',
-  },
-  mapPickerAccuracyText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    dropdownField: {
+      minHeight: 52,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+      alignItems: 'center',
+    },
+    dropdownFieldOpen: {
+      borderColor: t.colors.textPrimary,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    dropdownFieldPressed: {
+      opacity: 0.94,
+    },
+    pressedButton: {
+      opacity: 0.82,
+    },
+    dropdownLabelWrap: {
+      flex: 1,
+      gap: 5,
+    },
+    dropdownLabel: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '700',
+      color: t.colors.textSecondary,
+      textTransform: 'uppercase',
+    },
+    dropdownValue: {
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    dropdownCaret: {
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    dropdownOptions: {
+      paddingTop: 8,
+      gap: 8,
+    },
+    statusOptionGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      paddingTop: 8,
+    },
+    statusOptionButton: {
+      minHeight: 38,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      flexGrow: 1,
+      flexBasis: '47%',
+    },
+    statusOptionButtonSelected: {
+      borderColor: t.colors.textPrimary,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    coordinateSummaryRow: {
+      minHeight: 38,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    coordinateSummaryText: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    coordinateAccuracyText: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+      textAlign: 'right',
+    },
+    coordinateSourceText: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '600',
+    },
+    coordinateInputRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    coordinateInputCell: {
+      flex: 1,
+    },
+    coordinateActionRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    coordinateActionCell: {
+      flex: 1,
+    },
+    mapPickerSafeArea: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+      paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+    },
+    mapPickerScreen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    mapPickerHeader: {
+      minHeight: 54,
+      paddingHorizontal: t.spacing.screen,
+      paddingBottom: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    mapPickerHeaderButton: {
+      minWidth: 72,
+      minHeight: 40,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.card,
+      paddingHorizontal: 12,
+    },
+    mapPickerHeaderButtonText: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    mapPickerHeaderTitleWrap: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 2,
+    },
+    mapPickerTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    mapPickerSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    mapPickerHeaderSide: {
+      width: 72,
+    },
+    mapPickerMapShell: {
+      flex: 1,
+      backgroundColor: t.colors.border,
+    },
+    mapPickerFooter: {
+      borderTopWidth: 1,
+      borderTopColor: t.colors.border,
+      backgroundColor: t.colors.background,
+      paddingHorizontal: t.spacing.screen,
+      paddingVertical: 14,
+      gap: 12,
+    },
+    mapPickerCoordinatePanel: {
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+      gap: 4,
+    },
+    mapPickerCoordinateLabel: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '600',
+    },
+    mapPickerCoordinateValue: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '800',
+    },
+    mapPickerAccuracyText: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+  });

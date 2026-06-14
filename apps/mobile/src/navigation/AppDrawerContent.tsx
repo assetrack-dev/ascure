@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { DrawerContentComponentProps } from '@react-navigation/drawer';
@@ -6,6 +6,7 @@ import { api, ApiError } from '../api';
 import { getActiveQueueCount } from '../syncQueue';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
+import { Theme, useTheme, useThemeControls } from '../theme';
 import type { Team } from '../types';
 import type { AppDrawerParamList } from './types';
 
@@ -22,6 +23,9 @@ const NAV_ITEMS: { label: string; route: DrawerRouteName }[] = [
 export function AppDrawerContent({ navigation, state }: DrawerContentComponentProps) {
   const { token, user, handleUnauthorized, signOut } = useSession();
   const { snapshot } = useSync();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { mode, toggle } = useThemeControls();
   const [teams, setTeams] = useState<Team[]>([]);
   const activeRouteName = state.routeNames[state.index] as DrawerRouteName;
   const activeSyncCount = getActiveQueueCount(snapshot);
@@ -61,7 +65,7 @@ export function AppDrawerContent({ navigation, state }: DrawerContentComponentPr
             onPress={() => navigation.closeDrawer()}
             style={({ pressed }) => [styles.drawerCloseButton, pressed && styles.drawerItemPressed]}
           >
-            <Feather name="x" size={18} color="#E5E7EB" />
+            <Feather name="x" size={18} color={theme.colors.onChrome} />
           </Pressable>
         </View>
 
@@ -98,6 +102,22 @@ export function AppDrawerContent({ navigation, state }: DrawerContentComponentPr
           ))}
         </View>
 
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} appearance`}
+          onPress={toggle}
+          style={({ pressed }) => [styles.appearanceRow, pressed && styles.drawerItemPressed]}
+        >
+          <Feather
+            name={mode === 'dark' ? 'sun' : 'moon'}
+            size={18}
+            color={theme.colors.onChrome}
+          />
+          <Text style={styles.appearanceText}>
+            {mode === 'dark' ? 'Light appearance' : 'Dark appearance'}
+          </Text>
+        </Pressable>
+
         <DrawerItem
           label="Logout"
           tone="danger"
@@ -121,6 +141,8 @@ function DrawerItem({
   tone?: 'default' | 'danger';
   active?: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -144,124 +166,143 @@ function DrawerItem({
   );
 }
 
-const styles = StyleSheet.create({
-  drawerPanel: {
-    flex: 1,
-    backgroundColor: '#111827',
-  },
-  drawerContent: {
-    paddingTop: 34,
-    paddingHorizontal: 16,
-    paddingBottom: 28,
-    gap: 16,
-  },
-  drawerHeader: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  drawerTitle: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  drawerCloseButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1F2937',
-    borderWidth: 1,
-    borderColor: '#374151',
-  },
-  identityCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    backgroundColor: '#1F2937',
-    padding: 16,
-    gap: 9,
-  },
-  identityLabel: {
-    color: '#9CA3AF',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  identityName: {
-    color: '#FFFFFF',
-    fontSize: 19,
-    lineHeight: 25,
-    fontWeight: '700',
-  },
-  identityEmail: {
-    color: '#D1D5DB',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  teamList: {
-    gap: 8,
-    paddingTop: 6,
-  },
-  teamRow: {
-    borderRadius: 8,
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#374151',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 3,
-  },
-  teamName: {
-    color: '#F9FAFB',
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  teamCode: {
-    color: '#9CA3AF',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  teamEmpty: {
-    color: '#9CA3AF',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  drawerNav: {
-    gap: 8,
-  },
-  drawerItem: {
-    minHeight: 52,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  drawerItemActive: {
-    borderColor: '#374151',
-    backgroundColor: '#1F2937',
-  },
-  drawerItemPressed: {
-    opacity: 0.82,
-  },
-  drawerItemText: {
-    color: '#D1D5DB',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  drawerItemTextActive: {
-    color: '#FFFFFF',
-  },
-  drawerItemTextDanger: {
-    color: '#FCA5A5',
-  },
-});
+const createStyles = (t: Theme) => {
+  const c = t.colors;
+  return StyleSheet.create({
+    drawerPanel: {
+      flex: 1,
+      backgroundColor: c.chrome,
+    },
+    drawerContent: {
+      paddingTop: 34,
+      paddingHorizontal: 16,
+      paddingBottom: 28,
+      gap: 16,
+    },
+    drawerHeader: {
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    drawerTitle: {
+      color: c.onChrome,
+      fontSize: 24,
+      fontWeight: '700',
+    },
+    drawerCloseButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.chromePanel,
+      borderWidth: 1,
+      borderColor: c.chromeBorderStrong,
+    },
+    identityCard: {
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.chromeBorderStrong,
+      backgroundColor: c.chromePanel,
+      padding: 16,
+      gap: 9,
+    },
+    identityLabel: {
+      color: c.onChromeMuted,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    identityName: {
+      color: c.onChrome,
+      fontSize: 19,
+      lineHeight: 25,
+      fontWeight: '700',
+    },
+    identityEmail: {
+      color: c.onChromeMuted,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '500',
+    },
+    teamList: {
+      gap: 8,
+      paddingTop: 6,
+    },
+    teamRow: {
+      borderRadius: 8,
+      backgroundColor: c.chrome,
+      borderWidth: 1,
+      borderColor: c.chromeBorderStrong,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 3,
+    },
+    teamName: {
+      color: c.onChrome,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+    },
+    teamCode: {
+      color: c.onChromeMuted,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    teamEmpty: {
+      color: c.onChromeMuted,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+    },
+    drawerNav: {
+      gap: 8,
+    },
+    drawerItem: {
+      minHeight: 52,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: 'transparent',
+      backgroundColor: 'transparent',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    },
+    drawerItemActive: {
+      borderColor: c.chromeBorderStrong,
+      backgroundColor: c.chromePanel,
+    },
+    drawerItemPressed: {
+      opacity: 0.82,
+    },
+    drawerItemText: {
+      color: c.onChromeMuted,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    drawerItemTextActive: {
+      color: c.onChrome,
+    },
+    drawerItemTextDanger: {
+      color: c.chromeDanger,
+    },
+    appearanceRow: {
+      minHeight: 52,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.chromeBorderStrong,
+      backgroundColor: c.chromePanel,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+    },
+    appearanceText: {
+      color: c.onChrome,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  });
+};

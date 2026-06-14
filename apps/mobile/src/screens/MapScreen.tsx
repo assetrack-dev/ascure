@@ -7,7 +7,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
-import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen, uiTheme } from '../ui';
+import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen } from '../ui';
+import { Theme, useTheme } from '../theme';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
 import type { AssetLike } from '../utils/feederSequence';
@@ -146,16 +147,12 @@ const FALLBACK_FEEDER_LINE_COLORS = [
 ];
 const FEEDER_LINE_OFFSET_AMOUNT = 0.000025;
 const MAP_CONTROL_RADIUS = 8;
-const MAP_CONTROL_SURFACE = 'rgba(255, 255, 255, 0.94)';
-const MAP_CONTROL_BORDER = 'rgba(148, 163, 184, 0.46)';
-const MAP_CONTROL_ACTIVE = '#1f2937';
-const MAP_CONTROL_TEXT = '#25364a';
-const MAP_CONTROL_MUTED_TEXT = '#64748b';
-const MAP_CONTROL_BUTTON_SURFACE = 'rgba(248, 250, 252, 0.98)';
 
 console.log('MAP API KEY:', process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
 export function MapScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<AppDrawerScreenProps<'AssetMap'>['navigation']>();
   const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
   const { visitId, substationId } = route.params ?? {};
@@ -631,6 +628,8 @@ function MapControlDeck({
   locationMessage,
   onRequestCurrentLocation,
 }: MapControlDeckProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [openMenu, setOpenMenu] = useState<MapControlMenu>(null);
   const hasActiveLayers = showHeatmap || showFeederLines || showSequenceWarnings;
   const mapTypeLabel = mapType === 'hybrid' ? 'Sat' : 'Map';
@@ -746,6 +745,8 @@ function MapFilterBar({
   mapMode: MapMode;
   onChangeMapMode: (nextMapMode: MapMode) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.filterBar}>
       {MAP_MODE_OPTIONS.map((option) => {
@@ -786,6 +787,8 @@ function MapMenuButton({
   isActive: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -819,6 +822,8 @@ function MapLayerMenuOption({
   activeColor: string;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="switch"
@@ -853,6 +858,8 @@ function MapTypeMenuOption({
   isActive: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -877,6 +884,8 @@ function MapTypeMenuOption({
 }
 
 function SequenceWarningMarkerView() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.sequenceWarningMarkerContainer}>
       <View style={styles.sequenceWarningMarkerBadge}>
@@ -888,6 +897,8 @@ function SequenceWarningMarkerView() {
 }
 
 function SequenceWarningCallout({ warning }: { warning: SequenceWarningMarker }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.sequenceWarningCallout}>
       <Text style={styles.sequenceWarningCalloutTitle}>{warning.assetCode}</Text>
@@ -904,6 +915,8 @@ function SequenceWarningCallout({ warning }: { warning: SequenceWarningMarker })
 }
 
 function DefectMarkerView({ defect }: { defect: DefectMapMarker }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const markerColor = getDefectMarkerColor(defect);
   const markerTextColor = getDefectMarkerTextColor(defect);
 
@@ -920,6 +933,8 @@ function DefectMarkerView({ defect }: { defect: DefectMapMarker }) {
 }
 
 function DefectCallout({ defect }: { defect: DefectMapMarker }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const description = createDefectDescriptionPreview(defect);
 
   return (
@@ -1587,423 +1602,424 @@ function addUniqueMessage(messages: string[], message: string) {
   }
 }
 
-const styles = StyleSheet.create({
-  mapSummary: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: uiTheme.radius.card,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  mapSummaryText: {
-    fontSize: 13,
-    color: uiTheme.colors.textSecondary,
-    fontWeight: '600',
-  },
-  mapShell: {
-    flex: 1,
-    minHeight: 420,
-    borderRadius: uiTheme.radius.card,
-    overflow: 'hidden',
-  },
-  mapLoadingState: {
-    flex: 1,
-    minHeight: 420,
-    backgroundColor: '#eef4fb',
-    justifyContent: 'center',
-  },
-  mapControlsOverlay: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    right: 10,
-    alignItems: 'flex-start',
-  },
-  mapControlsStack: {
-    width: '100%',
-    maxWidth: 340,
-    gap: 6,
-  },
-  mapControlRail: {
-    maxWidth: 340,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: MAP_CONTROL_SURFACE,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    padding: 6,
-    shadowColor: '#0f172a',
-    shadowOffset: {
-      width: 0,
-      height: 3,
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    mapSummary: {
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.card,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 7,
-    elevation: 2,
-  },
-  filterBar: {
-    flex: 1,
-    minWidth: 104,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  filterButton: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 34,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
-    paddingHorizontal: 8,
-    paddingVertical: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterButtonActive: {
-    backgroundColor: MAP_CONTROL_ACTIVE,
-    borderColor: MAP_CONTROL_ACTIVE,
-  },
-  filterButtonPressed: {
-    opacity: 0.82,
-  },
-  filterButtonText: {
-    color: MAP_CONTROL_TEXT,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  filterButtonTextActive: {
-    color: '#ffffff',
-  },
-  mapControlActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  mapMenuButton: {
-    minHeight: 34,
-    minWidth: 48,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-    paddingVertical: 7,
-  },
-  mapMenuButtonActive: {
-    backgroundColor: MAP_CONTROL_ACTIVE,
-    borderColor: MAP_CONTROL_ACTIVE,
-  },
-  mapMenuButtonText: {
-    color: MAP_CONTROL_TEXT,
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  mapMenuButtonTextActive: {
-    color: '#ffffff',
-  },
-  mapDropdownPanel: {
-    alignSelf: 'flex-end',
-    width: 190,
-    backgroundColor: MAP_CONTROL_SURFACE,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    padding: 6,
-    gap: 4,
-    shadowColor: '#0f172a',
-    shadowOffset: {
-      width: 0,
-      height: 4,
+    mapSummaryText: {
+      fontSize: 13,
+      color: t.colors.textSecondary,
+      fontWeight: '600',
     },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  mapDropdownOption: {
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderRadius: MAP_CONTROL_RADIUS,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
-  },
-  mapDropdownOptionSelected: {
-    backgroundColor: 'rgba(31, 41, 55, 0.08)',
-  },
-  mapDropdownCheck: {
-    width: 14,
-    height: 14,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    backgroundColor: 'transparent',
-  },
-  mapDropdownCheckSelected: {
-    backgroundColor: MAP_CONTROL_ACTIVE,
-    borderColor: MAP_CONTROL_ACTIVE,
-  },
-  mapDropdownOptionText: {
-    flex: 1,
-    color: MAP_CONTROL_TEXT,
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: '700',
-  },
-  mapDropdownStateText: {
-    color: MAP_CONTROL_MUTED_TEXT,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  mapDropdownStateTextActive: {
-    color: MAP_CONTROL_ACTIVE,
-  },
-  mapControlPressed: {
-    opacity: 0.82,
-  },
-  mapStatusPanel: {
-    alignSelf: 'flex-start',
-    maxWidth: 300,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: MAP_CONTROL_SURFACE,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    padding: 5,
-    shadowColor: '#0f172a',
-    shadowOffset: {
-      width: 0,
-      height: 2,
+    mapShell: {
+      flex: 1,
+      minHeight: 420,
+      borderRadius: t.radius.card,
+      overflow: 'hidden',
     },
-    shadowOpacity: 0.08,
-    shadowRadius: 5,
-    elevation: 1,
-  },
-  locationButton: {
-    width: 34,
-    minHeight: 34,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_ACTIVE,
-    backgroundColor: MAP_CONTROL_ACTIVE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 5,
-    paddingVertical: 7,
-  },
-  locationButtonText: {
-    color: '#ffffff',
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '700',
-  },
-  locationStatusPill: {
-    minHeight: 30,
-    borderRadius: MAP_CONTROL_RADIUS,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    backgroundColor: MAP_CONTROL_BUTTON_SURFACE,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    justifyContent: 'center',
-  },
-  locationStatusPillError: {
-    maxWidth: 230,
-    borderColor: '#f3b4b4',
-    backgroundColor: 'rgba(254, 242, 242, 0.96)',
-  },
-  locationStatusText: {
-    color: MAP_CONTROL_TEXT,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  locationStatusTextError: {
-    color: '#b42318',
-  },
-  selectedPinPanel: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    backgroundColor: MAP_CONTROL_SURFACE,
-    borderRadius: MAP_CONTROL_RADIUS,
-    padding: 14,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: MAP_CONTROL_BORDER,
-    shadowColor: '#0f172a',
-    shadowOffset: {
-      width: 0,
-      height: 4,
+    mapLoadingState: {
+      flex: 1,
+      minHeight: 420,
+      backgroundColor: t.colors.background,
+      justifyContent: 'center',
     },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  selectedPinTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    color: '#0f172a',
-    fontWeight: '700',
-  },
-  sequenceWarningMarkerContainer: {
-    width: 44,
-    height: 50,
-    alignItems: 'center',
-  },
-  sequenceWarningMarkerBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 3,
-    borderColor: '#ffffff',
-    backgroundColor: '#f59e0b',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: {
-      width: 0,
-      height: 3,
+    mapControlsOverlay: {
+      position: 'absolute',
+      top: 10,
+      left: 10,
+      right: 10,
+      alignItems: 'flex-start',
     },
-    shadowOpacity: 0.34,
-    shadowRadius: 5,
-    elevation: 8,
-  },
-  sequenceWarningMarkerIcon: {
-    color: '#111827',
-    fontSize: 21,
-    lineHeight: 25,
-    fontWeight: '900',
-  },
-  sequenceWarningMarkerPointer: {
-    width: 0,
-    height: 0,
-    marginTop: -2,
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderTopWidth: 12,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: '#f59e0b',
-  },
-  sequenceWarningCallout: {
-    width: 270,
-    gap: 7,
-    paddingVertical: 2,
-  },
-  sequenceWarningCalloutTitle: {
-    color: '#0f172a',
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  sequenceWarningCalloutMessage: {
-    color: '#7c2d12',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  defectMarkerContainer: {
-    width: 44,
-    height: 52,
-    alignItems: 'center',
-  },
-  defectMarkerHalo: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 3,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: {
-      width: 0,
-      height: 3,
+    mapControlsStack: {
+      width: '100%',
+      maxWidth: 340,
+      gap: 6,
     },
-    shadowOpacity: 0.34,
-    shadowRadius: 5,
-    elevation: 8,
-  },
-  defectMarkerBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  defectMarkerIcon: {
-    fontSize: 21,
-    lineHeight: 24,
-    fontWeight: '900',
-  },
-  defectMarkerPointer: {
-    width: 0,
-    height: 0,
-    marginTop: -2,
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderTopWidth: 12,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-  },
-  defectCallout: {
-    width: 260,
-    gap: 8,
-    paddingVertical: 2,
-  },
-  defectCalloutTitle: {
-    color: '#0f172a',
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  defectCalloutRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  defectCalloutLabel: {
-    width: 74,
-    color: '#64748b',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-  },
-  defectCalloutValue: {
-    flex: 1,
-    color: '#10233d',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  defectCalloutDescriptionGroup: {
-    gap: 3,
-    paddingTop: 2,
-  },
-  defectCalloutDescription: {
-    color: '#334155',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-});
+    mapControlRail: {
+      maxWidth: 340,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: t.colors.card,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: 6,
+      shadowColor: t.colors.shadow,
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+      shadowOpacity: 0.1,
+      shadowRadius: 7,
+      elevation: 2,
+    },
+    filterBar: {
+      flex: 1,
+      minWidth: 104,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    filterButton: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 34,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 8,
+      paddingVertical: 7,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    filterButtonActive: {
+      backgroundColor: t.colors.primary,
+      borderColor: t.colors.primary,
+    },
+    filterButtonPressed: {
+      opacity: 0.82,
+    },
+    filterButtonText: {
+      color: t.colors.textPrimary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+      flexShrink: 1,
+    },
+    filterButtonTextActive: {
+      color: t.colors.textOnPrimary,
+    },
+    mapControlActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    mapMenuButton: {
+      minHeight: 34,
+      minWidth: 48,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 7,
+      paddingVertical: 7,
+    },
+    mapMenuButtonActive: {
+      backgroundColor: t.colors.primary,
+      borderColor: t.colors.primary,
+    },
+    mapMenuButtonText: {
+      color: t.colors.textPrimary,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '700',
+      flexShrink: 1,
+    },
+    mapMenuButtonTextActive: {
+      color: t.colors.textOnPrimary,
+    },
+    mapDropdownPanel: {
+      alignSelf: 'flex-end',
+      width: 190,
+      backgroundColor: t.colors.card,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: 6,
+      gap: 4,
+      shadowColor: t.colors.shadow,
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    mapDropdownOption: {
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: MAP_CONTROL_RADIUS,
+      paddingHorizontal: 9,
+      paddingVertical: 8,
+    },
+    mapDropdownOptionSelected: {
+      backgroundColor: t.colors.surfacePressed,
+    },
+    mapDropdownCheck: {
+      width: 14,
+      height: 14,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: 'transparent',
+    },
+    mapDropdownCheckSelected: {
+      backgroundColor: t.colors.primary,
+      borderColor: t.colors.primary,
+    },
+    mapDropdownOptionText: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    mapDropdownStateText: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
+    mapDropdownStateTextActive: {
+      color: t.colors.textPrimary,
+    },
+    mapControlPressed: {
+      opacity: 0.82,
+    },
+    mapStatusPanel: {
+      alignSelf: 'flex-start',
+      maxWidth: 300,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: t.colors.card,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: 5,
+      shadowColor: t.colors.shadow,
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.08,
+      shadowRadius: 5,
+      elevation: 1,
+    },
+    locationButton: {
+      width: 34,
+      minHeight: 34,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 5,
+      paddingVertical: 7,
+    },
+    locationButtonText: {
+      color: t.colors.textOnPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      fontWeight: '700',
+    },
+    locationStatusPill: {
+      minHeight: 30,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      justifyContent: 'center',
+    },
+    locationStatusPillError: {
+      maxWidth: 230,
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+    },
+    locationStatusText: {
+      color: t.colors.textPrimary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
+    locationStatusTextError: {
+      color: t.colors.dangerText,
+    },
+    selectedPinPanel: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: 12,
+      backgroundColor: t.colors.card,
+      borderRadius: MAP_CONTROL_RADIUS,
+      padding: 14,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      shadowColor: t.colors.shadow,
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    selectedPinTitle: {
+      fontSize: 15,
+      lineHeight: 20,
+      color: t.colors.textPrimary,
+      fontWeight: '700',
+    },
+    sequenceWarningMarkerContainer: {
+      width: 44,
+      height: 50,
+      alignItems: 'center',
+    },
+    sequenceWarningMarkerBadge: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      borderWidth: 3,
+      borderColor: '#ffffff',
+      backgroundColor: '#f59e0b',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000000',
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+      shadowOpacity: 0.34,
+      shadowRadius: 5,
+      elevation: 8,
+    },
+    sequenceWarningMarkerIcon: {
+      color: '#111827',
+      fontSize: 21,
+      lineHeight: 25,
+      fontWeight: '900',
+    },
+    sequenceWarningMarkerPointer: {
+      width: 0,
+      height: 0,
+      marginTop: -2,
+      borderLeftWidth: 8,
+      borderRightWidth: 8,
+      borderTopWidth: 12,
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      borderTopColor: '#f59e0b',
+    },
+    sequenceWarningCallout: {
+      width: 270,
+      gap: 7,
+      paddingVertical: 2,
+    },
+    sequenceWarningCalloutTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+    },
+    sequenceWarningCalloutMessage: {
+      color: t.colors.warningText,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    defectMarkerContainer: {
+      width: 44,
+      height: 52,
+      alignItems: 'center',
+    },
+    defectMarkerHalo: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      borderWidth: 3,
+      backgroundColor: '#ffffff',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000000',
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+      shadowOpacity: 0.34,
+      shadowRadius: 5,
+      elevation: 8,
+    },
+    defectMarkerBadge: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    defectMarkerIcon: {
+      fontSize: 21,
+      lineHeight: 24,
+      fontWeight: '900',
+    },
+    defectMarkerPointer: {
+      width: 0,
+      height: 0,
+      marginTop: -2,
+      borderLeftWidth: 8,
+      borderRightWidth: 8,
+      borderTopWidth: 12,
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+    },
+    defectCallout: {
+      width: 260,
+      gap: 8,
+      paddingVertical: 2,
+    },
+    defectCalloutTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '700',
+    },
+    defectCalloutRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    defectCalloutLabel: {
+      width: 74,
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '600',
+    },
+    defectCalloutValue: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    defectCalloutDescriptionGroup: {
+      gap: 3,
+      paddingTop: 2,
+    },
+    defectCalloutDescription: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+  });

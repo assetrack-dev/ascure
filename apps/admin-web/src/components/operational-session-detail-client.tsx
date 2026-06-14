@@ -568,7 +568,7 @@ function AssetAssignmentModalDialog({
   const isBulk = modal === "bulk";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
       <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">

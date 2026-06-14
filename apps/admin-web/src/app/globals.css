@@ -1,53 +1,277 @@
 @import "tailwindcss";
 
+/* =========================================================================
+   ASCURE — "Ink on Mist" theme
+   Monochrome brand: ink #161A1F on mist #E9ECEF. Dual light/dark.
+   Brand IS the ink — primary actions are solid ink (light) / mist (dark).
+   Status colors are FUNCTIONAL, not brand.
+   ========================================================================= */
+
+/* ---- Light / "mist" (default) ---- */
 :root {
-  /* Brand */
-  --brand: #0F766E;
-  --brand-strong: #115E59;
-  --brand-bright: #14B8A6;
-  --brand-soft: #CCFBF1;
-  --accent: #06B6D4;
-  --accent-bright: #22D3EE;
+  color-scheme: light;
 
-  /* Ink — dark "control-room" surfaces (reserved for dashboards / ops board) */
-  --ink-950: #0A0F1A;
-  --ink-900: #0F172A;
-  --ink-850: #162236;
-  --ink-800: #1E293B;
-  --ink-700: #334155;
-  --on-ink: #E2E8F0;
-  --on-ink-muted: #94A3B8;
+  /* Neutral ink ramp (cool, anchored at the logo ink + mist) */
+  --ink-950: #0B0E12;
+  --ink-925: #0E1116;
+  --ink-900: #11151A;
+  --ink-850: #161A1F; /* logo ink */
+  --ink-800: #1D222A;
+  --ink-700: #2A313B;
+  --ink-600: #3A434F;
+  --ink-500: #566373;
+  --ink-400: #828E9C;
+  --ink-300: #A2ADB9;
+  --ink-200: #CDD4DB;
+  --ink-150: #D7DCE2;
+  --ink-100: #E9ECEF; /* mist */
+  --ink-75: #F1F3F5;
+  --ink-50: #F7F8FA;
+  --ink-0: #FFFFFF;
 
-  /* Light surfaces */
-  --background: #F6F8FB;
-  --foreground: #0F172A;
-  --muted: #667085;
+  /* Brand = ink (monochrome) */
+  --brand: #161A1F;
+  --brand-strong: #2A313B;
+  --brand-bright: #3A434F;
+  --brand-soft: #DDE2E8;
+  --on-brand: #F7F8FA;
+  --accent: #161A1F;
+  --accent-bright: #2A313B;
+  --accent-soft: #DDE2E8;
+
+  /* Content surfaces */
+  --background: #E9ECEF;
   --panel: #FFFFFF;
-  --panel-muted: #F8FAFC;
-  --line: #D9E1EC;
+  --panel-muted: #F4F6F8;
+  --surface-pressed: #ECEEF1;
+  --foreground: #161A1F;
+  --foreground-soft: #2A313B;
+  --muted: #566373;
+  --muted-2: #828E9C;
+  --line: #D7DCE2;
+  --line-strong: #C5CCD4;
 
-  /* Status language — vivid & consistent with mobile */
-  --critical: #EF4444;
-  --high: #F97316;
-  --medium: #F59E0B;
-  --low: #38BDF8;
-  --verified: #10B981;
-  --info: #3B82F6;
-  --warning: #B45309;
-  --danger: #EF4444;
+  /* Dark "chrome" surfaces — sidebar, map panels (dark in BOTH modes) */
+  --chrome: #11151A;
+  --chrome-panel: #1B212A;
+  --chrome-line: rgba(233, 236, 239, 0.10);
+  --chrome-line-strong: rgba(233, 236, 239, 0.16);
+  --chrome-active: rgba(233, 236, 239, 0.10);
+  --on-chrome: #E9ECEF;
+  --on-chrome-muted: #9AA4B0;
+  --on-chrome-faint: #66717F;
+  --chrome-accent: #E9ECEF;
+
+  /* Legacy ink aliases (still referenced by some components) */
+  --on-ink: var(--on-chrome);
+  --on-ink-muted: var(--on-chrome-muted);
+
+  /* Focus / selection */
+  --focus-ring: rgba(22, 26, 31, 0.26);
+  --selection-bg: rgba(22, 26, 31, 0.14);
+
+  /* Modal scrim — constant dark in BOTH modes */
+  --scrim: rgba(8, 11, 15, 0.55);
+
+  /* Status — functional (light) */
+  --critical: #DC2626; --critical-bg: #FCEBEB; --critical-border: #F2C7C7; --critical-text: #791F1F;
+  --high: #EA580C; --high-bg: #FBEAE0; --high-border: #F2CDB6; --high-text: #7C2D12;
+  --medium: #B45309; --medium-bg: #FAEFDD; --medium-border: #EBD7AE; --medium-text: #854F0B;
+  --warning: #B45309; --warning-bg: #FAEFDD; --warning-border: #EBD7AE; --warning-text: #854F0B;
+  --low: #2563EB;
+  --info: #2563EB; --info-bg: #E7F1FB; --info-border: #C4DBF5; --info-text: #0C447C;
+  --verified: #16A34A; --verified-bg: #E9F4EA; --verified-border: #C5E2C8; --verified-text: #27500A;
+  --success: #16A34A; --success-bg: #E9F4EA; --success-border: #C5E2C8; --success-text: #27500A;
+  --danger: #DC2626; --danger-bg: #FCEBEB; --danger-border: #F2C7C7; --danger-text: #791F1F;
+  --monitor: #7C5CD6; --monitor-bg: #EEEAFB; --monitor-border: #D6CCF3; --monitor-text: #3C3489;
+  --neutral: #566373; --neutral-bg: #EEF0F2; --neutral-border: #D7DCE2; --neutral-text: #3A434F;
+
+  /* Typography */
+  --font-display: var(--font-display, 'Space Grotesk'), 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-body, 'Inter'), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-mono, 'JetBrains Mono'), ui-monospace, 'SFMono-Regular', monospace;
 
   /* Shape & elevation */
-  --radius-card: 12px;
-  --radius-control: 8px;
+  --radius-card: 14px;
+  --radius-control: 9px;
   --radius-pill: 999px;
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.06);
-  --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-card: 0 1px 2px rgba(11, 14, 18, 0.05), 0 12px 32px rgba(11, 14, 18, 0.07);
+  --shadow-soft: 0 1px 2px rgba(11, 14, 18, 0.05);
 
-  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- Dark / "ink" ---- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand: #E9ECEF;
+  --brand-strong: #FFFFFF;
+  --brand-bright: #CDD4DB;
+  --brand-soft: #1E2630;
+  --on-brand: #11151A;
+  --accent: #E9ECEF;
+  --accent-bright: #CDD4DB;
+  --accent-soft: #1E2630;
+
+  --background: #0E1116;
+  --panel: #181D24;
+  --panel-muted: #11151A;
+  --surface-pressed: #222932;
+  --foreground: #E9ECEF;
+  --foreground-soft: #CDD4DB;
+  --muted: #9AA4B0;
+  --muted-2: #66717F;
+  --line: #262D36;
+  --line-strong: #3A434F;
+
+  /* Chrome deepens slightly so it still reads against dark content */
+  --chrome: #0B0E12;
+  --chrome-panel: #161A1F;
+
+  --focus-ring: rgba(233, 236, 239, 0.32);
+  --selection-bg: rgba(233, 236, 239, 0.16);
+
+  --critical: #F87171; --critical-bg: #3A1D20; --critical-border: #5A2A2D; --critical-text: #FCA5A5;
+  --high: #FB923C; --high-bg: #3A271A; --high-border: #5A3A24; --high-text: #FDBA8C;
+  --medium: #F5B544; --medium-bg: #332817; --medium-border: #4D3B1E; --medium-text: #FCD77F;
+  --warning: #F5B544; --warning-bg: #332817; --warning-border: #4D3B1E; --warning-text: #FCD77F;
+  --low: #60A5FA;
+  --info: #60A5FA; --info-bg: #152538; --info-border: #23405E; --info-text: #AECBF5;
+  --verified: #4ADE80; --verified-bg: #13301E; --verified-border: #234A30; --verified-text: #A7E8BC;
+  --success: #4ADE80; --success-bg: #13301E; --success-border: #234A30; --success-text: #A7E8BC;
+  --danger: #F87171; --danger-bg: #3A1D20; --danger-border: #5A2A2D; --danger-text: #FCA5A5;
+  --monitor: #A99BE8; --monitor-bg: #221C3A; --monitor-border: #382E5C; --monitor-text: #CFC6F2;
+  --neutral: #9AA4B0; --neutral-bg: #1B212A; --neutral-border: #2A313B; --neutral-text: #CDD4DB;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.40);
+}
+
+/* -------------------------------------------------------------------------
+   Tailwind v4 colour remap.
+   The codebase uses raw Tailwind colour classes (teal-*, slate-*, red-* …)
+   that do NOT follow our CSS vars. `@theme inline` rebinds those scales to
+   our semantic tokens, so every existing utility class flips with the theme
+   automatically — no per-component edits needed.
+   ------------------------------------------------------------------------- */
+@theme inline {
+  /* "white" means "lightest surface / on-ink text" → invert with the theme.
+     This flips all bg-white panels + text-white on ink buttons in one move. */
+  --color-white: var(--panel);
+
+  /* Brand (teal) + accent (cyan) → ink monochrome */
+  --color-teal-50: var(--brand-soft);
+  --color-teal-100: var(--brand-soft);
+  --color-teal-200: var(--line-strong);
+  --color-teal-300: var(--muted-2);
+  --color-teal-400: var(--muted);
+  --color-teal-500: var(--brand-bright);
+  --color-teal-600: var(--brand);
+  --color-teal-700: var(--brand);
+  --color-teal-800: var(--brand-strong);
+  --color-teal-900: var(--foreground);
+  --color-cyan-50: var(--brand-soft);
+  --color-cyan-100: var(--brand-soft);
+  --color-cyan-500: var(--brand);
+  --color-cyan-600: var(--brand);
+
+  /* Neutral (slate + gray) → inverting ink ramp */
+  --color-slate-50: var(--panel-muted);
+  --color-slate-100: var(--surface-pressed);
+  --color-slate-200: var(--line);
+  --color-slate-300: var(--line-strong);
+  --color-slate-400: var(--muted-2);
+  --color-slate-500: var(--muted);
+  --color-slate-600: var(--muted);
+  --color-slate-700: var(--foreground-soft);
+  --color-slate-800: var(--foreground);
+  --color-slate-900: var(--foreground);
+  --color-slate-950: var(--foreground);
+  --color-gray-50: var(--panel-muted);
+  --color-gray-100: var(--surface-pressed);
+  --color-gray-200: var(--line);
+  --color-gray-300: var(--line-strong);
+  --color-gray-400: var(--muted-2);
+  --color-gray-500: var(--muted);
+  --color-gray-600: var(--muted);
+  --color-gray-700: var(--foreground-soft);
+  --color-gray-800: var(--foreground);
+  --color-gray-900: var(--foreground);
+  --color-gray-950: var(--foreground);
+
+  /* Status scales → functional tokens (flip per mode) */
+  --color-red-50: var(--danger-bg);
+  --color-red-100: var(--danger-bg);
+  --color-red-200: var(--danger-border);
+  --color-red-300: var(--danger-border);
+  --color-red-500: var(--danger);
+  --color-red-600: var(--danger);
+  --color-red-700: var(--danger-text);
+  --color-red-800: var(--danger-text);
+  --color-red-900: var(--danger-text);
+  --color-rose-50: var(--danger-bg);
+  --color-rose-200: var(--danger-border);
+  --color-rose-700: var(--danger-text);
+  --color-orange-50: var(--high-bg);
+  --color-orange-100: var(--high-bg);
+  --color-orange-200: var(--high-border);
+  --color-orange-500: var(--high);
+  --color-orange-600: var(--high);
+  --color-orange-700: var(--high-text);
+  --color-orange-800: var(--high-text);
+  --color-amber-50: var(--medium-bg);
+  --color-amber-100: var(--medium-bg);
+  --color-amber-200: var(--medium-border);
+  --color-amber-300: var(--medium-border);
+  --color-amber-500: var(--medium);
+  --color-amber-600: var(--medium);
+  --color-amber-700: var(--medium-text);
+  --color-amber-800: var(--medium-text);
+  --color-yellow-50: var(--medium-bg);
+  --color-yellow-200: var(--medium-border);
+  --color-yellow-700: var(--medium-text);
+  --color-green-50: var(--success-bg);
+  --color-green-100: var(--success-bg);
+  --color-green-200: var(--success-border);
+  --color-green-500: var(--success);
+  --color-green-600: var(--success);
+  --color-green-700: var(--success-text);
+  --color-green-800: var(--success-text);
+  --color-emerald-50: var(--verified-bg);
+  --color-emerald-100: var(--verified-bg);
+  --color-emerald-200: var(--verified-border);
+  --color-emerald-500: var(--verified);
+  --color-emerald-600: var(--verified);
+  --color-emerald-700: var(--verified-text);
+  --color-emerald-800: var(--verified-text);
+  --color-blue-50: var(--info-bg);
+  --color-blue-100: var(--info-bg);
+  --color-blue-200: var(--info-border);
+  --color-blue-300: var(--info-border);
+  --color-blue-500: var(--info);
+  --color-blue-600: var(--info);
+  --color-blue-700: var(--info-text);
+  --color-blue-800: var(--info-text);
+  --color-sky-50: var(--info-bg);
+  --color-sky-200: var(--info-border);
+  --color-sky-700: var(--info-text);
+  --color-indigo-50: var(--info-bg);
+  --color-indigo-200: var(--info-border);
+  --color-indigo-700: var(--info-text);
+  --color-violet-50: var(--monitor-bg);
+  --color-violet-100: var(--monitor-bg);
+  --color-violet-200: var(--monitor-border);
+  --color-violet-500: var(--monitor);
+  --color-violet-600: var(--monitor);
+  --color-violet-700: var(--monitor-text);
+  --color-violet-800: var(--monitor-text);
+  --color-purple-50: var(--monitor-bg);
+  --color-purple-200: var(--monitor-border);
+  --color-purple-700: var(--monitor-text);
 }
 
 * {
@@ -56,6 +280,7 @@
 
 html {
   min-height: 100%;
+  background: var(--background);
 }
 
 body {
@@ -63,7 +288,7 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-body, "Inter"), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-body), "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.5;
 }
 
@@ -71,7 +296,7 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-display, "Space Grotesk"), var(--font-body, "Inter"), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-display), var(--font-body), "Inter", ui-sans-serif, system-ui, sans-serif;
   letter-spacing: -0.01em;
 }
 
@@ -79,7 +304,7 @@ h4 {
 code,
 kbd,
 samp {
-  font-family: var(--font-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, "SF Mono", monospace;
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono", monospace;
 }
 
 button,
@@ -92,11 +317,11 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgba(15, 118, 110, 0.28);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(15, 118, 110, 0.16);
+  background: var(--selection-bg);
   color: var(--foreground);
 }

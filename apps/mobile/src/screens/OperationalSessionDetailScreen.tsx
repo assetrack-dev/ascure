@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
@@ -26,8 +26,8 @@ import {
   SectionTitle,
   StatusChip,
   SuccessBanner,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import { formatDateTime } from '../utils';
 
 type LifecycleAction = 'start' | 'submit';
@@ -85,6 +85,8 @@ export function OperationalSessionDetailScreen({
   route,
   navigation,
 }: RootStackScreenProps<'OperationalSessionDetail'>) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { token, handleUnauthorized } = useSession();
   const [session, setSession] = useState<OperationalSession | null>(null);
   const [assignedAssets, setAssignedAssets] = useState<OperationalSessionAssignedAsset[]>([]);
@@ -319,6 +321,8 @@ export function OperationalSessionDetailScreen({
 }
 
 function ProgressCard({ session }: { session: OperationalSession }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const progress = getOperationalSessionProgress(session);
 
   return (
@@ -356,6 +360,8 @@ function AssignedAssetsCard({
   error: string | null;
   onViewAsset: (asset: OperationalSessionAssignedAsset) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const progress = getOperationalSessionProgress(session);
 
   return (
@@ -397,7 +403,7 @@ function AssignedAssetsCard({
 
       {isLoading ? (
         <View style={styles.assetLoadingRow}>
-          <ActivityIndicator color={uiTheme.colors.primary} />
+          <ActivityIndicator color={theme.colors.primary} />
           <Text style={styles.assetLoadingText}>Loading assigned assets...</Text>
         </View>
       ) : null}
@@ -428,6 +434,8 @@ function AssignedAssetCard({
   asset: OperationalSessionAssignedAsset;
   onViewAsset: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const coordinates = formatCoordinates(asset.latitude, asset.longitude);
   const notes = asset.assignment.notes?.trim();
 
@@ -463,151 +471,152 @@ function AssignedAssetCard({
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: {
-    minHeight: 42,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  titleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  sessionNo: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '800',
-  },
-  scopeText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  metadataSummary: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '600',
-  },
-  detailRows: {
-    gap: 8,
-  },
-  actionHeader: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  actionMeta: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  assetProgressGrid: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  assetProgressItem: {
-    flex: 1,
-    minHeight: 62,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    justifyContent: 'center',
-    gap: 2,
-  },
-  metricLabel: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  metricValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '800',
-  },
-  assetErrorBox: {
-    borderWidth: 1,
-    borderColor: uiTheme.colors.dangerBorder,
-    borderRadius: uiTheme.radius.control,
-    backgroundColor: uiTheme.colors.dangerSoft,
-    padding: 10,
-  },
-  assetErrorText: {
-    color: uiTheme.colors.danger,
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600',
-  },
-  assetLoadingRow: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  assetLoadingText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  assetList: {
-    gap: 10,
-  },
-  assignedAssetCard: {
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    borderRadius: uiTheme.radius.card,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    padding: 12,
-    gap: 10,
-  },
-  assignedAssetHeader: {
-    minHeight: 40,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  assignedAssetTitleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  assignedAssetCode: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '800',
-  },
-  assignedAssetName: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  progressTrack: {
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 5,
-    backgroundColor: uiTheme.colors.primary,
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    headerRow: {
+      minHeight: 42,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    titleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    sessionNo: {
+      color: t.colors.textPrimary,
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '800',
+    },
+    scopeText: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    metadataSummary: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 21,
+      fontWeight: '600',
+    },
+    detailRows: {
+      gap: 8,
+    },
+    actionHeader: {
+      minHeight: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    actionMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    assetProgressGrid: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    assetProgressItem: {
+      flex: 1,
+      minHeight: 62,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      justifyContent: 'center',
+      gap: 2,
+    },
+    metricLabel: {
+      color: t.colors.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+    },
+    metricValue: {
+      color: t.colors.textPrimary,
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '800',
+    },
+    assetErrorBox: {
+      borderWidth: 1,
+      borderColor: t.colors.dangerBorder,
+      borderRadius: t.radius.control,
+      backgroundColor: t.colors.dangerSoft,
+      padding: 10,
+    },
+    assetErrorText: {
+      color: t.colors.danger,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '600',
+    },
+    assetLoadingRow: {
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    assetLoadingText: {
+      color: t.colors.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+    },
+    assetList: {
+      gap: 10,
+    },
+    assignedAssetCard: {
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderRadius: t.radius.card,
+      backgroundColor: t.colors.surfaceMuted,
+      padding: 12,
+      gap: 10,
+    },
+    assignedAssetHeader: {
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    assignedAssetTitleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    assignedAssetCode: {
+      color: t.colors.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '800',
+    },
+    assignedAssetName: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    progressTrack: {
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: t.colors.surfaceMuted,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: 5,
+      backgroundColor: t.colors.primary,
+    },
+  });

@@ -26,7 +26,8 @@ import {
   InspectionItemResultValue,
 } from '../types';
 import { formatDateTime } from '../utils';
-import { HeaderIconButton, StatusChip, uiTheme } from '../ui';
+import { HeaderIconButton, StatusChip } from '../ui';
+import { Theme, useTheme } from '../theme';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -35,6 +36,8 @@ export function AssetDetailScreen() {
   const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
   const { visitId, substationId, assetId, assetSnapshot, operationalSessionId } = route.params;
   const { token, handleUnauthorized } = useSession();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
   const [editableAsset, setEditableAsset] = useState<Asset | null>(assetSnapshot ?? null);
   const [isLoading, setIsLoading] = useState(true);
@@ -259,7 +262,7 @@ export function AssetDetailScreen() {
     return (
       <SafeAreaView style={styles.centerScreen}>
         <ExpoStatusBar style="dark" />
-        <ActivityIndicator size="large" color={uiTheme.colors.primary} />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
         <Text style={styles.loadingText}>Loading asset detail...</Text>
       </SafeAreaView>
     );
@@ -361,7 +364,7 @@ export function AssetDetailScreen() {
               pressed && asset.status !== 'NOT_FOUND' && !isMarkingNotFound && styles.pressedButton,
             ]}
           >
-            {isMarkingNotFound ? <ActivityIndicator color={uiTheme.colors.textPrimary} /> : null}
+            {isMarkingNotFound ? <ActivityIndicator color={theme.colors.textPrimary} /> : null}
             <Text style={styles.actionButtonGhostText}>Mark Not Found</Text>
           </Pressable>
 
@@ -375,7 +378,7 @@ export function AssetDetailScreen() {
               pressed && visitId && !isStartingInspection && styles.pressedButton,
             ]}
           >
-            {isStartingInspection ? <ActivityIndicator color="#ffffff" /> : null}
+            {isStartingInspection ? <ActivityIndicator color={theme.colors.textOnPrimary} /> : null}
             <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
           </Pressable>
 
@@ -389,7 +392,7 @@ export function AssetDetailScreen() {
               pressed && !isDeleting && styles.pressedButton,
             ]}
           >
-            {isDeleting ? <ActivityIndicator color="#dc2626" /> : null}
+            {isDeleting ? <ActivityIndicator color={theme.colors.danger} /> : null}
             <Text style={styles.actionButtonDangerText}>Delete</Text>
           </Pressable>
         </View>
@@ -542,6 +545,8 @@ export function AssetDetailScreen() {
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -559,6 +564,8 @@ function CoordinateReadout({
   longitude: number | null;
   accuracyMeters: number | null;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.coordinatePanel}>
       <Text style={styles.coordinateValue} numberOfLines={1}>
@@ -673,325 +680,326 @@ function getImageSourceUri(image: AssetDetailImage) {
   return source;
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: uiTheme.colors.background,
-  },
-  centerScreen: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    backgroundColor: uiTheme.colors.background,
-    paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
-  },
-  centerContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 24,
-  },
-  header: {
-    minHeight: 44,
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerSide: {
-    width: 84,
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-  },
-  headerSideRight: {
-    justifyContent: 'flex-end',
-  },
-  headerTitleWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-  },
-  title: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: uiTheme.colors.textSecondary,
-    textAlign: 'center',
-  },
-  content: {
-    paddingHorizontal: uiTheme.spacing.screen,
-    paddingBottom: 128,
-    gap: 12,
-  },
-  card: {
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: uiTheme.radius.card,
-    padding: 12,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  cardTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  infoLabel: {
-    flex: 1,
-    fontSize: 13,
-    color: uiTheme.colors.textSecondary,
-  },
-  infoValue: {
-    flex: 1.2,
-    fontSize: 13,
-    fontWeight: '500',
-    color: uiTheme.colors.textPrimary,
-    textAlign: 'right',
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-  },
-  bodyText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: uiTheme.colors.textPrimary,
-  },
-  placeholderText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: uiTheme.colors.textSecondary,
-  },
-  checklistList: {
-    marginTop: 6,
-    gap: 8,
-  },
-  checklistRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  checklistRowDefect: {
-    borderColor: uiTheme.colors.dangerBorder,
-    backgroundColor: uiTheme.colors.dangerSoft,
-  },
-  checklistTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  checklistLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  checklistRemark: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: uiTheme.colors.textSecondary,
-  },
-  checklistDefectTag: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: uiTheme.colors.danger,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: uiTheme.colors.textSecondary,
-    textAlign: 'center',
-  },
-  loadingText: {
-    fontSize: 15,
-    color: uiTheme.colors.textSecondary,
-  },
-  errorBanner: {
-    backgroundColor: uiTheme.colors.dangerSoft,
-    borderRadius: uiTheme.radius.control,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    padding: 14,
-  },
-  errorText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#991b1b',
-    fontWeight: '600',
-  },
-  actionPanel: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  actionButton: {
-    minHeight: 42,
-    flexGrow: 1,
-    flexBasis: 118,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 14,
-  },
-  actionButtonPrimary: {
-    backgroundColor: uiTheme.colors.primary,
-  },
-  actionButtonSecondary: {
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  actionButtonGhost: {
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  actionButtonPrimaryText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  actionButtonSecondaryText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  actionButtonGhostText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  actionButtonDanger: {
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-  },
-  actionButtonDangerText: {
-    color: '#dc2626',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  imageBlock: {
-    gap: 8,
-  },
-  imageCarouselContent: {
-    gap: 12,
-  },
-  imageMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  imageType: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: uiTheme.colors.textSecondary,
-  },
-  imageCounter: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: uiTheme.colors.textPrimary,
-  },
-  image: {
-    width: '100%',
-    height: 190,
-    borderRadius: uiTheme.radius.card,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-  },
-  imagePlaceholder: {
-    height: 120,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  historyButton: {
-    minHeight: 44,
-    borderRadius: uiTheme.radius.card,
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  historyButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: uiTheme.colors.textPrimary,
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  pressedButton: {
-    transform: [{ scale: 0.99 }],
-  },
-  statusLine: {
-    minHeight: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  coordinatePanel: {
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 2,
-  },
-  coordinateValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  coordinateAccuracy: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+      paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+    },
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    centerScreen: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      backgroundColor: t.colors.background,
+      paddingHorizontal: 24,
+      paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+    },
+    centerContent: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      paddingHorizontal: 24,
+    },
+    header: {
+      minHeight: 44,
+      paddingHorizontal: t.spacing.screen,
+      paddingBottom: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    headerSide: {
+      width: 84,
+      flexDirection: 'row',
+      gap: 6,
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+    headerSideRight: {
+      justifyContent: 'flex-end',
+    },
+    headerTitleWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+    },
+    title: {
+      fontSize: 18,
+      lineHeight: 24,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontSize: 12,
+      lineHeight: 17,
+      color: t.colors.textSecondary,
+      textAlign: 'center',
+    },
+    content: {
+      paddingHorizontal: t.spacing.screen,
+      paddingBottom: 128,
+      gap: 12,
+    },
+    card: {
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.card,
+      padding: 12,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    cardTitle: {
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '600',
+      color: t.colors.textPrimary,
+    },
+    infoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    infoLabel: {
+      flex: 1,
+      fontSize: 13,
+      color: t.colors.textSecondary,
+    },
+    infoValue: {
+      flex: 1.2,
+      fontSize: 13,
+      fontWeight: '500',
+      color: t.colors.textPrimary,
+      textAlign: 'right',
+    },
+    fieldLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+    },
+    bodyText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: t.colors.textPrimary,
+    },
+    placeholderText: {
+      fontSize: 13,
+      lineHeight: 19,
+      color: t.colors.textSecondary,
+    },
+    checklistList: {
+      marginTop: 6,
+      gap: 8,
+    },
+    checklistRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    checklistRowDefect: {
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+    },
+    checklistTextWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    checklistLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: t.colors.textPrimary,
+    },
+    checklistRemark: {
+      fontSize: 13,
+      lineHeight: 18,
+      color: t.colors.textSecondary,
+    },
+    checklistDefectTag: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: t.colors.danger,
+    },
+    emptyTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+      textAlign: 'center',
+    },
+    emptyText: {
+      fontSize: 15,
+      lineHeight: 22,
+      color: t.colors.textSecondary,
+      textAlign: 'center',
+    },
+    loadingText: {
+      fontSize: 15,
+      color: t.colors.textSecondary,
+    },
+    errorBanner: {
+      backgroundColor: t.colors.dangerSoft,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.dangerBorder,
+      padding: 14,
+    },
+    errorText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: t.colors.dangerText,
+      fontWeight: '600',
+    },
+    actionPanel: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    actionButton: {
+      minHeight: 42,
+      flexGrow: 1,
+      flexBasis: 118,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 14,
+    },
+    actionButtonPrimary: {
+      backgroundColor: t.colors.primary,
+    },
+    actionButtonSecondary: {
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    actionButtonGhost: {
+      backgroundColor: t.colors.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    actionButtonPrimaryText: {
+      color: t.colors.textOnPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    actionButtonSecondaryText: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    actionButtonGhostText: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    actionButtonDanger: {
+      backgroundColor: t.colors.dangerSoft,
+      borderWidth: 1,
+      borderColor: t.colors.dangerBorder,
+    },
+    actionButtonDangerText: {
+      color: t.colors.danger,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    imageBlock: {
+      gap: 8,
+    },
+    imageCarouselContent: {
+      gap: 12,
+    },
+    imageMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    imageType: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+    },
+    imageCounter: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: t.colors.textPrimary,
+    },
+    image: {
+      width: '100%',
+      height: 190,
+      borderRadius: t.radius.card,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    imagePlaceholder: {
+      height: 120,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    historyButton: {
+      minHeight: 44,
+      borderRadius: t.radius.card,
+      backgroundColor: t.colors.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 18,
+    },
+    historyButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    disabledButton: {
+      opacity: 0.6,
+    },
+    pressedButton: {
+      transform: [{ scale: 0.99 }],
+    },
+    statusLine: {
+      minHeight: 28,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    coordinatePanel: {
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      gap: 2,
+    },
+    coordinateValue: {
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    coordinateAccuracy: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+  });

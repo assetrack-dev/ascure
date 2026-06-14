@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -17,8 +17,8 @@ import {
   SuccessBanner,
   TextField,
   WarningBanner,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import {
   enqueueVisitCompletion,
   hasQueuedVisitCompletion,
@@ -68,6 +68,8 @@ const DEFAULT_REGION: Region = {
 };
 
 export function VisitDetailScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<RootStackScreenProps<'VisitDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'VisitDetail'>['route']>();
   const { visitId, substationId, successMessage } = route.params;
@@ -469,6 +471,8 @@ function ReassignTeamCard({
   userRole?: UserRole;
   onReassigned: () => void | Promise<void>;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const [teams, setTeams] = useState<
     Array<{
@@ -610,6 +614,8 @@ function ReassignTeamCard({
 }
 
 function VisitProgressCard({ rollup }: { rollup: SiteVisitSummary }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Card>
       <View style={styles.progressHeader}>
@@ -639,6 +645,8 @@ function VisitProgressCard({ rollup }: { rollup: SiteVisitSummary }) {
 }
 
 function ProgressStat({ label, value }: { label: string; value: number }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.progressStat}>
       <Text style={styles.progressStatValue}>{value}</Text>
@@ -656,6 +664,8 @@ function VisitAssetMap({
   onOpenAsset: (asset: Asset) => void;
   onOpenFullScreen: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const mappedAssets = assets
     .map((asset) => {
       const coordinate = getAssetCoordinate(asset);
@@ -703,7 +713,7 @@ function VisitAssetMap({
                 coordinate={coordinate}
                 title={asset.assetCode}
                 description={asset.name ?? asset.assetType.name}
-                pinColor={uiTheme.colors.primary}
+                pinColor={theme.colors.primary}
                 onPress={() => onOpenAsset(asset)}
               />
             ))}
@@ -727,6 +737,8 @@ function AssetListRow({
   disabled?: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const thumbnailUri = getAssetThumbnailUri(asset, visit);
   const { title, subtitle } = getAssetRowLabels(asset);
 
@@ -771,6 +783,8 @@ function AssetListRow({
 }
 
 function VisitGpsReadout({ visit }: { visit: SiteVisit }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.gpsPanel}>
       <Text style={styles.gpsValue} numberOfLines={1}>
@@ -999,277 +1013,278 @@ function isMappedAsset(
   return value !== null;
 }
 
-const styles = StyleSheet.create({
-  progressHeader: {
-    minHeight: 40,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  progressTitleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  progressSubtitle: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  progressPercent: {
-    minWidth: 52,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 5,
-    backgroundColor: uiTheme.colors.success,
-  },
-  progressStats: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  progressStat: {
-    flex: 1,
-    minHeight: 52,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    gap: 2,
-  },
-  progressStatValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: '800',
-  },
-  progressStatLabel: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  mapHeader: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  fullScreenButton: {
-    minHeight: 38,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    paddingHorizontal: 12,
-  },
-  fullScreenButtonText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  mapFrame: {
-    height: 180,
-    borderRadius: uiTheme.radius.card,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  map: {
-    flex: 1,
-  },
-  assetHeader: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  countText: {
-    minWidth: 36,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  addAssetButton: {
-    minHeight: 38,
-    borderRadius: uiTheme.radius.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: uiTheme.colors.primary,
-    paddingHorizontal: 14,
-  },
-  addAssetButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  assetList: {
-    gap: 8,
-  },
-  viewAllAssetsWrap: {
-    marginTop: uiTheme.spacing.section,
-  },
-  assetRow: {
-    minHeight: 66,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    padding: 8,
-  },
-  assetRowMuted: {
-    opacity: 0.56,
-  },
-  assetRowDisabled: {
-    opacity: 0.68,
-  },
-  assetRowPressed: {
-    backgroundColor: uiTheme.colors.surfacePressed,
-    transform: [{ scale: 0.995 }],
-  },
-  thumbnailFrame: {
-    width: 48,
-    height: 48,
-    borderRadius: uiTheme.radius.card,
-    overflow: 'hidden',
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-  },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbnailPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  thumbnailPlaceholderText: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  assetTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  assetName: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700',
-  },
-  assetMeta: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  gpsPanel: {
-    borderRadius: uiTheme.radius.card,
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 2,
-  },
-  gpsValue: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  gpsAccuracy: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  rowArrow: {
-    width: 18,
-    color: uiTheme.colors.textMuted,
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
-  rowActionLabel: {
-    minWidth: 54,
-    color: uiTheme.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-  disabledButton: {
-    opacity: 0.54,
-  },
-  buttonPressed: {
-    opacity: 0.82,
-  },
-  reassignForm: {
-    gap: 10,
-  },
-  reassignHint: {
-    color: uiTheme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  teamRow: {
-    borderWidth: 1,
-    borderColor: uiTheme.colors.border,
-    backgroundColor: uiTheme.colors.card,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  teamRowSelected: {
-    borderColor: uiTheme.colors.primary,
-    backgroundColor: uiTheme.colors.primarySoft,
-  },
-  teamRowText: {
-    color: uiTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  teamRowTextSelected: {
-    color: uiTheme.colors.primaryStrong,
-  },
-});
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
+    progressHeader: {
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    progressTitleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    progressSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+    },
+    progressPercent: {
+      minWidth: 52,
+      color: t.colors.textPrimary,
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: '800',
+      textAlign: 'right',
+    },
+    progressTrack: {
+      height: 8,
+      borderRadius: 4,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: 5,
+      backgroundColor: t.colors.success,
+    },
+    progressStats: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    progressStat: {
+      flex: 1,
+      minHeight: 52,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      justifyContent: 'center',
+      paddingHorizontal: 10,
+      gap: 2,
+    },
+    progressStatValue: {
+      color: t.colors.textPrimary,
+      fontSize: 16,
+      lineHeight: 21,
+      fontWeight: '800',
+    },
+    progressStatLabel: {
+      color: t.colors.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+    },
+    mapHeader: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    fullScreenButton: {
+      minHeight: 38,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      paddingHorizontal: 12,
+    },
+    fullScreenButtonText: {
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    mapFrame: {
+      height: 180,
+      borderRadius: t.radius.card,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    map: {
+      flex: 1,
+    },
+    assetHeader: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    countText: {
+      minWidth: 36,
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    addAssetButton: {
+      minHeight: 38,
+      borderRadius: t.radius.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 14,
+    },
+    addAssetButtonText: {
+      color: t.colors.textOnPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    assetList: {
+      gap: 8,
+    },
+    viewAllAssetsWrap: {
+      marginTop: t.spacing.section,
+    },
+    assetRow: {
+      minHeight: 66,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 8,
+    },
+    assetRowMuted: {
+      opacity: 0.56,
+    },
+    assetRowDisabled: {
+      opacity: 0.68,
+    },
+    assetRowPressed: {
+      backgroundColor: t.colors.surfacePressed,
+      transform: [{ scale: 0.995 }],
+    },
+    thumbnailFrame: {
+      width: 48,
+      height: 48,
+      borderRadius: t.radius.card,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    thumbnail: {
+      width: '100%',
+      height: '100%',
+    },
+    thumbnailPlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+    },
+    thumbnailPlaceholderText: {
+      color: t.colors.textSecondary,
+      fontSize: 11,
+      lineHeight: 14,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    assetTextWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    assetName: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    assetMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '500',
+    },
+    gpsPanel: {
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      gap: 2,
+    },
+    gpsValue: {
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    gpsAccuracy: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    rowArrow: {
+      width: 18,
+      color: t.colors.textMuted,
+      fontSize: 20,
+      fontWeight: '700',
+      textAlign: 'right',
+    },
+    rowActionLabel: {
+      minWidth: 54,
+      color: t.colors.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '800',
+      textAlign: 'right',
+    },
+    disabledButton: {
+      opacity: 0.54,
+    },
+    buttonPressed: {
+      opacity: 0.82,
+    },
+    reassignForm: {
+      gap: 10,
+    },
+    reassignHint: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    teamRow: {
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    teamRowSelected: {
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.primarySoft,
+    },
+    teamRowText: {
+      color: t.colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    teamRowTextSelected: {
+      color: t.colors.primaryStrong,
+    },
+  });

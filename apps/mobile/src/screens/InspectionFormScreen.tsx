@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
@@ -49,8 +49,8 @@ import {
   SuccessBanner,
   TextField,
   WarningBanner,
-  uiTheme,
 } from '../ui';
+import { Theme, useTheme } from '../theme';
 import { recognizeReadingFromImage } from '../ocr';
 import {
   DraftValues,
@@ -83,6 +83,8 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
 
 export function InspectionFormScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<RootStackScreenProps<'InspectionForm'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'InspectionForm'>['route']>();
   const { inspectionId, visitId, substationId } = route.params;
@@ -872,6 +874,8 @@ function InspectionPhotoSection({
   onRetakePhoto: (photoId: string) => void;
   onRemovePhoto: (photoId: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.photoSection}>
       <View style={styles.photoSectionHeader}>
@@ -970,6 +974,8 @@ function ChecklistSectionCard({
   photos: CapturedInspectionPhoto[];
   onPreviewPhoto: (uri: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const normalizedTitle = section.title.trim().toUpperCase();
   const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
     ? normalizedTitle
@@ -1036,6 +1042,8 @@ function ChecklistItemCard({
   scanPhotoUri?: string;
   onPreviewPhoto: (uri: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
 
@@ -1121,7 +1129,7 @@ function ChecklistItemCard({
             ]}
           >
             {scanning ? (
-              <ActivityIndicator size="small" color="#ffffff" />
+              <ActivityIndicator size="small" color={theme.colors.textOnPrimary} />
             ) : (
               <Text style={styles.scanButtonIcon}>⌖</Text>
             )}
@@ -1215,6 +1223,8 @@ function BooleanField({
   defectValue: boolean;
   onChange: (value: boolean | null) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   // For defect-trigger items the inspector answers whether the defect exists, so
   // the defect answer is coloured as the alarming (danger) choice and the clear
   // answer as success. Non-defect items keep the conventional YES=good colouring.
@@ -1269,6 +1279,8 @@ function DropdownField({
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const options = normalizeSelectOptions(item.optionsJson);
 
   if (options.length === 0) {
@@ -1316,6 +1328,8 @@ function MultiSelectField({
   disabled: boolean;
   onChange: (value: string[]) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const options = normalizeSelectOptions(item.optionsJson);
   const selectedValues = new Set(value);
 
@@ -1364,6 +1378,8 @@ function MultiSelectField({
 }
 
 function ImageFieldPlaceholder() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.imageFieldPlaceholder}>
       <Text style={styles.imageFieldTitle}>Image capture</Text>
@@ -1387,6 +1403,8 @@ function ChoiceButton({
   tone: 'success' | 'danger' | 'neutral';
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1432,6 +1450,8 @@ function DropdownOptionButton({
   disabled: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1457,6 +1477,8 @@ function DropdownOptionButton({
 }
 
 function PhotoStatusPill({ state }: { state: PhotoUploadState }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View
       style={[
@@ -1489,6 +1511,8 @@ function PhotoActionButton({
   disabled?: boolean;
   danger?: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1649,7 +1673,8 @@ async function delay(durationMs: number) {
   await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
 }
 
-const styles = StyleSheet.create({
+const createStyles = (t: Theme) =>
+  StyleSheet.create({
   stickyActionArea: {
     gap: 12,
   },
@@ -1666,12 +1691,12 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   inspectionHeaderCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderRadius: 8,
     padding: 12,
     gap: 10,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
+    borderColor: t.colors.border,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -1688,14 +1713,14 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: '600',
     letterSpacing: 0,
-    color: '#6b7280',
+    color: t.colors.textSecondary,
     textTransform: 'uppercase',
   },
   summaryAsset: {
     fontSize: 17,
     lineHeight: 22,
     fontWeight: '700',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   contextChipRow: {
     flexDirection: 'row',
@@ -1706,27 +1731,27 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
-    backgroundColor: '#f8fafc',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     paddingHorizontal: 9,
     paddingVertical: 4,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
-    color: '#334155',
+    color: t.colors.textSecondary,
   },
   summaryMetaText: {
     fontSize: 12,
     lineHeight: 17,
-    color: '#64748b',
+    color: t.colors.textSecondary,
   },
   photoSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderRadius: 8,
     padding: 12,
     gap: 12,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: t.colors.border,
   },
   photoSectionHeader: {
     flexDirection: 'row',
@@ -1742,15 +1767,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '600',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   photoCount: {
     minWidth: 34,
     minHeight: 28,
     borderRadius: 14,
     overflow: 'hidden',
-    backgroundColor: '#eef2f7',
-    color: '#111827',
+    backgroundColor: t.colors.surfaceMuted,
+    color: t.colors.textPrimary,
     textAlign: 'center',
     textAlignVertical: 'center',
     fontSize: 13,
@@ -1761,8 +1786,8 @@ const styles = StyleSheet.create({
     minHeight: 56,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f8fafc',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 12,
@@ -1771,12 +1796,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
     fontWeight: '500',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   emptyPhotoText: {
     fontSize: 13,
     lineHeight: 19,
-    color: '#6b7280',
+    color: t.colors.textSecondary,
     textAlign: 'center',
   },
   itemCard: {
@@ -1784,8 +1809,8 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.card,
   },
   itemHeader: {
     flexDirection: 'row',
@@ -1797,10 +1822,10 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   sectionCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#d9e1ea',
+    borderColor: t.colors.border,
     overflow: 'hidden',
   },
   sectionTopRail: {
@@ -1813,21 +1838,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: t.colors.border,
   },
   sectionIndexBadge: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#111827',
+    backgroundColor: t.colors.primary,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sectionIndexText: {
-    color: '#ffffff',
+    color: t.colors.textOnPrimary,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -1838,19 +1863,19 @@ const styles = StyleSheet.create({
   sectionMeta: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#6b7280',
+    color: t.colors.textSecondary,
   },
   sectionDescription: {
     paddingHorizontal: 16,
     paddingTop: 14,
     fontSize: 14,
     lineHeight: 20,
-    color: '#6b7280',
+    color: t.colors.textSecondary,
   },
   sectionItems: {
     padding: 10,
     gap: 8,
-    backgroundColor: '#f8fafc',
+    backgroundColor: t.colors.surfaceMuted,
   },
   photoCardHeader: {
     flexDirection: 'row',
@@ -1865,8 +1890,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f8fafc',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
   },
   photoGrid: {
     flexDirection: 'row',
@@ -1882,11 +1907,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   photoPreviewButton: {
     overflow: 'hidden',
-    backgroundColor: '#e5edf8',
+    backgroundColor: t.colors.surfaceMuted,
   },
   photoPreviewPressed: {
     opacity: 0.92,
@@ -1894,7 +1919,7 @@ const styles = StyleSheet.create({
   photoPreview: {
     width: '100%',
     height: 124,
-    backgroundColor: '#e5edf8',
+    backgroundColor: t.colors.surfaceMuted,
   },
   photoPreviewBadge: {
     position: 'absolute',
@@ -1921,7 +1946,7 @@ const styles = StyleSheet.create({
   photoCoordLine: {
     fontSize: 11,
     lineHeight: 15,
-    color: '#64748b',
+    color: t.colors.textSecondary,
     fontWeight: '600',
   },
   photoDetailsGrid: {
@@ -1934,9 +1959,9 @@ const styles = StyleSheet.create({
     minWidth: 120,
     minHeight: 58,
     borderRadius: 8,
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: t.colors.border,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 2,
@@ -1946,47 +1971,47 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '600',
-    color: '#6b7280',
+    color: t.colors.textSecondary,
     textTransform: 'uppercase',
   },
   photoMetaValue: {
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '600',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   photoStatusPill: {
     borderRadius: 999,
     paddingHorizontal: 7,
     paddingVertical: 3,
-    backgroundColor: '#eef2ff',
+    backgroundColor: t.colors.infoSoft,
     borderWidth: 1,
-    borderColor: '#c7d2fe',
+    borderColor: t.colors.infoBorder,
   },
   photoStatusUploaded: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#bbf7d0',
+    backgroundColor: t.colors.successSoft,
+    borderColor: t.colors.successBorder,
   },
   photoStatusError: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
+    backgroundColor: t.colors.dangerSoft,
+    borderColor: t.colors.dangerBorder,
   },
   photoStatusText: {
     fontSize: 10,
     lineHeight: 14,
     fontWeight: '600',
-    color: '#3730a3',
+    color: t.colors.infoText,
   },
   photoStatusTextUploaded: {
-    color: '#166534',
+    color: t.colors.successText,
   },
   photoStatusTextError: {
-    color: '#b91c1c',
+    color: t.colors.dangerText,
   },
   photoUploadError: {
     fontSize: 11,
     lineHeight: 15,
-    color: '#b91c1c',
+    color: t.colors.dangerText,
   },
   photoActionRow: {
     flexDirection: 'row',
@@ -1998,14 +2023,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: t.colors.card,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: t.colors.border,
     paddingHorizontal: 12,
   },
   photoActionButtonDanger: {
-    borderColor: '#fecaca',
-    backgroundColor: '#fff7f7',
+    borderColor: t.colors.dangerBorder,
+    backgroundColor: t.colors.dangerSoft,
   },
   photoActionButtonDisabled: {
     opacity: 0.5,
@@ -2018,10 +2043,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   photoActionTextDanger: {
-    color: '#b91c1c',
+    color: t.colors.dangerText,
   },
   overlayCaptureRoot: {
     position: 'absolute',
@@ -2064,7 +2089,7 @@ const styles = StyleSheet.create({
     gap: 8,
     borderRadius: 8,
     paddingHorizontal: 14,
-    backgroundColor: uiTheme.colors.primary,
+    backgroundColor: t.colors.primary,
   },
   scanButtonDisabled: {
     opacity: 0.55,
@@ -2073,12 +2098,12 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   scanButtonIcon: {
-    color: '#ffffff',
+    color: t.colors.textOnPrimary,
     fontSize: 16,
     fontWeight: '700',
   },
   scanButtonText: {
-    color: '#ffffff',
+    color: t.colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -2086,7 +2111,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    backgroundColor: t.colors.surfaceMuted,
   },
   scanPhotoThumb: {
     width: '100%',
@@ -2107,7 +2132,7 @@ const styles = StyleSheet.create({
   },
   previewModalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    backgroundColor: t.colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -2124,23 +2149,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '500',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   requiredLabel: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#92400e',
-    backgroundColor: '#fffbeb',
+    color: t.colors.warningText,
+    backgroundColor: t.colors.warningSoft,
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#fde68a',
+    borderColor: t.colors.warningBorder,
   },
   helperText: {
     fontSize: 12,
     lineHeight: 17,
-    color: '#6b7280',
+    color: t.colors.textSecondary,
   },
   resultControl: {
     gap: 8,
@@ -2149,14 +2174,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600',
-    color: '#64748b',
+    color: t.colors.textSecondary,
     textTransform: 'uppercase',
   },
   resultButtonRow: {
     flexDirection: 'row',
     gap: 6,
     borderRadius: 8,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: t.colors.surfaceMuted,
     padding: 5,
   },
   optionStack: {
@@ -2166,8 +2191,8 @@ const styles = StyleSheet.create({
     minHeight: 42,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#ffffff',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.card,
     paddingHorizontal: 12,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -2175,55 +2200,55 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   optionButtonSelected: {
-    borderColor: '#111827',
-    backgroundColor: '#f8fafc',
+    borderColor: t.colors.primary,
+    backgroundColor: t.colors.surfaceMuted,
   },
   optionButtonText: {
     flex: 1,
     fontSize: 15,
     lineHeight: 21,
     fontWeight: '600',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   optionButtonTextSelected: {
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   optionIndicator: {
     width: 22,
     height: 22,
     borderRadius: 11,
     borderWidth: 2,
-    borderColor: '#111827',
+    borderColor: t.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   optionIndicatorSelected: {
-    borderColor: '#111827',
+    borderColor: t.colors.primary,
   },
   optionIndicatorInner: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#111827',
+    backgroundColor: t.colors.primary,
   },
   unsupportedFieldPanel: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fef2f2',
+    borderColor: t.colors.dangerBorder,
+    backgroundColor: t.colors.dangerSoft,
     padding: 12,
   },
   unsupportedFieldText: {
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '600',
-    color: '#991b1b',
+    color: t.colors.dangerText,
   },
   imageFieldPlaceholder: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f8fafc',
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     padding: 12,
     gap: 3,
   },
@@ -2231,12 +2256,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '700',
-    color: '#111827',
+    color: t.colors.textPrimary,
   },
   imageFieldText: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#64748b',
+    color: t.colors.textSecondary,
   },
   choiceButton: {
     flex: 1,
@@ -2250,23 +2275,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   choiceButtonSelected: {
-    borderColor: '#111827',
-    backgroundColor: '#111827',
+    borderColor: t.colors.primary,
+    backgroundColor: t.colors.primary,
   },
   choiceButtonPassSelected: {
-    borderColor: '#15803d',
-    backgroundColor: '#15803d',
+    borderColor: t.colors.success,
+    backgroundColor: t.colors.success,
   },
   choiceButtonFail: {
     borderColor: 'transparent',
   },
   choiceButtonFailSelected: {
-    borderColor: '#b91c1c',
-    backgroundColor: '#b91c1c',
+    borderColor: t.colors.danger,
+    backgroundColor: t.colors.danger,
   },
   choiceButtonNaSelected: {
-    borderColor: '#475569',
-    backgroundColor: '#475569',
+    borderColor: t.colors.textSecondary,
+    backgroundColor: t.colors.textSecondary,
   },
   choiceButtonDisabled: {
     opacity: 0.55,
@@ -2278,21 +2303,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 19,
     fontWeight: '700',
-    color: '#374151',
+    color: t.colors.textSecondary,
   },
   choiceButtonTextSelected: {
-    color: '#ffffff',
+    color: t.colors.textOnPrimary,
   },
   choiceButtonPassTextSelected: {
-    color: '#ffffff',
+    color: t.colors.onStatus,
   },
   choiceButtonFailText: {
-    color: '#374151',
+    color: t.colors.textSecondary,
   },
   choiceButtonFailTextSelected: {
-    color: '#ffffff',
+    color: t.colors.onStatus,
   },
   choiceButtonNaTextSelected: {
-    color: '#ffffff',
+    color: t.colors.onStatus,
   },
-});
+  });

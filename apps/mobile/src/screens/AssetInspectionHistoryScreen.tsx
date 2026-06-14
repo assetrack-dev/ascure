@@ -13,12 +13,14 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
+import { useTheme } from '../theme';
 import { AssetInspectionHistoryItem, InspectionImage } from '../types';
 import { formatDateTime } from '../utils';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
 export function AssetInspectionHistoryScreen() {
+  const theme = useTheme();
   const navigation =
     useNavigation<RootStackScreenProps<'AssetInspectionHistory'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'AssetInspectionHistory'>['route']>();
@@ -58,7 +60,7 @@ export function AssetInspectionHistoryScreen() {
     <View
       style={{
         flex: 1,
-        backgroundColor: '#f4f7fb',
+        backgroundColor: theme.colors.background,
         paddingTop: Platform.OS === 'android' ? 24 : 16,
       }}
     >
@@ -73,11 +75,11 @@ export function AssetInspectionHistoryScreen() {
         }}
       >
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a' }}>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: theme.colors.textPrimary }}>
             Inspection History
           </Text>
           {assetCode ? (
-            <Text style={{ fontSize: 15, lineHeight: 22, color: '#526277' }}>{assetCode}</Text>
+            <Text style={{ fontSize: 15, lineHeight: 22, color: theme.colors.textSecondary }}>{assetCode}</Text>
           ) : null}
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -86,14 +88,14 @@ export function AssetInspectionHistoryScreen() {
               style={{
                 fontSize: 15,
                 fontWeight: '700',
-                color: isLoading ? '#94a3b8' : '#0f5cd8',
+                color: isLoading ? theme.colors.textMuted : theme.colors.info,
               }}
             >
               Refresh
             </Text>
           </Pressable>
           <Pressable onPress={() => navigation.goBack()} style={{ paddingVertical: 6 }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f5cd8' }}>Back</Text>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.info }}>Back</Text>
           </Pressable>
         </View>
       </View>
@@ -108,23 +110,23 @@ export function AssetInspectionHistoryScreen() {
       >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 12 }}>
-            <ActivityIndicator size="large" color="#0f5cd8" />
-            <Text style={{ fontSize: 15, color: '#526277' }}>Loading inspection history...</Text>
+            <ActivityIndicator size="large" color={theme.colors.info} />
+            <Text style={{ fontSize: 15, color: theme.colors.textSecondary }}>Loading inspection history...</Text>
           </View>
         ) : null}
 
         {!isLoading && error ? (
           <View
             style={{
-              backgroundColor: '#fee2e2',
+              backgroundColor: theme.colors.dangerSoft,
               borderRadius: 14,
               borderWidth: 1,
-              borderColor: '#fecaca',
+              borderColor: theme.colors.dangerBorder,
               padding: 14,
               gap: 12,
             }}
           >
-            <Text style={{ fontSize: 14, lineHeight: 20, color: '#991b1b', fontWeight: '600' }}>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: theme.colors.dangerText, fontWeight: '600' }}>
               {error}
             </Text>
             <Pressable
@@ -134,11 +136,11 @@ export function AssetInspectionHistoryScreen() {
                 borderRadius: 14,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: '#ffffff',
+                backgroundColor: theme.colors.card,
                 opacity: pressed ? 0.9 : 1,
               })}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#991b1b' }}>Try Again</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.dangerText }}>Try Again</Text>
             </Pressable>
           </View>
         ) : null}
@@ -146,14 +148,14 @@ export function AssetInspectionHistoryScreen() {
         {!isLoading && !error && inspections.length === 0 ? (
           <View
             style={{
-              backgroundColor: '#eef4fb',
+              backgroundColor: theme.colors.infoSoft,
               borderRadius: 16,
               padding: 18,
               borderWidth: 1,
-              borderColor: '#d9e4f2',
+              borderColor: theme.colors.border,
             }}
           >
-            <Text style={{ fontSize: 17, fontWeight: '700', color: '#0f172a' }}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: theme.colors.textPrimary }}>
               No inspections submitted yet.
             </Text>
           </View>
@@ -190,6 +192,7 @@ function InspectionHistoryCard({
   onOpenImagePreview: (params: { uri: string; title?: string }) => void;
   onOpenInspectionDetail: () => void;
 }) {
+  const theme = useTheme();
   const firstImage = inspection.images?.find((image) => getImageSourceUri(image)) ?? null;
   const thumbnailUri = firstImage ? getImageSourceUri(firstImage) : null;
   const remarksPreview = createRemarksPreview(inspection.remarks);
@@ -198,21 +201,21 @@ function InspectionHistoryCard({
     <Pressable
       onPress={onOpenInspectionDetail}
       style={({ pressed }) => ({
-        backgroundColor: '#ffffff',
+        backgroundColor: theme.colors.card,
         borderRadius: 16,
         padding: 16,
         gap: 12,
         borderWidth: 1,
-        borderColor: '#dce5f1',
+        borderColor: theme.colors.border,
         opacity: pressed ? 0.94 : 1,
       })}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>
+          <Text style={{ fontSize: 18, fontWeight: '800', color: theme.colors.textPrimary }}>
             Cycle {inspection.cycleNumber}
           </Text>
-          <Text style={{ fontSize: 13, lineHeight: 19, color: '#607086' }}>
+          <Text style={{ fontSize: 13, lineHeight: 19, color: theme.colors.textSecondary }}>
             Submitted {formatDateTime(inspection.submittedAt)}
           </Text>
         </View>
@@ -222,14 +225,20 @@ function InspectionHistoryCard({
             borderRadius: 999,
             paddingHorizontal: 10,
             paddingVertical: 6,
-            backgroundColor: inspection.status === 'SUBMITTED' ? '#dcfce7' : '#fef3c7',
+            backgroundColor:
+              inspection.status === 'SUBMITTED'
+                ? theme.colors.successSoft
+                : theme.colors.warningSoft,
           }}
         >
           <Text
             style={{
               fontSize: 12,
               fontWeight: '700',
-              color: inspection.status === 'SUBMITTED' ? '#166534' : '#92400e',
+              color:
+                inspection.status === 'SUBMITTED'
+                  ? theme.colors.successText
+                  : theme.colors.warningText,
             }}
           >
             {formatStatus(inspection.status)}
@@ -238,12 +247,12 @@ function InspectionHistoryCard({
       </View>
 
       <View style={{ gap: 6 }}>
-        <Text style={{ fontSize: 13, fontWeight: '700', color: '#607086' }}>Remarks</Text>
+        <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary }}>Remarks</Text>
         <Text
           style={{
             fontSize: 15,
             lineHeight: 22,
-            color: remarksPreview ? '#10233d' : '#607086',
+            color: remarksPreview ? theme.colors.textPrimary : theme.colors.textSecondary,
           }}
         >
           {remarksPreview || 'No remarks recorded.'}
@@ -258,8 +267,8 @@ function InspectionHistoryCard({
           gap: 12,
         }}
       >
-        <Text style={{ fontSize: 14, color: '#607086' }}>Images</Text>
-        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>
+        <Text style={{ fontSize: 14, color: theme.colors.textSecondary }}>Images</Text>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary }}>
           {inspection.imageCount ?? inspection.images?.length ?? 0}
         </Text>
       </View>
@@ -281,7 +290,7 @@ function InspectionHistoryCard({
               width: '100%',
               height: 160,
               borderRadius: 14,
-              backgroundColor: '#e5edf8',
+              backgroundColor: theme.colors.surfaceMuted,
             }}
             resizeMode="cover"
           />
