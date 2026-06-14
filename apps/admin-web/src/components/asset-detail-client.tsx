@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CalendarDays, MapPin, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CalendarDays, FileText, MapPin, RefreshCw, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import { fetchAssetDetail } from "@/lib/assets";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
+import { downloadAssetReportPreview } from "@/lib/report-templates";
 import type { AssetDetail } from "@/types/assets";
 import type { AuthSession } from "@/types/auth";
 
@@ -54,6 +55,8 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const [asset, setAsset] = useState<AssetDetail | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -92,6 +95,32 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   }, [loadAsset]);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
+  const canReport =
+    session?.user?.canReport === true || session?.user?.role === "ADMIN";
+
+  const handlePreviewReport = useCallback(async () => {
+    if (!session?.token || !asset) return;
+    setPreviewing(true);
+    setPreviewError("");
+    try {
+      await downloadAssetReportPreview(session.token, {
+        id: assetId,
+        assetCode: asset.assetCode,
+      });
+    } catch (reportError) {
+      if (reportError instanceof ApiError && reportError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setPreviewError(
+        reportError instanceof Error
+          ? reportError.message
+          : "Unable to generate the report.",
+      );
+    } finally {
+      setPreviewing(false);
+    }
+  }, [session?.token, asset, assetId, handleLogout]);
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -126,16 +155,40 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadAsset(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {canReport ? (
+                <button
+                  type="button"
+                  onClick={handlePreviewReport}
+                  disabled={previewing || !asset || !session?.token}
+                  title="Generate the per-asset visual report from the latest submitted inspection"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  {previewing ? (
+                    <RefreshCw size={16} className="animate-spin" />
+                  ) : (
+                    <FileText size={16} />
+                  )}
+                  Preview report
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => (session?.token ? loadAsset(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
           </div>
+
+          {previewError ? (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {previewError}
+            </div>
+          ) : null}
 
           <div className="mt-6">
             {isLoading && !asset ? (

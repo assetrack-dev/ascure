@@ -28,6 +28,14 @@ export function listReportTemplates(token: string) {
   return apiRequest<ReportTemplate[]>("/report-templates", { token });
 }
 
+/** Hard-delete a template (row + file). ADMIN-only on the server. */
+export function deleteReportTemplate(token: string, id: string) {
+  return apiRequest<{ id: string }>(
+    `/report-templates/${encodeURIComponent(id)}`,
+    { method: "DELETE", token },
+  );
+}
+
 /**
  * Upload a `.docx` template for an operational scope. Becomes the active template
  * for that scope and supersedes the prior one. ADMIN-only on the server.

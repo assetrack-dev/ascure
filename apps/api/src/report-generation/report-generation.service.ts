@@ -7,7 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
   InspectionCompletionStatus,
@@ -255,6 +255,40 @@ export class ReportGenerationService {
       where: { tenantId: user.tenantId },
       orderBy: [{ operationalScope: 'asc' }, { version: 'desc' }],
     });
+  }
+
+  /**
+   * Hard-delete a template (DB row + the `.docx` on disk). Safe: compiled
+   * reports don't reference the template row (it's only used at compile time),
+   * so removing one has no downstream effect. The file removal is best-effort.
+   */
+  async deleteTemplate(
+    user: RequestUser,
+    id: string,
+  ): Promise<{ id: string }> {
+    this.assertAdmin(user);
+
+    const template = await this.prisma.reportTemplate.findFirst({
+      where: { id, tenantId: user.tenantId },
+    });
+    if (!template) {
+      throw new NotFoundException('Report template not found.');
+    }
+
+    await this.prisma.reportTemplate.delete({ where: { id: template.id } });
+
+    try {
+      await unlink(resolveUploadPath(template.storageKey));
+    } catch (error) {
+      this.logger.warn(
+        `Deleted template ${template.id} row but its file was not removed ` +
+          `(${template.storageKey}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+      );
+    }
+
+    return { id: template.id };
   }
 
   // ─── Per-asset preview (on demand) ────────────────────────────────────────

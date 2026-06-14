@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   FileText,
   RefreshCw,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/auth";
 import {
   OPERATIONAL_SCOPES,
+  deleteReportTemplate,
   listReportTemplates,
   uploadReportTemplate,
   type OperationalScope,
@@ -43,6 +45,7 @@ function ReportTemplatesContent() {
   const [name, setName] = useState("");
   const [scope, setScope] = useState<OperationalScope>(OPERATIONAL_SCOPES[0]);
   const [isUploading, setIsUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -115,6 +118,36 @@ function ReportTemplatesContent() {
       setIsUploading(false);
     }
   }, [session?.token, file, scope, name, refreshTemplates, handleLogout]);
+
+  const handleDelete = useCallback(
+    async (template: ReportTemplate) => {
+      if (!session?.token) return;
+      if (
+        !window.confirm(
+          `Delete template "${template.name}" (${template.operationalScope} v${template.version})? This removes it permanently.`,
+        )
+      ) {
+        return;
+      }
+      setDeletingId(template.id);
+      setError("");
+      setNotice("");
+      try {
+        await deleteReportTemplate(session.token, template.id);
+        setNotice(`Deleted "${template.name}" (${template.operationalScope}).`);
+        await refreshTemplates(session.token);
+      } catch (deleteError) {
+        if (deleteError instanceof ApiError && deleteError.status === 401) {
+          handleLogout();
+          return;
+        }
+        setError(errMsg(deleteError, "Template delete failed."));
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [session?.token, refreshTemplates, handleLogout],
+  );
 
   const activeByScope = new Map<string, ReportTemplate>();
   for (const t of templates) {
@@ -307,6 +340,22 @@ function ReportTemplatesContent() {
                             superseded
                           </span>
                         )}
+                        {isAdmin ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(t)}
+                            disabled={deletingId === t.id}
+                            title="Delete template"
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 font-semibold text-slate-500 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deletingId === t.id ? (
+                              <RefreshCw size={12} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={12} />
+                            )}
+                            Delete
+                          </button>
+                        ) : null}
                       </span>
                     </li>
                   ))}
