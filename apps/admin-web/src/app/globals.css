@@ -29,15 +29,15 @@
   --ink-50: #F7F8FA;
   --ink-0: #FFFFFF;
 
-  /* Brand = ink (monochrome) */
-  --brand: #161A1F;
-  --brand-strong: #2A313B;
-  --brand-bright: #3A434F;
-  --brand-soft: #DDE2E8;
-  --on-brand: #F7F8FA;
-  --accent: #161A1F;
-  --accent-bright: #2A313B;
-  --accent-soft: #DDE2E8;
+  /* Brand accent = electric blue (layered on the monochrome ink/mist base) */
+  --brand: #2563EB;
+  --brand-strong: #1D4ED8;
+  --brand-bright: #3B82F6;
+  --brand-soft: #DBEAFE;
+  --on-brand: #FFFFFF;
+  --accent: #2563EB;
+  --accent-bright: #3B82F6;
+  --accent-soft: #DBEAFE;
 
   /* Content surfaces */
   --background: #E9ECEF;
@@ -60,15 +60,15 @@
   --on-chrome: #E9ECEF;
   --on-chrome-muted: #9AA4B0;
   --on-chrome-faint: #66717F;
-  --chrome-accent: #E9ECEF;
+  --chrome-accent: #60A5FA;
 
   /* Legacy ink aliases (still referenced by some components) */
   --on-ink: var(--on-chrome);
   --on-ink-muted: var(--on-chrome-muted);
 
   /* Focus / selection */
-  --focus-ring: rgba(22, 26, 31, 0.26);
-  --selection-bg: rgba(22, 26, 31, 0.14);
+  --focus-ring: rgba(37, 99, 235, 0.30);
+  --selection-bg: rgba(37, 99, 235, 0.16);
 
   /* Modal scrim — constant dark in BOTH modes */
   --scrim: rgba(8, 11, 15, 0.55);
@@ -78,8 +78,8 @@
   --high: #EA580C; --high-bg: #FBEAE0; --high-border: #F2CDB6; --high-text: #7C2D12;
   --medium: #B45309; --medium-bg: #FAEFDD; --medium-border: #EBD7AE; --medium-text: #854F0B;
   --warning: #B45309; --warning-bg: #FAEFDD; --warning-border: #EBD7AE; --warning-text: #854F0B;
-  --low: #2563EB;
-  --info: #2563EB; --info-bg: #E7F1FB; --info-border: #C4DBF5; --info-text: #0C447C;
+  --low: #0284C7;
+  --info: #0284C7; --info-bg: #E0F2FE; --info-border: #BAE0FB; --info-text: #075985;
   --verified: #16A34A; --verified-bg: #E9F4EA; --verified-border: #C5E2C8; --verified-text: #27500A;
   --success: #16A34A; --success-bg: #E9F4EA; --success-border: #C5E2C8; --success-text: #27500A;
   --danger: #DC2626; --danger-bg: #FCEBEB; --danger-border: #F2C7C7; --danger-text: #791F1F;
@@ -108,14 +108,14 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --brand: #E9ECEF;
-  --brand-strong: #FFFFFF;
-  --brand-bright: #CDD4DB;
-  --brand-soft: #1E2630;
-  --on-brand: #11151A;
-  --accent: #E9ECEF;
-  --accent-bright: #CDD4DB;
-  --accent-soft: #1E2630;
+  --brand: #3B82F6;
+  --brand-strong: #60A5FA;
+  --brand-bright: #60A5FA;
+  --brand-soft: #18233A;
+  --on-brand: #FFFFFF;
+  --accent: #3B82F6;
+  --accent-bright: #60A5FA;
+  --accent-soft: #18233A;
 
   --background: #0E1116;
   --panel: #181D24;
@@ -132,15 +132,15 @@
   --chrome: #0B0E12;
   --chrome-panel: #161A1F;
 
-  --focus-ring: rgba(233, 236, 239, 0.32);
-  --selection-bg: rgba(233, 236, 239, 0.16);
+  --focus-ring: rgba(96, 165, 250, 0.40);
+  --selection-bg: rgba(96, 165, 250, 0.20);
 
   --critical: #F87171; --critical-bg: #3A1D20; --critical-border: #5A2A2D; --critical-text: #FCA5A5;
   --high: #FB923C; --high-bg: #3A271A; --high-border: #5A3A24; --high-text: #FDBA8C;
   --medium: #F5B544; --medium-bg: #332817; --medium-border: #4D3B1E; --medium-text: #FCD77F;
   --warning: #F5B544; --warning-bg: #332817; --warning-border: #4D3B1E; --warning-text: #FCD77F;
-  --low: #60A5FA;
-  --info: #60A5FA; --info-bg: #152538; --info-border: #23405E; --info-text: #AECBF5;
+  --low: #38BDF8;
+  --info: #38BDF8; --info-bg: #0C2A3B; --info-border: #1E4A63; --info-text: #BAE6FD;
   --verified: #4ADE80; --verified-bg: #13301E; --verified-border: #234A30; --verified-text: #A7E8BC;
   --success: #4ADE80; --success-bg: #13301E; --success-border: #234A30; --success-text: #A7E8BC;
   --danger: #F87171; --danger-bg: #3A1D20; --danger-border: #5A2A2D; --danger-text: #FCA5A5;

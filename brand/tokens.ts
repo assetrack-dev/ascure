@@ -4,10 +4,10 @@
 
 export const ascureTokens = {
   light: {
-    // Brand = ink
-    primary: '#161A1F',
-    primaryStrong: '#2A313B',
-    primarySoft: '#DDE2E8',
+    // Brand accent = electric blue
+    primary: '#2563EB',
+    primaryStrong: '#1D4ED8',
+    primarySoft: '#DBEAFE',
     // Surfaces (mist)
     background: '#E9ECEF',
     card: '#FFFFFF',
@@ -20,12 +20,12 @@ export const ascureTokens = {
     textMuted: '#828E9C',
     textOnPrimary: '#F7F8FA',
     // Status — functional
-    danger: '#DC2626', success: '#16A34A', warning: '#B45309', info: '#2563EB',
+    danger: '#DC2626', success: '#16A34A', warning: '#B45309', info: '#0284C7',
   },
   dark: {
-    primary: '#E9ECEF',
-    primaryStrong: '#FFFFFF',
-    primarySoft: '#1E2630',
+    primary: '#3B82F6',
+    primaryStrong: '#60A5FA',
+    primarySoft: '#18233A',
     background: '#0E1116',
     card: '#181D24',
     surfaceMuted: '#11151A',
@@ -36,7 +36,7 @@ export const ascureTokens = {
     textSecondary: '#9AA4B0',
     textMuted: '#66717F',
     textOnPrimary: '#11151A',
-    danger: '#F87171', success: '#4ADE80', warning: '#F5B544', info: '#60A5FA',
+    danger: '#F87171', success: '#4ADE80', warning: '#F5B544', info: '#38BDF8',
   },
   // Dark "chrome" surfaces (drawer/map panels) — dark in BOTH modes
   chrome: { surface: '#11151A', panel: '#1B212A', onChrome: '#E9ECEF', onChromeMuted: '#9AA4B0', accent: '#E9ECEF' },

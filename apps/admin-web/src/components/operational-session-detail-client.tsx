@@ -198,7 +198,7 @@ function StatusBadge({ status }: { status: OperationalSessionStatus }) {
 
 function actionButtonClassName(tone: DetailAction["tone"]) {
   if (tone === "primary") {
-    return "bg-[var(--brand)] text-white hover:bg-[var(--brand-strong)]";
+    return "bg-[var(--brand)] text-[var(--on-brand)] hover:bg-[var(--brand-strong)]";
   }
 
   if (tone === "success") {
@@ -668,7 +668,7 @@ function AssetAssignmentModalDialog({
             type="button"
             onClick={isBulk ? onSubmitBulk : onSubmitAdd}
             disabled={isSubmitting}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isSubmitting ? <RefreshCw size={16} className="animate-spin" /> : null}
             {isBulk ? "Bulk Assign" : "Add Asset"}

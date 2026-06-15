@@ -18,22 +18,24 @@ In-app the monogram PNG ships at `apps/admin-web/public/brand/monogram.png`,
 `apps/admin-web/src/app/icon.png` (favicon), and `apps/mobile/assets/brand/monogram.png`.
 Wordmark is **Space Grotesk 700**. The older teal `assets/*.svg` marks are **superseded** by this monogram.
 
-## Color — monochrome
+## Color — monochrome + electric-blue accent
 
-The brand **is the ink**. Primary actions are solid ink on a mist canvas (light) or
-solid mist on an ink canvas (dark). No teal, no cyan — color is reserved for *status*.
+A monochrome ink/mist base carries the structure; a single **electric-blue accent**
+(`#2563EB` light / `#3B82F6` dark) carries the energy — primary actions, active nav,
+links, key metrics, focus, selection. Everything else stays ink on mist; color beyond
+the accent is reserved for *status*.
 
-**Ink** `#161A1F` (the logo ink) · **Mist** `#E9ECEF` (the canvas)
+**Ink** `#161A1F` (logo ink) · **Mist** `#E9ECEF` (canvas) · **Accent** `#2563EB` electric blue
 
 Neutral ramp (cool, anchored ink→mist): `#0B0E12` `#11151A` `#161A1F` `#1D222A` `#2A313B`
 `#3A434F` `#566373` `#828E9C` `#A2ADB9` `#CDD4DB` `#D7DCE2` `#E9ECEF` `#F4F6F8` `#FFFFFF`.
 
-**Light** — bg `#E9ECEF` · panel `#FFFFFF` · line `#D7DCE2` · text `#161A1F` · muted `#566373` · primary `#161A1F`
-**Dark** — bg `#0E1116` · panel `#181D24` · line `#262D36` · text `#E9ECEF` · muted `#9AA4B0` · primary `#E9ECEF`
-**Chrome** (dark sidebar/drawer in both modes) — surface `#11151A` · on-chrome `#E9ECEF` · accent `#E9ECEF`
+**Light** — bg `#E9ECEF` · panel `#FFFFFF` · line `#D7DCE2` · text `#161A1F` · muted `#566373` · primary `#2563EB`
+**Dark** — bg `#0E1116` · panel `#181D24` · line `#262D36` · text `#E9ECEF` · muted `#9AA4B0` · primary `#3B82F6`
+**Chrome** (dark sidebar/drawer in both modes) — surface `#11151A` · on-chrome `#E9ECEF` · accent `#60A5FA`
 
 **Status — functional, not brand.** Critical `#DC2626` · High `#EA580C` · Medium `#B45309` ·
-Info/Low `#2563EB` · Verified `#16A34A`. (Each has soft/border/text variants per theme;
+Info/Low `#0284C7` · Verified `#16A34A`. (Each has soft/border/text variants per theme;
 dark mode uses lighter on-dark variants. Red is reserved for **Critical**, never brand.)
 
 ## Typography

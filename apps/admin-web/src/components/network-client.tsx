@@ -55,7 +55,7 @@ function feederColor(code: string, feeders: { code: string }[]) {
 
 function viewTabClass(active: boolean) {
   return `inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-semibold transition ${
-    active ? "bg-[var(--brand)] text-white" : "text-slate-600 hover:text-[var(--brand)]"
+    active ? "bg-[var(--brand)] text-[var(--on-brand)]" : "text-slate-600 hover:text-[var(--brand)]"
   }`;
 }
 
@@ -598,7 +598,7 @@ function NetworkContent() {
                       type="button"
                       onClick={handleAddTie}
                       disabled={isMutating || !newFrom || !newTo || newFrom === newTo}
-                      className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-[var(--brand)] text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                      className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-[var(--brand)] text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       <Plus size={15} /> Add NOP tie
                     </button>

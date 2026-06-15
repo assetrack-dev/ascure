@@ -10,8 +10,8 @@
   --ink-300: #A2ADB9; --ink-200: #CDD4DB; --ink-150: #D7DCE2; --ink-100: #E9ECEF;
   --ink-75: #F1F3F5; --ink-50: #F7F8FA; --ink-0: #FFFFFF;
 
-  /* Brand = ink */
-  --brand: #161A1F; --brand-strong: #2A313B; --brand-soft: #DDE2E8; --on-brand: #F7F8FA;
+  /* Brand accent = electric blue (on the ink/mist base) */
+  --brand: #2563EB; --brand-strong: #1D4ED8; --brand-soft: #DBEAFE; --on-brand: #FFFFFF;
 
   /* Light surfaces */
   --background: #E9ECEF; --panel: #FFFFFF; --panel-muted: #F4F6F8;
@@ -21,8 +21,8 @@
   --chrome: #11151A; --on-chrome: #E9ECEF; --on-chrome-muted: #9AA4B0; --chrome-accent: #E9ECEF;
 
   /* Status — functional (light) */
-  --critical: #DC2626; --high: #EA580C; --medium: #B45309; --low: #2563EB;
-  --info: #2563EB; --verified: #16A34A; --warning: #B45309; --danger: #DC2626;
+  --critical: #DC2626; --high: #EA580C; --medium: #B45309; --low: #0284C7;
+  --info: #0284C7; --verified: #16A34A; --warning: #B45309; --danger: #DC2626;
 
   /* Type / shape */
   --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -33,10 +33,10 @@
 }
 
 :root[data-theme="dark"] {
-  --brand: #E9ECEF; --brand-strong: #FFFFFF; --brand-soft: #1E2630; --on-brand: #11151A;
+  --brand: #3B82F6; --brand-strong: #60A5FA; --brand-soft: #18233A; --on-brand: #FFFFFF;
   --background: #0E1116; --panel: #181D24; --panel-muted: #11151A;
   --foreground: #E9ECEF; --muted: #9AA4B0; --line: #262D36; --line-strong: #3A434F;
   --chrome: #0B0E12;
-  --critical: #F87171; --high: #FB923C; --medium: #F5B544; --low: #60A5FA;
-  --info: #60A5FA; --verified: #4ADE80; --warning: #F5B544; --danger: #F87171;
+  --critical: #F87171; --high: #FB923C; --medium: #F5B544; --low: #38BDF8;
+  --info: #38BDF8; --verified: #4ADE80; --warning: #F5B544; --danger: #F87171;
 }

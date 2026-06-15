@@ -90,7 +90,7 @@ export function ChangePasswordClient() {
         className="w-full max-w-md rounded-xl border border-[var(--line)] bg-white p-6 shadow-[var(--shadow-card)]"
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--brand)] text-white shadow-sm">
+          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--brand)] text-[var(--on-brand)] shadow-sm">
             <KeyRound size={20} />
           </div>
           <div>
@@ -163,7 +163,7 @@ export function ChangePasswordClient() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           <KeyRound size={18} />
           {isSubmitting ? "Saving" : "Update password"}

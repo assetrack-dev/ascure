@@ -437,7 +437,7 @@ function SurveyLifecyclePanel({
   const isBusy = pendingAction !== null;
 
   const primaryBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
+    "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
   const amberBtn =
     "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50";
   const subtleBtn =
@@ -463,7 +463,7 @@ function SurveyLifecyclePanel({
             : attention
               ? "border-amber-400 bg-amber-100 text-amber-700"
               : active
-                ? "border-[var(--brand)] bg-[var(--brand)] text-white"
+                ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
                 : "border-slate-300 bg-white text-slate-400";
           return (
             <li key={step.key} className="flex flex-1 items-center gap-3">
@@ -1080,7 +1080,7 @@ function ReassignTeamPanel({
               type="button"
               disabled={!canSubmit}
               onClick={() => void submit()}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               {submitting ? (
                 <RefreshCw size={15} className="animate-spin" />

@@ -31,7 +31,7 @@ import type { AuthSession } from "@/types/auth";
 const card =
   "rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]";
 const primaryBtn =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
 
 function errMsg(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -202,7 +202,7 @@ function ReportTemplatesContent() {
                     type="file"
                     accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     onChange={onPickFile}
-                    className="mt-1.5 block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-[var(--brand)] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[var(--brand-strong)]"
+                    className="mt-1.5 block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-[var(--brand)] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-[var(--on-brand)] hover:file:bg-[var(--brand-strong)]"
                   />
                   {file ? (
                     <p className="mt-1.5 text-xs text-[var(--muted)]">

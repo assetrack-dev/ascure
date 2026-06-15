@@ -23,9 +23,9 @@ const STORAGE_KEY = 'ascure-theme';
 
 const lightColors = {
   // Brand = ink
-  primary: '#161A1F',
-  primaryStrong: '#2A313B',
-  primarySoft: '#DDE2E8',
+  primary: '#2563EB',
+  primaryStrong: '#1D4ED8',
+  primarySoft: '#DBEAFE',
 
   // Content surfaces (mist)
   background: '#E9ECEF',
@@ -38,7 +38,7 @@ const lightColors = {
   textPrimary: '#161A1F',
   textSecondary: '#566373',
   textMuted: '#828E9C',
-  textOnPrimary: '#F7F8FA',
+  textOnPrimary: '#FFFFFF',
   // Text/glyph that sits on a saturated STATUS fill (success/danger/info button).
   // White in light mode; ink in dark (where status fills lighten) — stays legible.
   onStatus: '#FFFFFF',
@@ -52,7 +52,7 @@ const lightColors = {
   onChrome: '#E9ECEF',
   onChromeMuted: '#9AA4B0',
   onChromeFaint: '#66717F',
-  chromeAccent: '#E9ECEF',
+  chromeAccent: '#60A5FA',
   chromeDanger: '#FCA5A5',
 
   // Status — functional
@@ -68,10 +68,10 @@ const lightColors = {
   warningSoft: '#FAEFDD',
   warningBorder: '#EBD7AE',
   warningText: '#854F0B',
-  info: '#2563EB',
-  infoSoft: '#E7F1FB',
-  infoBorder: '#C4DBF5',
-  infoText: '#0C447C',
+  info: '#0284C7',
+  infoSoft: '#E0F2FE',
+  infoBorder: '#BAE0FB',
+  infoText: '#075985',
 
   overlay: 'rgba(8,11,15,0.55)',
   shadow: '#0B0E12',
@@ -80,9 +80,9 @@ const lightColors = {
 type ColorPalette = typeof lightColors;
 
 const darkColors: ColorPalette = {
-  primary: '#E9ECEF',
-  primaryStrong: '#FFFFFF',
-  primarySoft: '#1E2630',
+  primary: '#3B82F6',
+  primaryStrong: '#60A5FA',
+  primarySoft: '#18233A',
 
   background: '#0E1116',
   card: '#181D24',
@@ -94,7 +94,7 @@ const darkColors: ColorPalette = {
   textPrimary: '#E9ECEF',
   textSecondary: '#9AA4B0',
   textMuted: '#66717F',
-  textOnPrimary: '#11151A',
+  textOnPrimary: '#FFFFFF',
   onStatus: '#11151A',
 
   chrome: '#0B0E12',
@@ -105,7 +105,7 @@ const darkColors: ColorPalette = {
   onChrome: '#E9ECEF',
   onChromeMuted: '#9AA4B0',
   onChromeFaint: '#66717F',
-  chromeAccent: '#E9ECEF',
+  chromeAccent: '#60A5FA',
   chromeDanger: '#FCA5A5',
 
   danger: '#F87171',
@@ -120,10 +120,10 @@ const darkColors: ColorPalette = {
   warningSoft: '#332817',
   warningBorder: '#4D3B1E',
   warningText: '#FCD77F',
-  info: '#60A5FA',
-  infoSoft: '#152538',
-  infoBorder: '#23405E',
-  infoText: '#AECBF5',
+  info: '#38BDF8',
+  infoSoft: '#0C2A3B',
+  infoBorder: '#1E4A63',
+  infoText: '#BAE6FD',
 
   overlay: 'rgba(0,0,0,0.62)',
   shadow: '#000000',

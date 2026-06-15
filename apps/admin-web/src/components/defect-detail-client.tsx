@@ -1167,7 +1167,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           type="button"
                           onClick={handleVerifyDefect}
                           disabled={!canSaveGovernance}
-                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           {isSavingGovernance ? (
                             <RefreshCw size={14} className="animate-spin" />
@@ -1198,7 +1198,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           type="button"
                           onClick={handleClosureVerification}
                           disabled={!canSaveGovernance}
-                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-xs font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           <FileCheck2 size={14} />
                           Verify Closure
@@ -1491,7 +1491,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                             type="button"
                             onClick={handleVerifyDefect}
                             disabled={!canSaveGovernance}
-                            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-3 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                           >
                             {isSavingGovernance ? (
                               <RefreshCw size={16} className="animate-spin" />
@@ -1576,7 +1576,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           type="button"
                           onClick={handleClosureVerification}
                           disabled={!canSaveGovernance}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           <FileCheck2 size={16} />
                           Verify Closure
@@ -1633,7 +1633,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           type="button"
                           onClick={handleAssignmentUpdate}
                           disabled={!canSaveAssignment}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           {isSavingAssignment ? (
                             <RefreshCw size={16} className="animate-spin" />
@@ -1714,7 +1714,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           type="button"
                           onClick={handleStatusUpdate}
                           disabled={!canSaveStatus}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                           {isSavingStatus ? (
                             <RefreshCw size={16} className="animate-spin" />

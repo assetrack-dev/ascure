@@ -145,7 +145,7 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isSubmitting ? "Signing in" : "Sign in"}
             <ArrowRight size={18} />

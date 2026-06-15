@@ -199,7 +199,7 @@ export function TeamSupervisorsDialog({
               type="button"
               onClick={handleSave}
               disabled={isSaving || isLoading}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSaving ? (
                 <Loader2 size={15} className="animate-spin" />
