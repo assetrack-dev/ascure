@@ -38,8 +38,9 @@ export const ascureTokens = {
     textOnPrimary: '#11151A',
     danger: '#F87171', success: '#4ADE80', warning: '#F5B544', info: '#38BDF8',
   },
-  // Dark "chrome" surfaces (drawer/map panels) — dark in BOTH modes
-  chrome: { surface: '#11151A', panel: '#1B212A', onChrome: '#E9ECEF', onChromeMuted: '#9AA4B0', accent: '#E9ECEF' },
+  // "Chrome" (drawer/map panels) — follows the theme
+  chromeLight: { surface: '#FFFFFF', panel: '#F4F6F8', onChrome: '#161A1F', onChromeMuted: '#566373', accent: '#2563EB' },
+  chromeDark: { surface: '#0B0E12', panel: '#161A1F', onChrome: '#E9ECEF', onChromeMuted: '#9AA4B0', accent: '#60A5FA' },
   fonts: {
     display: 'SpaceGrotesk_700Bold',
     body: 'Inter_400Regular',

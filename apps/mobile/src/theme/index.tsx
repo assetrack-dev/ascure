@@ -43,17 +43,17 @@ const lightColors = {
   // White in light mode; ink in dark (where status fills lighten) — stays legible.
   onStatus: '#FFFFFF',
 
-  // Dark "chrome" surfaces (drawer, map panels) — dark in BOTH modes
-  chrome: '#11151A',
-  chromePanel: '#1B212A',
-  chromeBorder: 'rgba(233,236,239,0.10)',
-  chromeBorderStrong: 'rgba(233,236,239,0.16)',
-  chromeActive: 'rgba(233,236,239,0.10)',
-  onChrome: '#E9ECEF',
-  onChromeMuted: '#9AA4B0',
-  onChromeFaint: '#66717F',
-  chromeAccent: '#60A5FA',
-  chromeDanger: '#FCA5A5',
+  // "Chrome" surfaces (drawer, map panels) — follow the theme (light in light mode)
+  chrome: '#FFFFFF',
+  chromePanel: '#F4F6F8',
+  chromeBorder: '#E1E5EA',
+  chromeBorderStrong: '#D7DCE2',
+  chromeActive: '#ECEEF1',
+  onChrome: '#161A1F',
+  onChromeMuted: '#566373',
+  onChromeFaint: '#828E9C',
+  chromeAccent: '#2563EB',
+  chromeDanger: '#DC2626',
 
   // Status — functional
   danger: '#DC2626',

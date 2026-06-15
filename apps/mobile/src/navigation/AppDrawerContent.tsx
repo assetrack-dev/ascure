@@ -283,7 +283,7 @@ const createStyles = (t: Theme) => {
       fontWeight: '600',
     },
     drawerItemTextActive: {
-      color: c.onChrome,
+      color: c.chromeAccent,
     },
     drawerItemTextDanger: {
       color: c.chromeDanger,

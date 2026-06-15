@@ -32,7 +32,7 @@ Neutral ramp (cool, anchored ink→mist): `#0B0E12` `#11151A` `#161A1F` `#1D222A
 
 **Light** — bg `#E9ECEF` · panel `#FFFFFF` · line `#D7DCE2` · text `#161A1F` · muted `#566373` · primary `#2563EB`
 **Dark** — bg `#0E1116` · panel `#181D24` · line `#262D36` · text `#E9ECEF` · muted `#9AA4B0` · primary `#3B82F6`
-**Chrome** (dark sidebar/drawer in both modes) — surface `#11151A` · on-chrome `#E9ECEF` · accent `#60A5FA`
+**Chrome** (sidebar/drawer — follows the theme) — light `#FFFFFF` + ink text · dark `#0B0E12` + mist text · active accent `#2563EB` / `#60A5FA`
 
 **Status — functional, not brand.** Critical `#DC2626` · High `#EA580C` · Medium `#B45309` ·
 Info/Low `#0284C7` · Verified `#16A34A`. (Each has soft/border/text variants per theme;

@@ -45,7 +45,7 @@ export function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.backdrop} edges={['top', 'bottom']}>
-      <ExpoStatusBar style="light" />
+      <ExpoStatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -139,7 +139,7 @@ const createStyles = (t: Theme) =>
     },
     backdrop: {
       flex: 1,
-      backgroundColor: t.colors.chrome,
+      backgroundColor: t.colors.background,
     },
     scrollContent: {
       flexGrow: 1,
@@ -233,7 +233,7 @@ const createStyles = (t: Theme) =>
       fontWeight: '600',
       letterSpacing: 1,
       textTransform: 'uppercase',
-      color: t.colors.onChromeMuted,
+      color: t.colors.textMuted,
       textAlign: 'center',
     },
   });

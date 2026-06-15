@@ -236,7 +236,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                 href={item.href}
                 className={`flex h-10 min-w-fit items-center gap-3 rounded-md px-3 text-sm transition lg:mt-1 ${
                   isActive
-                    ? "bg-[var(--chrome-active)] font-semibold text-[var(--on-chrome)] shadow-[inset_3px_0_0_var(--chrome-accent)]"
+                    ? "bg-[var(--chrome-active)] font-semibold text-[var(--chrome-accent)] shadow-[inset_3px_0_0_var(--chrome-accent)]"
                     : "font-medium text-[var(--on-chrome-muted)] hover:bg-[var(--chrome-active)] hover:text-[var(--on-chrome)]"
                 }`}
               >

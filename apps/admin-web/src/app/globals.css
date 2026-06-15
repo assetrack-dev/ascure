@@ -51,16 +51,17 @@
   --line: #D7DCE2;
   --line-strong: #C5CCD4;
 
-  /* Dark "chrome" surfaces — sidebar, map panels (dark in BOTH modes) */
-  --chrome: #11151A;
-  --chrome-panel: #1B212A;
-  --chrome-line: rgba(233, 236, 239, 0.10);
-  --chrome-line-strong: rgba(233, 236, 239, 0.16);
-  --chrome-active: rgba(233, 236, 239, 0.10);
-  --on-chrome: #E9ECEF;
-  --on-chrome-muted: #9AA4B0;
-  --on-chrome-faint: #66717F;
-  --chrome-accent: #60A5FA;
+  /* "Chrome" surfaces — sidebar, drawer, login panels. Follow the theme:
+     light rail in light mode, dark rail in dark mode. */
+  --chrome: #FFFFFF;
+  --chrome-panel: #F4F6F8;
+  --chrome-line: #E1E5EA;
+  --chrome-line-strong: #D7DCE2;
+  --chrome-active: #ECEEF1;
+  --on-chrome: #161A1F;
+  --on-chrome-muted: #566373;
+  --on-chrome-faint: #828E9C;
+  --chrome-accent: #2563EB;
 
   /* Legacy ink aliases (still referenced by some components) */
   --on-ink: var(--on-chrome);
@@ -128,9 +129,16 @@
   --line: #262D36;
   --line-strong: #3A434F;
 
-  /* Chrome deepens slightly so it still reads against dark content */
+  /* Chrome goes dark in dark mode */
   --chrome: #0B0E12;
   --chrome-panel: #161A1F;
+  --chrome-line: rgba(233, 236, 239, 0.10);
+  --chrome-line-strong: rgba(233, 236, 239, 0.16);
+  --chrome-active: rgba(233, 236, 239, 0.10);
+  --on-chrome: #E9ECEF;
+  --on-chrome-muted: #9AA4B0;
+  --on-chrome-faint: #66717F;
+  --chrome-accent: #60A5FA;
 
   --focus-ring: rgba(96, 165, 250, 0.40);
   --selection-bg: rgba(96, 165, 250, 0.20);

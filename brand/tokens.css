@@ -17,8 +17,8 @@
   --background: #E9ECEF; --panel: #FFFFFF; --panel-muted: #F4F6F8;
   --foreground: #161A1F; --muted: #566373; --line: #D7DCE2; --line-strong: #C5CCD4;
 
-  /* Dark "chrome" (sidebar/drawer — dark in both modes) */
-  --chrome: #11151A; --on-chrome: #E9ECEF; --on-chrome-muted: #9AA4B0; --chrome-accent: #E9ECEF;
+  /* "Chrome" (sidebar/drawer) — follows the theme (light here, dark below) */
+  --chrome: #FFFFFF; --on-chrome: #161A1F; --on-chrome-muted: #566373; --chrome-accent: #2563EB;
 
   /* Status — functional (light) */
   --critical: #DC2626; --high: #EA580C; --medium: #B45309; --low: #0284C7;
@@ -36,7 +36,7 @@
   --brand: #3B82F6; --brand-strong: #60A5FA; --brand-soft: #18233A; --on-brand: #FFFFFF;
   --background: #0E1116; --panel: #181D24; --panel-muted: #11151A;
   --foreground: #E9ECEF; --muted: #9AA4B0; --line: #262D36; --line-strong: #3A434F;
-  --chrome: #0B0E12;
+  --chrome: #0B0E12; --on-chrome: #E9ECEF; --on-chrome-muted: #9AA4B0; --chrome-accent: #60A5FA;
   --critical: #F87171; --high: #FB923C; --medium: #F5B544; --low: #38BDF8;
   --info: #38BDF8; --verified: #4ADE80; --warning: #F5B544; --danger: #F87171;
 }
