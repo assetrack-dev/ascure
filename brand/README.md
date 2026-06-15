@@ -9,14 +9,19 @@ Primary mark: **the survey monogram** — an "A" peak fused with a map-pin/locat
 and a pen-nib/survey-needle (the dot-and-line). It reads as precision mapping + surveying +
 infrastructure: exactly what ASCURE does.
 
-| File | Use |
-|---|---|
-| `logo/monogram_03_ink_on_mist.png` | Primary mark / app icon — ink mark on a mist tile |
-| `logo/lockup_03_ink_on_mist.png` | Mark + wordmark, stacked lockup |
+The mark is the **seam-merged monogram** (one continuous shape — no hairline between the halves).
+Primary app icon / tile: **White on Azure** — a white mark on a `#2563EB` rounded squircle, which
+ties the icon to the electric-blue accent and pops on a home screen. The wordmark stays monochrome.
 
-In-app the monogram PNG ships at `apps/admin-web/public/brand/monogram.png`,
-`apps/admin-web/src/app/icon.png` (favicon), and `apps/mobile/assets/brand/monogram.png`.
-Wordmark is **Space Grotesk 700**. The older teal `assets/*.svg` marks are **superseded** by this monogram.
+The icons are generated from the vector mark by **`scripts/gen-brand-icons.cjs`** (rasterised via
+sharp) and ship at `apps/admin-web/public/brand/monogram.png`, `apps/admin-web/src/app/icon.png`
+(favicon), `apps/mobile/assets/brand/monogram.png` (in-app tile / app icon / splash), and
+`apps/mobile/assets/brand/adaptive-foreground.png` (Android adaptive foreground, azure background).
+Wordmark is **Space Grotesk 700**. The older teal `assets/*.svg` marks are **superseded**.
+
+> Note: the mobile **home-screen launcher icon + native splash** only refresh on an `expo prebuild`
+> pass (deferred to avoid clobbering the committed native build workarounds). The in-app login mark,
+> the admin favicon, and all in-app marks update without it.
 
 ## Color — monochrome + electric-blue accent
 

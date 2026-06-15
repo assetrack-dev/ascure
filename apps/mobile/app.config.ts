@@ -59,8 +59,8 @@ export default {
       versionCode: 2,
       usesCleartextTraffic: true,
       adaptiveIcon: {
-        foregroundImage: './assets/brand/monogram.png',
-        backgroundColor: '#E9ECEF',
+        foregroundImage: './assets/brand/adaptive-foreground.png',
+        backgroundColor: '#2563EB',
       },
       permissions: ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION'],
       config: {
