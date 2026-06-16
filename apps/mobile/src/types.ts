@@ -526,11 +526,27 @@ export interface SaveInspectionResultItemInput {
   valueJson?: unknown;
 }
 
+export interface EmergencyFeedItem {
+  id: string;
+  severity: DefectSeverity;
+  label: string;
+  assetCode: string;
+  location: string | null;
+  createdAt: string;
+}
+
+export interface ActiveEmergenciesResponse {
+  generatedAt: string;
+  count: number;
+  emergencies: EmergencyFeedItem[];
+}
+
 export interface SaveInspectionItemResultInput {
   checklistItemId?: string | null;
   label: string;
   result: InspectionItemResultValue;
   remark?: string | null;
+  isEmergency?: boolean;
 }
 
 export interface InspectionImageUploadInput {
@@ -684,18 +700,22 @@ export type DefectListItem = {
   assetId: string;
   assetCode?: string;
   assetType?: string;
+  location?: string | null;
   cycleNumber?: number;
   assignedUserId?: string | null;
   assignedTeamId?: string | null;
   assignedToUserId?: string | null;
   assignedToTeamId?: string | null;
   assignedAt?: string | null;
+  dueDate?: string | null;
+  isOverdue?: boolean;
   label: string;
   result: 'FAIL';
   remark?: string | null;
   status: DefectStatus;
   lifecycleStatus?: DefectLifecycleStatus | null;
   severity?: DefectSeverity | null;
+  isEmergency?: boolean;
   resolutionOutcome?: DefectResolutionOutcome | null;
   actionRemark?: string | null;
   verificationNotes?: string | null;
@@ -717,6 +737,7 @@ export type DefectDetail = {
   status: DefectStatus;
   lifecycleStatus?: DefectLifecycleStatus | null;
   severity?: DefectSeverity | null;
+  isEmergency?: boolean;
   assignedUserId?: string | null;
   assignedTeamId?: string | null;
   assignedToUserId?: string | null;
@@ -757,6 +778,7 @@ export interface InspectionItemResult {
   result: InspectionItemResultValue;
   remark: string | null;
   isDefect: boolean;
+  isEmergency?: boolean;
   severity?: DefectSeverity | null;
   createdAt?: string;
   updatedAt?: string;

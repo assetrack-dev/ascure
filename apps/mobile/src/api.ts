@@ -5,6 +5,7 @@ import {
   AssetInspectionHistoryItem,
   AssetType,
   ChecklistTemplate,
+  ActiveEmergenciesResponse,
   CreateChecklistTemplateInput,
   CreateAssetInput,
   DailyTeamActivity,
@@ -591,8 +592,21 @@ export const api = {
     return request<DefectListItem[]>('/defects', { token });
   },
 
+  getActiveEmergencies(token: string) {
+    return request<ActiveEmergenciesResponse>('/defects/active-emergencies', {
+      token,
+    });
+  },
+
   getDefectDetail(token: string, defectId: string) {
     return request<DefectDetail>(`/defects/${defectId}`, { token });
+  },
+
+  claimDefect(token: string, defectId: string) {
+    return request<DefectDetail>(`/defects/${defectId}/claim`, {
+      method: 'PATCH',
+      token,
+    });
   },
 
   updateDefectStatus(
@@ -632,6 +646,21 @@ export const api = {
         resolutionOutcome: input.resolutionOutcome,
         maintenanceNotes: input.maintenanceNotes ?? null,
         completionRemarks: input.maintenanceNotes ?? null,
+      },
+    });
+  },
+
+  verifyDefectClosure(
+    token: string,
+    defectId: string,
+    input?: { closureRemarks?: string | null },
+  ) {
+    return request<DefectDetail>(`/defects/${defectId}/closure-verification`, {
+      method: 'PATCH',
+      token,
+      body: {
+        closureRemarks: input?.closureRemarks ?? null,
+        closureVerificationNotes: input?.closureRemarks ?? null,
       },
     });
   },

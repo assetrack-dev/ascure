@@ -49,6 +49,11 @@ export class DefectsController {
     return this.defectsService.getOperationsBoard(user, query);
   }
 
+  @Get('active-emergencies')
+  listActiveEmergencies(@CurrentUser() user: RequestUser) {
+    return this.defectsService.listActiveEmergencies(user);
+  }
+
   @Get(':id')
   getDetail(@CurrentUser() user: RequestUser, @Param() params: DefectIdParamDto) {
     return this.defectsService.getDetail(user, params.id);
@@ -89,6 +94,14 @@ export class DefectsController {
     @Body() dto: UpdateDefectAssignmentDto,
   ) {
     return this.defectsService.updateAssignment(user, params.id, dto);
+  }
+
+  @Patch(':id/claim')
+  claimDefect(
+    @CurrentUser() user: RequestUser,
+    @Param() params: DefectIdParamDto,
+  ) {
+    return this.defectsService.claimDefect(user, params.id);
   }
 
   @Patch(':id/due-date')

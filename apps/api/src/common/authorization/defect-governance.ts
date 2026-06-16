@@ -1,3 +1,5 @@
+import { DefectLifecycleStatus } from '@prisma/client';
+
 export type DefectGovernanceMode = 'INSPECTOR_OWNS' | 'QA_GATED';
 
 /**
@@ -23,4 +25,18 @@ export function resolveDefectGovernanceMode(): DefectGovernanceMode {
 
 export function inspectorOwnsDefects(): boolean {
   return resolveDefectGovernanceMode() === 'INSPECTOR_OWNS';
+}
+
+/**
+ * The lifecycle status a freshly-materialized defect opens in. Under the
+ * inspector-owns policy a detected defect is immediately maintenance-ready
+ * (VERIFIED) — no QA review gate. Legacy QA_GATED mode opens at DETECTED.
+ *
+ * Single source of truth shared by both defect-creation paths (inspection
+ * submit + lazy materialization in defects.service) so they can't drift.
+ */
+export function initialDefectLifecycleStatus(): DefectLifecycleStatus {
+  return inspectorOwnsDefects()
+    ? DefectLifecycleStatus.VERIFIED
+    : DefectLifecycleStatus.DETECTED;
 }

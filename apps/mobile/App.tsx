@@ -4,7 +4,9 @@ import { DarkTheme, DefaultTheme, NavigationContainer, Theme as NavTheme } from 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { SyncProvider } from './src/context/SyncContext';
+import { EmergencyWatcher } from './src/components/EmergencyWatcher';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { navigationRef } from './src/navigation/navigationRef';
 import { ThemeProvider, useTheme } from './src/theme';
 import { LoadingScreen } from './src/ui';
 
@@ -30,8 +32,9 @@ function AppShell() {
   };
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} ref={navigationRef}>
       <RootNavigator />
+      <EmergencyWatcher />
     </NavigationContainer>
   );
 }

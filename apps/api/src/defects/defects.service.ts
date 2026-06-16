@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -17,7 +18,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
-import { inspectorOwnsDefects } from '../common/authorization/defect-governance';
+import {
+  initialDefectLifecycleStatus,
+  inspectorOwnsDefects,
+} from '../common/authorization/defect-governance';
 import { APPSHEET_IMPORT_REPORTING_GROUP_PREFIX } from '../common/import.constants';
 import {
   buildScopeContext,
@@ -76,18 +80,6 @@ const GOVERNED_LIFECYCLE_TRANSITIONS: Record<
   [DefectLifecycleStatus.VERIFICATION_PENDING]: [DefectLifecycleStatus.CLOSED],
   [DefectLifecycleStatus.CLOSED]: [],
 };
-
-/**
- * The lifecycle status a freshly-materialized defect opens in. Under the
- * north-star "inspector owns the call" policy a detected defect is immediately
- * maintenance-ready (VERIFIED) — no QA review gate. Legacy QA_GATED mode opens
- * at DETECTED. See common/authorization/defect-governance.ts.
- */
-function initialDefectLifecycleStatus(): DefectLifecycleStatus {
-  return inspectorOwnsDefects()
-    ? DefectLifecycleStatus.VERIFIED
-    : DefectLifecycleStatus.DETECTED;
-}
 
 const DEFECT_ACTOR_SELECT = {
   id: true,
@@ -668,6 +660,73 @@ export class DefectsService {
     return this.serializeDefectDetail(defect);
   }
 
+  /**
+   * Lightweight feed of active (not-yet-closed) emergency defects in the
+   * caller's scope. Polled by the mobile app to raise an immediate in-app
+   * alert when an inspector flags a dangerous-to-public asset.
+   */
+  async listActiveEmergencies(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
+
+    const defects = await this.prisma.defect.findMany({
+      where: {
+        isEmergency: true,
+        status: { not: DefectStatus.CLOSED },
+        inspectionItemResult: {
+          isDefect: true,
+          inspection: {
+            tenantId: user.tenantId,
+            ...this.inspectionAccessScope(user, ctx),
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        severity: true,
+        createdAt: true,
+        inspectionItemResult: {
+          select: {
+            label: true,
+            inspection: {
+              select: {
+                asset: {
+                  select: {
+                    assetCode: true,
+                    substation: {
+                      select: { name: true, location: true, code: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: defects.length,
+      emergencies: defects.map((defect) => {
+        const asset = defect.inspectionItemResult.inspection.asset;
+
+        return {
+          id: defect.id,
+          severity: defect.severity,
+          label: defect.inspectionItemResult.label,
+          assetCode: asset.assetCode,
+          location:
+            asset.substation.location ||
+            asset.substation.name ||
+            asset.substation.code,
+          createdAt: defect.createdAt.toISOString(),
+        };
+      }),
+    };
+  }
+
   async uploadEvidenceImage(
     user: RequestUser,
     defectId: string,
@@ -1003,6 +1062,81 @@ export class DefectsService {
             assignmentLifecycleStatus ??
             this.getEffectiveLifecycleStatus(defect.lifecycleStatus),
           comment: `Assignment changed from ${previousAssignee} to ${nextAssignee}.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  /**
+   * Self-serve claim: a maintainer grabs a verified, unassigned defect and
+   * becomes its assignee in one step (no MANAGER hand-off required). Reuses the
+   * read-scope check in findOrCreateAccessibleDefect, so a maintainer can only
+   * claim defects already inside their scope — claiming never widens access.
+   */
+  async claimDefect(user: RequestUser, defectId: string) {
+    this.assertCanMutate(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const currentLifecycleStatus = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
+    const currentAssignedUserId =
+      defect.assignedToUserId ?? defect.assignedUserId ?? null;
+    const currentAssignedTeamId =
+      defect.assignedToTeamId ?? defect.assignedTeamId ?? null;
+
+    // Idempotent: re-claiming a defect that is already mine is a no-op.
+    if (currentAssignedUserId === user.id) {
+      return this.getDetail(user, defect.id);
+    }
+
+    // Someone else already owns it — don't let a second maintainer grab it.
+    if (currentAssignedUserId || currentAssignedTeamId) {
+      throw new ConflictException(
+        `This defect is already claimed by ${this.formatAssignmentLabel(
+          defect.assignedToUser ?? defect.assignedUser,
+          defect.assignedToTeam ?? defect.assignedTeam,
+        )}.`,
+      );
+    }
+
+    // Only a verified, maintenance-ready defect can be claimed.
+    if (currentLifecycleStatus !== DefectLifecycleStatus.VERIFIED) {
+      throw new BadRequestException(
+        'Only a verified, unassigned defect can be claimed for maintenance.',
+      );
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: { id: defect.id },
+        data: {
+          assignedUserId: user.id,
+          assignedToUserId: user.id,
+          assignedTeamId: null,
+          assignedToTeamId: null,
+          assignedAt: now,
+          lifecycleStatus: DefectLifecycleStatus.ASSIGNED,
+        },
+      });
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.DEFECT_ASSIGNED,
+          fromLifecycleStatus: currentLifecycleStatus,
+          toLifecycleStatus: DefectLifecycleStatus.ASSIGNED,
+          comment: `Self-claimed by ${this.formatAssignmentLabel(
+            { name: user.name, email: user.email },
+            null,
+          )}.`,
           createdByUserId: user.id,
           createdAt: now,
         },
@@ -2524,6 +2658,7 @@ export class DefectsService {
     closureVerifiedByUserId: string | null;
     status: DefectStatus;
     severity: DefectSeverity;
+    isEmergency: boolean;
     lifecycleStatus: DefectLifecycleStatus | null;
     resolutionOutcome: DefectResolutionOutcome | null;
     actionRemark: string | null;
@@ -2653,6 +2788,7 @@ export class DefectsService {
       remark: item.remark,
       status: defect.status,
       severity: defect.severity,
+      isEmergency: defect.isEmergency,
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,
       actionRemark: defect.actionRemark,
@@ -2698,6 +2834,7 @@ export class DefectsService {
       checklistItemId: item.checklistItemId,
       status: defect.status,
       severity: defect.severity,
+      isEmergency: defect.isEmergency,
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,
       assignedUserId,

@@ -27,8 +27,10 @@ import {
   buildChecklistItemsPayloadFromDraft,
   buildResultsPayload,
   createInitialDraftValues,
+  createInitialEmergencyMap,
   formatDateTime,
   getBooleanDefectValue,
+  getInspectionItemResultValue,
   getVisibleInspectionSections,
   hasAnyInspectionDraftValue,
   isOperationalTemplateTextItem,
@@ -97,6 +99,7 @@ export function InspectionFormScreen() {
 
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
+  const [emergencyItemIds, setEmergencyItemIds] = useState<Record<string, boolean>>({});
   const [scanningItemId, setScanningItemId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -135,6 +138,7 @@ export function InspectionFormScreen() {
       const formResponse = await api.getInspectionForm(token, inspectionId);
       setForm(formResponse);
       setDraftValues(createInitialDraftValues(formResponse));
+      setEmergencyItemIds(createInitialEmergencyMap(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -224,6 +228,25 @@ export function InspectionFormScreen() {
       ...current,
       [itemId]: value,
     }));
+  }
+
+  function toggleEmergency(itemId: string, nextValue: boolean) {
+    setSaveNotice(null);
+    setEmergencyItemIds((current) => {
+      if (Boolean(current[itemId]) === nextValue) {
+        return current;
+      }
+
+      const next = { ...current };
+
+      if (nextValue) {
+        next[itemId] = true;
+      } else {
+        delete next[itemId];
+      }
+
+      return next;
+    });
   }
 
   function updatePhoto(photoId: string, changes: Partial<CapturedInspectionPhoto>) {
@@ -519,6 +542,7 @@ export function InspectionFormScreen() {
       const updatedForm = await api.amendInspection(token, inspectionId);
       setForm(updatedForm);
       setDraftValues(createInitialDraftValues(updatedForm));
+      setEmergencyItemIds(createInitialEmergencyMap(updatedForm));
       setSaveNotice('Inspection re-opened. Fix the entries, then submit again.');
     } catch (amendError) {
       if (amendError instanceof ApiError && amendError.status === 401) {
@@ -567,6 +591,7 @@ export function InspectionFormScreen() {
 
     const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
       includeEmpty: true,
+      emergencyByItemId: emergencyItemIds,
     });
     const submissionPayload = {
       results: supportedResults,
@@ -646,7 +671,9 @@ export function InspectionFormScreen() {
       return;
     }
 
-    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues);
+    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
+      emergencyByItemId: emergencyItemIds,
+    });
 
     try {
       setIsSavingDraft(true);
@@ -660,6 +687,7 @@ export function InspectionFormScreen() {
 
       setForm(savedForm);
       setDraftValues(createInitialDraftValues(savedForm));
+      setEmergencyItemIds(createInitialEmergencyMap(savedForm));
       setSaveNotice(`Draft saved ${formatDraftSavedTime(new Date())}.`);
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.status === 401) {
@@ -797,8 +825,10 @@ export function InspectionFormScreen() {
                   section={section}
                   sectionIndex={sectionIndex}
                   draftValues={draftValues}
+                  emergencyItemIds={emergencyItemIds}
                   isSubmitted={Boolean(isSubmitted)}
                   onUpdateDraftValue={updateDraftValue}
+                  onToggleEmergency={toggleEmergency}
                   onScanReading={handleScanReading}
                   scanningItemId={scanningItemId}
                   photos={photos}
@@ -954,8 +984,10 @@ function ChecklistSectionCard({
   section,
   sectionIndex,
   draftValues,
+  emergencyItemIds,
   isSubmitted,
   onUpdateDraftValue,
+  onToggleEmergency,
   onScanReading,
   scanningItemId,
   photos,
@@ -964,11 +996,13 @@ function ChecklistSectionCard({
   section: InspectionTemplateSection;
   sectionIndex: number;
   draftValues: DraftValues;
+  emergencyItemIds: Record<string, boolean>;
   isSubmitted: boolean;
   onUpdateDraftValue: (
     itemId: string,
     value: DraftValues[string],
   ) => void;
+  onToggleEmergency: (itemId: string, nextValue: boolean) => void;
   onScanReading: (itemId: string) => void;
   scanningItemId: string | null;
   photos: CapturedInspectionPhoto[];
@@ -1010,8 +1044,10 @@ function ChecklistSectionCard({
             key={item.id}
             item={item}
             value={draftValues[item.id]}
+            isEmergency={Boolean(emergencyItemIds[item.id])}
             disabled={isSubmitted}
             onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
+            onToggleEmergency={(nextValue) => onToggleEmergency(item.id, nextValue)}
             onScanReading={() => onScanReading(item.id)}
             scanning={scanningItemId === item.id}
             scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
@@ -1026,8 +1062,10 @@ function ChecklistSectionCard({
 function ChecklistItemCard({
   item,
   value,
+  isEmergency,
   disabled,
   onChange,
+  onToggleEmergency,
   onScanReading,
   scanning,
   scanPhotoUri,
@@ -1035,8 +1073,10 @@ function ChecklistItemCard({
 }: {
   item: InspectionTemplateItem;
   value: DraftValues[string] | undefined;
+  isEmergency: boolean;
   disabled: boolean;
   onChange: (value: DraftValues[string]) => void;
+  onToggleEmergency: (nextValue: boolean) => void;
   onScanReading: () => void;
   scanning: boolean;
   scanPhotoUri?: string;
@@ -1046,6 +1086,11 @@ function ChecklistItemCard({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
+  // An emergency flag only makes sense once the item is recorded as a defect
+  // (a FAIL on a defect-trigger item). Showing it elsewhere would be noise.
+  const isDefectNow =
+    item.isDefectTrigger !== false &&
+    getInspectionItemResultValue(item, value ?? null) === 'FAIL';
 
   return (
     <View style={styles.itemCard}>
@@ -1203,6 +1248,41 @@ function ChecklistItemCard({
             Unsupported field type: {formatFieldType(item.inputType)}.
           </Text>
         </View>
+      ) : null}
+      {isDefectNow || isEmergency ? (
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isEmergency, disabled }}
+          disabled={disabled}
+          onPress={() => onToggleEmergency(!isEmergency)}
+          style={({ pressed }) => [
+            styles.emergencyToggle,
+            isEmergency && styles.emergencyToggleActive,
+            disabled && styles.emergencyToggleDisabled,
+            pressed && !disabled && styles.emergencyTogglePressed,
+          ]}
+        >
+          <View style={styles.emergencyToggleTextWrap}>
+            <Text
+              style={[
+                styles.emergencyToggleText,
+                isEmergency && styles.emergencyToggleTextActive,
+              ]}
+            >
+              {isEmergency
+                ? '🚨 Emergency — Immediate Action'
+                : '🚨 Flag Emergency'}
+            </Text>
+            <Text style={styles.emergencyToggleHint} numberOfLines={2}>
+              {isEmergency
+                ? 'Maintenance will be alerted to respond immediately.'
+                : 'Dangerous to public — alert maintenance for immediate action.'}
+            </Text>
+          </View>
+          <View style={[styles.emergencyCheck, isEmergency && styles.emergencyCheckActive]}>
+            {isEmergency ? <Text style={styles.emergencyCheckMark}>✓</Text> : null}
+          </View>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -2243,6 +2323,66 @@ const createStyles = (t: Theme) =>
     lineHeight: 19,
     fontWeight: '600',
     color: t.colors.dangerText,
+  },
+  emergencyToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: t.colors.dangerBorder,
+    backgroundColor: t.colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 52,
+  },
+  emergencyToggleActive: {
+    backgroundColor: t.colors.dangerSoft,
+    borderColor: t.colors.danger,
+  },
+  emergencyToggleDisabled: {
+    opacity: 0.6,
+  },
+  emergencyTogglePressed: {
+    opacity: 0.9,
+  },
+  emergencyToggleTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  emergencyToggleText: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+    color: t.colors.dangerText,
+  },
+  emergencyToggleTextActive: {
+    color: t.colors.danger,
+  },
+  emergencyToggleHint: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: t.colors.textSecondary,
+  },
+  emergencyCheck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: t.colors.dangerBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: t.colors.card,
+  },
+  emergencyCheckActive: {
+    backgroundColor: t.colors.danger,
+    borderColor: t.colors.danger,
+  },
+  emergencyCheckMark: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: t.colors.textOnPrimary,
   },
   imageFieldPlaceholder: {
     borderRadius: 8,

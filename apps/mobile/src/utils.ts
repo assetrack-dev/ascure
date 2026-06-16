@@ -751,7 +751,10 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
 export function buildChecklistItemsPayloadFromDraft(
   form: InspectionFormResponse,
   draftValues: DraftValues,
-  options: { includeEmpty?: boolean } = {},
+  options: {
+    includeEmpty?: boolean;
+    emergencyByItemId?: Record<string, boolean>;
+  } = {},
 ) {
   const items: SaveInspectionItemResultInput[] = [];
   const sections = options.includeEmpty
@@ -777,11 +780,31 @@ export function buildChecklistItemsPayloadFromDraft(
         label: item.label,
         result: getInspectionItemResultValue(item, rawValue),
         remark,
+        isEmergency: options.emergencyByItemId?.[item.id] ?? false,
       });
     }
   }
 
   return items;
+}
+
+/**
+ * Seed the per-item emergency map from a loaded form so re-opening a saved
+ * draft restores the inspector's emergency flags (and a later save doesn't
+ * silently clear them). Keyed by checklist template item id.
+ */
+export function createInitialEmergencyMap(
+  form: InspectionFormResponse,
+): Record<string, boolean> {
+  const emergencyByItemId: Record<string, boolean> = {};
+
+  for (const storedItem of form.items ?? []) {
+    if (storedItem.isEmergency && storedItem.checklistItemId) {
+      emergencyByItemId[storedItem.checklistItemId] = true;
+    }
+  }
+
+  return emergencyByItemId;
 }
 
 export function hasAnyInspectionDraftValue(
@@ -1017,7 +1040,7 @@ export function getBooleanDefectValue(item: InspectionTemplateItem): boolean {
   return true;
 }
 
-function getInspectionItemResultValue(
+export function getInspectionItemResultValue(
   item: InspectionTemplateItem,
   rawValue: DraftValues[string],
 ): InspectionItemResultValue {

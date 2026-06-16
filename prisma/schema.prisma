@@ -1310,6 +1310,7 @@ model InspectionItemResult {
   result          InspectionItemResultValue
   remark          String?
   isDefect        Boolean                   @default(false)
+  isEmergency     Boolean                   @default(false)
   severity        DefectSeverity?
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
@@ -1332,6 +1333,7 @@ model Defect {
   closureVerifiedByUserId  String?                @db.Uuid
   status                   DefectStatus           @default(OPEN)
   severity                 DefectSeverity         @default(MEDIUM)
+  isEmergency              Boolean                @default(false)
   lifecycleStatus          DefectLifecycleStatus?
   resolutionOutcome        ResolutionOutcome?
   actionRemark             String?
@@ -1373,6 +1375,7 @@ model Defect {
   @@index([maintainedAt])
   @@index([dueDate])
   @@index([status, dueDate])
+  @@index([isEmergency])
 }
 
 model DefectEvidenceImage {

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -23,7 +23,6 @@ import {
 } from '../syncQueue';
 import {
   AppButton,
-  BodyText,
   Card,
   EmptyState,
   ErrorBanner,
@@ -35,6 +34,8 @@ import {
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import {
+  DefectListItem,
+  DefectSeverity,
   EffectiveCapability,
   InspectionSummary,
   OperationalScope,
@@ -296,8 +297,11 @@ export function HomeScreen() {
       ) : null}
 
       {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
-        <MaintenanceWorkspacePlaceholder
-          onOpenDefects={() => navigation.navigate('DefectList')}
+        <MaintenanceWorkspaceView
+          userId={user.id}
+          onOpenDefect={(defectId) =>
+            navigation.navigate('DefectDetail', { defectId })
+          }
         />
       ) : null}
     </Screen>
@@ -510,22 +514,374 @@ function InspectionQueueCard({
   );
 }
 
-function MaintenanceWorkspacePlaceholder({ onOpenDefects }: { onOpenDefects: () => void }) {
+type MaintenanceGroupKey =
+  | 'EMERGENCY'
+  | 'READY'
+  | 'ACTIVE'
+  | 'AWAITING_CLOSURE'
+  | 'DONE';
+
+type MaintenanceGroups = Record<MaintenanceGroupKey, DefectListItem[]>;
+
+const MAINTENANCE_GROUPS: Array<{
+  key: MaintenanceGroupKey;
+  label: string;
+  tone: 'info' | 'success' | 'warning' | 'neutral' | 'danger';
+}> = [
+  { key: 'EMERGENCY', label: '🚨 Emergency', tone: 'danger' },
+  { key: 'READY', label: 'Ready to Claim', tone: 'warning' },
+  { key: 'ACTIVE', label: 'In Progress', tone: 'info' },
+  { key: 'AWAITING_CLOSURE', label: 'Awaiting Closure', tone: 'success' },
+  { key: 'DONE', label: 'Recently Closed', tone: 'neutral' },
+];
+
+const SEVERITY_RANK: Record<DefectSeverity, number> = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+};
+
+const DONE_GROUP_LIMIT = 10;
+
+function MaintenanceWorkspaceView({
+  userId,
+  onOpenDefect,
+}: {
+  userId: string;
+  onOpenDefect: (defectId: string) => void;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const { token, handleUnauthorized } = useSession();
+  const [defects, setDefects] = useState<DefectListItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const hasLoadedRef = useRef(false);
+
+  const loadDefects = useCallback(
+    async (showLoading: boolean) => {
+      try {
+        if (showLoading) {
+          setIsLoading(true);
+        }
+        setError(null);
+
+        const response = await api.getDefects(token);
+        setDefects(response);
+      } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          await handleUnauthorized(loadError);
+          return;
+        }
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Unable to load maintenance tasks.',
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [handleUnauthorized, token],
+  );
+
+  // Reload when the workspace regains focus (e.g. returning from a defect the
+  // maintainer just completed) — but only show the skeleton on first entry.
+  useFocusEffect(
+    useCallback(() => {
+      void loadDefects(!hasLoadedRef.current);
+      hasLoadedRef.current = true;
+    }, [loadDefects]),
+  );
+
+  const grouped = useMemo(
+    () => groupMaintenanceDefects(defects, userId),
+    [defects, userId],
+  );
+
+  const handleClaim = useCallback(
+    async (defectId: string) => {
+      try {
+        setClaimingId(defectId);
+        setError(null);
+
+        await api.claimDefect(token, defectId);
+        onOpenDefect(defectId);
+        await loadDefects(false);
+      } catch (claimError) {
+        if (claimError instanceof ApiError && claimError.status === 401) {
+          await handleUnauthorized(claimError);
+          return;
+        }
+
+        setError(
+          claimError instanceof Error
+            ? claimError.message
+            : 'Unable to claim this defect.',
+        );
+      } finally {
+        setClaimingId(null);
+      }
+    },
+    [handleUnauthorized, loadDefects, onOpenDefect, token],
+  );
+
+  if (isLoading) {
+    return (
+      <>
+        <SkeletonCard />
+        <SkeletonCard />
+      </>
+    );
+  }
+
+  const hasAnyTask = MAINTENANCE_GROUPS.some(
+    (group) => grouped[group.key].length > 0,
+  );
 
   return (
-    <Card>
-      <View style={styles.listHeader}>
-        <SectionTitle>Maintenance</SectionTitle>
-        <StatusChip label="Tasks" tone="warning" />
-      </View>
-      <BodyText muted>
-        Maintenance assignments will appear here. Current defect work remains available.
-      </BodyText>
-      <AppButton label="Open Defects" variant="secondary" onPress={onOpenDefects} />
-    </Card>
+    <>
+      <ErrorBanner message={error} />
+      {!hasAnyTask ? (
+        <Card>
+          <EmptyState
+            icon="tool"
+            title="No maintenance tasks"
+            description="Verified defects in your scope will appear here to claim and repair."
+          />
+        </Card>
+      ) : (
+        MAINTENANCE_GROUPS.map((group) => {
+          const items = grouped[group.key];
+
+          if (items.length === 0) {
+            return null;
+          }
+
+          return (
+            <Card key={group.key}>
+              <View style={styles.listHeader}>
+                <StatusChip label={group.label} tone={group.tone} />
+                <Text style={styles.countText}>{items.length}</Text>
+              </View>
+              <View style={styles.queueGrid}>
+                {items.map((item) => (
+                  <MaintenanceTaskCard
+                    key={item.id}
+                    item={item}
+                    claimable={isClaimableDefect(item)}
+                    claiming={claimingId === item.id}
+                    onOpen={() => onOpenDefect(item.id)}
+                    onClaim={() => handleClaim(item.id)}
+                  />
+                ))}
+              </View>
+            </Card>
+          );
+        })
+      )}
+    </>
   );
+}
+
+function MaintenanceTaskCard({
+  item,
+  claimable,
+  claiming,
+  onOpen,
+  onClaim,
+}: {
+  item: DefectListItem;
+  claimable: boolean;
+  claiming: boolean;
+  onOpen: () => void;
+  onClaim: () => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const metaParts = [item.assetType, item.location]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  return (
+    <View style={styles.maintenanceCard}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onOpen}
+        style={({ pressed }) => [
+          styles.maintenanceCardBody,
+          pressed && styles.visitRowPressed,
+        ]}
+      >
+        <View style={styles.queueCardHeader}>
+          <Text style={[styles.queueTitle, { flex: 1 }]} numberOfLines={1}>
+            {item.assetCode || 'Unknown asset'}
+          </Text>
+          <SeverityChip severity={item.severity} />
+        </View>
+        <Text style={styles.queueSubtitle} numberOfLines={2}>
+          {item.label}
+        </Text>
+        {metaParts.length > 0 ? (
+          <Text style={styles.maintenanceMeta} numberOfLines={1}>
+            {metaParts.join(' · ')}
+          </Text>
+        ) : null}
+        {item.isOverdue ? <Text style={styles.overdueText}>Overdue</Text> : null}
+      </Pressable>
+      {claimable ? (
+        <AppButton
+          label={claiming ? 'Claiming…' : 'Claim & Start'}
+          variant="primary"
+          loading={claiming}
+          onPress={onClaim}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function SeverityChip({ severity }: { severity?: DefectSeverity | null }) {
+  const tone =
+    severity === 'CRITICAL'
+      ? 'danger'
+      : severity === 'HIGH'
+        ? 'warning'
+        : severity === 'LOW'
+          ? 'neutral'
+          : 'info';
+
+  return <StatusChip label={severity ?? 'MEDIUM'} tone={tone} />;
+}
+
+function groupMaintenanceDefects(
+  defects: DefectListItem[],
+  userId: string,
+): MaintenanceGroups {
+  const groups: MaintenanceGroups = {
+    EMERGENCY: [],
+    READY: [],
+    ACTIVE: [],
+    AWAITING_CLOSURE: [],
+    DONE: [],
+  };
+
+  for (const defect of defects) {
+    const group = getMaintenanceGroup(defect, userId);
+
+    if (group) {
+      groups[group].push(defect);
+    }
+  }
+
+  groups.EMERGENCY.sort(compareMaintenanceTasks);
+  groups.READY.sort(compareMaintenanceTasks);
+  groups.ACTIVE.sort(compareMaintenanceTasks);
+  groups.AWAITING_CLOSURE.sort(compareMaintenanceTasks);
+  groups.DONE.sort(compareDoneTasks).splice(DONE_GROUP_LIMIT);
+
+  return groups;
+}
+
+// A defect can be claimed when it's verified and nobody owns it yet.
+function isClaimableDefect(item: DefectListItem) {
+  const lifecycle = (item.lifecycleStatus ?? '').toUpperCase();
+  const hasAssignee = Boolean(
+    item.assignedToUserId ||
+      item.assignedUserId ||
+      item.assignedToTeamId ||
+      item.assignedTeamId,
+  );
+
+  return lifecycle === 'VERIFIED' && !hasAssignee && item.status !== 'CLOSED';
+}
+
+function getMaintenanceGroup(
+  item: DefectListItem,
+  userId: string,
+): MaintenanceGroupKey | null {
+  const lifecycle = (item.lifecycleStatus ?? '').toUpperCase();
+  const assignedToMe =
+    item.assignedToUserId === userId || item.assignedUserId === userId;
+  const hasAssignee = Boolean(
+    item.assignedToUserId ||
+      item.assignedUserId ||
+      item.assignedToTeamId ||
+      item.assignedTeamId,
+  );
+
+  // Active emergencies float to the top for ALL in-scope maintainers (broad
+  // awareness matters more than personal ownership here), regardless of who
+  // claimed them — until they're closed.
+  if (item.isEmergency && item.status !== 'CLOSED' && lifecycle !== 'CLOSED') {
+    return 'EMERGENCY';
+  }
+
+  // Closure authority is the assigned maintainer, so the personal groups
+  // (active / awaiting-closure / done) are scoped to my own work. "Ready to
+  // claim" stays the shared pool of unassigned, verified defects.
+  if (item.status === 'CLOSED' || lifecycle === 'CLOSED') {
+    return assignedToMe ? 'DONE' : null;
+  }
+
+  if (lifecycle === 'COMPLETED' || lifecycle === 'VERIFICATION_PENDING') {
+    return assignedToMe ? 'AWAITING_CLOSURE' : null;
+  }
+
+  if (
+    assignedToMe &&
+    (lifecycle === 'ASSIGNED' ||
+      lifecycle === 'IN_PROGRESS' ||
+      item.status === 'IN_PROGRESS')
+  ) {
+    return 'ACTIVE';
+  }
+
+  if (lifecycle === 'VERIFIED' && !hasAssignee) {
+    return 'READY';
+  }
+
+  // Assigned to someone else, rejected, or a QA exception — not actionable here.
+  return null;
+}
+
+function compareMaintenanceTasks(a: DefectListItem, b: DefectListItem) {
+  const severityDelta = getSeverityRank(a.severity) - getSeverityRank(b.severity);
+
+  if (severityDelta !== 0) {
+    return severityDelta;
+  }
+
+  if (Boolean(a.isOverdue) !== Boolean(b.isOverdue)) {
+    return a.isOverdue ? -1 : 1;
+  }
+
+  // Oldest first — the longest-waiting defect rises to the top.
+  return toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
+}
+
+function compareDoneTasks(a: DefectListItem, b: DefectListItem) {
+  // Most recently closed first.
+  return (
+    toTimestamp(b.closedAt ?? b.createdAt) - toTimestamp(a.closedAt ?? a.createdAt)
+  );
+}
+
+function getSeverityRank(severity?: DefectSeverity | null) {
+  return severity ? SEVERITY_RANK[severity] : SEVERITY_RANK.MEDIUM;
+}
+
+function toTimestamp(value?: string | null) {
+  if (!value) {
+    return 0;
+  }
+
+  const time = new Date(value).getTime();
+
+  return Number.isNaN(time) ? 0 : time;
 }
 
 async function loadVisitDetails(token: string, visits: SiteVisit[]) {
@@ -873,6 +1229,31 @@ const createStyles = (t: Theme) =>
       backgroundColor: t.colors.card,
       padding: 12,
       gap: 8,
+    },
+    maintenanceCard: {
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 12,
+      gap: 10,
+    },
+    maintenanceCardBody: {
+      gap: 6,
+      borderRadius: 6,
+    },
+    maintenanceMeta: {
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '600',
+    },
+    overdueText: {
+      color: t.colors.danger,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '800',
+      textTransform: 'uppercase',
     },
     queueCardHeader: {
       minHeight: 30,

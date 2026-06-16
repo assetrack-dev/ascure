@@ -64,6 +64,8 @@ export function DefectDetailScreen() {
   const [defect, setDefect] = useState<DefectDetail | null>(null);
   const [actionRemark, setActionRemark] = useState('');
   const [maintenanceNote, setMaintenanceNote] = useState('');
+  const [closureNote, setClosureNote] = useState('');
+  const [isClosing, setIsClosing] = useState(false);
   const [resolutionOutcome, setResolutionOutcome] =
     useState<DefectResolutionOutcome>('RESOLVED');
   const [proofPhotos, setProofPhotos] = useState<CapturedMaintenanceProofPhoto[]>([]);
@@ -97,6 +99,9 @@ export function DefectDetailScreen() {
           isMaintenanceOutcome(response.resolutionOutcome)
             ? response.resolutionOutcome
             : 'RESOLVED',
+        );
+        setClosureNote(
+          response.closureVerificationNotes ?? response.closureRemarks ?? '',
         );
       } catch (loadError) {
         console.error('[DEFECT DETAIL LOAD ERROR]', loadError);
@@ -359,10 +364,39 @@ export function DefectDetailScreen() {
     }
   }
 
+  async function handleVerifyClosure() {
+    try {
+      setIsClosing(true);
+      setError(null);
+
+      await api.verifyDefectClosure(token, defectId, {
+        closureRemarks: normalizeOperationalPayloadText(closureNote) ?? null,
+      });
+      await loadDefectDetail(false);
+    } catch (closeError) {
+      console.error('[DEFECT CLOSURE ERROR]', closeError);
+
+      if (closeError instanceof ApiError && closeError.status === 401) {
+        await handleUnauthorized(closeError);
+        return;
+      }
+
+      setError(closeError instanceof Error ? closeError.message : 'Unable to close defect.');
+    } finally {
+      setIsClosing(false);
+    }
+  }
+
+  const lifecycleStatus = defect
+    ? getDisplayLifecycleStatus(defect.lifecycleStatus)
+    : null;
   const canShowMaintenanceActions = defect
     ? ['ASSIGNED', 'IN_PROGRESS'].includes(getDisplayLifecycleStatus(defect.lifecycleStatus)) ||
       defect.status === 'IN_PROGRESS'
     : false;
+  const canVerifyClosure =
+    defect?.status !== 'CLOSED' &&
+    (lifecycleStatus === 'COMPLETED' || lifecycleStatus === 'VERIFICATION_PENDING');
   const proofImages = defect?.maintenanceProofImages?.length
     ? defect.maintenanceProofImages
     : defect?.evidenceImages ?? [];
@@ -619,6 +653,40 @@ export function DefectDetailScreen() {
               </View>
             ) : null}
 
+            {canVerifyClosure ? (
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Closure</Text>
+                <Text style={styles.mutedText}>
+                  Maintenance is complete. Verify the repair and close this defect.
+                </Text>
+                <TextInput
+                  value={closureNote}
+                  onChangeText={setClosureNote}
+                  placeholder="Add closure note (optional)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  multiline
+                  autoCapitalize="characters"
+                  textAlignVertical="top"
+                  style={styles.noteInput}
+                />
+                <Pressable
+                  disabled={isClosing}
+                  onPress={handleVerifyClosure}
+                  style={({ pressed }) => [
+                    styles.maintenanceButton,
+                    styles.maintenanceButtonGreen,
+                    isClosing && styles.disabledButton,
+                    pressed && !isClosing && styles.pressedButton,
+                  ]}
+                >
+                  {isClosing ? <ActivityIndicator color={theme.colors.success} /> : null}
+                  <Text style={styles.maintenanceButtonGreenText}>
+                    {isClosing ? 'Closing...' : 'Verify & Close Defect'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             {pendingOverlayPhoto ? (
               <View pointerEvents="none" style={styles.overlayCaptureRoot}>
                 <View
@@ -709,13 +777,6 @@ export function DefectDetailScreen() {
                 <StatusButton
                   label="Mark In Progress"
                   status="IN_PROGRESS"
-                  currentStatus={defect.status}
-                  savingStatus={savingStatus}
-                  onPress={handleUpdateStatus}
-                />
-                <StatusButton
-                  label="Mark Closed"
-                  status="CLOSED"
                   currentStatus={defect.status}
                   savingStatus={savingStatus}
                   onPress={handleUpdateStatus}

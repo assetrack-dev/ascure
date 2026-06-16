@@ -59,6 +59,10 @@ export class SaveInspectionItemResultDto {
   @IsOptional()
   @IsString()
   remark?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isEmergency?: boolean;
 }
 
 export class SaveInspectionResultsDto {

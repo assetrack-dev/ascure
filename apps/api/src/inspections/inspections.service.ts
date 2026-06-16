@@ -23,6 +23,7 @@ import {
   inferOperationalScopeFromAssetTypeCode,
   scopeRequiresQAQC,
 } from '../common/operational-scope';
+import { initialDefectLifecycleStatus } from '../common/authorization/defect-governance';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -421,6 +422,9 @@ export class InspectionsService {
       const templateItem = checklistItemId ? templateItemById.get(checklistItemId) : null;
       const remark = this.normalizeOperationalString(item.remark);
       const isDefect = item.result === 'FAIL' && templateItem?.isDefectTrigger !== false;
+      // Emergency only carries meaning on an actual defect — an inspector
+      // flagging a dangerous-to-public condition on a failed item.
+      const isEmergency = isDefect && item.isEmergency === true;
       const severity =
         templateItem && templateItem.isDefectTrigger !== false
           ? templateItem.severity ?? DefectSeverity.MEDIUM
@@ -433,6 +437,7 @@ export class InspectionsService {
         result: item.result,
         remark,
         isDefect,
+        isEmergency,
         severity,
       };
     });
@@ -612,6 +617,7 @@ export class InspectionsService {
     result: string;
     remark: string | null;
     isDefect: boolean;
+    isEmergency: boolean;
     severity: DefectSeverity | null;
     createdAt: Date;
     updatedAt: Date;
@@ -624,6 +630,7 @@ export class InspectionsService {
       result: item.result,
       remark: item.remark,
       isDefect: item.isDefect,
+      isEmergency: item.isEmergency,
       severity: item.severity,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
@@ -1493,6 +1500,7 @@ export class InspectionsService {
       id: string;
       isDefect: boolean;
       severity: DefectSeverity | null;
+      isEmergency: boolean;
     }>,
   ) {
     const now = new Date();
@@ -1503,8 +1511,14 @@ export class InspectionsService {
         id: randomUUID(),
         inspectionItemResultId: item.id,
         status: DefectStatus.OPEN,
-        severity: item.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: DefectLifecycleStatus.DETECTED,
+        // Emergency-flagged items are CRITICAL regardless of template severity.
+        severity: item.isEmergency
+          ? DefectSeverity.CRITICAL
+          : item.severity ?? DefectSeverity.MEDIUM,
+        isEmergency: item.isEmergency,
+        // Governance-aware: under INSPECTOR_OWNS a submitted defect opens
+        // VERIFIED (immediately maintenance-ready); QA_GATED opens DETECTED.
+        lifecycleStatus: initialDefectLifecycleStatus(),
         createdAt: now,
         updatedAt: now,
       }));
