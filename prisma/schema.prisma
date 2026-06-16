@@ -168,10 +168,9 @@ enum AssetStatus {
 enum OrganizationType {
   ASCURE
   TNB
+  MAIN_CONTRACTOR
   SUBCONTRACTOR
-  CONSULTANT
   CLIENT
-  OTHER
 }
 
 enum OperationalDomain {

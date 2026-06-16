@@ -195,7 +195,7 @@ const primaryButtonClassName =
 const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   name: "",
   code: "",
-  type: "OTHER",
+  type: "SUBCONTRACTOR",
   status: "ACTIVE",
   isActive: true,
   organizationId: "",
@@ -350,7 +350,7 @@ function optionLabel(option: { name: string; code?: string | null }) {
 function createInitialForm(kind: EnterpriseEntityKind): EnterpriseFormState {
   return {
     ...DEFAULT_ENTERPRISE_FORM,
-    type: "OTHER",
+    type: "SUBCONTRACTOR",
     status: kind === "projects" || kind === "work-packages" ? "ACTIVE" : "ACTIVE",
   };
 }
@@ -368,7 +368,7 @@ function createFormFromRow(
     ...createInitialForm(kind),
     name: row.name,
     code: row.code ?? "",
-    type: readRawString(row, "type") || "OTHER",
+    type: readRawString(row, "type") || "SUBCONTRACTOR",
     status: readRawString(row, "status") || (row.isActive === false ? "ARCHIVED" : "ACTIVE"),
     isActive: readRawBoolean(row, "isActive") ?? row.isActive !== false,
     organizationId:
@@ -413,7 +413,7 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
   };
 
   if (kind === "organizations") {
-    payload.type = form.type || "OTHER";
+    payload.type = form.type || "SUBCONTRACTOR";
     payload.isActive = form.isActive;
     payload.capabilityIds = form.capabilityIds;
   }
@@ -648,7 +648,7 @@ function EnterpriseFormModal({
                   >
                     {(options?.organizationTypes.length
                       ? options.organizationTypes
-                      : ["ASCURE", "TNB", "SUBCONTRACTOR", "CONSULTANT", "CLIENT", "OTHER"]
+                      : ["ASCURE", "TNB", "MAIN_CONTRACTOR", "SUBCONTRACTOR", "CLIENT"]
                     ).map((type) => (
                       <option key={type} value={type}>
                         {formatEnum(type)}

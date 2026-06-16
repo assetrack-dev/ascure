@@ -42,9 +42,8 @@ export class CreateOrganizationDto {
   @MaxLength(64)
   code?: string | null;
 
-  @IsOptional()
   @IsEnum(OrganizationType)
-  type?: OrganizationType;
+  type!: OrganizationType;
 
   @IsOptional()
   @IsUUID()

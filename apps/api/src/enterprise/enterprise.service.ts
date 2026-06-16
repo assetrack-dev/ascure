@@ -515,7 +515,7 @@ export class EnterpriseService {
           data: {
             name: this.normalizeRequiredString(dto.name, 'Organization name'),
             code: this.normalizeOptionalString(dto.code),
-            type: dto.type ?? OrganizationType.OTHER,
+            type: dto.type,
             parentOrganizationId:
               this.normalizeOptionalString(dto.parentOrganizationId) ?? null,
             isActive: dto.isActive ?? true,
