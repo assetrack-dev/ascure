@@ -60,7 +60,7 @@ export function DefectDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'DefectDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'DefectDetail'>['route']>();
   const { defectId } = route.params;
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   const [defect, setDefect] = useState<DefectDetail | null>(null);
   const [actionRemark, setActionRemark] = useState('');
   const [maintenanceNote, setMaintenanceNote] = useState('');
@@ -390,11 +390,21 @@ export function DefectDetailScreen() {
   const lifecycleStatus = defect
     ? getDisplayLifecycleStatus(defect.lifecycleStatus)
     : null;
-  const canShowMaintenanceActions = defect
-    ? ['ASSIGNED', 'IN_PROGRESS'].includes(getDisplayLifecycleStatus(defect.lifecycleStatus)) ||
-      defect.status === 'IN_PROGRESS'
+  // Maintenance + closure are restricted server-side to the assigned maintainer
+  // (or ADMIN). The EMERGENCY group surfaces other maintainers' defects too, so
+  // gate the action buttons on ownership to avoid showing controls that 403.
+  const isAssignedToMe = defect
+    ? defect.assignedToUserId === user.id || defect.assignedUserId === user.id
     : false;
+  const canActOnMaintenance = isAssignedToMe || user.role === 'ADMIN';
+  const canShowMaintenanceActions =
+    canActOnMaintenance &&
+    (defect
+      ? ['ASSIGNED', 'IN_PROGRESS'].includes(getDisplayLifecycleStatus(defect.lifecycleStatus)) ||
+        defect.status === 'IN_PROGRESS'
+      : false);
   const canVerifyClosure =
+    canActOnMaintenance &&
     defect?.status !== 'CLOSED' &&
     (lifecycleStatus === 'COMPLETED' || lifecycleStatus === 'VERIFICATION_PENDING');
   const proofImages = defect?.maintenanceProofImages?.length

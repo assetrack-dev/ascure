@@ -66,7 +66,12 @@ export function EmergencyWatcher() {
     return () => {
       cancelled = true;
     };
-  }, [token, user]);
+    // Key on session IDENTITY (id + role), not the user object reference — getMe
+    // refreshes hand back a new object with identical data, and depending on the
+    // whole object would re-baseline (dropping new emergencies into the seen set
+    // without alerting) and dismiss any live banner on every routine refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, user?.id, user?.role]);
 
   const poll = useCallback(async () => {
     if (!token || !isMaintainerRef.current) {

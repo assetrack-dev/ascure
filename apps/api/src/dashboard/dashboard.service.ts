@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  DefectLifecycleStatus,
   DefectSeverity,
   DefectStatus,
   InspectionCompletionStatus,
@@ -11,8 +10,9 @@ import {
   SiteVisitValidationStatus,
   UserRole,
 } from '@prisma/client';
-import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { APPSHEET_IMPORT_REPORTING_GROUP_PREFIX } from '../common/import.constants';
+import { buildInitialDefectData } from '../defects/defect-materialization.util';
 import {
   buildScopeContext,
   ScopeContext,
@@ -759,11 +759,25 @@ export class DashboardService {
         defect: {
           is: null,
         },
-        inspection: this.accessibleInspectionWhere(user, ctx),
+        inspection: {
+          ...this.accessibleInspectionWhere(user, ctx),
+          // Foundation/baseline imports are historical observations — never
+          // materialize live Defects from them (parity with defects.service,
+          // which otherwise lets the dashboard surface them as claimable work).
+          OR: [
+            { reportingGroup: null },
+            {
+              reportingGroup: {
+                not: { startsWith: APPSHEET_IMPORT_REPORTING_GROUP_PREFIX },
+              },
+            },
+          ],
+        },
       },
       select: {
         id: true,
         severity: true,
+        isEmergency: true,
       },
     });
 
@@ -774,15 +788,7 @@ export class DashboardService {
     const now = new Date();
 
     await this.prisma.defect.createMany({
-      data: itemResults.map((item) => ({
-        id: randomUUID(),
-        inspectionItemResultId: item.id,
-        status: DefectStatus.OPEN,
-        severity: item.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: DefectLifecycleStatus.DETECTED,
-        createdAt: now,
-        updatedAt: now,
-      })),
+      data: itemResults.map((item) => buildInitialDefectData(item, now)),
       skipDuplicates: true,
     });
   }

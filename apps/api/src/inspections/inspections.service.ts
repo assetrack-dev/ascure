@@ -10,7 +10,6 @@ import { extname, resolve } from 'path';
 import {
   DefectLifecycleStatus,
   DefectSeverity,
-  DefectStatus,
   InspectionCompletionStatus,
   InspectionItemInputType,
   Prisma,
@@ -23,7 +22,7 @@ import {
   inferOperationalScopeFromAssetTypeCode,
   scopeRequiresQAQC,
 } from '../common/operational-scope';
-import { initialDefectLifecycleStatus } from '../common/authorization/defect-governance';
+import { buildInitialDefectData } from '../defects/defect-materialization.util';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -1507,21 +1506,7 @@ export class InspectionsService {
 
     return itemResults
       .filter((item) => item.isDefect)
-      .map((item) => ({
-        id: randomUUID(),
-        inspectionItemResultId: item.id,
-        status: DefectStatus.OPEN,
-        // Emergency-flagged items are CRITICAL regardless of template severity.
-        severity: item.isEmergency
-          ? DefectSeverity.CRITICAL
-          : item.severity ?? DefectSeverity.MEDIUM,
-        isEmergency: item.isEmergency,
-        // Governance-aware: under INSPECTOR_OWNS a submitted defect opens
-        // VERIFIED (immediately maintenance-ready); QA_GATED opens DETECTED.
-        lifecycleStatus: initialDefectLifecycleStatus(),
-        createdAt: now,
-        updatedAt: now,
-      }));
+      .map((item) => buildInitialDefectData(item, now));
   }
 
   private serializeStoredValue(

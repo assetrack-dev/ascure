@@ -18,10 +18,8 @@ import {
   UserRole,
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
-import {
-  initialDefectLifecycleStatus,
-  inspectorOwnsDefects,
-} from '../common/authorization/defect-governance';
+import { inspectorOwnsDefects } from '../common/authorization/defect-governance';
+import { buildInitialDefectData } from './defect-materialization.util';
 import { APPSHEET_IMPORT_REPORTING_GROUP_PREFIX } from '../common/import.constants';
 import {
   buildScopeContext,
@@ -1113,9 +1111,20 @@ export class DefectsService {
 
     const now = new Date();
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.defect.update({
-        where: { id: defect.id },
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      // Atomic single-winner claim: the write only lands if the row is STILL
+      // verified and unassigned at write time. Two maintainers tapping "claim"
+      // on the same hot emergency can't both win — the DB, not the earlier
+      // read, decides. (The checks above stay for fast, friendly errors.)
+      const result = await tx.defect.updateMany({
+        where: {
+          id: defect.id,
+          assignedUserId: null,
+          assignedToUserId: null,
+          assignedTeamId: null,
+          assignedToTeamId: null,
+          lifecycleStatus: DefectLifecycleStatus.VERIFIED,
+        },
         data: {
           assignedUserId: user.id,
           assignedToUserId: user.id,
@@ -1125,6 +1134,10 @@ export class DefectsService {
           lifecycleStatus: DefectLifecycleStatus.ASSIGNED,
         },
       });
+
+      if (result.count === 0) {
+        return false;
+      }
 
       await tx.defectTimelineEntry.create({
         data: {
@@ -1141,7 +1154,24 @@ export class DefectsService {
           createdAt: now,
         },
       });
+
+      return true;
     });
+
+    if (!claimed) {
+      // Lost the race between our read and write — resolve from fresh state.
+      const fresh = await this.findOrCreateAccessibleDefect(user, defect.id);
+      const freshAssignedUserId =
+        fresh.assignedToUserId ?? fresh.assignedUserId ?? null;
+
+      if (freshAssignedUserId === user.id) {
+        return this.getDetail(user, defect.id);
+      }
+
+      throw new ConflictException(
+        'This defect is no longer available to claim — it was just claimed or changed state.',
+      );
+    }
 
     return this.getDetail(user, defect.id);
   }
@@ -1603,6 +1633,7 @@ export class DefectsService {
       select: {
         id: true,
         severity: true,
+        isEmergency: true,
       },
     });
 
@@ -1613,15 +1644,7 @@ export class DefectsService {
     const now = new Date();
 
     await this.prisma.defect.createMany({
-      data: itemResults.map((item) => ({
-        id: randomUUID(),
-        inspectionItemResultId: item.id,
-        status: DefectStatus.OPEN,
-        severity: item.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: initialDefectLifecycleStatus(),
-        createdAt: now,
-        updatedAt: now,
-      })),
+      data: itemResults.map((item) => buildInitialDefectData(item, now)),
       skipDuplicates: true,
     });
   }
@@ -1655,6 +1678,7 @@ export class DefectsService {
       select: {
         id: true,
         severity: true,
+        isEmergency: true,
       },
     });
 
@@ -1666,13 +1690,7 @@ export class DefectsService {
       where: {
         inspectionItemResultId: itemResult.id,
       },
-      create: {
-        id: randomUUID(),
-        inspectionItemResultId: itemResult.id,
-        status: DefectStatus.OPEN,
-        severity: itemResult.severity ?? DefectSeverity.MEDIUM,
-        lifecycleStatus: initialDefectLifecycleStatus(),
-      },
+      create: buildInitialDefectData(itemResult, new Date()),
       update: {},
     });
 
