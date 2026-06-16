@@ -172,6 +172,15 @@ importers:
       '@ascure/shared-utils':
         specifier: workspace:*
         version: link:../../packages/shared-utils
+      '@expo-google-fonts/inter':
+        specifier: ^0.4.2
+        version: 0.4.2
+      '@expo-google-fonts/jetbrains-mono':
+        specifier: ^0.4.1
+        version: 0.4.1
+      '@expo-google-fonts/space-grotesk':
+        specifier: ^0.4.1
+        version: 0.4.1
       '@expo/metro-runtime':
         specifier: ~55.0.11
         version: 55.0.11(@expo/dom-webview@55.0.5)(expo@55.0.26)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
@@ -199,6 +208,9 @@ importers:
       expo-file-system:
         specifier: ~55.0.22
         version: 55.0.22(expo@55.0.26)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))
+      expo-font:
+        specifier: ~55.0.8
+        version: 55.0.8(expo@55.0.26)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       expo-image-picker:
         specifier: ~55.0.20
         version: 55.0.20(expo@55.0.26)
@@ -1095,6 +1107,15 @@ packages:
   '@eslint/plugin-kit@0.7.1':
     resolution: {integrity: sha512-rZAP3aVgB9ds9KOeUSL+zZ21hPmo8dh6fnIFwRQj5EAZl9gzR7wxYbYXYysAM8CTqGmUGyp2S4kUdV17MnGuWQ==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
+
+  '@expo-google-fonts/inter@0.4.2':
+    resolution: {integrity: sha512-syfiImMaDmq7cFi0of+waE2M4uSCyd16zgyWxdPOY7fN2VBmSLKEzkfbZgeOjJq61kSqPBNNtXjggiQiSD6gMQ==}
+
+  '@expo-google-fonts/jetbrains-mono@0.4.1':
+    resolution: {integrity: sha512-CslACrtMOcRwoWXCO7OMEI+9w3fukWSoBtvNz46OqPoogEuuoY0tkDY1O8sFumk8t0pC6Cx0Xr95O0TOQhpkug==}
+
+  '@expo-google-fonts/space-grotesk@0.4.1':
+    resolution: {integrity: sha512-ZVQYw4Ok/pgcSJiufP8oRZE3AVxS9xtmKEUfsurbHkHNdMc/GA1gDXP9G4Cr7KL4KqSc0haexR2TuMigotCn4Q==}
 
   '@expo/cli@55.0.32':
     resolution: {integrity: sha512-fq+/yUYBVw5ZudT4igNyJ3WaF17R39iS7EZlrkfHkLI7Y1kmUlivabwKviLoAfepJOKjKODKpViti9EPfmG3SQ==}
@@ -6608,6 +6629,12 @@ snapshots:
     dependencies:
       '@eslint/core': 1.2.1
       levn: 0.4.1
+
+  '@expo-google-fonts/inter@0.4.2': {}
+
+  '@expo-google-fonts/jetbrains-mono@0.4.1': {}
+
+  '@expo-google-fonts/space-grotesk@0.4.1': {}
 
   '@expo/cli@55.0.32(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.11)(expo-constants@55.0.16(expo@55.0.26)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)))(expo-font@55.0.8(expo@55.0.26)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(expo@55.0.26)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)':
     dependencies:

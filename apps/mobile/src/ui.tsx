@@ -672,12 +672,14 @@ function createStyles(t: Theme) {
       fontSize: 18,
       lineHeight: 24,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
       color: c.textPrimary,
       textAlign: 'center',
     },
     subtitle: {
       fontSize: 12,
       lineHeight: 16,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
       textAlign: 'center',
     },
@@ -712,16 +714,19 @@ function createStyles(t: Theme) {
       fontSize: 15,
       lineHeight: 20,
       fontWeight: '600',
+      fontFamily: t.fonts.display,
       color: c.textPrimary,
     },
     bodyText: {
       fontSize: 15,
       lineHeight: 22,
+      fontFamily: t.fonts.body,
       color: c.textPrimary,
     },
     bodyMuted: {
       fontSize: 14,
       lineHeight: 21,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     errorBanner: {
@@ -736,6 +741,7 @@ function createStyles(t: Theme) {
       lineHeight: 20,
       color: c.dangerText,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     successBanner: {
       backgroundColor: c.successSoft,
@@ -749,6 +755,7 @@ function createStyles(t: Theme) {
       lineHeight: 20,
       color: c.successText,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     warningBanner: {
       backgroundColor: c.warningSoft,
@@ -762,6 +769,7 @@ function createStyles(t: Theme) {
       lineHeight: 20,
       color: c.warningText,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     loadingBlock: {
       alignItems: 'center',
@@ -771,6 +779,7 @@ function createStyles(t: Theme) {
     },
     loadingText: {
       fontSize: 15,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     loadingScreen: {
@@ -783,6 +792,7 @@ function createStyles(t: Theme) {
     },
     loadingScreenText: {
       fontSize: 16,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
       textAlign: 'center',
     },
@@ -808,11 +818,13 @@ function createStyles(t: Theme) {
     emptyTitle: {
       fontSize: 16,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
       color: c.textPrimary,
     },
     emptyDescription: {
       fontSize: 14,
       lineHeight: 21,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     button: {
@@ -852,6 +864,7 @@ function createStyles(t: Theme) {
     buttonText: {
       fontSize: 15,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     buttonTextPrimary: {
       color: c.textOnPrimary,
@@ -871,6 +884,7 @@ function createStyles(t: Theme) {
     inlineButtonText: {
       fontSize: 14,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
       color: c.primary,
     },
     inlineButtonDisabled: {
@@ -882,6 +896,7 @@ function createStyles(t: Theme) {
     fieldLabel: {
       fontSize: 13,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: c.textSecondary,
     },
     textInput: {
@@ -893,6 +908,7 @@ function createStyles(t: Theme) {
       paddingHorizontal: 12,
       paddingVertical: 10,
       fontSize: 15,
+      fontFamily: t.fonts.body,
       color: c.textPrimary,
     },
     textArea: {
@@ -911,6 +927,7 @@ function createStyles(t: Theme) {
     keyValueLabel: {
       flex: 1,
       fontSize: 13,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     keyValueValueWrap: {
@@ -921,6 +938,7 @@ function createStyles(t: Theme) {
       fontSize: 13,
       color: c.textPrimary,
       fontWeight: '500',
+      fontFamily: t.fonts.bodyMedium,
       textAlign: 'right',
     },
     chip: {
@@ -951,6 +969,7 @@ function createStyles(t: Theme) {
     chipText: {
       fontSize: 12,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: c.textPrimary,
     },
     chipTextSuccess: {
@@ -1004,10 +1023,12 @@ function createStyles(t: Theme) {
     selectTitle: {
       fontSize: 14,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: c.textPrimary,
     },
     selectDescription: {
       fontSize: 12,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     dropdownControl: {
@@ -1034,6 +1055,7 @@ function createStyles(t: Theme) {
       fontSize: 15,
       color: c.textPrimary,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     dropdownPlaceholder: {
       color: c.textMuted,
@@ -1061,6 +1083,7 @@ function createStyles(t: Theme) {
       flex: 1,
       minHeight: 42,
       fontSize: 14,
+      fontFamily: t.fonts.body,
       color: c.textPrimary,
       paddingVertical: 8,
     },
@@ -1069,6 +1092,7 @@ function createStyles(t: Theme) {
     },
     dropdownEmptyText: {
       fontSize: 13,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
       paddingHorizontal: 12,
       paddingVertical: 14,
@@ -1095,10 +1119,12 @@ function createStyles(t: Theme) {
     dropdownOptionLabel: {
       fontSize: 14,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: c.textPrimary,
     },
     dropdownOptionDescription: {
       fontSize: 12,
+      fontFamily: t.fonts.body,
       color: c.textSecondary,
     },
     headerIconButton: {

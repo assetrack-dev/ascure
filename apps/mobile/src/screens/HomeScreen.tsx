@@ -717,7 +717,10 @@ function MaintenanceTaskCard({
         ]}
       >
         <View style={styles.queueCardHeader}>
-          <Text style={[styles.queueTitle, { flex: 1 }]} numberOfLines={1}>
+          <Text
+            style={[styles.queueTitle, { flex: 1, fontFamily: theme.fonts.monoMedium }]}
+            numberOfLines={1}
+          >
             {item.assetCode || 'Unknown asset'}
           </Text>
           <SeverityChip severity={item.severity} />
@@ -1247,6 +1250,7 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 16,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     overdueText: {
       color: t.colors.danger,
@@ -1267,12 +1271,14 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
     },
     queueSubtitle: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '500',
+      fontFamily: t.fonts.body,
     },
     visitRowPressed: {
       backgroundColor: t.colors.surfacePressed,

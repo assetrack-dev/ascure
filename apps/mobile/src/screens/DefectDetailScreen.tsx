@@ -1232,6 +1232,7 @@ const createStyles = (t: Theme) =>
     fontSize: 17,
     lineHeight: 22,
     fontWeight: '800',
+    fontFamily: t.fonts.monoMedium,
   },
   mutedText: {
     color: t.colors.textSecondary,

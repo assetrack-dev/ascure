@@ -129,11 +129,45 @@ const darkColors: ColorPalette = {
   shadow: '#000000',
 };
 
+/* Brand type — Space Grotesk (display/headings), Inter (body/UI), JetBrains
+   Mono (codes/readings). Loaded via expo-font in App.tsx; these names MUST match
+   the @expo-google-fonts export keys. RN ignores fontWeight for custom fonts, so
+   each weight is its own family — pick the family, not the weight. */
+export const fonts = {
+  display: 'SpaceGrotesk_700Bold',
+  displayMedium: 'SpaceGrotesk_500Medium',
+  body: 'Inter_400Regular',
+  bodyMedium: 'Inter_500Medium',
+  bodySemibold: 'Inter_600SemiBold',
+  bodyBold: 'Inter_700Bold',
+  mono: 'JetBrainsMono_400Regular',
+  monoMedium: 'JetBrainsMono_500Medium',
+} as const;
+
+/** Map an RN fontWeight to the matching Inter family (custom fonts don't honour
+ *  fontWeight on Android, so the family carries the weight). Default → regular. */
+export function interFamily(weight?: string): string {
+  switch (weight) {
+    case 'bold':
+    case '700':
+    case '800':
+    case '900':
+      return fonts.bodyBold;
+    case '600':
+      return fonts.bodySemibold;
+    case '500':
+      return fonts.bodyMedium;
+    default:
+      return fonts.body;
+  }
+}
+
 export function buildTheme(mode: ThemeMode) {
   const colors = mode === 'dark' ? darkColors : lightColors;
   return {
     mode,
     colors,
+    fonts,
     radius: { card: 14, control: 10, pill: 999 },
     spacing: { screen: 16, section: 12, card: 12 },
     shadow: {
