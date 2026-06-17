@@ -254,6 +254,14 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
           location: true,
         },
       },
+      // Latest inspection so the in-visit map can color poles by status
+      // (lime = inspected/submitted, red = not yet) — mirrors what
+      // masterDataService.listAssets returns for the no-visit map.
+      inspections: {
+        take: 1,
+        orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+        select: { id: true, completionStatus: true, submittedAt: true },
+      },
     },
   },
 });
@@ -2336,6 +2344,8 @@ export class SiteVisitsService {
   }
 
   private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
+    const { inspections, ...asset } = link.asset;
+    const latest = inspections[0] ?? null;
     return {
       id: link.id,
       siteVisitId: link.siteVisitId,
@@ -2345,7 +2355,18 @@ export class SiteVisitsService {
       source: link.source,
       notes: link.notes,
       addedBy: link.addedBy,
-      asset: link.asset,
+      asset: {
+        ...asset,
+        // Flatten to the same shape the no-visit map already consumes so the
+        // client can color markers by inspection status inside a visit too.
+        latestInspection: latest
+          ? {
+              id: latest.id,
+              status: latest.completionStatus,
+              submittedAt: latest.submittedAt?.toISOString() ?? null,
+            }
+          : null,
+      },
     };
   }
 
