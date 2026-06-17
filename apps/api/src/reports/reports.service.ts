@@ -405,30 +405,6 @@ export class ReportsService {
       a.asset.assetCode.localeCompare(b.asset.assetCode),
     );
 
-    // IMAGE cells render YES/NO on whether a photo was captured for the item, so
-    // gather which (inspection, templateItem) pairs have a linked InspectionImage.
-    const images = chosen.length
-      ? await this.prisma.inspectionImage.findMany({
-          where: {
-            inspectionId: { in: chosen.map((i) => i.id) },
-            templateItemId: { not: null },
-          },
-          select: { inspectionId: true, templateItemId: true },
-        })
-      : [];
-    const imageItemIdsByInspection = new Map<string, Set<string>>();
-    for (const img of images) {
-      if (!img.templateItemId) {
-        continue;
-      }
-      let set = imageItemIdsByInspection.get(img.inspectionId);
-      if (!set) {
-        set = new Set<string>();
-        imageItemIdsByInspection.set(img.inspectionId, set);
-      }
-      set.add(img.templateItemId);
-    }
-
     // Columns = the actual template items used. Dedup by key (stable across
     // template versions); keep the first label/order seen, and remember every
     // item id that maps to the column so values recorded under any version
@@ -458,6 +434,10 @@ export class ReportsService {
       }
     >();
     for (const item of templateItems) {
+      // IMAGE (photo) fields are evidence, not tabular data — exclude them.
+      if (item.inputType === InspectionItemInputType.IMAGE) {
+        continue;
+      }
       const existing = columnsByKey.get(item.key);
       if (existing) {
         existing.itemIds.add(item.id);
@@ -508,9 +488,6 @@ export class ReportsService {
           verdictByItemId.set(ir.checklistItemId, ir.result);
         }
       }
-      const imageItemIds =
-        imageItemIdsByInspection.get(insp.id) ?? new Set<string>();
-
       const meta: (string | number)[] = [
         sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
         sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
@@ -533,10 +510,9 @@ export class ReportsService {
 
       const itemCells = columns.map((col) => {
         // A column may map to several item ids (same key across template
-        // versions); use the first id that carries data of each kind.
+        // versions); use the first id that carries each kind of value.
         let result: (typeof insp.results)[number] | undefined;
         let verdict: InspectionItemResultValue | undefined;
-        let hasImage = false;
         for (const id of col.itemIds) {
           if (!result) {
             result = resultByItemId.get(id);
@@ -544,11 +520,8 @@ export class ReportsService {
           if (!verdict) {
             verdict = verdictByItemId.get(id);
           }
-          if (imageItemIds.has(id)) {
-            hasImage = true;
-          }
         }
-        return resolveTemplateCell(col.inputType, result, verdict, hasImage);
+        return resolveTemplateCell(col.inputType, result, verdict);
       });
 
       sheet.addRow([...meta, ...itemCells]);
@@ -1009,12 +982,12 @@ type RecordedResult = {
 };
 
 /**
- * Resolve a single template-driven report cell by field type:
+ * Resolve a single template-driven report cell by field type. (IMAGE items are
+ * excluded from the report upstream, so they never reach here.)
  * - BOOLEAN: YES (defect / FAIL) or NO (no defect / PASS); N/A or unanswered →
  *   blank. Driven by the PASS/FAIL/NA verdict, NOT valueBoolean — valueBoolean
  *   is an inverse "passed?" flag (true = PASS), so reading it directly inverts.
  * - MULTI_SELECT: the chosen values, comma-separated.
- * - IMAGE: YES if a photo was captured for the item, else NO.
  * - OCR / NUMBER / READING: the keyed-in number.
  * - TEXT / SELECT (dropdown) / DATE / DATETIME / GPS / JSON: the value verbatim.
  */
@@ -1022,12 +995,8 @@ function resolveTemplateCell(
   inputType: InspectionItemInputType,
   result: RecordedResult | undefined,
   verdict: InspectionItemResultValue | undefined,
-  hasImage: boolean,
 ): string {
   switch (inputType) {
-    case InspectionItemInputType.IMAGE:
-      return hasImage ? 'YES' : 'NO';
-
     case InspectionItemInputType.BOOLEAN:
       if (verdict === InspectionItemResultValue.FAIL) return 'YES';
       if (verdict === InspectionItemResultValue.PASS) return 'NO';
