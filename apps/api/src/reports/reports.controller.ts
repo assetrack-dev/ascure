@@ -66,6 +66,30 @@ export class ReportsController {
     return new StreamableFile(buffer);
   }
 
+  @Get('pencawang/:substationId/template-masterlist.xlsx')
+  async exportPencawangTemplateMasterlist(
+    @CurrentUser() user: RequestUser,
+    @Param() params: PencawangReportParamsDto,
+    @Query('status') status: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } =
+      await this.reportsService.buildPencawangTemplateMasterlist(
+        user,
+        params.substationId,
+        parseLifecycleStatus(status),
+      );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   @Get('pencawang/:substationId/inspections.xlsx')
   async exportPencawangInspections(
     @CurrentUser() user: RequestUser,

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   DefectStatus,
+  InspectionItemResultValue,
   OperationalScope,
   Prisma,
   SurveyLifecycleStatus,
@@ -317,6 +318,203 @@ export class ReportsService {
     const buffer = await buildMasterlistWorkbook(rows);
     const filename = buildMasterlistFilename(substation.name || substation.code);
     return { buffer, filename };
+  }
+
+  /**
+   * Per-Pencawang masterlist whose columns come from the ACTUAL checklist
+   * template items the inspections used (one column per item, 1 pole = 1 row,
+   * in the template's own order). Unlike buildPencawangMasterlist — which emits
+   * the fixed SAVR-KLB AppSheet schema so the file round-trips the F2 importer —
+   * this export always reflects the live template, so editing the checklist
+   * template changes the report. Not asset-type filtered: every asset in the
+   * Pencawang is included, with Asset Type + Template meta columns so rows from
+   * different templates stay legible.
+   */
+  async buildPencawangTemplateMasterlist(
+    user: RequestUser,
+    substationId: string,
+    lifecycleStatus?: SurveyLifecycleStatus,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const substation = await this.prisma.substation.findFirst({
+      where: { id: substationId, tenantId: user.tenantId },
+      select: { id: true, code: true, name: true },
+    });
+    if (!substation) {
+      throw new NotFoundException('Pencawang (substation) not found.');
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        asset: { substationId },
+        ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        templateId: true,
+        submittedAt: true,
+        createdAt: true,
+        createdBy: { select: { email: true } },
+        template: { select: { name: true, version: true } },
+        siteVisit: {
+          select: { pencawangName: true, pencawangCode: true },
+        },
+        asset: {
+          select: {
+            assetCode: true,
+            noTiangLama: true,
+            latitude: true,
+            longitude: true,
+            assetType: { select: { code: true, name: true } },
+          },
+        },
+        itemResults: {
+          select: {
+            checklistItemId: true,
+            label: true,
+            result: true,
+            isDefect: true,
+          },
+        },
+        results: {
+          select: {
+            templateItemId: true,
+            valueText: true,
+            valueNumber: true,
+            valueBoolean: true,
+            valueJson: true,
+          },
+        },
+      },
+    });
+
+    // One row per asset = its latest inspection (the list is newest-first).
+    const latestByAsset = new Map<string, (typeof inspections)[number]>();
+    for (const insp of inspections) {
+      if (!latestByAsset.has(insp.assetId)) {
+        latestByAsset.set(insp.assetId, insp);
+      }
+    }
+    const chosen = [...latestByAsset.values()].sort((a, b) =>
+      a.asset.assetCode.localeCompare(b.asset.assetCode),
+    );
+
+    // Columns = the actual template items used. Dedup by key (stable across
+    // template versions); keep the first label/order seen, and remember every
+    // item id that maps to the column so values recorded under any version
+    // line up under one header.
+    const templateIds = [...new Set(chosen.map((i) => i.templateId))];
+    const templateItems = templateIds.length
+      ? await this.prisma.inspectionTemplateItem.findMany({
+          where: { templateId: { in: templateIds } },
+          select: { id: true, key: true, label: true, sortOrder: true },
+          orderBy: { sortOrder: 'asc' },
+        })
+      : [];
+
+    const columnsByKey = new Map<
+      string,
+      { label: string; sortOrder: number; itemIds: Set<string> }
+    >();
+    for (const item of templateItems) {
+      const existing = columnsByKey.get(item.key);
+      if (existing) {
+        existing.itemIds.add(item.id);
+      } else {
+        columnsByKey.set(item.key, {
+          label: item.label,
+          sortOrder: item.sortOrder,
+          itemIds: new Set([item.id]),
+        });
+      }
+    }
+    const columns = [...columnsByKey.values()].sort(
+      (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
+    );
+
+    const META_HEADERS = [
+      'Pencawang Code',
+      'Pencawang Name',
+      'Asset Code',
+      'No Tiang Lama',
+      'Asset Type',
+      'Template',
+      'Inspector',
+      'Submitted (MYT)',
+      'Latitude',
+      'Longitude',
+    ];
+
+    const workbook = new Workbook();
+    workbook.creator = 'ASCURE';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('CHECKLIST');
+    sheet.addRow([...META_HEADERS, ...columns.map((c) => c.label)]);
+    sheet.getRow(1).font = { bold: true };
+
+    for (const insp of chosen) {
+      // Recorded data values + defect-trigger verdicts, keyed by template item id.
+      const valueByItemId = new Map<string, string>();
+      for (const r of insp.results) {
+        valueByItemId.set(r.templateItemId, formatRecordedValue(r));
+      }
+      const verdictByItemId = new Map<string, string>();
+      for (const ir of insp.itemResults) {
+        if (ir.checklistItemId) {
+          verdictByItemId.set(ir.checklistItemId, mapItemVerdict(ir.result));
+        }
+      }
+
+      const meta: (string | number)[] = [
+        sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
+        sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
+        sanitizeText(insp.asset.assetCode),
+        sanitizeText(insp.asset.noTiangLama ?? ''),
+        sanitizeText(insp.asset.assetType?.name ?? insp.asset.assetType?.code ?? ''),
+        sanitizeText(
+          insp.template ? `${insp.template.name} v${insp.template.version}` : '',
+        ),
+        sanitizeText(insp.createdBy?.email ?? ''),
+        formatDateTime(insp.submittedAt ?? insp.createdAt),
+        insp.asset.latitude == null ? '' : Number(insp.asset.latitude),
+        insp.asset.longitude == null ? '' : Number(insp.asset.longitude),
+      ];
+
+      const itemCells = columns.map((col) => {
+        // Prefer the YES/NO/NA verdict for defect-trigger items (it carries
+        // N/A), then fall back to a recorded data value for everything else.
+        for (const id of col.itemIds) {
+          const verdict = verdictByItemId.get(id);
+          if (verdict) {
+            return verdict;
+          }
+        }
+        for (const id of col.itemIds) {
+          const value = valueByItemId.get(id);
+          if (value) {
+            return value;
+          }
+        }
+        return '';
+      });
+
+      sheet.addRow([...meta, ...itemCells]);
+    }
+
+    sheet.columns.forEach((column, index) => {
+      column.width = index < META_HEADERS.length ? 18 : 16;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    const safe =
+      (substation.name || substation.code || 'PENCAWANG')
+        .replace(/[^A-Za-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'PENCAWANG';
+    return { buffer, filename: `${safe}_CHECKLIST.xlsx` };
   }
 
   /**
@@ -751,6 +949,48 @@ function formatDate(value: Date | null | undefined): string {
 
   const myt = new Date(value.getTime() + 8 * 60 * 60 * 1000);
   return myt.toISOString().slice(0, 10);
+}
+
+/**
+ * A defect-trigger item's verdict, mirroring the mobile UI wording:
+ * FAIL = defect found (YES), PASS = no defect (NO), NA = N/A.
+ */
+function mapItemVerdict(result: InspectionItemResultValue): string {
+  switch (result) {
+    case InspectionItemResultValue.FAIL:
+      return 'YES';
+    case InspectionItemResultValue.PASS:
+      return 'NO';
+    case InspectionItemResultValue.NA:
+      return 'N/A';
+    default:
+      return '';
+  }
+}
+
+/** Render a recorded data value (InspectionResult) into a single cell string. */
+function formatRecordedValue(r: {
+  valueText: string | null;
+  valueNumber: Prisma.Decimal | null;
+  valueBoolean: boolean | null;
+  valueJson: unknown;
+}): string {
+  if (r.valueText != null && r.valueText !== '') {
+    return sanitizeText(r.valueText);
+  }
+  if (r.valueNumber != null) {
+    return String(r.valueNumber.toNumber());
+  }
+  if (r.valueBoolean != null) {
+    return r.valueBoolean ? 'YES' : 'NO';
+  }
+  if (Array.isArray(r.valueJson)) {
+    return sanitizeText((r.valueJson as unknown[]).join(', '));
+  }
+  if (typeof r.valueJson === 'string') {
+    return sanitizeText(r.valueJson);
+  }
+  return '';
 }
 
 function resolveImageUrl(

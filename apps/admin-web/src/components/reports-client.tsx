@@ -11,7 +11,11 @@ import {
   readStoredSession,
   refreshStoredSessionUser,
 } from "@/lib/auth";
-import { downloadPencawangMasterlist, fetchReportSubstations } from "@/lib/reports";
+import {
+  downloadPencawangMasterlist,
+  downloadPencawangTemplateMasterlist,
+  fetchReportSubstations,
+} from "@/lib/reports";
 import type { AuthSession } from "@/types/auth";
 import type { ReportSubstation } from "@/types/reports";
 
@@ -43,6 +47,7 @@ function ReportsContent() {
   const [status, setStatus] = useState("ALL");
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -139,6 +144,47 @@ function ReportsContent() {
     }
   }
 
+  async function handleDownloadTemplate() {
+    if (
+      !session?.token ||
+      !selectedSubstation ||
+      isDownloading ||
+      isDownloadingTemplate
+    ) {
+      return;
+    }
+
+    setIsDownloadingTemplate(true);
+    setError("");
+    setNotice("");
+
+    try {
+      await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status);
+      setNotice(
+        `Checklist report generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
+      );
+    } catch (downloadError) {
+      if (downloadError instanceof ApiError && downloadError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      if (downloadError instanceof ApiError && downloadError.status === 403) {
+        setError("The REPORTING capability is required to download reports.");
+        return;
+      }
+
+      if (downloadError instanceof ApiError && downloadError.status === 404) {
+        setError("That Pencawang could not be found.");
+        return;
+      }
+
+      setError(requestErrorMessage(downloadError, "Unable to generate the Excel report."));
+    } finally {
+      setIsDownloadingTemplate(false);
+    }
+  }
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -150,9 +196,10 @@ function ReportsContent() {
               </p>
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Reports</h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-                Download a per-Pencawang SAVR <strong>masterlist</strong> (.xlsx) — one
-                pole per row, checklist items as columns. Filter by survey status, then
-                arrange the QR01/02/03 / KELEGAAN reports from it.
+                Download a per-Pencawang report (.xlsx) — one pole per row, checklist items
+                as columns. <strong>Checklist</strong> follows your live checklist template
+                (columns update when you edit it); <strong>Masterlist (AppSheet)</strong> uses
+                the fixed SAVR-KLB import layout. Filter by survey status as needed.
               </p>
             </div>
 
@@ -224,15 +271,27 @@ function ReportsContent() {
                 </select>
               </label>
 
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={!selectedSubstation || isDownloading}
-                className={primaryButtonClassName}
-              >
-                <Download size={16} />
-                {isDownloading ? "Generating…" : "Download Masterlist"}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadTemplate}
+                  disabled={!selectedSubstation || isDownloading || isDownloadingTemplate}
+                  className={primaryButtonClassName}
+                >
+                  <Download size={16} />
+                  {isDownloadingTemplate ? "Generating…" : "Download Checklist"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={!selectedSubstation || isDownloading || isDownloadingTemplate}
+                  className={secondaryButtonClassName}
+                  title="Fixed SAVR-KLB AppSheet layout — re-importable through the F2 importer."
+                >
+                  <Download size={16} />
+                  {isDownloading ? "Generating…" : "Masterlist (AppSheet)"}
+                </button>
+              </div>
             </div>
 
             {selectedSubstation ? (

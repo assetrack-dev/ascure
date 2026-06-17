@@ -46,6 +46,32 @@ export async function downloadPencawangMasterlist(
 }
 
 /**
+ * Downloads the per-Pencawang checklist masterlist whose columns follow the
+ * ACTUAL checklist template the inspections used (1 pole per row, one column
+ * per template item). Unlike downloadPencawangMasterlist (fixed SAVR-KLB
+ * AppSheet layout), this always reflects the live template. `status` filters by
+ * survey lifecycle; "ALL"/omitted = no filter. Server names it
+ * `[NAMA PENCAWANG]_CHECKLIST.xlsx`.
+ */
+export async function downloadPencawangTemplateMasterlist(
+  token: string,
+  substation: Pick<ReportSubstation, "id" | "code" | "name">,
+  status?: string,
+): Promise<void> {
+  const query =
+    status && status !== "ALL" ? `?status=${encodeURIComponent(status)}` : "";
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/pencawang/${encodeURIComponent(substation.id)}/template-masterlist.xlsx${query}`,
+    { token },
+  );
+
+  const fallbackBase = (substation.name || substation.code || "PENCAWANG")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  triggerBrowserDownload(blob, filename ?? `${fallbackBase}_CHECKLIST.xlsx`);
+}
+
+/**
  * Downloads a network drawing as a PDF and triggers a browser save.
  * - `layout: "tree"` (default) — the logical schematic (depth/branch tree).
  * - `layout: "gps"` — pole topology plotted at real GPS positions, no basemap.
