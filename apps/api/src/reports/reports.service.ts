@@ -367,6 +367,7 @@ export class ReportsService {
         asset: {
           select: {
             assetCode: true,
+            name: true,
             noTiangLama: true,
             latitude: true,
             longitude: true,
@@ -513,7 +514,11 @@ export class ReportsService {
         sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
         sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
         sanitizeText(insp.asset.assetCode),
-        sanitizeText(insp.asset.noTiangLama ?? ''),
+        // NO TIANG LAMA: the SAVR mobile workflow captures the painted label as
+        // the asset NAME (Asset Code = NO TIANG RONDAAN); only the F2 import
+        // populates asset.noTiangLama. Prefer the dedicated field, fall back to
+        // the name so field-created poles aren't blank.
+        sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
         sanitizeText(insp.asset.assetType?.name ?? insp.asset.assetType?.code ?? ''),
         sanitizeText(
           insp.template ? `${insp.template.name} v${insp.template.version}` : '',
