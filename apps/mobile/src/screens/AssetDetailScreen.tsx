@@ -31,6 +31,11 @@ import { Theme, useTheme } from '../theme';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
+// Session cache of fetched asset details, keyed by assetId, so going back and
+// re-entering a pole paints instantly from cache and refreshes in the
+// background instead of showing a blocking full-screen spinner every time.
+const assetDetailCache = new Map<string, AssetDetailResponse>();
+
 export function AssetDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'AssetDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
@@ -38,9 +43,12 @@ export function AssetDetailScreen() {
   const { token, handleUnauthorized } = useSession();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [asset, setAsset] = useState<AssetDetailResponse | null>(null);
+  const [asset, setAsset] = useState<AssetDetailResponse | null>(
+    () => assetDetailCache.get(assetId) ?? null,
+  );
   const [editableAsset, setEditableAsset] = useState<Asset | null>(assetSnapshot ?? null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Only block the whole screen on the very first load (nothing cached yet).
+  const [isLoading, setIsLoading] = useState(() => !assetDetailCache.has(assetId));
   const [isStartingInspection, setIsStartingInspection] = useState(false);
   const [isMarkingNotFound, setIsMarkingNotFound] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -50,15 +58,19 @@ export function AssetDetailScreen() {
 
   const loadAssetDetail = useCallback(async () => {
     try {
-      setIsLoading(true);
+      // Only show the blocking spinner when there's nothing cached to display.
+      setIsLoading(!assetDetailCache.has(assetId));
       setLoadFailed(false);
       setActionError(null);
 
-      const response = await api.getAssetDetail(token, assetId);
-      const assetList =
+      // Fetch the detail and (when no snapshot) the editable list concurrently
+      // instead of chaining two serial round-trips.
+      const [response, assetList] = await Promise.all([
+        api.getAssetDetail(token, assetId),
         !assetSnapshot && substationId
-          ? await loadEditableAssetList(token, substationId)
-          : null;
+          ? loadEditableAssetList(token, substationId)
+          : Promise.resolve(null),
+      ]);
       setAsset(response);
       setEditableAsset(assetSnapshot ?? assetList?.find((item) => item.id === assetId) ?? null);
     } catch (error) {
@@ -69,8 +81,12 @@ export function AssetDetailScreen() {
         return;
       }
 
-      setAsset(null);
-      setLoadFailed(true);
+      // Keep any cached detail on screen through a transient failure; only fail
+      // hard when there's nothing to show.
+      if (!assetDetailCache.has(assetId)) {
+        setAsset(null);
+        setLoadFailed(true);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -79,6 +95,14 @@ export function AssetDetailScreen() {
   useEffect(() => {
     loadAssetDetail();
   }, [loadAssetDetail]);
+
+  // Keep the session cache in sync with whatever detail is on screen (from a
+  // load or an in-screen action) so the next re-entry paints instantly.
+  useEffect(() => {
+    if (asset) {
+      assetDetailCache.set(assetId, asset);
+    }
+  }, [asset, assetId]);
 
   const images = useMemo(() => asset?.latestInspection?.images ?? [], [asset]);
   const imageCarouselWidth = Math.max(180, screenWidth - 72);

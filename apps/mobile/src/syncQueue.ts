@@ -209,7 +209,14 @@ export function hasQueuedVisitCompletion(snapshot: SyncQueueSnapshot, siteVisitI
 
 export function isRetryableSyncError(error: unknown) {
   if (error instanceof ApiError) {
-    return error.status === 408 || error.status === 429 || error.status >= 500;
+    // status 0 = couldn't reach the server (network failure / request timeout,
+    // thrown by api.ts request()) — retryable, like a true offline error.
+    return (
+      error.status === 0 ||
+      error.status === 408 ||
+      error.status === 429 ||
+      error.status >= 500
+    );
   }
 
   return true;

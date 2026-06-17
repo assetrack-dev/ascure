@@ -127,6 +127,30 @@ export function getSubmittedInspectionAssetIds(visit: SiteVisit): Set<string> {
   return assetIds;
 }
 
+/** Map-marker colors: lime = inspected (submitted), bright red = not yet. */
+export const INSPECTED_MARKER_COLOR = '#84cc16';
+export const NOT_INSPECTED_MARKER_COLOR = '#ef4444';
+
+/**
+ * Whether a pole counts as "inspected" for map coloring — its latest inspection
+ * is submitted (status SUBMITTED or a submittedAt timestamp). Mirrors the visit
+ * "done" rule in getSubmittedInspectionAssetIds. DRAFT / none = not yet.
+ */
+export function isAssetInspected(asset: {
+  latestInspection?: { status?: string | null; submittedAt?: string | null } | null;
+}): boolean {
+  const latest = asset.latestInspection;
+  if (!latest) {
+    return false;
+  }
+  return latest.status === 'SUBMITTED' || Boolean(latest.submittedAt);
+}
+
+/** Marker pinColor for a pole by inspection status (lime inspected / red not). */
+export function assetMarkerColor(asset: Parameters<typeof isAssetInspected>[0]): string {
+  return isAssetInspected(asset) ? INSPECTED_MARKER_COLOR : NOT_INSPECTED_MARKER_COLOR;
+}
+
 /** Asset IDs whose inspection answers triggered at least one defect on this visit. */
 export function getDefectAssetIds(visit: SiteVisit): Set<string> {
   const assetIds = new Set<string>();

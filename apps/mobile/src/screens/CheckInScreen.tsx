@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import {
@@ -12,10 +12,12 @@ import {
   Text,
   View,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import type { Region } from 'react-native-maps';
 import { useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
+import { MapCrosshair } from '../components/MapCrosshair';
+import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -132,6 +134,14 @@ export function CheckInScreen() {
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Mirror the live check-in coordinate so the background GPS prefill can read
+  // the CURRENT value (not a stale closure) and skip overwriting a coordinate
+  // the user typed/picked while GPS was still resolving.
+  const checkInCoordRef = useRef({ lat: '', lng: '' });
+  useEffect(() => {
+    checkInCoordRef.current = { lat: checkInLatitude, lng: checkInLongitude };
+  }, [checkInLatitude, checkInLongitude]);
+
   const selectedTeam = useMemo(
     () => teams.find((team) => team.id === selectedTeamId) ?? null,
     [selectedTeamId, teams],
@@ -227,7 +237,11 @@ export function CheckInScreen() {
         setSelectedSubstationId('');
       }
 
-      await prefillCurrentLocation();
+      // GPS must NOT block the screen load — a cold/indoor Android fix can take
+      // tens of seconds and previously left this stuck on "Loading teams,
+      // MAINHEADs, pencawang, and GPS...". Fire it in the background; the lists
+      // and form become usable immediately and isLoading clears now.
+      void prefillCurrentLocation();
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -290,13 +304,26 @@ export function CheckInScreen() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
+      setIsLocating(true);
+      const position = await getPositionWithTimeout({
         accuracy: Location.Accuracy.Balanced,
       });
+
+      // Skip if GPS timed out, or the user already typed/picked a coordinate
+      // while this background fix was resolving (read live value via the ref).
+      if (
+        !position ||
+        checkInCoordRef.current.lat.trim() ||
+        checkInCoordRef.current.lng.trim()
+      ) {
+        return;
+      }
 
       applyCheckInLocation(position);
     } catch {
       // Passive check-in GPS should not block field users from starting a visit.
+    } finally {
+      setIsLocating(false);
     }
   }
 
@@ -313,9 +340,14 @@ export function CheckInScreen() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
+      const position = await getPositionWithTimeout({
         accuracy: Location.Accuracy.Balanced,
       });
+
+      if (!position) {
+        setError('Could not get a GPS fix. Move to open sky or enter the coordinates manually.');
+        return;
+      }
 
       applyCheckInLocation(position);
     } catch (locationError) {
@@ -365,9 +397,13 @@ export function CheckInScreen() {
       return null;
     }
 
-    const position = await Location.getCurrentPositionAsync({
+    const position = await getPositionWithTimeout({
       accuracy: Location.Accuracy.High,
     });
+
+    if (!position) {
+      return null;
+    }
 
     return {
       coordinate: {
@@ -928,30 +964,9 @@ function MapCoordinatePicker({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [coordinate, setCoordinate] = useState(initialCoordinate);
+  // Uncontrolled region (seed initialRegion + track centre) so the map doesn't
+  // re-snap and fight gestures; the chosen location is the centre crosshair.
   const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
-
-  function handleMapPress(event: MapPressEvent) {
-    const nextCoordinate = event.nativeEvent.coordinate;
-
-    setCoordinate(nextCoordinate);
-    setRegion((currentRegion) => ({
-      ...currentRegion,
-      latitude: nextCoordinate.latitude,
-      longitude: nextCoordinate.longitude,
-    }));
-  }
-
-  function handleMarkerDragEnd(event: MarkerDragStartEndEvent) {
-    const nextCoordinate = event.nativeEvent.coordinate;
-
-    setCoordinate(nextCoordinate);
-    setRegion((currentRegion) => ({
-      ...currentRegion,
-      latitude: nextCoordinate.latitude,
-      longitude: nextCoordinate.longitude,
-    }));
-  }
 
   return (
     <SafeAreaView style={styles.mapPickerSafeArea}>
@@ -966,7 +981,7 @@ function MapCoordinatePicker({
           </Pressable>
           <View style={styles.mapPickerHeaderTitleWrap}>
             <Text style={styles.mapPickerTitle}>Select Coordinates</Text>
-            <Text style={styles.mapPickerSubtitle}>Satellite view</Text>
+            <Text style={styles.mapPickerSubtitle}>Pan so the crosshair marks the spot</Text>
           </View>
           <View style={styles.mapPickerHeaderSide} />
         </View>
@@ -976,34 +991,30 @@ function MapCoordinatePicker({
             provider={PROVIDER_GOOGLE}
             style={StyleSheet.absoluteFillObject}
             initialRegion={region}
-            region={region}
             mapType="satellite"
             showsUserLocation
             showsMyLocationButton
-            onPress={handleMapPress}
             onRegionChangeComplete={setRegion}
-          >
-            <Marker
-              coordinate={coordinate}
-              draggable
-              title="Selected check-in location"
-              pinColor={theme.colors.primary}
-              onDragEnd={handleMarkerDragEnd}
-            />
-          </MapView>
+          />
+          <MapCrosshair color={theme.colors.primary} />
         </View>
 
         <View style={styles.mapPickerFooter}>
           <View style={styles.mapPickerCoordinatePanel}>
-            <Text style={styles.mapPickerCoordinateLabel}>Selected GPS</Text>
+            <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
             <Text style={styles.mapPickerCoordinateValue}>
-              Lat {coordinate.latitude.toFixed(6)} · Lng {coordinate.longitude.toFixed(6)}
+              Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
             </Text>
             <Text style={styles.mapPickerAccuracyText}>{formatGpsAccuracy(accuracyMeters)}</Text>
           </View>
           <AppButton
             label="Confirm Coordinates"
-            onPress={() => onConfirm({ coordinate, accuracyMeters })}
+            onPress={() =>
+              onConfirm({
+                coordinate: { latitude: region.latitude, longitude: region.longitude },
+                accuracyMeters,
+              })
+            }
           />
         </View>
       </View>

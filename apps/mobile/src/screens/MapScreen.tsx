@@ -5,6 +5,9 @@ import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 're
 import type { LongPressEvent, Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { assetMarkerColor } from '../assetDisplay';
+import { MapCrosshair } from '../components/MapCrosshair';
+import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen } from '../ui';
@@ -307,9 +310,15 @@ export function MapScreen() {
           return null;
         }
 
-        const location = await Location.getCurrentPositionAsync({
+        const location = await getPositionWithTimeout({
           accuracy: Location.Accuracy.High,
         });
+
+        if (!location) {
+          setLocationMessage('Unable to get current location.');
+          return null;
+        }
+
         const nextCoordinate = {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
@@ -413,7 +422,7 @@ export function MapScreen() {
           coordinate={coordinate}
           title={asset.assetCode}
           description={asset.name ?? asset.assetType.name}
-          pinColor="#0f5cd8"
+          pinColor={assetMarkerColor(asset)}
           onPress={() => handleOpenAssetDetail(asset)}
         />,
       ];
@@ -553,6 +562,10 @@ export function MapScreen() {
             {mapMarkers}
           </MapView>
         )}
+
+        {/* Aiming crosshair: "Drop Pin to Add Asset" captures the map centre, so
+            show a fixed centre target while no pin is placed yet. */}
+        {!isLoading && !selectedCoordinate ? <MapCrosshair /> : null}
 
         {!isLoading ? (
           <>

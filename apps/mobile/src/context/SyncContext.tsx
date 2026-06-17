@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import NetInfo from '@react-native-community/netinfo';
-import { ApiError, api } from '../api';
+import { ApiError, API_BASE_URL, api } from '../api';
 import {
   getActiveQueueCount,
   subscribeSyncQueue,
@@ -18,6 +18,22 @@ import {
   SyncQueueSnapshot,
 } from '../syncQueue';
 import { useAuth } from './AuthContext';
+
+// Decide "online" by whether the device can reach the ASCURE API itself — NOT
+// NetInfo's default probe to Google's https://clients3.google.com/generate_204,
+// which is blocked/redirected on many Malaysian field SIMs and captive portals
+// and made the app falsely show "Offline mode" while the API was perfectly
+// reachable (then silently queue work instead of submitting it). /auth/me
+// returns 401 unauthenticated, which still proves the host is reachable, so
+// accept any non-5xx response. Runs once at module load, before the provider
+// attaches its NetInfo listeners.
+NetInfo.configure({
+  reachabilityUrl: `${API_BASE_URL}/auth/me`,
+  reachabilityMethod: 'GET',
+  reachabilityTest: async (response) =>
+    response.status >= 200 && response.status < 500,
+  reachabilityShouldRun: () => true,
+});
 
 const EMPTY_SYNC_QUEUE_SNAPSHOT: SyncQueueSnapshot = {
   items: [],

@@ -10,9 +10,12 @@ import {
   View,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { MapPressEvent, MarkerDragStartEndEvent, Region } from 'react-native-maps';
+import type { Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { assetMarkerColor } from '../assetDisplay';
+import { MapCrosshair } from '../components/MapCrosshair';
+import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -125,6 +128,7 @@ export function AddAssetScreen() {
   const [coordinateSource, setCoordinateSource] = useState<CoordinateSource | null>(null);
   const [coordinateCapturedAt, setCoordinateCapturedAt] = useState<string | null>(null);
   const [mapPickerState, setMapPickerState] = useState<MapPickerState | null>(null);
+  const [mapPickerAssets, setMapPickerAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
@@ -211,11 +215,13 @@ export function AddAssetScreen() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
+      const position = await getPositionWithTimeout({
         accuracy: Location.Accuracy.Balanced,
       });
 
-      applyGpsPosition(position, 'current_gps');
+      if (position) {
+        applyGpsPosition(position, 'current_gps');
+      }
     } catch {
       // Ignore passive GPS lookup failures so the form still loads cleanly.
     }
@@ -289,9 +295,14 @@ export function AddAssetScreen() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
+      const position = await getPositionWithTimeout({
         accuracy: Location.Accuracy.Balanced,
       });
+
+      if (!position) {
+        setError('Could not get a GPS fix. Move to open sky or enter the coordinates manually.');
+        return;
+      }
 
       applyGpsPosition(position, 'current_gps');
     } catch (locationError) {
@@ -306,10 +317,20 @@ export function AddAssetScreen() {
       setError(null);
       setIsOpeningMapPicker(true);
 
-      const currentLocation = await getCurrentLocationForMapPicker();
+      const targetSubstationId = substationId ?? selectedSubstationId;
+      const [currentLocation, neighbours] = await Promise.all([
+        getCurrentLocationForMapPicker(),
+        // Show existing poles in this Pencawang so the surveyor can place the
+        // new pole relative to its neighbours (best-effort — never block the
+        // picker if it fails).
+        targetSubstationId
+          ? api.getAssets(token, targetSubstationId).catch(() => [] as Asset[])
+          : Promise.resolve<Asset[]>([]),
+      ]);
       const formCoordinate = parseFormCoordinate(latitude, longitude);
       const coordinate = currentLocation?.coordinate ?? formCoordinate ?? DEFAULT_MAP_PICKER_COORDINATE;
 
+      setMapPickerAssets(neighbours.filter((asset) => asset.id !== assetToEdit?.id));
       setMapPickerState({
         coordinate,
         accuracyMeters: currentLocation?.accuracyMeters ?? null,
@@ -342,9 +363,13 @@ export function AddAssetScreen() {
       return null;
     }
 
-    const position = await Location.getCurrentPositionAsync({
+    const position = await getPositionWithTimeout({
       accuracy: Location.Accuracy.High,
     });
+
+    if (!position) {
+      return null;
+    }
 
     return {
       coordinate: {
@@ -504,6 +529,7 @@ export function AddAssetScreen() {
       <MapCoordinatePicker
         initialCoordinate={mapPickerState.coordinate}
         accuracyMeters={mapPickerState.accuracyMeters}
+        assets={mapPickerAssets}
         onCancel={() => setMapPickerState(null)}
         onConfirm={handleConfirmMapCoordinate}
       />
@@ -780,40 +806,44 @@ export function AddAssetScreen() {
 function MapCoordinatePicker({
   initialCoordinate,
   accuracyMeters,
+  assets,
   onCancel,
   onConfirm,
 }: {
   initialCoordinate: Coordinate;
   accuracyMeters: number | null;
+  assets: Asset[];
   onCancel: () => void;
   onConfirm: (params: { coordinate: Coordinate; accuracyMeters: number | null }) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [coordinate, setCoordinate] = useState(initialCoordinate);
+  // Uncontrolled region: only seed initialRegion and TRACK the centre via
+  // onRegionChangeComplete. Previously this also passed region={region} AND
+  // re-set it on every tap/drag, which fought the native gesture and made the
+  // map slow/janky and taps feel inert.
   const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
 
-  function handleMapPress(event: MapPressEvent) {
-    const nextCoordinate = event.nativeEvent.coordinate;
-
-    setCoordinate(nextCoordinate);
-    setRegion((currentRegion) => ({
-      ...currentRegion,
-      latitude: nextCoordinate.latitude,
-      longitude: nextCoordinate.longitude,
-    }));
-  }
-
-  function handleMarkerDragEnd(event: MarkerDragStartEndEvent) {
-    const nextCoordinate = event.nativeEvent.coordinate;
-
-    setCoordinate(nextCoordinate);
-    setRegion((currentRegion) => ({
-      ...currentRegion,
-      latitude: nextCoordinate.latitude,
-      longitude: nextCoordinate.longitude,
-    }));
-  }
+  const neighbourMarkers = useMemo(
+    () =>
+      assets.flatMap((asset) => {
+        const lat = asset.latitude;
+        const lng = asset.longitude;
+        if (typeof lat !== 'number' || typeof lng !== 'number') {
+          return [];
+        }
+        return [
+          <Marker
+            key={`pole-${asset.id}`}
+            coordinate={{ latitude: lat, longitude: lng }}
+            title={asset.assetCode}
+            description={asset.name ?? asset.assetType?.name}
+            pinColor={assetMarkerColor(asset)}
+          />,
+        ];
+      }),
+    [assets],
+  );
 
   return (
     <SafeAreaView style={styles.mapPickerSafeArea}>
@@ -828,7 +858,7 @@ function MapCoordinatePicker({
           </Pressable>
           <View style={styles.mapPickerHeaderTitleWrap}>
             <Text style={styles.mapPickerTitle}>Select Coordinates</Text>
-            <Text style={styles.mapPickerSubtitle}>Satellite view</Text>
+            <Text style={styles.mapPickerSubtitle}>Pan so the crosshair marks the spot</Text>
           </View>
           <View style={styles.mapPickerHeaderSide} />
         </View>
@@ -838,28 +868,23 @@ function MapCoordinatePicker({
             provider={PROVIDER_GOOGLE}
             style={StyleSheet.absoluteFillObject}
             initialRegion={region}
-            region={region}
             mapType="satellite"
             showsUserLocation
             showsMyLocationButton
-            onPress={handleMapPress}
             onRegionChangeComplete={setRegion}
           >
-            <Marker
-              coordinate={coordinate}
-              draggable
-              title="Selected asset location"
-              pinColor="#10b981"
-              onDragEnd={handleMarkerDragEnd}
-            />
+            {neighbourMarkers}
           </MapView>
+          {/* Fixed centre crosshair: the chosen location is the map centre, so
+              the target isn't hidden under the finger. */}
+          <MapCrosshair />
         </View>
 
         <View style={styles.mapPickerFooter}>
           <View style={styles.mapPickerCoordinatePanel}>
-            <Text style={styles.mapPickerCoordinateLabel}>Selected GPS</Text>
+            <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
             <Text style={styles.mapPickerCoordinateValue}>
-              Lat {coordinate.latitude.toFixed(6)} · Lng {coordinate.longitude.toFixed(6)}
+              Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
             </Text>
             <Text style={styles.mapPickerAccuracyText}>
               {formatGpsAccuracy(accuracyMeters)}
@@ -867,7 +892,12 @@ function MapCoordinatePicker({
           </View>
           <AppButton
             label="Confirm Coordinates"
-            onPress={() => onConfirm({ coordinate, accuracyMeters })}
+            onPress={() =>
+              onConfirm({
+                coordinate: { latitude: region.latitude, longitude: region.longitude },
+                accuracyMeters,
+              })
+            }
           />
         </View>
       </View>

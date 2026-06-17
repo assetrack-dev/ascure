@@ -53,6 +53,7 @@ import {
   WarningBanner,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
+import { getPositionWithTimeout } from '../location';
 import { recognizeReadingFromImage } from '../ocr';
 import {
   DraftValues,
@@ -393,9 +394,16 @@ export function InspectionFormScreen() {
 
     const capturedAt = new Date();
     const photoTimestamp = capturedAt.toISOString();
-    const position = await Location.getCurrentPositionAsync({
+    // Bounded GPS (falls back to last-known) so a cold fix can't hang the photo
+    // capture forever; the overlay needs coordinates, so fail clearly if none.
+    const position = await getPositionWithTimeout({
       accuracy: Location.Accuracy.Balanced,
     });
+
+    if (!position) {
+      throw new Error('Could not get a GPS fix for the photo. Move to open sky and try again.');
+    }
+
     const photoId = createLocalPhotoId(photoTimestamp);
     const overlayImageUri = await createOverlayPhoto({
       originalUri: capturedAsset.uri,

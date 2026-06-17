@@ -43,8 +43,17 @@ import {
   AssetDeleteResult,
 } from './types';
 
-const DEFAULT_API_BASE_URL = 'http://10.149.246.224:3000/api/v1';
+// Default to PROD so a build that somehow misses EXPO_PUBLIC_API_BASE_URL still
+// reaches the real API in the field instead of silently hitting a dead LAN dev
+// IP (which surfaces to the crew as "Network request failed"). Dev builds keep
+// the LAN IP.
+const DEFAULT_API_BASE_URL = __DEV__
+  ? 'http://10.149.246.224:3000/api/v1'
+  : 'https://api.ascure.com.my/api/v1';
 const NETWORK_ERROR_LOG_THROTTLE_MS = 30000;
+// Hard ceiling on a single JSON request so a slow/hung backend can't leave a
+// screen spinning forever (photo uploads use FileSystem.uploadAsync, not this).
+const REQUEST_TIMEOUT_MS = 20000;
 
 const networkErrorLogTimes = new Map<string, number>();
 
@@ -100,6 +109,9 @@ async function request<T>(path: string, options: RequestOptions = {}) {
 
   console.log('[API REQUEST]', { url, method });
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   let response: Response;
 
   try {
@@ -107,10 +119,24 @@ async function request<T>(path: string, options: RequestOptions = {}) {
       method,
       headers,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
     });
   } catch (error) {
     logNetworkError({ url, method, error });
-    throw error;
+    // fetch rejected at the network layer (TypeError "Network request failed")
+    // or we aborted on timeout. Surface a clearer, actionable ApiError (status 0
+    // = couldn't reach the server) so the crew can tell this apart from a real
+    // server error, and so callers can detect it via `status === 0`.
+    const timedOut = error instanceof Error && error.name === 'AbortError';
+    throw new ApiError(
+      timedOut
+        ? `Request timed out reaching the ASCURE server (${API_BASE_URL}). Check your connection and try again.`
+        : `Could not reach the ASCURE server (${API_BASE_URL}). Check your internet / Wi-Fi captive portal / VPN and try again.`,
+      0,
+      error,
+    );
+  } finally {
+    clearTimeout(timeout);
   }
 
   const rawText = await response.text();

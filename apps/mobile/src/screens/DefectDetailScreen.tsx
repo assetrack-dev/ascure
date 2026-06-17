@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -1098,7 +1099,7 @@ async function getOptionalCurrentPosition() {
       return null;
     }
 
-    return await Location.getCurrentPositionAsync({
+    return await getPositionWithTimeout({
       accuracy: Location.Accuracy.Balanced,
     });
   } catch {

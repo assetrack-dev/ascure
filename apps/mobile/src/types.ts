@@ -161,6 +161,13 @@ export interface Asset {
   updatedAt?: string;
   assetType: AssetType;
   substation?: Pick<Substation, 'id' | 'code' | 'name'>;
+  // Latest inspection summary used to color map markers (inspected vs not).
+  // Present on /assets (no-visit map) and /site-visits/:id/assets (in-visit map).
+  latestInspection?: {
+    id?: string;
+    status?: string | null;
+    submittedAt?: string | null;
+  } | null;
 }
 
 export type AssetDetailImageType = 'BEFORE' | 'DURING' | 'AFTER';
