@@ -484,6 +484,12 @@ export class UsersService {
         passwordHash,
         // A reset password is temporary — force the user to set their own again.
         mustChangePassword: true,
+        // Revoke any active mobile session: mobile tokens now live 30 days, so a
+        // reset (e.g. lost/stolen phone or compromised account) must invalidate
+        // the outstanding token instead of letting it ride out its TTL. Clearing
+        // the session id makes the JWT guard reject that token on its next call;
+        // the legitimate user re-logs in with the temp password.
+        mobileSessionId: null,
       },
       select: this.userSelect(),
     });

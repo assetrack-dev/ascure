@@ -298,7 +298,10 @@ export const api = {
   login(email: string, password: string) {
     return request<LoginResponse>('/auth/login', {
       method: 'POST',
-      body: { email, password },
+      // Identify as the mobile app so the API issues a single-device, 30-day
+      // ("always logged in") session and signs any previously logged-in phone
+      // out of this account.
+      body: { email, password, client: 'mobile' },
     });
   },
 

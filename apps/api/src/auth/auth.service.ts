@@ -9,9 +9,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangeOwnPasswordDto } from './dto/change-own-password.dto';
+import { JwtPayload } from './jwt-payload.interface';
+import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
 const PASSWORD_SALT_ROUNDS = 10;
+// "Always logged in" window for the mobile app. Long enough that field crew
+// effectively never get logged out mid-deployment, with single-device rotation
+// (mobileSessionId) acting as the real kill-switch. Admin web keeps the
+// module-default 8h.
+const MOBILE_TOKEN_TTL = '30d';
 
 @Injectable()
 export class AuthService {
@@ -47,12 +54,34 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    const accessToken = await this.jwtService.signAsync({
+    // Mobile app opts into a single-device, long-lived ("always logged in")
+    // session: stamp the user with a fresh session id, embed it in the token,
+    // and give the token a 30-day TTL. Any subsequent login (a new phone, or a
+    // re-login here) rotates mobileSessionId, so the previously-issued token
+    // stops validating — enforcing one active phone per account. Admin-web
+    // logins are unaffected and keep the default short-lived token.
+    const isMobile = dto.client === 'mobile';
+    const tokenPayload: JwtPayload = {
       sub: user.id,
       tenantId: user.tenantId,
       email: user.email,
       role: user.role,
-    });
+    };
+
+    if (isMobile) {
+      const sessionId = randomUUID();
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { mobileSessionId: sessionId },
+      });
+      tokenPayload.client = 'mobile';
+      tokenPayload.sid = sessionId;
+    }
+
+    const accessToken = await this.jwtService.signAsync(
+      tokenPayload,
+      isMobile ? { expiresIn: MOBILE_TOKEN_TTL } : undefined,
+    );
 
     const requestUser: RequestUser = {
       id: user.id,

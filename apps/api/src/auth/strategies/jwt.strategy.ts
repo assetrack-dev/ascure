@@ -34,11 +34,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         name: true,
         role: true,
         organizationId: true,
+        mobileSessionId: true,
       },
     });
 
     if (!user) {
       throw new UnauthorizedException('Unauthorized.');
+    }
+
+    // Single-device enforcement for mobile sessions: the token's session id
+    // must still match the user's active mobile session. A mismatch means the
+    // account was signed in on another phone after this token was issued (which
+    // rotated mobileSessionId), so this older device is signed out.
+    if (payload.client === 'mobile' && payload.sid !== user.mobileSessionId) {
+      throw new UnauthorizedException(
+        'Signed out: this account was signed in on another device.',
+      );
     }
 
     return {
