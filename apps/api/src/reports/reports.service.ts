@@ -477,8 +477,10 @@ export class ReportsService {
     const META_HEADERS = [
       'Pencawang Code',
       'Pencawang Name',
-      'Asset Code',
-      'No Tiang Lama',
+      // SAVR identity: asset code = NO TIANG RONDAAN, asset name = NO TIANG LAMA
+      // (see AddAssetScreen / the No Tiang Lama meta value below).
+      'NO TIANG RONDAAN',
+      'NO TIANG LAMA',
       'Asset Type',
       'Template',
       'Inspector',
