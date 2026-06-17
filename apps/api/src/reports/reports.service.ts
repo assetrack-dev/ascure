@@ -485,8 +485,7 @@ export class ReportsService {
       'Template',
       'Inspector',
       'Submitted (MYT)',
-      'Latitude',
-      'Longitude',
+      'LOCATION',
     ];
 
     const workbook = new Workbook();
@@ -527,8 +526,9 @@ export class ReportsService {
         ),
         sanitizeText(insp.createdBy?.email ?? ''),
         formatDateTime(insp.submittedAt ?? insp.createdAt),
-        insp.asset.latitude == null ? '' : Number(insp.asset.latitude),
-        insp.asset.longitude == null ? '' : Number(insp.asset.longitude),
+        insp.asset.latitude != null && insp.asset.longitude != null
+          ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+          : '',
       ];
 
       const itemCells = columns.map((col) => {
