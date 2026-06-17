@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   DefectStatus,
+  InspectionItemInputType,
   InspectionItemResultValue,
   OperationalScope,
   Prisma,
@@ -353,6 +354,7 @@ export class ReportsService {
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
       select: {
+        id: true,
         assetId: true,
         templateId: true,
         submittedAt: true,
@@ -402,6 +404,30 @@ export class ReportsService {
       a.asset.assetCode.localeCompare(b.asset.assetCode),
     );
 
+    // IMAGE cells render YES/NO on whether a photo was captured for the item, so
+    // gather which (inspection, templateItem) pairs have a linked InspectionImage.
+    const images = chosen.length
+      ? await this.prisma.inspectionImage.findMany({
+          where: {
+            inspectionId: { in: chosen.map((i) => i.id) },
+            templateItemId: { not: null },
+          },
+          select: { inspectionId: true, templateItemId: true },
+        })
+      : [];
+    const imageItemIdsByInspection = new Map<string, Set<string>>();
+    for (const img of images) {
+      if (!img.templateItemId) {
+        continue;
+      }
+      let set = imageItemIdsByInspection.get(img.inspectionId);
+      if (!set) {
+        set = new Set<string>();
+        imageItemIdsByInspection.set(img.inspectionId, set);
+      }
+      set.add(img.templateItemId);
+    }
+
     // Columns = the actual template items used. Dedup by key (stable across
     // template versions); keep the first label/order seen, and remember every
     // item id that maps to the column so values recorded under any version
@@ -410,14 +436,25 @@ export class ReportsService {
     const templateItems = templateIds.length
       ? await this.prisma.inspectionTemplateItem.findMany({
           where: { templateId: { in: templateIds } },
-          select: { id: true, key: true, label: true, sortOrder: true },
+          select: {
+            id: true,
+            key: true,
+            label: true,
+            sortOrder: true,
+            inputType: true,
+          },
           orderBy: { sortOrder: 'asc' },
         })
       : [];
 
     const columnsByKey = new Map<
       string,
-      { label: string; sortOrder: number; itemIds: Set<string> }
+      {
+        label: string;
+        sortOrder: number;
+        inputType: InspectionItemInputType;
+        itemIds: Set<string>;
+      }
     >();
     for (const item of templateItems) {
       const existing = columnsByKey.get(item.key);
@@ -427,6 +464,7 @@ export class ReportsService {
         columnsByKey.set(item.key, {
           label: item.label,
           sortOrder: item.sortOrder,
+          inputType: item.inputType,
           itemIds: new Set([item.id]),
         });
       }
@@ -456,17 +494,20 @@ export class ReportsService {
     sheet.getRow(1).font = { bold: true };
 
     for (const insp of chosen) {
-      // Recorded data values + defect-trigger verdicts, keyed by template item id.
-      const valueByItemId = new Map<string, string>();
+      // Index this inspection's recorded values, defect verdicts and photos by
+      // template item id, so each column resolves its cell by field type.
+      const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
-        valueByItemId.set(r.templateItemId, formatRecordedValue(r));
+        resultByItemId.set(r.templateItemId, r);
       }
-      const verdictByItemId = new Map<string, string>();
+      const verdictByItemId = new Map<string, InspectionItemResultValue>();
       for (const ir of insp.itemResults) {
         if (ir.checklistItemId) {
-          verdictByItemId.set(ir.checklistItemId, mapItemVerdict(ir.result));
+          verdictByItemId.set(ir.checklistItemId, ir.result);
         }
       }
+      const imageItemIds =
+        imageItemIdsByInspection.get(insp.id) ?? new Set<string>();
 
       const meta: (string | number)[] = [
         sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
@@ -484,21 +525,23 @@ export class ReportsService {
       ];
 
       const itemCells = columns.map((col) => {
-        // Prefer the YES/NO/NA verdict for defect-trigger items (it carries
-        // N/A), then fall back to a recorded data value for everything else.
+        // A column may map to several item ids (same key across template
+        // versions); use the first id that carries data of each kind.
+        let result: (typeof insp.results)[number] | undefined;
+        let verdict: InspectionItemResultValue | undefined;
+        let hasImage = false;
         for (const id of col.itemIds) {
-          const verdict = verdictByItemId.get(id);
-          if (verdict) {
-            return verdict;
+          if (!result) {
+            result = resultByItemId.get(id);
+          }
+          if (!verdict) {
+            verdict = verdictByItemId.get(id);
+          }
+          if (imageItemIds.has(id)) {
+            hasImage = true;
           }
         }
-        for (const id of col.itemIds) {
-          const value = valueByItemId.get(id);
-          if (value) {
-            return value;
-          }
-        }
-        return '';
+        return resolveTemplateCell(col.inputType, result, verdict, hasImage);
       });
 
       sheet.addRow([...meta, ...itemCells]);
@@ -951,46 +994,72 @@ function formatDate(value: Date | null | undefined): string {
   return myt.toISOString().slice(0, 10);
 }
 
-/**
- * A defect-trigger item's verdict, mirroring the mobile UI wording:
- * FAIL = defect found (YES), PASS = no defect (NO), NA = N/A.
- */
-function mapItemVerdict(result: InspectionItemResultValue): string {
-  switch (result) {
-    case InspectionItemResultValue.FAIL:
-      return 'YES';
-    case InspectionItemResultValue.PASS:
-      return 'NO';
-    case InspectionItemResultValue.NA:
-      return 'N/A';
-    default:
-      return '';
-  }
-}
-
-/** Render a recorded data value (InspectionResult) into a single cell string. */
-function formatRecordedValue(r: {
+type RecordedResult = {
   valueText: string | null;
   valueNumber: Prisma.Decimal | null;
   valueBoolean: boolean | null;
   valueJson: unknown;
-}): string {
-  if (r.valueText != null && r.valueText !== '') {
-    return sanitizeText(r.valueText);
+};
+
+/**
+ * Resolve a single template-driven report cell by field type:
+ * - BOOLEAN: YES (defect / FAIL) or NO (no defect / PASS); N/A or unanswered →
+ *   blank. Driven by the PASS/FAIL/NA verdict, NOT valueBoolean — valueBoolean
+ *   is an inverse "passed?" flag (true = PASS), so reading it directly inverts.
+ * - MULTI_SELECT: the chosen values, comma-separated.
+ * - IMAGE: YES if a photo was captured for the item, else NO.
+ * - OCR / NUMBER / READING: the keyed-in number.
+ * - TEXT / SELECT (dropdown) / DATE / DATETIME / GPS / JSON: the value verbatim.
+ */
+function resolveTemplateCell(
+  inputType: InspectionItemInputType,
+  result: RecordedResult | undefined,
+  verdict: InspectionItemResultValue | undefined,
+  hasImage: boolean,
+): string {
+  switch (inputType) {
+    case InspectionItemInputType.IMAGE:
+      return hasImage ? 'YES' : 'NO';
+
+    case InspectionItemInputType.BOOLEAN:
+      if (verdict === InspectionItemResultValue.FAIL) return 'YES';
+      if (verdict === InspectionItemResultValue.PASS) return 'NO';
+      return ''; // NA or unanswered → blank
+
+    case InspectionItemInputType.MULTI_SELECT: {
+      const json = result?.valueJson;
+      if (Array.isArray(json)) {
+        return sanitizeText(json.map((v) => String(v)).join(', '));
+      }
+      return sanitizeText(result?.valueText ?? '');
+    }
+
+    case InspectionItemInputType.OCR:
+    case InspectionItemInputType.NUMBER:
+    case InspectionItemInputType.READING:
+      if (result?.valueText && result.valueText.trim()) {
+        return sanitizeText(result.valueText);
+      }
+      if (result?.valueNumber != null) {
+        return String(result.valueNumber.toNumber());
+      }
+      return '';
+
+    default: {
+      // TEXT, SELECT (dropdown), DATE, DATETIME, GPS, JSON → recorded value.
+      if (result?.valueText != null && result.valueText !== '') {
+        return sanitizeText(result.valueText);
+      }
+      if (result?.valueNumber != null) {
+        return String(result.valueNumber.toNumber());
+      }
+      const json = result?.valueJson;
+      if (Array.isArray(json)) {
+        return sanitizeText(json.map((v) => String(v)).join(', '));
+      }
+      return '';
+    }
   }
-  if (r.valueNumber != null) {
-    return String(r.valueNumber.toNumber());
-  }
-  if (r.valueBoolean != null) {
-    return r.valueBoolean ? 'YES' : 'NO';
-  }
-  if (Array.isArray(r.valueJson)) {
-    return sanitizeText((r.valueJson as unknown[]).join(', '));
-  }
-  if (typeof r.valueJson === 'string') {
-    return sanitizeText(r.valueJson);
-  }
-  return '';
 }
 
 function resolveImageUrl(
