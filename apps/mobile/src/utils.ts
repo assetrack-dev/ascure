@@ -534,7 +534,14 @@ function comparableTextCandidates(value: DraftValues[string]) {
   return [normalizeComparableText(value)];
 }
 
-export function validateInspectionDraft(form: InspectionFormResponse, draftValues: DraftValues) {
+export function validateInspectionDraft(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
+  // Item ids that have at least one captured photo. IMAGE fields store their
+  // value as photos (tagged with templateItemId), not in draftValues, so the
+  // caller passes the set so required IMAGE items can be validated.
+  photoItemIds: Set<string> = new Set(),
+) {
   const missingRequiredItems: string[] = [];
   const invalidNumbers: string[] = [];
 
@@ -576,6 +583,11 @@ export function validateInspectionDraft(form: InspectionFormResponse, draftValue
         }
 
         if (inputType === 'MULTI_SELECT' && (!Array.isArray(rawValue) || rawValue.length === 0)) {
+          missingRequiredItems.push(item.label);
+          continue;
+        }
+
+        if (inputType === 'IMAGE' && !photoItemIds.has(item.id)) {
           missingRequiredItems.push(item.label);
           continue;
         }

@@ -101,6 +101,7 @@ export function InspectionFormScreen() {
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [emergencyItemIds, setEmergencyItemIds] = useState<Record<string, boolean>>({});
   const [scanningItemId, setScanningItemId] = useState<string | null>(null);
+  const [capturingItemId, setCapturingItemId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -451,6 +452,36 @@ export function InspectionFormScreen() {
     }
   }
 
+  // Capture a photo bound to a specific IMAGE checklist item (e.g. GAMBAR PENUH
+  // TIANG). Reuses the same camera + timestamp/GPS overlay pipeline as the
+  // global photos section, but tags the photo with templateItemId so the API
+  // links it to this item's result (the same linkage the OCR field uses).
+  // Multiple photos per item are appended; remove uses handleRemovePhoto.
+  async function handleCaptureItemPhoto(itemId: string) {
+    try {
+      setCapturingItemId(itemId);
+      setError(null);
+
+      const captured = await captureInspectionPhoto();
+
+      if (!captured) {
+        return;
+      }
+
+      const itemPhoto = { ...captured.photo, templateItemId: itemId };
+      setPhotoList((current) => [...current, itemPhoto]);
+      void uploadPhotoInBackground(itemPhoto);
+    } catch (captureError) {
+      setError(
+        captureError instanceof Error
+          ? captureError.message
+          : 'Unable to capture inspection photo.',
+      );
+    } finally {
+      setCapturingItemId(null);
+    }
+  }
+
   async function handleRetakePhoto(photoId: string) {
     try {
       setIsCapturingPhoto(true);
@@ -570,7 +601,12 @@ export function InspectionFormScreen() {
       return;
     }
 
-    const validationMessage = validateInspectionDraft(form, draftValues);
+    const photoItemIds = new Set(
+      photosRef.current
+        .map((photo) => photo.templateItemId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const validationMessage = validateInspectionDraft(form, draftValues, photoItemIds);
 
     if (validationMessage) {
       setError(validationMessage);
@@ -831,6 +867,9 @@ export function InspectionFormScreen() {
                   onToggleEmergency={toggleEmergency}
                   onScanReading={handleScanReading}
                   scanningItemId={scanningItemId}
+                  onCaptureItemPhoto={handleCaptureItemPhoto}
+                  capturingItemId={capturingItemId}
+                  onRemoveItemPhoto={handleRemovePhoto}
                   photos={photos}
                   onPreviewPhoto={(uri) => setSelectedPhotoUri(uri)}
                 />
@@ -990,6 +1029,9 @@ function ChecklistSectionCard({
   onToggleEmergency,
   onScanReading,
   scanningItemId,
+  onCaptureItemPhoto,
+  capturingItemId,
+  onRemoveItemPhoto,
   photos,
   onPreviewPhoto,
 }: {
@@ -1005,6 +1047,9 @@ function ChecklistSectionCard({
   onToggleEmergency: (itemId: string, nextValue: boolean) => void;
   onScanReading: (itemId: string) => void;
   scanningItemId: string | null;
+  onCaptureItemPhoto: (itemId: string) => void;
+  capturingItemId: string | null;
+  onRemoveItemPhoto: (photoId: string) => void;
   photos: CapturedInspectionPhoto[];
   onPreviewPhoto: (uri: string) => void;
 }) {
@@ -1051,6 +1096,10 @@ function ChecklistSectionCard({
             onScanReading={() => onScanReading(item.id)}
             scanning={scanningItemId === item.id}
             scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
+            itemPhotos={photos.filter((photo) => photo.templateItemId === item.id)}
+            capturing={capturingItemId === item.id}
+            onCapturePhoto={() => onCaptureItemPhoto(item.id)}
+            onRemovePhoto={onRemoveItemPhoto}
             onPreviewPhoto={onPreviewPhoto}
           />
         ))}
@@ -1069,6 +1118,10 @@ function ChecklistItemCard({
   onScanReading,
   scanning,
   scanPhotoUri,
+  itemPhotos,
+  capturing,
+  onCapturePhoto,
+  onRemovePhoto,
   onPreviewPhoto,
 }: {
   item: InspectionTemplateItem;
@@ -1080,6 +1133,10 @@ function ChecklistItemCard({
   onScanReading: () => void;
   scanning: boolean;
   scanPhotoUri?: string;
+  itemPhotos: CapturedInspectionPhoto[];
+  capturing: boolean;
+  onCapturePhoto: () => void;
+  onRemovePhoto: (photoId: string) => void;
   onPreviewPhoto: (uri: string) => void;
 }) {
   const theme = useTheme();
@@ -1241,7 +1298,16 @@ function ChecklistItemCard({
           onChange={onChange}
         />
       ) : null}
-      {inputType === 'IMAGE' ? <ImageFieldPlaceholder /> : null}
+      {inputType === 'IMAGE' ? (
+        <ImageCaptureField
+          photos={itemPhotos}
+          capturing={capturing}
+          disabled={disabled}
+          onCapture={onCapturePhoto}
+          onRemove={onRemovePhoto}
+          onPreview={onPreviewPhoto}
+        />
+      ) : null}
       {!inputType ? (
         <View style={styles.unsupportedFieldPanel}>
           <Text style={styles.unsupportedFieldText}>
@@ -1457,15 +1523,89 @@ function MultiSelectField({
   );
 }
 
-function ImageFieldPlaceholder() {
+// Inline per-item photo capture for IMAGE checklist fields (e.g. GAMBAR PENUH
+// TIANG). Camera-only with an automatic timestamp + GPS overlay — the same
+// pipeline as the global photos section — and each photo is tagged to this
+// checklist item. Supports multiple photos with per-photo removal.
+function ImageCaptureField({
+  photos,
+  capturing,
+  disabled,
+  onCapture,
+  onRemove,
+  onPreview,
+}: {
+  photos: CapturedInspectionPhoto[];
+  capturing: boolean;
+  disabled: boolean;
+  onCapture: () => void;
+  onRemove: (photoId: string) => void;
+  onPreview: (uri: string) => void;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const hasPhotos = photos.length > 0;
+
   return (
-    <View style={styles.imageFieldPlaceholder}>
-      <Text style={styles.imageFieldTitle}>Image capture</Text>
-      <Text style={styles.imageFieldText}>
-        Attach photos from the inspection photos section.
-      </Text>
+    <View style={styles.imageCaptureField}>
+      {hasPhotos ? (
+        <View style={styles.imageThumbRow}>
+          {photos.map((photo) => (
+            <View key={photo.id} style={styles.imageThumbWrap}>
+              <Pressable
+                accessibilityRole="imagebutton"
+                accessibilityLabel="Inspection photo — tap to enlarge"
+                onPress={() => onPreview(photo.uri)}
+                style={styles.imageThumbPressable}
+              >
+                <Image
+                  source={{ uri: photo.uri }}
+                  style={styles.imageThumb}
+                  resizeMode="cover"
+                />
+              </Pressable>
+              <View style={styles.imageThumbPill}>
+                <PhotoStatusPill state={photo.uploadState} />
+              </View>
+              {!disabled ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove photo"
+                  onPress={() => onRemove(photo.id)}
+                  style={styles.imageThumbRemove}
+                >
+                  <Text style={styles.imageThumbRemoveText}>✕</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.imageCaptureHint}>
+          Camera only · timestamp &amp; GPS added automatically.
+        </Text>
+      )}
+      {!disabled ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={capturing}
+          onPress={onCapture}
+          style={({ pressed }) => [
+            styles.scanButton,
+            capturing && styles.scanButtonDisabled,
+            pressed && !capturing && styles.scanButtonPressed,
+          ]}
+        >
+          {capturing ? (
+            <ActivityIndicator size="small" color={theme.colors.textOnPrimary} />
+          ) : (
+            <Text style={styles.scanButtonIcon}>📷</Text>
+          )}
+          <Text style={styles.scanButtonText}>
+            {capturing ? 'Opening Camera…' : hasPhotos ? 'Add Photo' : 'Take Photo'}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2384,21 +2524,53 @@ const createStyles = (t: Theme) =>
     fontWeight: '900',
     color: t.colors.textOnPrimary,
   },
-  imageFieldPlaceholder: {
+  imageCaptureField: {
+    gap: 8,
+  },
+  imageThumbRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  imageThumbWrap: {
+    position: 'relative',
+    width: 104,
+    height: 104,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: t.colors.border,
+    overflow: 'hidden',
     backgroundColor: t.colors.surfaceMuted,
-    padding: 12,
-    gap: 3,
   },
-  imageFieldTitle: {
-    fontSize: 14,
-    lineHeight: 19,
+  imageThumbPressable: {
+    width: '100%',
+    height: '100%',
+  },
+  imageThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  imageThumbPill: {
+    position: 'absolute',
+    left: 4,
+    bottom: 4,
+  },
+  imageThumbRemove: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  imageThumbRemoveText: {
+    color: '#ffffff',
+    fontSize: 13,
     fontWeight: '700',
-    color: t.colors.textPrimary,
+    lineHeight: 16,
   },
-  imageFieldText: {
+  imageCaptureHint: {
     fontSize: 13,
     lineHeight: 18,
     color: t.colors.textSecondary,
