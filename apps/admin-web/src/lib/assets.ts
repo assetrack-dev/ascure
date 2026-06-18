@@ -233,6 +233,9 @@ function normalizeAsset(rawAsset: unknown, index: number): AssetListItem | null 
     feeder: readFeeder(record),
     location: readLocation(record),
     pencawangName: readPencawangName(record),
+    substationId:
+      firstString(record, ["substationId", "substation_id"]) ??
+      readString(asRecord(record.substation), "id"),
     inspectionStatus,
     date: readDate(record, latestInspection),
     assetStatus: firstString(record, ["assetStatus", "status"]),
@@ -332,4 +335,49 @@ export async function fetchAssetDetail(token: string, assetId: string): Promise<
   const payload = await apiRequest<unknown>(`/assets/${encodeURIComponent(assetId)}`, { token });
 
   return normalizeAssetDetail(payload);
+}
+
+export interface DeleteAssetsResult {
+  deleted: number;
+  deletedIds: string[];
+  notFound: string[];
+}
+
+/** Hard-delete a single asset (and its inspections/defects/photos). */
+export async function deleteAsset(token: string, id: string): Promise<DeleteAssetsResult> {
+  return apiRequest<DeleteAssetsResult>(`/assets/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+/** Hard-delete a selected set of assets by id. */
+export async function bulkDeleteAssets(token: string, ids: string[]): Promise<DeleteAssetsResult> {
+  return apiRequest<DeleteAssetsResult>("/assets/bulk-delete", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ ids }),
+  });
+}
+
+/** ADMIN-only: hard-delete every asset in a Pencawang (substation). */
+export async function deleteAssetsBySubstation(
+  token: string,
+  substationId: string,
+): Promise<DeleteAssetsResult> {
+  return apiRequest<DeleteAssetsResult>(
+    `/assets/by-substation/${encodeURIComponent(substationId)}`,
+    { method: "DELETE", token },
+  );
+}
+
+/** ADMIN-only: hard-delete every asset associated with an Operational Session. */
+export async function deleteAssetsBySession(
+  token: string,
+  sessionId: string,
+): Promise<DeleteAssetsResult> {
+  return apiRequest<DeleteAssetsResult>(
+    `/assets/by-session/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE", token },
+  );
 }

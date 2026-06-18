@@ -741,6 +741,91 @@ export class AssetsService {
   }
 
   /**
+   * ADMIN-only: hard-delete EVERY asset in a Pencawang (substation). Resolves the
+   * IDs server-side (so the caller can't pass a stale set) and reuses the same
+   * cascade transaction as the per-asset delete. Returns 0 deleted for an empty
+   * Pencawang; 404 if the substation isn't in the caller's tenant.
+   */
+  async deleteBySubstation(user: RequestUser, substationId: string) {
+    this.assertAdmin(user);
+
+    const substation = await this.prisma.substation.findFirst({
+      where: { id: substationId, tenantId: user.tenantId },
+      select: { id: true },
+    });
+
+    if (!substation) {
+      throw new NotFoundException('Substation not found.');
+    }
+
+    const assets = await this.prisma.asset.findMany({
+      where: { substationId, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    const ids = assets.map((asset) => asset.id);
+
+    if (ids.length > 0) {
+      await this.hardDeleteAssets(user.tenantId, ids);
+    }
+
+    return { deleted: ids.length, deletedIds: ids, notFound: [] as string[] };
+  }
+
+  /**
+   * ADMIN-only: hard-delete every asset associated with an Operational Session —
+   * its current roster (OperationalSessionAsset, excluding soft-removed rows) plus
+   * any asset inspected under the session. IDs are re-checked against the caller's
+   * tenant before deletion. 404 if the session isn't in the caller's tenant.
+   */
+  async deleteBySession(user: RequestUser, sessionId: string) {
+    this.assertAdmin(user);
+
+    const session = await this.prisma.operationalSession.findFirst({
+      where: { id: sessionId, workspaceId: user.tenantId },
+      select: { id: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Operational session not found.');
+    }
+
+    const [roster, inspected] = await Promise.all([
+      this.prisma.operationalSessionAsset.findMany({
+        where: { operationalSessionId: sessionId, removedAt: null },
+        select: { assetId: true },
+      }),
+      this.prisma.inspection.findMany({
+        where: { operationalSessionId: sessionId, tenantId: user.tenantId },
+        select: { assetId: true },
+      }),
+    ]);
+
+    const candidateIds = Array.from(
+      new Set([
+        ...roster.map((row) => row.assetId),
+        ...inspected.map((row) => row.assetId),
+      ]),
+    );
+
+    if (candidateIds.length === 0) {
+      return { deleted: 0, deletedIds: [] as string[], notFound: [] as string[] };
+    }
+
+    // Tenant-guard the resolved IDs before deleting.
+    const owned = await this.prisma.asset.findMany({
+      where: { id: { in: candidateIds }, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    const ids = owned.map((asset) => asset.id);
+
+    if (ids.length > 0) {
+      await this.hardDeleteAssets(user.tenantId, ids);
+    }
+
+    return { deleted: ids.length, deletedIds: ids, notFound: [] as string[] };
+  }
+
+  /**
    * Hard-delete poles and everything hanging off them. The Asset's inspection /
    * site-visit / operational-session links are onDelete Restrict, so they're
    * removed first (each cascades its own children at the DB level: an inspection
@@ -979,6 +1064,12 @@ export class AssetsService {
   private assertCanMutate(user: RequestUser) {
     if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
       throw new ForbiddenException('This role is read-only for asset actions.');
+    }
+  }
+
+  private assertAdmin(user: RequestUser) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only an administrator can perform this action.');
     }
   }
 

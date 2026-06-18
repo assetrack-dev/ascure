@@ -353,6 +353,8 @@ export interface DefectOperationsBoardFilters {
 
 export interface DefectOperationsBoardResponse {
   generatedAt: string | null;
+  /** True when defects skip the QA/QC gate (INSPECTOR_OWNS) — hide that column. */
+  inspectorOwns: boolean;
   filters: DefectOperationsBoardFilters;
   totalCount: number;
   queues: DefectOperationsBoardQueue[];

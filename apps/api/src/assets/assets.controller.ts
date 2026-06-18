@@ -4,14 +4,18 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
   UseGuards,
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
+import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -71,6 +75,28 @@ export class AssetsController {
   @Post('bulk-delete')
   deleteBulk(@CurrentUser() user: RequestUser, @Body() dto: DeleteAssetsDto) {
     return this.assetsService.deleteBulk(user, dto.ids);
+  }
+
+  // ADMIN-only bulk wipes — resolve IDs server-side. Declared before `:id` so
+  // the literal `by-substation` / `by-session` segments aren't matched as an id.
+  @Delete('by-substation/:substationId')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  deleteBySubstation(
+    @CurrentUser() user: RequestUser,
+    @Param('substationId', ParseUUIDPipe) substationId: string,
+  ) {
+    return this.assetsService.deleteBySubstation(user, substationId);
+  }
+
+  @Delete('by-session/:sessionId')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  deleteBySession(
+    @CurrentUser() user: RequestUser,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+  ) {
+    return this.assetsService.deleteBySession(user, sessionId);
   }
 
   @Delete(':id')

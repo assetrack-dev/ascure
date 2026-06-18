@@ -7,6 +7,7 @@ export interface AssetListItem {
   feeder: string | null;
   location: string | null;
   pencawangName: string | null;
+  substationId: string | null;
   inspectionStatus: AssetInspectionStatus;
   date: string | null;
   assetStatus?: string | null;

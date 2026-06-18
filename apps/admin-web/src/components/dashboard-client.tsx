@@ -8,10 +8,8 @@ import {
   Archive,
   Bug,
   CheckCircle2,
-  Clock3,
   RefreshCw,
   ShieldAlert,
-  Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -381,33 +379,12 @@ function DashboardContent() {
                     tone="success"
                   />
                   <MetricCard
-                    title="Overdue Visits"
-                    value={metrics.overdueVisits}
-                    detail="Active visits beyond the configured threshold."
-                    icon={Clock3}
-                    tone={metrics.overdueVisits > 0 ? "danger" : "neutral"}
-                  />
-                  <MetricCard
-                    title="Total Defects"
-                    value={metrics.totalDefects}
-                    detail="All defects detected from submitted inspections."
-                    icon={Bug}
-                    tone="warning"
-                  />
-                  <MetricCard
                     title="Completion Rate"
                     value={metrics.completionRate}
                     suffix="%"
                     detail="Completed visits across non-cancelled operations."
                     icon={ShieldAlert}
                     tone="success"
-                  />
-                  <MetricCard
-                    title="Active Field Teams"
-                    value={metrics.activeFieldTeams}
-                    detail={`${metrics.activeMappedVisits} active visits have check-in coordinates.`}
-                    icon={Users}
-                    tone="neutral"
                   />
                 </div>
 
@@ -460,27 +437,6 @@ function DashboardContent() {
                     icon={AlertTriangle}
                     tone="danger"
                   />
-                  <MetricCard
-                    title="Critical Defects"
-                    value={metrics.criticalDefects}
-                    detail="Defects marked as critical severity."
-                    icon={ShieldAlert}
-                    tone="danger"
-                  />
-                  <MetricCard
-                    title="Overdue Defects"
-                    value={metrics.overdueDefects}
-                    detail="Open, in-progress, or monitoring defects past due."
-                    icon={Clock3}
-                    tone="danger"
-                  />
-                  <MetricCard
-                    title="Critical Overdue"
-                    value={metrics.criticalOverdueDefects}
-                    detail="Critical defects currently past due."
-                    icon={ShieldAlert}
-                    tone="danger"
-                  />
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
@@ -512,12 +468,6 @@ function DashboardContent() {
                     title="Defects by Team"
                     data={metrics.defectsByTeam}
                     emptyLabel="No assigned team counts are available yet."
-                    tone="teal"
-                  />
-                  <SimpleBarChart
-                    title="Assets by Type"
-                    data={metrics.assetsByType}
-                    emptyLabel="No asset type counts are available yet."
                     tone="teal"
                   />
                 </div>

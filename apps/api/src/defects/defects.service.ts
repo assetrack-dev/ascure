@@ -620,6 +620,10 @@ export class DefectsService {
 
     return {
       generatedAt: new Date().toISOString(),
+      // Under INSPECTOR_OWNS, submitted defects open VERIFIED (no QA/QC gate),
+      // so the admin board hides the "Awaiting QA/QC" column. Surfaced here so
+      // the client can decide without re-reading the governance env.
+      inspectorOwns: inspectorOwnsDefects(),
       filters: {
         mainhead: query.mainhead ?? null,
         projectId: query.projectId ?? null,
@@ -2626,7 +2630,10 @@ export class DefectsService {
       }
     }
 
-    return 'awaitingQaQc';
+    // Default unmatched statuses to a VISIBLE queue. Under INSPECTOR_OWNS the
+    // QA/QC column is hidden client-side, so falling back to it would make a
+    // stray defect disappear from the board.
+    return 'maintenanceReady';
   }
 
   private compareOperationsBoardItems(

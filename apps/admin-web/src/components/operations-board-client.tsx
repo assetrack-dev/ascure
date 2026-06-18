@@ -764,6 +764,12 @@ function MainheadRollup({
     return null;
   }
 
+  // Show the QA/QC column unless INSPECTOR_OWNS AND it's empty — mirrors the
+  // queue-list/summary hide so legacy DETECTED defects don't silently vanish.
+  const showQaQc =
+    !board.inspectorOwns ||
+    (board.queues.find((queue) => queue.key === "awaitingQaQc")?.count ?? 0) > 0;
+
   return (
     <section className="rounded-lg border border-[var(--line)] bg-white shadow-[var(--shadow-soft)]">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
@@ -778,7 +784,7 @@ function MainheadRollup({
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
               <th className="px-5 py-3">MAINHEAD</th>
               <th className="px-5 py-3">Total</th>
-              <th className="px-5 py-3">QA/QC</th>
+              {showQaQc ? <th className="px-5 py-3">QA/QC</th> : null}
               <th className="px-5 py-3">Maint. Ready</th>
               <th className="px-5 py-3">In Maint.</th>
               <th className="px-5 py-3">Closure</th>
@@ -800,7 +806,9 @@ function MainheadRollup({
                     {group.mainhead.label}
                   </td>
                   <td className="px-5 py-3 font-semibold text-slate-800">{group.count}</td>
-                  <td className="px-5 py-3 text-slate-600">{counts.get("awaitingQaQc") ?? 0}</td>
+                  {showQaQc ? (
+                    <td className="px-5 py-3 text-slate-600">{counts.get("awaitingQaQc") ?? 0}</td>
+                  ) : null}
                   <td className="px-5 py-3 text-slate-600">{counts.get("maintenanceReady") ?? 0}</td>
                   <td className="px-5 py-3 text-slate-600">{counts.get("inMaintenance") ?? 0}</td>
                   <td className="px-5 py-3 text-slate-600">
@@ -1138,7 +1146,14 @@ function OperationsBoardContent() {
   }, [board, filters.assignedToUserId, users]);
 
   const summaryQueues = useMemo(
-    () => board?.queues.filter((queue) => SUMMARY_QUEUE_KEYS.includes(queue.key)) ?? [],
+    () =>
+      board?.queues.filter(
+        (queue) =>
+          SUMMARY_QUEUE_KEYS.includes(queue.key) &&
+          // Under INSPECTOR_OWNS there's no QA/QC gate — hide that column, but
+          // ONLY when empty, so legacy DETECTED defects never silently vanish.
+          !(board.inspectorOwns && queue.key === "awaitingQaQc" && queue.count === 0),
+      ) ?? [],
     [board],
   );
 
@@ -1472,7 +1487,16 @@ function OperationsBoardContent() {
                 />
 
                 <div className="space-y-4">
-                  {board.queues.map((queue) => (
+                  {board.queues
+                    .filter(
+                      (queue) =>
+                        !(
+                          board.inspectorOwns &&
+                          queue.key === "awaitingQaQc" &&
+                          queue.count === 0
+                        ),
+                    )
+                    .map((queue) => (
                     <QueueSection
                       key={queue.key}
                       queue={queue}
