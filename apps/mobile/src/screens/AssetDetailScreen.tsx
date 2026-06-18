@@ -93,7 +93,8 @@ async function loadAssetDetailResponse(
 export function AssetDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'AssetDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
-  const { visitId, substationId, assetId, assetSnapshot, operationalSessionId } = route.params;
+  const { visitId, substationId, assetId, assetSnapshot, operationalSessionId, autoStartInspection } =
+    route.params;
   const { token, user, handleUnauthorized } = useSession();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -171,6 +172,16 @@ export function AssetDetailScreen() {
   useEffect(() => {
     loadAssetDetail();
   }, [loadAssetDetail]);
+
+  // "Save & inspect" from Add Asset lands here with autoStartInspection — open
+  // the inspection form automatically once the new pole has loaded (the
+  // startInspectionRef guard keeps it to a single run).
+  useEffect(() => {
+    if (autoStartInspection && asset && !startInspectionRef.current) {
+      handleStartInspection();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartInspection, asset]);
 
   // Keep the session cache in sync with whatever detail is on screen (from a
   // load or an in-screen action) so the next re-entry paints instantly.

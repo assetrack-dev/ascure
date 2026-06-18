@@ -129,6 +129,26 @@ export class InspectionsService {
       throw new BadRequestException('Asset does not belong to the substation for the selected site visit.');
     }
 
+    // Idempotent per (asset, site visit): inspecting a pole that already has an
+    // inspection this visit returns the existing one instead of minting a
+    // duplicate cycle (re-taps of "Inspection" / "Save & inspect"). A genuine
+    // new cycle is always a new site visit, so this never blocks re-inspection.
+    const existingInspection = await this.prisma.inspection.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        siteVisitId: siteVisit.id,
+        assetId: asset.id,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      include: this.inspectionInclude(),
+    });
+
+    if (existingInspection) {
+      return existingInspection;
+    }
+
     const operationalSession = dto.operationalSessionId
       ? await this.resolveOperationalSessionContext(user, dto.operationalSessionId, asset.id)
       : null;

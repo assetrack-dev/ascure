@@ -30,6 +30,9 @@ export type RootStackParamList = {
     assetId: string;
     operationalSessionId?: string;
     assetSnapshot?: Asset;
+    // Set by Add Asset "Save & inspect" — opens the inspection form automatically
+    // once the new pole loads.
+    autoStartInspection?: boolean;
   };
   AddAsset: {
     visitId?: string;

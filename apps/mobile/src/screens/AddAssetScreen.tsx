@@ -110,6 +110,33 @@ export function AddAssetScreen() {
     });
   }
 
+  // Where to go after saving a NEW pole — the field fork (ADR 0003):
+  //  - inspect : chain straight into the inspection form (Workflow 1)
+  //  - another : back to the map to tag the next pole; it refreshes on focus
+  //              and shows the new pole as a red (not-yet-inspected) pin (Workflow 2)
+  //  - detail  : the asset detail (edit mode / default)
+  type SaveIntent = 'inspect' | 'another' | 'detail';
+
+  function proceedAfterSave(asset: Asset, intent: SaveIntent) {
+    if (intent === 'inspect') {
+      navigation.replace('AssetDetail', {
+        visitId: siteVisitId,
+        substationId: asset.substationId || substationId,
+        assetId: asset.id,
+        assetSnapshot: asset,
+        autoStartInspection: true,
+      });
+      return;
+    }
+
+    if (intent === 'another') {
+      navigation.goBack();
+      return;
+    }
+
+    goToSavedAsset(asset);
+  }
+
   const isEditMode = Boolean(assetToEdit);
   const initialMapLatitude =
     typeof initialLatitude === 'number' && Number.isFinite(initialLatitude) ? initialLatitude : null;
@@ -415,7 +442,7 @@ export function AddAssetScreen() {
     setCoordinateCapturedAt(null);
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(intent: SaveIntent = 'detail') {
     const normalizedAssetCode = normalizeOperationalPayloadText(assetCode);
     const normalizedAssetName = normalizeOperationalPayloadText(assetName);
 
@@ -518,7 +545,7 @@ export function AddAssetScreen() {
 
       try {
         const savedAsset = await api.createAsset(token, createInput);
-        goToSavedAsset(savedAsset);
+        proceedAfterSave(savedAsset, intent);
       } catch (createError) {
         // Offline (server unreachable) → queue the create and optimistically open
         // the new pole so field work continues; it reconciles to a real id on
@@ -566,7 +593,7 @@ export function AddAssetScreen() {
             prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
           ]);
 
-          goToSavedAsset(optimisticAsset);
+          proceedAfterSave(optimisticAsset, intent);
           return;
         }
 
@@ -602,6 +629,12 @@ export function AddAssetScreen() {
     );
   }
 
+  const isSaveDisabled =
+    isLoading ||
+    isSubmitting ||
+    assetTypes.length === 0 ||
+    (!substationId && substations.length === 0);
+
   return (
     <Screen
       title={isEditMode ? 'Edit Asset' : 'Add Asset'}
@@ -617,25 +650,29 @@ export function AddAssetScreen() {
       }
       keyboardAware
       footer={
-        <AppButton
-          label={
-            isSubmitting
-              ? isEditMode
-                ? 'Updating Asset...'
-                : 'Saving Asset...'
-              : isEditMode
-                ? 'Update Asset'
-                : 'Save Asset'
-          }
-          onPress={handleSubmit}
-          loading={isSubmitting}
-          disabled={
-            isLoading ||
-            isSubmitting ||
-            assetTypes.length === 0 ||
-            (!substationId && substations.length === 0)
-          }
-        />
+        isEditMode ? (
+          <AppButton
+            label={isSubmitting ? 'Updating Asset...' : 'Update Asset'}
+            onPress={() => handleSubmit('detail')}
+            loading={isSubmitting}
+            disabled={isSaveDisabled}
+          />
+        ) : (
+          <View style={{ gap: 10 }}>
+            <AppButton
+              label={isSubmitting ? 'Saving...' : 'Save & inspect'}
+              onPress={() => handleSubmit('inspect')}
+              loading={isSubmitting}
+              disabled={isSaveDisabled}
+            />
+            <AppButton
+              label="Save & add another"
+              onPress={() => handleSubmit('another')}
+              variant="secondary"
+              disabled={isSaveDisabled}
+            />
+          </View>
+        )
       }
     >
       <ErrorBanner message={error} />
