@@ -58,6 +58,8 @@ interface AssetReportData {
   pencawang: string;
   pencawangCode: string;
   pencawangName: string;
+  functionalLocation: string;
+  mainhead: string;
   inspector: string;
   inspectorEmail: string;
   inspectionDate: string;
@@ -119,6 +121,9 @@ const assetReportInclude = {
       id: true,
       pencawangCode: true,
       pencawangName: true,
+      functionalLocation: true,
+      mainhead: true,
+      mainheadRecord: { select: { code: true, name: true } },
       visitType: true,
       startedAt: true,
       completedAt: true,
@@ -589,6 +594,8 @@ export class ReportGenerationService {
       pencawang: visit?.pencawangName ?? visit?.pencawangCode ?? '',
       pencawangCode: visit?.pencawangCode ?? '',
       pencawangName: visit?.pencawangName ?? '',
+      functionalLocation: visit?.functionalLocation ?? '',
+      mainhead: visit?.mainhead ?? visit?.mainheadRecord?.name ?? '',
       inspector: inspection.createdBy?.name ?? '',
       inspectorEmail: inspection.createdBy?.email ?? '',
       inspectionDate: this.fmtDateTime(inspection.createdAt),

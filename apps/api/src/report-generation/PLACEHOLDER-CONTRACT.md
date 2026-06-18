@@ -23,6 +23,8 @@ Delimiters are curly braces: `{tagName}`. Whitespace inside braces is allowed.
 | `{latitude}` / `{longitude}` / `{gps}` | GPS coordinates (`gps` = "lat, lng") |
 | `{pencawang}` | Pencawang name (falls back to code) |
 | `{pencawangCode}` / `{pencawangName}` | Pencawang code / name |
+| `{functionalLocation}` | Functional location / operational alamat (from the visit) |
+| `{mainhead}` | MAINHEAD (visit free-text, falls back to the linked MAINHEAD name) |
 | `{inspector}` / `{inspectorEmail}` | Inspector who submitted |
 | `{inspectionDate}` | Inspection created date-time (MYT) |
 | `{submittedDate}` | Submission date-time (MYT) |
