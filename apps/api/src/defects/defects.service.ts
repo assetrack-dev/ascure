@@ -25,6 +25,7 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { normalizeOperationalText } from '../common/operational-text';
 import {
   buildDefectEvidenceImagePath,
@@ -3365,59 +3366,16 @@ export class DefectsService {
    * the teams they personally sit on.
    */
   private inspectionAccessScope(user: RequestUser, ctx?: ScopeContext) {
+    // ADMIN gets an empty filter ({}), NOT { siteVisit: {} } — an Inspection
+    // could in principle have no site visit, and we must not exclude it.
     if (user.role === 'ADMIN' || ctx?.isAdmin) {
       return {};
     }
-
-    if (ctx?.isQa) {
-      return {
-        siteVisit: {
-          mainheadId: { in: ctx.qaMainheadIds },
-        },
-      };
-    }
-
-    const ownTeamMembership = {
-      members: {
-        some: {
-          userId: user.id,
-          isActive: true,
-        },
-      },
-    };
-
-    if (user.role === UserRole.MANAGER && user.organizationId) {
-      return {
-        siteVisit: {
-          team: {
-            OR: [{ organizationId: user.organizationId }, ownTeamMembership],
-          },
-        },
-      };
-    }
-
-    if (user.role === UserRole.SUPERVISOR) {
-      return {
-        siteVisit: {
-          team: {
-            OR: [
-              {
-                supervisors: {
-                  some: { supervisorUserId: user.id, isActive: true },
-                },
-              },
-              ownTeamMembership,
-            ],
-          },
-        },
-      };
-    }
-
-    return {
-      siteVisit: {
-        team: ownTeamMembership,
-      },
-    };
+    // For every other role the shared matrix returns a non-empty
+    // SiteVisitWhereInput, so wrapping it under `siteVisit` reproduces the
+    // previous hand-rolled behaviour exactly. Canonical matrix lives in
+    // common/authorization/site-visit-scope so it cannot drift from site-visits.
+    return { siteVisit: siteVisitAccessWhere(user, ctx) };
   }
 
   private assertCanMutate(user: RequestUser) {

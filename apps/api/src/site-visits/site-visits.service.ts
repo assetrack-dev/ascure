@@ -24,6 +24,7 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import {
   calculateOperationalHealthStatus,
   isSiteVisitOverdue,
@@ -2768,55 +2769,9 @@ export class SiteVisitsService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
-    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
-      return {};
-    }
-
-    if (ctx?.isQa) {
-      return {
-        mainheadId: { in: ctx.qaMainheadIds },
-      };
-    }
-
-    // Every actor at minimum sees visits of teams they actively belong to.
-    const ownTeamMembership: Prisma.TeamWhereInput = {
-      members: {
-        some: {
-          userId: user.id,
-          isActive: true,
-        },
-      },
-    };
-
-    // MANAGER: all teams in their own company (Organization), plus any team
-    // they personally belong to. (north-star §5 / ADR 0002 §3)
-    if (user.role === UserRole.MANAGER && user.organizationId) {
-      return {
-        team: {
-          OR: [{ organizationId: user.organizationId }, ownTeamMembership],
-        },
-      };
-    }
-
-    // SUPERVISOR: the teams they are explicitly assigned to via TeamSupervisor
-    // (a company-scoped, geography-independent subset), plus their own teams.
-    if (user.role === UserRole.SUPERVISOR) {
-      return {
-        team: {
-          OR: [
-            {
-              supervisors: {
-                some: { supervisorUserId: user.id, isActive: true },
-              },
-            },
-            ownTeamMembership,
-          ],
-        },
-      };
-    }
-
-    // TECHNICIAN / VIEWER / CLIENT: only their own teams' visits.
-    return { team: ownTeamMembership };
+    // Canonical matrix lives in common/authorization/site-visit-scope so the
+    // site-visit, defect, and asset-map scopes cannot drift apart.
+    return siteVisitAccessWhere(user, ctx);
   }
 
   private normalizeOptionalString(value?: string | null) {

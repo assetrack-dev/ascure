@@ -15,6 +15,8 @@ import {
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildScopeContext } from '../common/authorization/scope-context';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -32,6 +34,108 @@ const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Role-scoped, lightweight asset feed for the admin web global map.
+   *
+   * Only assets with finite GPS coordinates are returned. Visibility mirrors the
+   * SiteVisit access matrix (common/authorization/site-visit-scope): an asset is
+   * visible if it has an inspection in a site visit the user may see, or it was
+   * created during such a visit. ADMIN sees every located asset in the tenant.
+   *
+   * The Asset row carries no team/region/mainhead column, so scope is applied
+   * transitively through `inspections.siteVisit` and `createdDuringVisit`.
+   * Distinct from MasterDataService.listAssets (GET /assets), which is tenant-
+   * scoped only and feeds the mobile inspection flow + the assets table.
+   */
+  async listMapAssets(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const scopeWhere = siteVisitAccessWhere(user, ctx);
+
+    const where: Prisma.AssetWhereInput = {
+      tenantId: user.tenantId,
+      latitude: { not: null },
+      longitude: { not: null },
+      // ADMIN / QA-admin: every located asset in the tenant. Everyone else:
+      // assets reachable through a site visit they may see.
+      ...(ctx.isAdmin
+        ? {}
+        : {
+            OR: [
+              { inspections: { some: { siteVisit: scopeWhere } } },
+              { createdDuringVisit: scopeWhere },
+            ],
+          }),
+    };
+
+    const assets = await this.prisma.asset.findMany({
+      where,
+      select: {
+        id: true,
+        assetCode: true,
+        name: true,
+        latitude: true,
+        longitude: true,
+        status: true,
+        substation: {
+          select: { id: true, code: true, name: true, location: true },
+        },
+        assetType: {
+          select: { id: true, code: true, name: true },
+        },
+        // team + mainhead aren't columns on the Asset; derive them from the
+        // asset's creation visit, falling back used below when there is no
+        // submitted inspection to source them from.
+        createdDuringVisit: {
+          select: {
+            team: { select: { id: true, name: true } },
+            mainheadRecord: { select: { id: true, name: true } },
+          },
+        },
+        inspections: {
+          // Marker colour follows the latest SUBMITTED inspection — same filter
+          // as MasterDataService.listAssets so web and mobile stay consistent.
+          // Its site visit also supplies the asset's team + mainhead for filters.
+          where: {
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+          },
+          take: 1,
+          orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+          select: {
+            completionStatus: true,
+            submittedAt: true,
+            siteVisit: {
+              select: {
+                team: { select: { id: true, name: true } },
+                mainheadRecord: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { assetCode: 'asc' },
+    });
+
+    return assets.map(({ inspections, createdDuringVisit, ...asset }) => {
+      const latest = inspections[0] ?? null;
+      // Prefer the latest submitted inspection's visit ("inspected by"), then
+      // the asset's creation visit, for the team/mainhead association.
+      const visit = latest?.siteVisit ?? createdDuringVisit ?? null;
+      return {
+        ...asset,
+        latestInspection: latest
+          ? {
+              status: latest.completionStatus,
+              submittedAt: latest.submittedAt?.toISOString() ?? null,
+            }
+          : null,
+        team: visit?.team ? { id: visit.team.id, name: visit.team.name } : null,
+        mainhead: visit?.mainheadRecord
+          ? { id: visit.mainheadRecord.id, name: visit.mainheadRecord.name }
+          : null,
+      };
+    });
+  }
 
   async create(user: RequestUser, dto: CreateAssetDto) {
     this.assertCanMutate(user);

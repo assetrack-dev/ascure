@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   Layers2,
   LogOut,
+  Map as MapIcon,
   MapPinned,
   Network,
   PackageCheck,
@@ -34,6 +35,8 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  /** When set, only these roles see the item (data is still server-scoped). */
+  roles?: string[];
   requiresReporting?: boolean;
   requiresImport?: boolean;
   requiresManageUsers?: boolean;
@@ -73,6 +76,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/network",
       label: "Network",
       icon: Waypoints,
+    },
+    {
+      href: "/map",
+      label: "Map",
+      icon: MapIcon,
+      roles: ["ADMIN", "MANAGER", "SUPERVISOR"],
     },
     {
       href: "/asset-types",
@@ -174,6 +183,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       return false;
     }
 
+    // Gate on the raw backend role (sourceRole): the admin web collapses
+    // MANAGER/SUPERVISOR/TECHNICIAN to VIEWER via normalizeRole, so user.role
+    // alone would hide role-gated items from MANAGER/SUPERVISOR. sourceRole is
+    // undefined for ADMIN/VIEWER/CLIENT, so the user.role fallback still holds.
+    if (item.roles && !item.roles.includes(user?.sourceRole ?? user?.role ?? "")) {
+      return false;
+    }
+
     if (item.requiresReporting && user?.canReport !== true && user?.role !== "ADMIN") {
       return false;
     }
@@ -195,7 +212,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] lg:grid lg:grid-cols-[272px_1fr]">
-      <aside className="border-b border-[var(--chrome-line)] bg-[var(--chrome)] text-[var(--on-chrome)] lg:sticky lg:top-0 lg:flex lg:min-h-screen lg:flex-col lg:border-b-0 lg:border-r">
+      <aside className="border-b border-[var(--chrome-line)] bg-[var(--chrome)] text-[var(--on-chrome)] lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:border-b-0 lg:border-r">
         <div className="flex items-center justify-between gap-4 px-5 py-4 lg:block lg:px-6 lg:py-7">
           <div>
             <div className="flex items-center gap-3">
@@ -224,7 +241,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
           </button>
         </div>
 
-        <nav className="flex gap-2 overflow-x-auto px-5 pb-4 lg:block lg:px-4">
+        <nav className="flex gap-2 overflow-x-auto px-5 pb-4 lg:block lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto lg:px-4">
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive =

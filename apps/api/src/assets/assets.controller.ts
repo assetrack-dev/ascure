@@ -34,6 +34,12 @@ export class AssetsController {
     return this.assetsService.create(user, dto);
   }
 
+  // Declared before `:id` so the literal `map` segment is not matched as an id.
+  @Get('map')
+  listMap(@CurrentUser() user: RequestUser) {
+    return this.assetsService.listMapAssets(user);
+  }
+
   @Get(':id')
   getById(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
     return this.assetsService.getById(user, params.id);
