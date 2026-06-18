@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -46,7 +47,9 @@ export function OperationalSessionsScreen() {
       setError(null);
       setIsLoading(true);
 
-      const nextSessions = await api.getOperationalSessions(token);
+      const { value: nextSessions } = await cachedFetch('operational-sessions', undefined, () =>
+        api.getOperationalSessions(token),
+      );
       setSessions(nextSessions);
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {

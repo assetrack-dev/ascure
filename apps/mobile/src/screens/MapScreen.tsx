@@ -5,6 +5,7 @@ import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 're
 import type { LongPressEvent, Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
@@ -978,31 +979,54 @@ function DefectCallout({ defect }: { defect: DefectMapMarker }) {
 }
 
 async function loadAssetsForMap(token: string, substationId?: string, visitId?: string) {
+  // Cache each map's asset set so the map renders its poles offline (serves the
+  // last snapshot when the server is unreachable).
   if (substationId && visitId) {
-    return api.getAssetsForVisit(token, visitId, substationId);
+    return (
+      await cachedFetch('map-visit-assets', `${visitId}:${substationId}`, () =>
+        api.getAssetsForVisit(token, visitId, substationId),
+      )
+    ).value;
   }
 
   if (substationId) {
-    return api.getAssets(token, substationId);
+    return (await cachedFetch('assets', substationId, () => api.getAssets(token, substationId)))
+      .value;
   }
 
-  const substations = await api.getSubstations(token);
-  const assetGroups = await Promise.all(
-    substations.map((substation) => api.getAssets(token, substation.id)),
-  );
+  return (
+    await cachedFetch('map-all-assets', undefined, async () => {
+      const substations = await api.getSubstations(token);
+      const assetGroups = await Promise.all(
+        substations.map((substation) => api.getAssets(token, substation.id)),
+      );
 
-  return assetGroups.flat();
+      return assetGroups.flat();
+    })
+  ).value;
 }
 
 async function loadDefectMarkers(token: string, assets: Asset[]) {
-  const assetLookup = new Map(assets.map((asset) => [asset.id, asset]));
-  const defects = await api.getDefects(token);
-  const relevantDefects = defects.filter((defect) => assetLookup.has(defect.assetId));
-  const markers = await Promise.all(
-    relevantDefects.map((defect) => createDefectMarker(token, defect, assetLookup)),
-  );
+  try {
+    const assetLookup = new Map(assets.map((asset) => [asset.id, asset]));
+    const { value: defects } = await cachedFetch('defects', undefined, () => api.getDefects(token));
+    const relevantDefects = defects.filter((defect) => assetLookup.has(defect.assetId));
+    const markers = await Promise.all(
+      // The defect overlay is secondary — never let one marker (or an offline
+      // gap) break the pole map; drop markers that can't resolve.
+      relevantDefects.map((defect) =>
+        createDefectMarker(token, defect, assetLookup).catch(() => null),
+      ),
+    );
 
-  return markers.filter(isDefectMapMarker);
+    return markers.filter(isDefectMapMarker);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      throw error;
+    }
+
+    return [];
+  }
 }
 
 function buildSequenceWarningMarkers(

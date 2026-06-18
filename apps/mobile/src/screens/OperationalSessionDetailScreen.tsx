@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { api, ApiError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -104,11 +105,20 @@ export function OperationalSessionDetailScreen({
       setIsLoading(true);
       setIsAssetsLoading(true);
 
-      const nextSession = await api.getOperationalSession(token, route.params.sessionId);
+      const { value: nextSession } = await cachedFetch(
+        'operational-session',
+        route.params.sessionId,
+        () => api.getOperationalSession(token, route.params.sessionId),
+      );
       setSession(nextSession);
 
       try {
-        setAssignedAssets(await api.getSessionAssets(token, route.params.sessionId));
+        const { value: sessionAssets } = await cachedFetch(
+          'session-assets',
+          route.params.sessionId,
+          () => api.getSessionAssets(token, route.params.sessionId),
+        );
+        setAssignedAssets(sessionAssets);
       } catch (assetLoadError) {
         if (assetLoadError instanceof ApiError && assetLoadError.status === 401) {
           await handleUnauthorized(assetLoadError);
