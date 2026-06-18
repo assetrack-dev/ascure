@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { InspectionCompletionStatus, Prisma } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -123,6 +123,14 @@ export class MasterDataService {
           },
         },
         inspections: {
+          // latestInspection drives the map "inspected" marker colour, so it
+          // must reflect the latest SUBMITTED inspection. Without this filter an
+          // amended-to-DRAFT (submittedAt nulled) or a newer-cycle draft sorts
+          // ahead under Postgres DESC NULLS FIRST and masks a real submission,
+          // leaving a genuinely-inspected pole red.
+          where: {
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+          },
           take: 1,
           orderBy: [
             {

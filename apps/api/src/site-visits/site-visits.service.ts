@@ -256,8 +256,11 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
       },
       // Latest inspection so the in-visit map can color poles by status
       // (lime = inspected/submitted, red = not yet) — mirrors what
-      // masterDataService.listAssets returns for the no-visit map.
+      // masterDataService.listAssets returns for the no-visit map. Filter to
+      // SUBMITTED so an amended-to-DRAFT or newer-cycle draft cannot mask a
+      // real submission and leave an inspected pole red.
       inspections: {
+        where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
         take: 1,
         orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
         select: { id: true, completionStatus: true, submittedAt: true },

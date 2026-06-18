@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { LongPressEvent, Region } from 'react-native-maps';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { cachedFetch } from '../offlineCache';
 import { assetMarkerColor } from '../assetDisplay';
@@ -341,39 +341,70 @@ export function MapScreen() {
     [centerMapOnCoordinate],
   );
 
-  const loadMapData = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
+  const loadMapData = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
 
-      const assetList = await loadAssetsForMap(token, substationId, visitId);
-      const nextDefectMarkers = await loadDefectMarkers(token, assetList);
-      const nextRegion = createRegion([
-        ...assetList.map(getAssetCoordinate).filter(isCoordinate),
-        ...nextDefectMarkers.map((defect) => ({
-          latitude: defect.latitude,
-          longitude: defect.longitude,
-        })),
-      ]);
+      try {
+        if (!silent) {
+          setIsLoading(true);
+        }
+        setError(null);
 
-      setAssets(assetList);
-      setDefectMarkers(nextDefectMarkers);
-      setRegion(nextRegion);
-    } catch (loadError) {
-      if (loadError instanceof ApiError && loadError.status === 401) {
-        await handleUnauthorized(loadError);
-        return;
+        const assetList = await loadAssetsForMap(token, substationId, visitId);
+        setAssets(assetList);
+
+        // A silent refresh (triggered when the screen regains focus) only needs
+        // the asset list to recolor inspected poles — skip the per-defect detail
+        // fan-out and the region re-fit so we don't re-pay an N+1 network cost on
+        // weak field links, and the user's current pan/zoom is preserved. Defect
+        // markers from the initial load persist in state.
+        if (!silent) {
+          const nextDefectMarkers = await loadDefectMarkers(token, assetList);
+          setDefectMarkers(nextDefectMarkers);
+
+          const nextRegion = createRegion([
+            ...assetList.map(getAssetCoordinate).filter(isCoordinate),
+            ...nextDefectMarkers.map((defect) => ({
+              latitude: defect.latitude,
+              longitude: defect.longitude,
+            })),
+          ]);
+          setRegion(nextRegion);
+        }
+      } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          await handleUnauthorized(loadError);
+          return;
+        }
+
+        setError(
+          loadError instanceof Error ? loadError.message : 'Unable to load map data.',
+        );
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
       }
+    },
+    [handleUnauthorized, substationId, token, visitId],
+  );
 
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load map data.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleUnauthorized, substationId, token, visitId]);
-
-  useEffect(() => {
-    loadMapData();
-  }, [loadMapData]);
+  // Refetch when the Map regains focus (e.g. returning after submitting an
+  // inspection) so inspected poles recolor without a manual refresh. The first
+  // focus does a full load with region fit; later focuses refresh silently,
+  // preserving the user's current view.
+  const hasFocusedOnceRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (hasFocusedOnceRef.current) {
+        void loadMapData({ silent: true });
+      } else {
+        hasFocusedOnceRef.current = true;
+        void loadMapData();
+      }
+    }, [loadMapData]),
+  );
 
   useEffect(() => {
     void requestCurrentLocation();
@@ -507,7 +538,7 @@ export function MapScreen() {
       }}
       rightAction={{
         icon: 'refresh',
-        onPress: loadMapData,
+        onPress: () => loadMapData(),
         accessibilityLabel: 'Refresh',
         disabled: isLoading,
       }}
