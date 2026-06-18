@@ -654,6 +654,27 @@ export function AssetDetailScreen() {
                   </View>
                 </>
               ) : null}
+
+              {latestInspection.status === 'SUBMITTED' && visitId ? (
+                <Pressable
+                  onPress={() =>
+                    navigation.navigate('InspectionForm', {
+                      inspectionId: latestInspection.id,
+                      visitId,
+                      substationId: substationId ?? '',
+                      operationalSessionId,
+                    })
+                  }
+                  style={({ pressed }) => [
+                    styles.editInspectionButton,
+                    pressed && styles.pressedButton,
+                  ]}
+                >
+                  <Text style={styles.editInspectionButtonText}>
+                    Edit Defects / Amend Inspection
+                  </Text>
+                </Pressable>
+              ) : null}
             </>
           ) : (
             <Text style={styles.placeholderText}>No submitted inspection.</Text>
@@ -1150,6 +1171,20 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       fontWeight: '700',
       color: t.colors.textPrimary,
+    },
+    editInspectionButton: {
+      minHeight: 44,
+      borderRadius: t.radius.card,
+      backgroundColor: t.colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 18,
+      marginTop: 16,
+    },
+    editInspectionButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: t.colors.textOnPrimary,
     },
     disabledButton: {
       opacity: 0.6,
