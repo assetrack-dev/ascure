@@ -46,15 +46,41 @@ cell of a table row to repeat the row.
 **Defects** — failed items flagged as defects (`{#defects}` … `{/defects}`):
 `{label}`, `{severity}`, `{status}`, `{lifecycle}`, `{dueDate}`, `{remark}`
 
-**Photos** — inspection + defect-evidence images (`{#photos}` … `{/photos}`):
+**Photos — all** — every image (`{#photos}` … `{/photos}`):
 `{image}` (the embedded photo — put this tag where the picture should appear),
 `{caption}`, `{source}`
+
+**Other photos** — everything NOT tied to a checklist IMAGE item (ad-hoc
+captures + defect evidence) (`{#otherPhotos}` … `{/otherPhotos}`): same fields
+`{image}`, `{caption}`, `{source}`. Use this for a "remaining photos" gallery so
+per-item photos you placed individually (see below) are **not** duplicated.
+
+**Per-item photos — labelled** — one entry per IMAGE checklist item that has a
+photo (`{#photoItems}` … `{/photoItems}`): `{label}`, `{key}`, `{tag}`, `{image}`.
+
+## Place a specific item's photo — `{img_<KEY>}`
+
+Every IMAGE-type checklist item's photo is also exposed as a **flat tag**, so you
+can drop a specific photo exactly where you want it (independent of the loops).
+The tag is `img_` + the item's **key**, uppercased with each run of
+non-alphanumeric characters collapsed to `_`:
+
+| Checklist item key | Tag |
+| --- | --- |
+| `GAMBAR PENUH TIANG` | `{img_GAMBAR_PENUH_TIANG}` |
+| `GAMBAR SPAN` | `{img_GAMBAR_SPAN}` |
+
+Place `{img_GAMBAR_PENUH_TIANG}` where the picture belongs, then use
+`{#otherPhotos}` … `{/otherPhotos}` for the rest — it excludes the per-item
+photos, so nothing duplicates. (Tip: drop a `{#photoItems}` loop printing `{tag}`
+into a draft to discover the exact tag for each IMAGE item in your template.)
 
 ## Conditionals (show a block only when there is data)
 
 Boolean flags can gate a whole section so empty tables don't render:
 `{#hasReadings}` … `{/hasReadings}`, `{#hasChecks}` … `{/hasChecks}`,
-`{#hasDefects}` … `{/hasDefects}`, `{#hasPhotos}` … `{/hasPhotos}`.
+`{#hasDefects}` … `{/hasDefects}`, `{#hasPhotos}` … `{/hasPhotos}`,
+`{#hasPhotoItems}` … `{/hasPhotoItems}`, `{#hasOtherPhotos}` … `{/hasOtherPhotos}`.
 
 ## Notes
 

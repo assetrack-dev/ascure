@@ -89,6 +89,14 @@ interface AssetReportData {
     remark: string;
   }>;
   photos: Array<{ image: ImageContent; caption: string; source: string }>;
+  // Per-IMAGE-item photos for the labelled loop ({#photoItems}); each item's
+  // photo is ALSO exposed as a flat {img_<KEY>} tag for direct placement.
+  photoItems: Array<{ key: string; label: string; tag: string; image: ImageContent }>;
+  // Everything NOT tied to a checklist IMAGE item (ad-hoc captures + defect
+  // evidence) — use {#otherPhotos} so placed item photos aren't duplicated.
+  otherPhotos: Array<{ image: ImageContent; caption: string; source: string }>;
+  hasPhotoItems: boolean;
+  hasOtherPhotos: boolean;
 }
 
 const assetReportInclude = {
@@ -159,6 +167,7 @@ const assetReportInclude = {
     select: {
       url: true,
       filename: true,
+      templateItemId: true,
       latitude: true,
       longitude: true,
       timestamp: true,
@@ -558,9 +567,13 @@ export class ReportGenerationService {
         remark: item.remark ?? item.defect?.actionRemark ?? '',
       }));
 
-    const photos = await this.collectPhotos(inspection);
+    const itemImageMap = await this.buildItemImageMap(inspection.inspectionImages);
+    const { photos, photoItems, otherPhotos, namedImages } = await this.collectPhotos(
+      inspection,
+      itemImageMap,
+    );
 
-    return {
+    const data: AssetReportData = {
       assetCode: asset.assetCode,
       assetName: asset.name ?? '',
       assetType: asset.assetType?.name ?? '',
@@ -595,22 +608,100 @@ export class ReportGenerationService {
       checks,
       defects,
       photos,
+      photoItems,
+      otherPhotos,
+      hasPhotoItems: photoItems.length > 0,
+      hasOtherPhotos: otherPhotos.length > 0,
     };
+
+    // Per-item IMAGE-field photos are also exposed as flat {img_<KEY>} tags so a
+    // template can place a specific photo (e.g. {img_GAMBAR_PENUH_TIANG}) exactly
+    // where it wants; {#otherPhotos} then carries everything NOT placed this way,
+    // so there is no duplication.
+    const dynamic = data as unknown as Record<string, unknown>;
+    for (const [tag, image] of Object.entries(namedImages)) {
+      dynamic[tag] = image;
+    }
+
+    return data;
+  }
+
+  private async buildItemImageMap(
+    images: ReadonlyArray<{ templateItemId: string | null }>,
+  ): Promise<Map<string, { key: string; label: string }>> {
+    const ids = [
+      ...new Set(
+        images
+          .map((image) => image.templateItemId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    if (ids.length === 0) {
+      return new Map();
+    }
+
+    const items = await this.prisma.inspectionTemplateItem.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, key: true, label: true },
+    });
+
+    return new Map(
+      items.map((item) => [item.id, { key: item.key, label: item.label }]),
+    );
+  }
+
+  /**
+   * Flat, tag-safe placeholder name for a checklist item's photo, e.g. key
+   * "GAMBAR PENUH TIANG" -> "img_GAMBAR_PENUH_TIANG" -> {img_GAMBAR_PENUH_TIANG}.
+   */
+  private imageTagForKey(key: string): string {
+    const safe = key
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return `img_${safe || 'ITEM'}`;
   }
 
   private async collectPhotos(
     inspection: AssetReportInspection,
-  ): Promise<AssetReportData['photos']> {
+    itemImageMap: Map<string, { key: string; label: string }>,
+  ): Promise<{
+    photos: AssetReportData['photos'];
+    photoItems: AssetReportData['photoItems'];
+    otherPhotos: AssetReportData['otherPhotos'];
+    namedImages: Record<string, ImageContent>;
+  }> {
     const photos: AssetReportData['photos'] = [];
+    const photoItems: AssetReportData['photoItems'] = [];
+    const otherPhotos: AssetReportData['otherPhotos'] = [];
+    const namedImages: Record<string, ImageContent> = {};
 
     for (const image of inspection.inspectionImages) {
       const loaded = await loadReportImage(image);
-      if (loaded) {
-        photos.push({
-          image: loaded,
-          caption: image.filename ?? '',
-          source: 'Inspection',
-        });
+      if (!loaded) {
+        continue;
+      }
+
+      const item = image.templateItemId
+        ? itemImageMap.get(image.templateItemId)
+        : undefined;
+      const caption = item?.label ?? image.filename ?? '';
+
+      // Every image still appears in the all-inclusive {#photos} loop.
+      photos.push({ image: loaded, caption, source: 'Inspection' });
+
+      if (item) {
+        const tag = this.imageTagForKey(item.key);
+        photoItems.push({ key: item.key, label: item.label, tag, image: loaded });
+        // First photo for an item wins its named {img_<KEY>} placement tag.
+        if (!(tag in namedImages)) {
+          namedImages[tag] = loaded;
+        }
+      } else {
+        // Ad-hoc / global captures (no checklist item) feed {#otherPhotos}.
+        otherPhotos.push({ image: loaded, caption, source: 'Inspection' });
       }
     }
 
@@ -618,16 +709,19 @@ export class ReportGenerationService {
       for (const evidence of item.defect?.evidenceImages ?? []) {
         const loaded = await loadReportImage(evidence);
         if (loaded) {
-          photos.push({
+          const photo = {
             image: loaded,
             caption: evidence.note ?? item.label,
             source: evidence.evidenceType ?? 'Defect evidence',
-          });
+          };
+          // Defect evidence is "other" (not a per-item IMAGE field).
+          photos.push(photo);
+          otherPhotos.push(photo);
         }
       }
     }
 
-    return photos;
+    return { photos, photoItems, otherPhotos, namedImages };
   }
 
   private async findLatestSubmittedInspection(
