@@ -35,6 +35,7 @@ import {
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import {
+  Asset,
   DefectListItem,
   DefectSeverity,
   EffectiveCapability,
@@ -911,24 +912,71 @@ function toTimestamp(value?: string | null) {
 async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   return Promise.all(
     visits.map(async (visit) => {
+      let detailed: SiteVisit = visit;
+
       try {
         // Cache each detailed visit so VisitDetail can be re-opened offline; on
         // an unreachable server cachedFetch serves the cached copy, and if even
-        // that is missing we fall back to the list-level visit below.
+        // that is missing we fall back to the list-level visit.
         const { value } = await cachedFetch('site-visit', visit.id, () =>
           api.getSiteVisit(token, visit.id),
         );
-
-        return value;
+        detailed = value;
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           throw error;
         }
-
-        return visit;
       }
+
+      // Warm the visit's asset register + per-type inspection templates while
+      // online, so an In-Progress visit can be opened AND inspected offline
+      // after just loading Home online (not only after opening it online).
+      await warmVisitOfflineCache(token, detailed);
+
+      return detailed;
     }),
   );
+}
+
+async function warmVisitOfflineCache(token: string, visit: SiteVisit) {
+  try {
+    const assets = await cachedFetch('site-visit-assets', visit.id, () =>
+      api.getSiteVisitAssets(token, visit.id),
+    )
+      .then((result) => result.value)
+      .catch(() => [] as Asset[]);
+
+    if (visit.substationId) {
+      await cachedFetch('assets', visit.substationId, () =>
+        api.getAssets(token, visit.substationId as string),
+      ).catch(() => undefined);
+    }
+
+    // One inspection template per distinct asset type — keyed exactly like
+    // AssetDetailScreen.handleStartInspection (`visitId:session:assetTypeId`,
+    // session 'none' for SAVR) so offline Start Inspection resolves from cache.
+    const seenTypes = new Set<string>();
+    await Promise.all(
+      assets.map((asset) => {
+        if (!asset.assetTypeId || seenTypes.has(asset.assetTypeId)) {
+          return Promise.resolve(undefined);
+        }
+
+        seenTypes.add(asset.assetTypeId);
+
+        return cachedFetch('inspection-template', `${visit.id}:none:${asset.assetTypeId}`, () =>
+          api.resolveInspectionTemplate(token, {
+            assetId: asset.id,
+            assetTypeId: asset.assetTypeId,
+            assetType: asset.assetType?.name,
+            siteVisitId: visit.id,
+          }),
+        ).catch(() => undefined);
+      }),
+    );
+  } catch {
+    // Best-effort warm — never block or fail Home's load.
+  }
 }
 
 function getAvailableInspectionScopes(

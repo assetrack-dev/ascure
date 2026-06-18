@@ -130,6 +130,25 @@ export function AssetDetailScreen() {
       ]);
       setAsset(response);
       setEditableAsset(assetSnapshot ?? assetList?.find((item) => item.id === assetId) ?? null);
+
+      // Warm this asset type's inspection template (same cache key as Start
+      // Inspection) so it can be started offline later, even for a brand-new
+      // asset type not yet seen in the visit's register.
+      if (visitId && !isTempId(assetId)) {
+        const warmTypeKey = assetSnapshot?.assetTypeId ?? response.assetTypeId ?? response.assetType;
+        void cachedFetch(
+          'inspection-template',
+          `${visitId}:${operationalSessionId ?? 'none'}:${warmTypeKey}`,
+          () =>
+            api.resolveInspectionTemplate(token, {
+              assetId,
+              assetTypeId: response.assetTypeId,
+              assetType: response.assetType,
+              siteVisitId: visitId,
+              operationalSessionId,
+            }),
+        ).catch(() => undefined);
+      }
     } catch (error) {
       console.error('[ASSET DETAIL LOAD ERROR]', error);
 
@@ -147,7 +166,7 @@ export function AssetDetailScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [assetId, assetSnapshot, handleUnauthorized, substationId, token]);
+  }, [assetId, assetSnapshot, handleUnauthorized, operationalSessionId, substationId, token, visitId]);
 
   useEffect(() => {
     loadAssetDetail();

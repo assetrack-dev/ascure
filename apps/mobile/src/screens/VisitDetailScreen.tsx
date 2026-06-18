@@ -98,14 +98,27 @@ export function VisitDetailScreen() {
           setIsLoading(true);
         }
 
-        // Offline-first: serve cached visit + asset register when the server is
-        // unreachable, so an In-Progress visit opens in the field.
-        const [visitResult, substationAssetResult] = await Promise.all([
-          cachedFetch('site-visit', visitId, () => api.getSiteVisit(token, visitId)),
-          cachedFetch('assets', substationId, () => api.getAssets(token, substationId)),
-        ]);
-        const visitResponse = visitResult.value;
-        const substationAssetList = substationAssetResult.value;
+        // Offline-first: serve the cached visit when the server is unreachable.
+        const { value: visitResponse } = await cachedFetch('site-visit', visitId, () =>
+          api.getSiteVisit(token, visitId),
+        );
+
+        // Load the asset register INDEPENDENTLY — a cold register cache (e.g.
+        // only Home was opened online, not this visit) must not blank the whole
+        // visit; show it with whatever assets are available.
+        let substationAssetList: Asset[] = [];
+        try {
+          const { value } = await cachedFetch('assets', substationId, () =>
+            api.getAssets(token, substationId),
+          );
+          substationAssetList = value;
+        } catch (assetError) {
+          if (assetError instanceof ApiError && assetError.status === 401) {
+            throw assetError;
+          }
+          // Offline + no cached register → empty; the visit still opens.
+        }
+
         const visitAssetList = await loadVisitScopedAssets(token, visitId, substationAssetList);
 
         setVisit(visitResponse);
