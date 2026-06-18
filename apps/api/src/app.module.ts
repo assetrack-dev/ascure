@@ -17,6 +17,7 @@ import { ReportsModule } from './reports/reports.module';
 import { ReportGenerationModule } from './report-generation/report-generation.module';
 import { ImportsModule } from './imports/imports.module';
 import { SyncModule } from './sync/sync.module';
+import { PublicModule } from './public/public.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { SyncModule } from './sync/sync.module';
     ReportGenerationModule,
     ImportsModule,
     SyncModule,
+    PublicModule,
   ],
 })
 export class AppModule {}
