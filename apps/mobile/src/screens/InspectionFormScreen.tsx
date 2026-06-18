@@ -125,6 +125,13 @@ export function InspectionFormScreen() {
   } | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
+  // The inspection (its answers, photos and defects) is read-only once it is
+  // submitted OR once the owning Pencawang/site visit has been Completed or
+  // Cancelled. The server enforces the same rule; editing is only possible
+  // while the visit is still open (Amend re-opens a submitted inspection).
+  const visitStatus = form?.inspection.siteVisit.status;
+  const isVisitClosed = visitStatus === 'COMPLETED' || visitStatus === 'CANCELLED';
+  const isReadOnly = isSubmitted || isVisitClosed;
   const checklistSections = form ? getVisibleInspectionSections(form, draftValues) : [];
   const checklistItemCount = checklistSections.reduce(
     (total, section) => total + section.items.length,
@@ -375,7 +382,7 @@ export function InspectionFormScreen() {
   }
 
   async function captureInspectionPhoto() {
-    if (isSubmitted) {
+    if (isReadOnly) {
       return null;
     }
 
@@ -591,7 +598,7 @@ export function InspectionFormScreen() {
   // Re-open a submitted inspection for correction (tweak B): the API reverts it
   // to DRAFT and the form becomes editable again so the user can fix + re-submit.
   async function handleAmendInspection() {
-    if (!form || !isSubmitted) {
+    if (!form || !isSubmitted || isVisitClosed) {
       return;
     }
 
@@ -621,7 +628,7 @@ export function InspectionFormScreen() {
   }
 
   async function handleSubmitInspection() {
-    if (!form || isSubmitted) {
+    if (!form || isReadOnly) {
       return;
     }
 
@@ -717,7 +724,7 @@ export function InspectionFormScreen() {
   }
 
   async function handleSaveDraft() {
-    if (!form || isSubmitted) {
+    if (!form || isReadOnly) {
       return;
     }
 
@@ -815,41 +822,48 @@ export function InspectionFormScreen() {
                 : photoUploadNotice
             }
           />
-          {isSubmitted ? <SuccessBanner message="This inspection has already been submitted." /> : null}
-          {!isSubmitted ? <SuccessBanner message={saveNotice} /> : null}
-          <View style={styles.footerActions}>
-            {isSubmitted ? (
-              <View style={styles.footerActionPrimary}>
-                <AppButton
-                  label={isAmending ? 'Re-opening...' : 'Amend / Edit'}
-                  onPress={handleAmendInspection}
-                  variant="secondary"
-                  loading={isAmending}
-                  disabled={isBusy}
-                />
-              </View>
-            ) : (
-              <>
-                <View style={styles.footerActionSecondary}>
-                  <AppButton
-                    label={isSavingDraft ? 'Saving...' : 'Save Draft'}
-                    onPress={handleSaveDraft}
-                    variant="secondary"
-                    loading={isSavingDraft}
-                    disabled={isBusy || isTemplateEmpty}
-                  />
-                </View>
+          {isVisitClosed ? (
+            <WarningBanner message="This site visit is complete — the inspection is now read-only." />
+          ) : isSubmitted ? (
+            <SuccessBanner message="This inspection has already been submitted." />
+          ) : (
+            <SuccessBanner message={saveNotice} />
+          )}
+          {isVisitClosed ? null : (
+            <View style={styles.footerActions}>
+              {isSubmitted ? (
                 <View style={styles.footerActionPrimary}>
                   <AppButton
-                    label={isSubmitting ? 'Submitting...' : 'Submit'}
-                    onPress={handleSubmitInspection}
-                    loading={isSubmitting}
-                    disabled={isBusy || isTemplateEmpty}
+                    label={isAmending ? 'Re-opening...' : 'Amend / Edit'}
+                    onPress={handleAmendInspection}
+                    variant="secondary"
+                    loading={isAmending}
+                    disabled={isBusy}
                   />
                 </View>
-              </>
-            )}
-          </View>
+              ) : (
+                <>
+                  <View style={styles.footerActionSecondary}>
+                    <AppButton
+                      label={isSavingDraft ? 'Saving...' : 'Save Draft'}
+                      onPress={handleSaveDraft}
+                      variant="secondary"
+                      loading={isSavingDraft}
+                      disabled={isBusy || isTemplateEmpty}
+                    />
+                  </View>
+                  <View style={styles.footerActionPrimary}>
+                    <AppButton
+                      label={isSubmitting ? 'Submitting...' : 'Submit'}
+                      onPress={handleSubmitInspection}
+                      loading={isSubmitting}
+                      disabled={isBusy || isTemplateEmpty}
+                    />
+                  </View>
+                </>
+              )}
+            </View>
+          )}
         </View>
       }
     >
@@ -890,7 +904,7 @@ export function InspectionFormScreen() {
             photos={photos}
             isBusy={isBusy}
             isCapturingPhoto={isCapturingPhoto}
-            isSubmitted={Boolean(isSubmitted)}
+            isSubmitted={Boolean(isReadOnly)}
             onTakePhoto={handleTakePhoto}
             onOpenPhoto={setSelectedPhotoUri}
             onRetakePhoto={handleRetakePhoto}
@@ -911,7 +925,7 @@ export function InspectionFormScreen() {
                   sectionIndex={sectionIndex}
                   draftValues={draftValues}
                   emergencyItemIds={emergencyItemIds}
-                  isSubmitted={Boolean(isSubmitted)}
+                  isSubmitted={Boolean(isReadOnly)}
                   onUpdateDraftValue={updateDraftValue}
                   onToggleEmergency={toggleEmergency}
                   onScanReading={handleScanReading}

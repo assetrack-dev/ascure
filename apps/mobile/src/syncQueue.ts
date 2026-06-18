@@ -748,6 +748,13 @@ async function syncQueueItem(
       return;
     }
 
+    // Visit closed before this queued edit could sync — it can never apply, so
+    // drop it rather than retry forever (see isVisitClosedError).
+    if (isVisitClosedError(error)) {
+      await completeQueueItem(item.id);
+      return;
+    }
+
     await markItemFailed(item.id, getErrorMessage(error));
     throw error;
   }
@@ -1338,6 +1345,24 @@ function isAlreadySubmittedError(error: unknown) {
   return (
     message.includes('already been submitted') ||
     message.includes('submitted inspections cannot be modified')
+  );
+}
+
+// The owning Pencawang/site visit was Completed or Cancelled before this
+// offline edit could sync, so the server (assertVisitEditable) permanently
+// rejects it — it can never apply. Recognise it as terminal so the queue drops
+// it instead of retrying every pass and inflating the failed badge. Keep this
+// substring in sync with the API message in inspections.service.ts.
+function isVisitClosedError(error: unknown) {
+  if (!(error instanceof ApiError) || error.status !== 400) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes('site visit has been completed') ||
+    message.includes('no longer be edited')
   );
 }
 

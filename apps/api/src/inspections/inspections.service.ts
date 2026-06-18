@@ -276,6 +276,8 @@ export class InspectionsService {
 
     const inspection = await this.getAccessibleInspection(inspectionId, user);
 
+    this.assertVisitEditable(inspection.siteVisit.status);
+
     if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
       throw new BadRequestException('Submitted inspections cannot be modified.');
     }
@@ -332,6 +334,24 @@ export class InspectionsService {
   }
 
   /**
+   * Block all inspection edits once the owning site visit (Pencawang) is no
+   * longer active — i.e. it has been Completed or Cancelled. Inspections, and
+   * the defects their checklist answers produce, are editable only while the
+   * visit is open. siteVisit.status is loaded by inspectionInclude().
+   */
+  private assertVisitEditable(siteVisitStatus: SiteVisitStatus) {
+    const isActive = (
+      ACTIVE_SITE_VISIT_STATUSES as readonly SiteVisitStatus[]
+    ).includes(siteVisitStatus);
+
+    if (!isActive) {
+      throw new BadRequestException(
+        'This site visit has been completed. The inspection can no longer be edited.',
+      );
+    }
+  }
+
+  /**
    * Re-open a SUBMITTED inspection for correction (amend tweak): revert it to
    * DRAFT so the field user can fix wrongly-entered data and re-submit. Blocked
    * if any of its defects has already entered maintenance (assigned / in
@@ -343,6 +363,8 @@ export class InspectionsService {
     this.assertCanMutate(user);
 
     const inspection = await this.getAccessibleInspection(inspectionId, user);
+
+    this.assertVisitEditable(inspection.siteVisit.status);
 
     if (inspection.completionStatus !== InspectionCompletionStatus.SUBMITTED) {
       throw new BadRequestException('Only a submitted inspection can be amended.');
@@ -492,6 +514,8 @@ export class InspectionsService {
 
     const inspection = await this.getAccessibleInspection(inspectionId, user);
 
+    this.assertVisitEditable(inspection.siteVisit.status);
+
     if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
       throw new BadRequestException('Inspection has already been submitted.');
     }
@@ -574,12 +598,19 @@ export class InspectionsService {
       },
       select: {
         id: true,
+        siteVisit: {
+          select: {
+            status: true,
+          },
+        },
       },
     });
 
     if (!inspection) {
       throw new NotFoundException('Inspection not found.');
     }
+
+    this.assertVisitEditable(inspection.siteVisit.status);
 
     const uploadDirectory = buildInspectionImagesDirectory(inspection.id);
 
