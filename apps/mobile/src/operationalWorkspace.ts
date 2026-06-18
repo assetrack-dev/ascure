@@ -10,18 +10,16 @@ import type {
 const INSPECTION_WORKSPACE_CAPABILITY_CODE = 'INSPECTION';
 const MAINTENANCE_WORKSPACE_CAPABILITY_CODE = 'MAINTENANCE';
 
-// Any of these capabilities unlock the Inspection workspace. A field
-// technician is frequently granted only scope-specific inspection
-// capabilities (SAVR/SAVT/PENCAWANG/...) without the umbrella INSPECTION code.
-const INSPECTION_CAPABILITY_CODES = new Set<string>([
-  INSPECTION_WORKSPACE_CAPABILITY_CODE,
-  'SAVR',
-  'SAVT',
-  'PENCAWANG',
-  'FEEDER_PILLAR',
-  'CABLE_BRIDGE',
-  'LINK_BOX',
-]);
+// Workspace visibility is driven ONLY by the explicit Workspace Access codes
+// (INSPECTION / MAINTENANCE), mirroring the admin "Workspace Access" group
+// ("Lets users enter this mobile workspace"). Asset-domain codes
+// (SAVR/SAVT/PENCAWANG/...) describe which asset classes an account operates on
+// WITHIN a workspace — they must never unlock a workspace on their own.
+//
+// Previously any asset-domain code unlocked Inspection, which leaked the
+// Inspection workspace to maintenance-only accounts that hold a domain grant
+// (e.g. MAINTENANCE + SAVR). Inspection is now strict and symmetric with
+// Maintenance: the explicit INSPECTION code (or ADMIN) is required.
 
 function normalizeCapabilityCode(code: string): string {
   return code.trim().toUpperCase();
@@ -80,10 +78,11 @@ export function getAvailableMobileWorkspaces(
   const isAdmin = user.role === 'ADMIN';
   const workspaces: MobileWorkspace[] = [];
 
-  // Inspection: ADMIN, the umbrella INSPECTION code, OR any scope-specific
-  // inspection capability (SAVR/SAVT/PENCAWANG/...).
+  // Inspection: STRICT. Only the explicit INSPECTION Workspace Access code or
+  // ADMIN. Never inferred from asset-domain codes (SAVR/SAVT/PENCAWANG/...),
+  // symmetric with the Maintenance gate below.
   const hasInspectionAuthority =
-    isAdmin || [...codes].some((code) => INSPECTION_CAPABILITY_CODES.has(code));
+    isAdmin || codes.has(INSPECTION_WORKSPACE_CAPABILITY_CODE);
 
   if (hasInspectionAuthority) {
     workspaces.push(INSPECTION_WORKSPACE);
