@@ -13,6 +13,8 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
+import { cachedFetch, prependToCachedArray } from '../offlineCache';
+import { enqueueMutation, isTempId, mintTempId } from '../syncQueue';
 import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
@@ -232,9 +234,13 @@ export function AddAssetScreen() {
       setError(null);
       setIsLoading(true);
 
+      // Cache the reference data so the Add Asset form still renders offline
+      // (these gate the Save button, so without them the form is unusable).
       const [assetTypeList, substationList] = await Promise.all([
-        api.getAssetTypes(token),
-        substationId ? Promise.resolve<Substation[]>([]) : api.getSubstations(token),
+        cachedFetch('asset-types', undefined, () => api.getAssetTypes(token)).then((r) => r.value),
+        substationId
+          ? Promise.resolve<Substation[]>([])
+          : cachedFetch('substations', undefined, () => api.getSubstations(token)).then((r) => r.value),
       ]);
 
       setAssetTypes(assetTypeList);
@@ -472,6 +478,11 @@ export function AddAssetScreen() {
       setIsSubmitting(true);
 
       if (assetToEdit) {
+        if (isTempId(assetToEdit.id)) {
+          setError('This pole has not synced yet. Connect and let it sync before editing.');
+          return;
+        }
+
         let savedAsset = await api.updateAsset(token, assetToEdit.id, {
           assetTypeId: selectedAssetTypeId,
           // Allow moving the pole to a different Pencawang (tweak A).
@@ -493,7 +504,7 @@ export function AddAssetScreen() {
         return;
       }
 
-      const savedAsset = await api.createAsset(token, {
+      const createInput = {
         substationId: targetSubstationId,
         assetTypeId: selectedAssetTypeId,
         assetCode: normalizedAssetCode,
@@ -503,9 +514,64 @@ export function AddAssetScreen() {
         metadata: assetMetadata,
         status: targetAssetStatus,
         createdDuringVisitId: siteVisitId,
-      });
+      };
 
-      goToSavedAsset(savedAsset);
+      try {
+        const savedAsset = await api.createAsset(token, createInput);
+        goToSavedAsset(savedAsset);
+      } catch (createError) {
+        // Offline (server unreachable) → queue the create and optimistically open
+        // the new pole so field work continues; it reconciles to a real id on
+        // sync. Needs the resolved asset type (cached) to render the asset.
+        if (createError instanceof ApiError && createError.status === 0 && selectedAssetType) {
+          const tempId = mintTempId('asset');
+
+          await enqueueMutation({
+            type: 'CREATE_ASSET',
+            payload: createInput as Record<string, unknown>,
+            tempId,
+            label: normalizedAssetCode,
+            sublabel: selectedSubstation
+              ? `${selectedSubstation.code} - ${selectedSubstation.name}`
+              : undefined,
+          });
+
+          const optimisticAsset: Asset = {
+            id: tempId,
+            substationId: targetSubstationId,
+            assetTypeId: selectedAssetTypeId,
+            assetCode: normalizedAssetCode,
+            name: normalizedAssetName ?? null,
+            latitude: parsedLatitude ?? null,
+            longitude: parsedLongitude ?? null,
+            metadata: assetMetadata ?? null,
+            status: targetAssetStatus ?? 'ACTIVE',
+            createdDuringVisitId: siteVisitId ?? null,
+            assetType: selectedAssetType,
+            substation: selectedSubstation
+              ? {
+                  id: selectedSubstation.id,
+                  code: selectedSubstation.code,
+                  name: selectedSubstation.name,
+                }
+              : undefined,
+            latestInspection: null,
+          };
+
+          // Surface the new pole in the cached registers (visit asset list + map).
+          await Promise.all([
+            siteVisitId
+              ? prependToCachedArray('site-visit-assets', siteVisitId, optimisticAsset, (a) => a.id)
+              : Promise.resolve(),
+            prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
+          ]);
+
+          goToSavedAsset(optimisticAsset);
+          return;
+        }
+
+        throw createError;
+      }
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         await handleUnauthorized(submitError);

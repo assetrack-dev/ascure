@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import {
   Card,
   EmptyState,
@@ -60,13 +61,24 @@ export function VisitAssetsScreen() {
           setIsLoading(true);
         }
 
-        const visitResponse = await api.getSiteVisit(token, visitId);
+        const { value: visitResponse } = await cachedFetch('site-visit', visitId, () =>
+          api.getSiteVisit(token, visitId),
+        );
         let visitAssets: Asset[];
         try {
-          visitAssets = await api.getSiteVisitAssets(token, visitId);
+          const { value } = await cachedFetch('site-visit-assets', visitId, () =>
+            api.getSiteVisitAssets(token, visitId),
+          );
+          visitAssets = value;
         } catch (assetError) {
-          if (isEndpointUnavailableError(assetError)) {
-            visitAssets = await api.getAssets(token, substationId);
+          if (
+            isEndpointUnavailableError(assetError) ||
+            (assetError instanceof ApiError && assetError.status === 0)
+          ) {
+            const { value } = await cachedFetch('assets', substationId, () =>
+              api.getAssets(token, substationId),
+            );
+            visitAssets = value;
           } else {
             throw assetError;
           }

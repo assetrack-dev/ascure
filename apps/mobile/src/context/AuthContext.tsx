@@ -17,6 +17,7 @@ import {
   storeToken,
   storeUser,
 } from '../storage';
+import { clearAllCache } from '../offlineCache';
 import type { SessionUser } from '../types';
 
 // A 401 can mean the token simply expired/was invalidated, or that this account
@@ -58,49 +59,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
 
     async function restoreSession() {
-      try {
-        const [storedToken, cachedUser] = await Promise.all([
-          loadStoredToken(),
-          loadStoredUser(),
-        ]);
+      const [storedToken, cachedUser] = await Promise.all([
+        loadStoredToken(),
+        loadStoredUser(),
+      ]);
 
-        if (!storedToken) {
+      if (!storedToken) {
+        if (isMounted) {
+          setIsBooting(false);
+        }
+        return;
+      }
+
+      // Offline-first boot: with a cached profile, show the app IMMEDIATELY from
+      // cache and revalidate in the BACKGROUND, so a cold boot in the field never
+      // hangs on the (up-to-20s) /auth/me timeout. Only a real 401 from the
+      // background check ends the session; an offline/transient failure keeps the
+      // crew logged in.
+      if (cachedUser) {
+        if (isMounted) {
+          setToken(storedToken);
+          setUser(cachedUser);
+          setIsBooting(false);
+        }
+
+        void api
+          .getMe(storedToken)
+          .then(async (freshUser) => {
+            await storeUser(freshUser);
+            if (isMounted) {
+              setUser(freshUser);
+            }
+          })
+          .catch(async (error) => {
+            if (error instanceof ApiError && error.status === 401) {
+              await Promise.all([removeStoredToken(), removeStoredUser(), clearAllCache()]);
+              if (isMounted) {
+                setToken(null);
+                setUser(null);
+                const { title, message } = describeSignOut(error);
+                Alert.alert(title, message);
+              }
+            }
+            // Offline / transient — keep the cached session as-is.
+          });
+
+        return;
+      }
+
+      // No cached profile (a pre-update session): we must validate online to get
+      // the user before we can render authenticated screens.
+      try {
+        const currentUser = await api.getMe(storedToken);
+
+        if (!isMounted) {
           return;
         }
 
-        try {
-          const currentUser = await api.getMe(storedToken);
+        await storeUser(currentUser);
+        setToken(storedToken);
+        setUser(currentUser);
+      } catch (error) {
+        // A real auth rejection ends the session (expired/deactivated/reset/
+        // signed-in-elsewhere). Offline + no cache → can't render authed screens,
+        // so stay on login but KEEP the token for the next (online) boot.
+        if (error instanceof ApiError && error.status === 401) {
+          await Promise.all([removeStoredToken(), removeStoredUser(), clearAllCache()]);
 
-          if (!isMounted) {
-            return;
-          }
-
-          await storeUser(currentUser);
-          setToken(storedToken);
-          setUser(currentUser);
-        } catch (error) {
-          // Only a real auth rejection ends the session: the long-lived token
-          // expired, the account was deactivated, the password was reset, or it
-          // was signed in on another phone. Drop the session and explain why.
-          if (error instanceof ApiError && error.status === 401) {
-            await Promise.all([removeStoredToken(), removeStoredUser()]);
-
-            if (isMounted) {
-              const { title, message } = describeSignOut(error);
-              Alert.alert(title, message);
-            }
-
-            return;
-          }
-
-          // Couldn't reach the server (offline / timeout / transient). Keep the
-          // crew logged in using the last known profile so the app works
-          // offline; the next online request revalidates the token. Without a
-          // cached profile (a pre-update session) we can't render authenticated
-          // screens, so fall through to login but keep the token for next boot.
-          if (isMounted && cachedUser) {
-            setToken(storedToken);
-            setUser(cachedUser);
+          if (isMounted) {
+            const { title, message } = describeSignOut(error);
+            Alert.alert(title, message);
           }
         }
       } finally {

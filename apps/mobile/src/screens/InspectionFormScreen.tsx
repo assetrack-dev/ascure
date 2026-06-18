@@ -21,8 +21,10 @@ import {
   cleanupLocalInspectionPhotos,
   enqueueInspectionSubmission,
   isRetryableSyncError,
+  isTempId,
   persistCapturedInspectionPhoto,
 } from '../syncQueue';
+import { cachedFetch, readCache } from '../offlineCache';
 import {
   buildChecklistItemsPayloadFromDraft,
   buildResultsPayload,
@@ -137,7 +139,26 @@ export function InspectionFormScreen() {
       setSaveNotice(null);
       setIsLoading(true);
 
-      const formResponse = await api.getInspectionForm(token, inspectionId);
+      let formResponse: InspectionFormResponse;
+
+      if (isTempId(inspectionId)) {
+        // Offline-created inspection: no server form — read the form synthesized
+        // and cached when it was started offline.
+        const cached = await readCache<InspectionFormResponse>('inspection-form', inspectionId);
+
+        if (!cached) {
+          throw new ApiError('This inspection has not synced to the server yet.', 0, null);
+        }
+
+        formResponse = cached.value;
+      } else {
+        // Cache the form so an inspection opened online can be filled offline.
+        const { value } = await cachedFetch('inspection-form', inspectionId, () =>
+          api.getInspectionForm(token, inspectionId),
+        );
+        formResponse = value;
+      }
+
       setForm(formResponse);
       setDraftValues(createInitialDraftValues(formResponse));
       setEmergencyItemIds(createInitialEmergencyMap(formResponse));
@@ -642,6 +663,19 @@ export function InspectionFormScreen() {
       items: checklistItems,
     };
 
+    if (isTempId(inspectionId)) {
+      // Offline-created inspection — never call the server with a temp id. Queue
+      // the full submission; the reconciler creates the inspection on sync, then
+      // replays the results + photos + submit against the real id.
+      await enqueueInspectionSubmission({
+        form,
+        payload: submissionPayload,
+        photos: photosRef.current,
+      });
+      goBackToVisit('Inspection saved to Sync Queue. It will sync when connection returns.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       setError(null);
@@ -718,6 +752,13 @@ export function InspectionFormScreen() {
     const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
       emergencyByItemId: emergencyItemIds,
     });
+
+    if (isTempId(inspectionId)) {
+      // No server draft for an offline-created inspection — keep editing in-form
+      // and submit to queue when ready.
+      setSaveNotice('Draft kept on device. Submit to queue it for sync.');
+      return;
+    }
 
     try {
       setIsSavingDraft(true);

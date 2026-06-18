@@ -40,6 +40,8 @@ const EMPTY_SYNC_QUEUE_SNAPSHOT: SyncQueueSnapshot = {
   completed: [],
   visitCompletions: [],
   completedVisitCompletions: [],
+  mutations: [],
+  tempIdMap: {},
 };
 
 type SyncContextValue = {

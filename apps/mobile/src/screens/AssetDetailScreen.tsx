@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,6 +17,9 @@ import {
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
+import { cachedFetch, readCache, removeFromCachedArray, writeCache } from '../offlineCache';
+import { dropOfflineAssetCreate, enqueueMutation, isTempId, mintTempId } from '../syncQueue';
+import { buildOfflineInspectionForm } from '../offlineInspection';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -24,6 +27,7 @@ import {
   AssetDetailImage,
   AssetDetailResponse,
   InspectionItemResultValue,
+  SiteVisit,
 } from '../types';
 import { formatDateTime } from '../utils';
 import { HeaderIconButton, StatusChip } from '../ui';
@@ -36,11 +40,61 @@ const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, ''
 // background instead of showing a blocking full-screen spinner every time.
 const assetDetailCache = new Map<string, AssetDetailResponse>();
 
+function assetDetailFromSnapshot(snapshot: Asset): AssetDetailResponse {
+  return {
+    id: snapshot.id,
+    assetCode: snapshot.assetCode,
+    name: snapshot.name ?? null,
+    assetType: snapshot.assetType?.name ?? '',
+    assetTypeId: snapshot.assetTypeId,
+    assetTypeCode: snapshot.assetType?.code,
+    assetTypeName: snapshot.assetType?.name,
+    status: snapshot.status,
+    latitude: snapshot.latitude ?? null,
+    longitude: snapshot.longitude ?? null,
+    metadata: snapshot.metadata ?? null,
+    location: snapshot.substation?.name ?? null,
+    latestInspection: null,
+  };
+}
+
+async function loadAssetDetailResponse(
+  token: string,
+  assetId: string,
+  snapshot: Asset | null,
+): Promise<AssetDetailResponse> {
+  // An offline-created (temp) asset has no server detail yet — render it from the
+  // snapshot captured at creation.
+  if (isTempId(assetId)) {
+    if (snapshot) {
+      return assetDetailFromSnapshot(snapshot);
+    }
+
+    throw new ApiError('This asset has not synced to the server yet.', 0, null);
+  }
+
+  // Real assets: cache the detail so re-entry works offline; fall back to the
+  // snapshot when the server is unreachable and nothing is cached.
+  try {
+    const { value } = await cachedFetch('asset-detail', assetId, () =>
+      api.getAssetDetail(token, assetId),
+    );
+
+    return value;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 0 && snapshot) {
+      return assetDetailFromSnapshot(snapshot);
+    }
+
+    throw error;
+  }
+}
+
 export function AssetDetailScreen() {
   const navigation = useNavigation<RootStackScreenProps<'AssetDetail'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'AssetDetail'>['route']>();
   const { visitId, substationId, assetId, assetSnapshot, operationalSessionId } = route.params;
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [asset, setAsset] = useState<AssetDetailResponse | null>(
@@ -55,6 +109,9 @@ export function AssetDetailScreen() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { width: screenWidth } = useWindowDimensions();
+  // Synchronous reentrancy guard — closes the double-tap window before the
+  // disabled prop re-renders (which would otherwise mint two temp inspections).
+  const startInspectionRef = useRef(false);
 
   const loadAssetDetail = useCallback(async () => {
     try {
@@ -66,7 +123,7 @@ export function AssetDetailScreen() {
       // Fetch the detail and (when no snapshot) the editable list concurrently
       // instead of chaining two serial round-trips.
       const [response, assetList] = await Promise.all([
-        api.getAssetDetail(token, assetId),
+        loadAssetDetailResponse(token, assetId, assetSnapshot ?? null),
         !assetSnapshot && substationId
           ? loadEditableAssetList(token, substationId)
           : Promise.resolve(null),
@@ -108,21 +165,32 @@ export function AssetDetailScreen() {
   const imageCarouselWidth = Math.max(180, screenWidth - 72);
 
   async function handleStartInspection() {
-    if (!asset || !visitId) {
+    if (!asset || !visitId || startInspectionRef.current) {
       return;
     }
+
+    startInspectionRef.current = true;
 
     try {
       setIsStartingInspection(true);
       setActionError(null);
 
-      const activeTemplate = await api.resolveInspectionTemplate(token, {
-        assetId,
-        assetTypeId: asset.assetTypeId,
-        assetType: asset.assetType,
-        siteVisitId: visitId,
-        operationalSessionId,
-      });
+      // Cache the resolved template per visit-scope + asset type. The server
+      // resolves by asset type PLUS the visit's mainhead/branch scope, so a
+      // type-only key could serve the wrong checklist; pinning to visitId (+
+      // session) keeps it correct. Don't send a temp assetId to the resolver —
+      // it would 404 once back online; assetTypeId + visit scope is enough.
+      const assetTypeKey = editableAsset?.assetTypeId ?? asset.assetTypeId ?? asset.assetType;
+      const templateCacheKey = `${visitId}:${operationalSessionId ?? 'none'}:${assetTypeKey}`;
+      const { value: activeTemplate } = await cachedFetch('inspection-template', templateCacheKey, () =>
+        api.resolveInspectionTemplate(token, {
+          assetId: isTempId(assetId) ? undefined : assetId,
+          assetTypeId: asset.assetTypeId,
+          assetType: asset.assetType,
+          siteVisitId: visitId,
+          operationalSessionId,
+        }),
+      );
 
       if (activeTemplate.items.length === 0) {
         setActionError(
@@ -131,20 +199,62 @@ export function AssetDetailScreen() {
         return;
       }
 
-      const inspection = await api.createInspection(token, {
+      const inspectionCycle = asset.latestInspection ? asset.latestInspection.cycleNumber + 1 : 1;
+      const createInput = {
         siteVisitId: visitId,
         assetId,
         operationalSessionId,
-        inspectionCycle: asset.latestInspection ? asset.latestInspection.cycleNumber + 1 : 1,
-      });
+        inspectionCycle,
+      };
 
-      if (visitId) {
+      try {
+        const inspection = await api.createInspection(token, createInput);
         navigation.navigate('InspectionForm', {
           inspectionId: inspection.id,
           visitId,
           substationId: substationId ?? '',
           operationalSessionId,
         });
+      } catch (createError) {
+        // Offline → mint a temp inspection, cache a synthesized form, queue the
+        // create (after the asset's own create when the asset is also offline),
+        // and open the form so the crew inspects now and syncs later.
+        if (createError instanceof ApiError && createError.status === 0) {
+          const tempInspectionId = mintTempId('inspection');
+          const cachedVisit = (await readCache<SiteVisit>('site-visit', visitId))?.value ?? null;
+          const syntheticForm = buildOfflineInspectionForm({
+            inspectionId: tempInspectionId,
+            assetId,
+            detail: asset,
+            snapshot: editableAsset,
+            template: activeTemplate,
+            visit: cachedVisit,
+            inspectionCycle,
+            operationalSessionId: operationalSessionId ?? null,
+            user,
+            nowIso: new Date().toISOString(),
+          });
+
+          await writeCache('inspection-form', tempInspectionId, syntheticForm);
+          await enqueueMutation({
+            type: 'CREATE_INSPECTION',
+            payload: createInput as Record<string, unknown>,
+            tempId: tempInspectionId,
+            dependsOn: isTempId(assetId) ? [assetId] : [],
+            label: `Inspection · ${asset.assetCode}`,
+            sublabel: asset.assetTypeName ?? asset.assetType,
+          });
+
+          navigation.navigate('InspectionForm', {
+            inspectionId: tempInspectionId,
+            visitId,
+            substationId: substationId ?? '',
+            operationalSessionId,
+          });
+          return;
+        }
+
+        throw createError;
       }
     } catch (error) {
       console.error('[ASSET DETAIL START INSPECTION ERROR]', error);
@@ -162,11 +272,17 @@ export function AssetDetailScreen() {
             : 'Unable to start inspection.',
       );
     } finally {
+      startInspectionRef.current = false;
       setIsStartingInspection(false);
     }
   }
 
   function handleEditAsset() {
+    if (isTempId(assetId)) {
+      setActionError('This pole has not synced yet. Connect and let it sync before editing.');
+      return;
+    }
+
     if (!editableAsset) {
       setActionError('Unable to load editable asset details.');
       return;
@@ -183,6 +299,13 @@ export function AssetDetailScreen() {
 
   async function handleMarkAssetNotFound() {
     if (!asset || asset.status === 'NOT_FOUND') {
+      return;
+    }
+
+    if (isTempId(assetId)) {
+      setActionError(
+        'This pole has not synced yet. Connect and let it sync before changing its status.',
+      );
       return;
     }
 
@@ -245,6 +368,23 @@ export function AssetDetailScreen() {
     try {
       setIsDeleting(true);
       setActionError(null);
+
+      // An unsynced offline pole exists only locally — drop its queued create
+      // (and any dependent queued inspection) and remove it from the caches
+      // instead of sending a temp id to the server.
+      if (isTempId(assetId)) {
+        await dropOfflineAssetCreate(assetId);
+        await Promise.all([
+          visitId
+            ? removeFromCachedArray<Asset>('site-visit-assets', visitId, assetId, (a) => a.id)
+            : Promise.resolve(),
+          substationId
+            ? removeFromCachedArray<Asset>('assets', substationId, assetId, (a) => a.id)
+            : Promise.resolve(),
+        ]);
+        navigation.goBack();
+        return;
+      }
 
       await api.deleteAsset(token, assetId);
       navigation.goBack();

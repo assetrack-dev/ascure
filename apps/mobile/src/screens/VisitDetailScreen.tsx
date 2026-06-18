@@ -4,6 +4,7 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import {
   AppButton,
   Card,
@@ -97,10 +98,14 @@ export function VisitDetailScreen() {
           setIsLoading(true);
         }
 
-        const [visitResponse, substationAssetList] = await Promise.all([
-          api.getSiteVisit(token, visitId),
-          api.getAssets(token, substationId),
+        // Offline-first: serve cached visit + asset register when the server is
+        // unreachable, so an In-Progress visit opens in the field.
+        const [visitResult, substationAssetResult] = await Promise.all([
+          cachedFetch('site-visit', visitId, () => api.getSiteVisit(token, visitId)),
+          cachedFetch('assets', substationId, () => api.getAssets(token, substationId)),
         ]);
+        const visitResponse = visitResult.value;
+        const substationAssetList = substationAssetResult.value;
         const visitAssetList = await loadVisitScopedAssets(token, visitId, substationAssetList);
 
         setVisit(visitResponse);
@@ -803,9 +808,15 @@ async function loadVisitScopedAssets(
   fallbackAssets: Asset[],
 ) {
   try {
-    return await api.getSiteVisitAssets(token, visitId);
+    const { value } = await cachedFetch('site-visit-assets', visitId, () =>
+      api.getSiteVisitAssets(token, visitId),
+    );
+
+    return value;
   } catch (error) {
-    if (isEndpointUnavailableError(error)) {
+    // Missing endpoint OR unreachable server (offline, status 0) with no cache:
+    // fall back to the substation asset list (itself cached upstream).
+    if (isEndpointUnavailableError(error) || (error instanceof ApiError && error.status === 0)) {
       return fallbackAssets;
     }
 

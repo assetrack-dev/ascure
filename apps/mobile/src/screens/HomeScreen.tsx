@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
+import { cachedFetch } from '../offlineCache';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
@@ -114,18 +115,31 @@ export function HomeScreen() {
       setError(null);
       setIsLoading(true);
 
-      const [me, activeVisitList, completedVisitList, myCapabilities] = await Promise.all([
-        api.getMe(token),
-        api.getActiveSiteVisits(token),
-        api.getCompletedSiteVisits(token),
-        api.getMyCapabilities(token),
+      // Offline-first: each read serves its last cached value when the server is
+      // unreachable (cachedFetch), so the Home queue still renders offline and an
+      // In-Progress visit can be re-opened from the field.
+      const [activeResult, completedResult, capabilitiesResult] = await Promise.all([
+        cachedFetch('site-visits-active', undefined, () => api.getActiveSiteVisits(token)),
+        cachedFetch('site-visits-completed', undefined, () => api.getCompletedSiteVisits(token)),
+        cachedFetch('my-capabilities', undefined, () => api.getMyCapabilities(token)),
       ]);
-      const activeVisitsWithImageData = await loadVisitDetails(token, activeVisitList);
+      const activeVisitsWithImageData = await loadVisitDetails(token, activeResult.value);
 
-      setUser(me);
       setActiveVisits(activeVisitsWithImageData);
-      setCompletedVisits(completedVisitList);
-      setCapabilities(myCapabilities);
+      setCompletedVisits(completedResult.value);
+      setCapabilities(capabilitiesResult.value);
+
+      // Identity refresh is best-effort — the session user is already cached by
+      // AuthContext, so this must not fail the screen offline; a 401 still
+      // bubbles to sign the crew out.
+      try {
+        const me = await api.getMe(token);
+        setUser(me);
+      } catch (meError) {
+        if (meError instanceof ApiError && meError.status === 401) {
+          throw meError;
+        }
+      }
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -206,7 +220,14 @@ export function HomeScreen() {
           return;
         }
 
-        if (isEndpointUnavailableError(joinError)) {
+        // Join is a best-effort membership refresh — the crew is already a member
+        // of a visit shown in their queue. If the endpoint is missing OR the
+        // server is unreachable (offline, status 0), just open the visit we
+        // already have so field work isn't blocked.
+        if (
+          isEndpointUnavailableError(joinError) ||
+          (joinError instanceof ApiError && joinError.status === 0)
+        ) {
           navigation.navigate('VisitDetail', {
             visitId: visit.id,
             substationId: visit.substationId,
@@ -891,7 +912,14 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   return Promise.all(
     visits.map(async (visit) => {
       try {
-        return await api.getSiteVisit(token, visit.id);
+        // Cache each detailed visit so VisitDetail can be re-opened offline; on
+        // an unreachable server cachedFetch serves the cached copy, and if even
+        // that is missing we fall back to the list-level visit below.
+        const { value } = await cachedFetch('site-visit', visit.id, () =>
+          api.getSiteVisit(token, visit.id),
+        );
+
+        return value;
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           throw error;

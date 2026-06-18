@@ -23,6 +23,62 @@ export type CompletedSyncStatus = 'COMPLETED';
 
 export type SyncQueueDisplayStatus = SyncQueueStatus | CompletedSyncStatus;
 
+// === Generic offline mutation queue (offline CREATEs) ============================
+// A second, generic queue that sits ALONGSIDE the inspection-submission and
+// visit-completion queues (which are untouched). It records create operations
+// performed while offline (a new asset, a new inspection) and replays them in
+// dependency order when connectivity returns, mapping the temporary local id
+// each create minted to the real server id. Downstream queued work (e.g. an
+// inspection-submission keyed on a temp inspectionId) resolves through the same
+// `tempIdMap`.
+
+export type OfflineMutationType = 'CREATE_ASSET' | 'CREATE_INSPECTION';
+
+export type OfflineMutation = {
+  id: string;
+  type: OfflineMutationType;
+  status: SyncQueueStatus;
+  // Body for the api.* create call. String fields equal to a temp id are
+  // rewritten to the real id (via tempIdMap) at sync time.
+  payload: Record<string, unknown>;
+  // Temp ids this op's payload references and that must be resolved before it
+  // can run (e.g. a CREATE_INSPECTION on an offline-created asset depends on
+  // that asset's temp id).
+  dependsOn: string[];
+  // The temp entity id this create MINTED — mapped to the real server id on
+  // success so dependents can resolve it.
+  tempId: string;
+  label: string;
+  sublabel?: string;
+  createdAt: string;
+  updatedAt: string;
+  attemptCount: number;
+  errorMessage?: string;
+};
+
+const TEMP_ID_PREFIX = 'temp_';
+let localIdCounter = 0;
+
+function nextLocalSuffix() {
+  localIdCounter += 1;
+  return `${Date.now().toString(36)}_${localIdCounter}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Mint a temp id for an entity created offline. Recognizable via isTempId(). */
+export function mintTempId(entity: 'asset' | 'inspection') {
+  return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
+}
+
+/** True for an id that was minted offline and not yet reconciled to a real id. */
+export function isTempId(id: string | null | undefined): id is string {
+  return typeof id === 'string' && id.startsWith(TEMP_ID_PREFIX);
+}
+
+/** Resolve a (possibly temp) id to its real server id once reconciled. */
+export function resolveTempId(tempIdMap: Record<string, string>, id: string): string {
+  return isTempId(id) && tempIdMap[id] ? tempIdMap[id] : id;
+}
+
 export type QueueableInspectionPhoto = InspectionImageUploadInput & {
   id: string;
   uploadedImageId?: string;
@@ -129,6 +185,9 @@ export type SyncQueueSnapshot = {
   completed: CompletedInspectionSyncRecord[];
   visitCompletions: OfflineVisitCompletionQueueItem[];
   completedVisitCompletions: CompletedVisitCompletionSyncRecord[];
+  // Generic offline create queue + the temp-id -> real-id reconciliation table.
+  mutations: OfflineMutation[];
+  tempIdMap: Record<string, string>;
 };
 
 export type SyncQueueRunResult = {
@@ -149,6 +208,8 @@ let storageUpdateChain: Promise<SyncQueueSnapshot> = Promise.resolve({
   completed: [],
   visitCompletions: [],
   completedVisitCompletions: [],
+  mutations: [],
+  tempIdMap: {},
 });
 let activeSyncPromise: Promise<SyncQueueRunResult> | null = null;
 
@@ -171,31 +232,36 @@ export async function loadSyncQueueSnapshot(): Promise<SyncQueueSnapshot> {
     completed: storedQueue.completed,
     visitCompletions: storedQueue.visitCompletions,
     completedVisitCompletions: storedQueue.completedVisitCompletions,
+    mutations: storedQueue.mutations,
+    tempIdMap: storedQueue.tempIdMap,
   };
 }
 
 export function getActiveQueueCount(snapshot: SyncQueueSnapshot) {
-  return snapshot.items.length + snapshot.visitCompletions.length;
+  return snapshot.items.length + snapshot.visitCompletions.length + snapshot.mutations.length;
 }
 
 export function getFailedQueueCount(snapshot: SyncQueueSnapshot) {
   return (
     snapshot.items.filter((item) => item.status === 'FAILED').length +
-    snapshot.visitCompletions.filter((item) => item.status === 'FAILED').length
+    snapshot.visitCompletions.filter((item) => item.status === 'FAILED').length +
+    snapshot.mutations.filter((item) => item.status === 'FAILED').length
   );
 }
 
 export function getPendingQueueCount(snapshot: SyncQueueSnapshot) {
   return (
     snapshot.items.filter((item) => item.status === 'PENDING_SYNC').length +
-    snapshot.visitCompletions.filter((item) => item.status === 'PENDING_SYNC').length
+    snapshot.visitCompletions.filter((item) => item.status === 'PENDING_SYNC').length +
+    snapshot.mutations.filter((item) => item.status === 'PENDING_SYNC').length
   );
 }
 
 export function getSyncingQueueCount(snapshot: SyncQueueSnapshot) {
   return (
     snapshot.items.filter((item) => item.status === 'SYNCING').length +
-    snapshot.visitCompletions.filter((item) => item.status === 'SYNCING').length
+    snapshot.visitCompletions.filter((item) => item.status === 'SYNCING').length +
+    snapshot.mutations.filter((item) => item.status === 'SYNCING').length
   );
 }
 
@@ -321,6 +387,208 @@ export async function enqueueVisitCompletion({
   });
 }
 
+export async function enqueueMutation(input: {
+  type: OfflineMutationType;
+  payload: Record<string, unknown>;
+  tempId: string;
+  dependsOn?: string[];
+  label: string;
+  sublabel?: string;
+}): Promise<OfflineMutation> {
+  const now = new Date().toISOString();
+  const mutation: OfflineMutation = {
+    id: `op_${nextLocalSuffix()}`,
+    type: input.type,
+    status: 'PENDING_SYNC',
+    payload: input.payload,
+    dependsOn: input.dependsOn ?? [],
+    tempId: input.tempId,
+    label: input.label,
+    sublabel: input.sublabel,
+    createdAt: now,
+    updatedAt: now,
+    attemptCount: 0,
+  };
+
+  await updateStoredQueue((queue) => ({
+    ...queue,
+    mutations: [...queue.mutations, mutation],
+  }));
+
+  return mutation;
+}
+
+async function getMutationItem(mutationId: string) {
+  const queue = await loadSyncQueueSnapshot();
+
+  return queue.mutations.find((mutation) => mutation.id === mutationId) ?? null;
+}
+
+async function markMutationSyncing(mutationId: string) {
+  const now = new Date().toISOString();
+
+  await updateStoredQueue((queue) => ({
+    ...queue,
+    mutations: queue.mutations.map((mutation) =>
+      mutation.id === mutationId
+        ? {
+            ...mutation,
+            status: 'SYNCING',
+            updatedAt: now,
+            attemptCount: mutation.attemptCount + 1,
+            errorMessage: undefined,
+          }
+        : mutation,
+    ),
+  }));
+}
+
+async function markMutationFailed(mutationId: string, errorMessage: string) {
+  const now = new Date().toISOString();
+
+  await updateStoredQueue((queue) => ({
+    ...queue,
+    mutations: queue.mutations.map((mutation) =>
+      mutation.id === mutationId
+        ? { ...mutation, status: 'FAILED', updatedAt: now, errorMessage }
+        : mutation,
+    ),
+  }));
+}
+
+async function completeMutation(mutationId: string, tempId: string, realId: string) {
+  await updateStoredQueue((queue) => ({
+    ...queue,
+    mutations: queue.mutations.filter((mutation) => mutation.id !== mutationId),
+    tempIdMap: { ...queue.tempIdMap, [tempId]: realId },
+  }));
+}
+
+function resolveTempIdsInPayload(
+  payload: Record<string, unknown>,
+  tempIdMap: Record<string, string>,
+): Record<string, unknown> {
+  const resolved: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    resolved[key] = typeof value === 'string' ? resolveTempId(tempIdMap, value) : value;
+  }
+
+  return resolved;
+}
+
+function mutationDependenciesResolved(
+  mutation: OfflineMutation,
+  tempIdMap: Record<string, string>,
+) {
+  return mutation.dependsOn.every((tempId) => Boolean(tempIdMap[tempId]));
+}
+
+async function syncMutationItem(token: string, mutation: OfflineMutation) {
+  await markMutationSyncing(mutation.id);
+
+  try {
+    const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
+
+    // Idempotency: if a prior pass already reconciled this temp id (e.g. the
+    // success write raced / partially applied), adopt the mapping instead of
+    // recreating a duplicate on the server.
+    const alreadyMapped = tempIdMap[mutation.tempId];
+    if (alreadyMapped) {
+      await completeMutation(mutation.id, mutation.tempId, alreadyMapped);
+      return;
+    }
+
+    const payload = resolveTempIdsInPayload(mutation.payload, tempIdMap);
+    let realId: string | undefined;
+
+    if (mutation.type === 'CREATE_ASSET') {
+      try {
+        const created = await api.createAsset(
+          token,
+          payload as unknown as Parameters<typeof api.createAsset>[1],
+        );
+        realId = created.id;
+      } catch (error) {
+        // At-least-once recovery: a prior attempt may have actually created the
+        // asset before its response was lost (timeout). On a duplicate/conflict,
+        // adopt the existing server row so the dependent inspection + its field
+        // data can reconcile instead of being stranded in the queue forever.
+        if (isAlreadyExistsError(error)) {
+          realId = (await findExistingAssetId(token, payload)) ?? undefined;
+        }
+
+        if (!realId) {
+          throw error;
+        }
+      }
+    } else {
+      const created = await api.createInspection(
+        token,
+        payload as unknown as Parameters<typeof api.createInspection>[1],
+      );
+      realId = created.id;
+    }
+
+    if (!realId) {
+      throw new ApiError('Offline create returned no id.', 0, null);
+    }
+
+    await completeMutation(mutation.id, mutation.tempId, realId);
+  } catch (error) {
+    await markMutationFailed(mutation.id, getErrorMessage(error));
+    throw error;
+  }
+}
+
+function isAlreadyExistsError(error: unknown) {
+  if (!(error instanceof ApiError)) {
+    return false;
+  }
+
+  if (error.status === 409) {
+    return true;
+  }
+
+  const message = (error.message ?? '').toLowerCase();
+
+  return message.includes('already exists') || message.includes('duplicate');
+}
+
+async function findExistingAssetId(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<string | null> {
+  const substationId = payload.substationId;
+  const assetCode = payload.assetCode;
+
+  if (typeof substationId !== 'string' || typeof assetCode !== 'string') {
+    return null;
+  }
+
+  try {
+    const assets = await api.getAssets(token, substationId);
+
+    return assets.find((asset) => asset.assetCode === assetCode)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drop an unsynced offline asset's queued create (and any queued inspection that
+ * depends on it) — used when the crew deletes a pole that only exists locally.
+ */
+export async function dropOfflineAssetCreate(tempAssetId: string) {
+  await updateStoredQueue((queue) => ({
+    ...queue,
+    mutations: queue.mutations.filter(
+      (mutation) => mutation.tempId !== tempAssetId && !mutation.dependsOn.includes(tempAssetId),
+    ),
+    items: queue.items.filter((item) => item.summary.assetId !== tempAssetId),
+  }));
+}
+
 export async function syncQueuedInspections(token: string): Promise<SyncQueueRunResult> {
   if (activeSyncPromise) {
     return activeSyncPromise;
@@ -345,6 +613,7 @@ export async function cleanupLocalInspectionPhotos(photos: QueueableInspectionPh
 
 async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
   const snapshot = await loadSyncQueueSnapshot();
+  const mutationCandidateIds = snapshot.mutations.map((mutation) => mutation.id);
   const candidateIds = snapshot.items.map((item) => item.id);
   const visitCompletionCandidateIds = snapshot.visitCompletions.map((item) => item.id);
   const result: SyncQueueRunResult = {
@@ -353,6 +622,40 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
     skipped: 0,
   };
 
+  // 1) Offline creates first, in insertion (dependency) order, so the temp -> real
+  //    id map is populated before any dependent op or inspection submission runs.
+  for (const mutationId of mutationCandidateIds) {
+    const mutation = await getMutationItem(mutationId);
+
+    if (!mutation) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
+
+    if (!mutationDependenciesResolved(mutation, tempIdMap)) {
+      // A producer this op depends on hasn't synced yet — leave it pending so it
+      // retries on the next pass once its dependency resolves.
+      result.skipped += 1;
+      continue;
+    }
+
+    try {
+      await syncMutationItem(token, mutation);
+      result.completed += 1;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        throw error;
+      }
+
+      result.failed += 1;
+    }
+  }
+
+  // 2) Inspection submissions. An offline-created inspection carries a temp
+  //    inspectionId — resolve it to the real id; if its CREATE_INSPECTION hasn't
+  //    synced yet, skip (it retries next pass).
   for (const itemId of candidateIds) {
     const item = await getQueueItem(itemId);
 
@@ -361,8 +664,16 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
       continue;
     }
 
+    const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
+    const inspectionId = resolveTempId(tempIdMap, item.summary.inspectionId);
+
+    if (isTempId(inspectionId)) {
+      result.skipped += 1;
+      continue;
+    }
+
     try {
-      await syncQueueItem(token, item);
+      await syncQueueItem(token, item, inspectionId);
       result.completed += 1;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -401,11 +712,15 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
   return result;
 }
 
-async function syncQueueItem(token: string, item: OfflineInspectionQueueItem) {
+async function syncQueueItem(
+  token: string,
+  item: OfflineInspectionQueueItem,
+  inspectionId: string,
+) {
   await markItemSyncing(item.id);
 
   try {
-    await api.saveInspectionResults(token, item.summary.inspectionId, item.payload);
+    await api.saveInspectionResults(token, inspectionId, item.payload);
 
     let currentItem = (await getQueueItem(item.id)) ?? item;
 
@@ -414,11 +729,7 @@ async function syncQueueItem(token: string, item: OfflineInspectionQueueItem) {
         continue;
       }
 
-      const uploadedImage = await api.uploadInspectionImage(
-        token,
-        currentItem.summary.inspectionId,
-        photo,
-      );
+      const uploadedImage = await api.uploadInspectionImage(token, inspectionId, photo);
 
       await updateQueuedPhoto(currentItem.id, photo.id, {
         uploadedImageId: uploadedImage.id,
@@ -429,7 +740,7 @@ async function syncQueueItem(token: string, item: OfflineInspectionQueueItem) {
       currentItem = (await getQueueItem(item.id)) ?? currentItem;
     }
 
-    await api.submitInspection(token, item.summary.inspectionId);
+    await api.submitInspection(token, inspectionId);
     await completeQueueItem(item.id);
   } catch (error) {
     if (isAlreadySubmittedError(error)) {
@@ -826,6 +1137,13 @@ async function loadStoredQueue(): Promise<StoredQueue> {
       completedVisitCompletions: Array.isArray(parsedValue.completedVisitCompletions)
         ? parsedValue.completedVisitCompletions.filter(isCompletedVisitCompletionSyncRecord)
         : [],
+      mutations: Array.isArray(parsedValue.mutations)
+        ? parsedValue.mutations.filter(isOfflineMutation)
+        : [],
+      tempIdMap:
+        parsedValue.tempIdMap && typeof parsedValue.tempIdMap === 'object'
+          ? (parsedValue.tempIdMap as Record<string, string>)
+          : {},
     };
   } catch {
     return createEmptyStoredQueue();
@@ -842,6 +1160,8 @@ function updateStoredQueue(updater: (queue: StoredQueue) => StoredQueue | SyncQu
       completed: updatedSnapshot.completed,
       visitCompletions: updatedSnapshot.visitCompletions,
       completedVisitCompletions: updatedSnapshot.completedVisitCompletions,
+      mutations: updatedSnapshot.mutations,
+      tempIdMap: updatedSnapshot.tempIdMap,
     };
 
     await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
@@ -852,6 +1172,8 @@ function updateStoredQueue(updater: (queue: StoredQueue) => StoredQueue | SyncQu
       completed: updatedQueue.completed,
       visitCompletions: updatedQueue.visitCompletions,
       completedVisitCompletions: updatedQueue.completedVisitCompletions,
+      mutations: updatedQueue.mutations,
+      tempIdMap: updatedQueue.tempIdMap,
     };
   });
 
@@ -865,6 +1187,8 @@ function notifySyncQueueListeners(snapshot: SyncQueueSnapshot) {
       completed: snapshot.completed,
       visitCompletions: snapshot.visitCompletions,
       completedVisitCompletions: snapshot.completedVisitCompletions,
+      mutations: snapshot.mutations,
+      tempIdMap: snapshot.tempIdMap,
     });
   }
 }
@@ -876,6 +1200,8 @@ function createEmptyStoredQueue(): StoredQueue {
     completed: [],
     visitCompletions: [],
     completedVisitCompletions: [],
+    mutations: [],
+    tempIdMap: {},
   };
 }
 
@@ -885,6 +1211,8 @@ function createEmptySnapshot(): SyncQueueSnapshot {
     completed: [],
     visitCompletions: [],
     completedVisitCompletions: [],
+    mutations: [],
+    tempIdMap: {},
   };
 }
 
@@ -957,6 +1285,23 @@ function isCompletedVisitCompletionSyncRecord(
 
 function isSyncQueueStatus(value: unknown): value is SyncQueueStatus {
   return value === 'PENDING_SYNC' || value === 'SYNCING' || value === 'FAILED';
+}
+
+function isOfflineMutation(value: unknown): value is OfflineMutation {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const mutation = value as Partial<OfflineMutation>;
+
+  return (
+    typeof mutation.id === 'string' &&
+    (mutation.type === 'CREATE_ASSET' || mutation.type === 'CREATE_INSPECTION') &&
+    isSyncQueueStatus(mutation.status) &&
+    typeof mutation.tempId === 'string' &&
+    Boolean(mutation.payload) &&
+    Array.isArray(mutation.dependsOn)
+  );
 }
 
 async function isVisitAlreadyCompleted(
