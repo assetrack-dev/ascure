@@ -741,6 +741,26 @@ export class InspectionsService {
             createdAt: 'asc',
           },
         },
+        // Already-uploaded photos (incl. per-item IMAGE/OCR captures tagged by
+        // templateItemId) so the form can rehydrate them on re-open/amend —
+        // otherwise required IMAGE items wrongly read as missing and force a
+        // retake.
+        inspectionImages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          select: {
+            id: true,
+            inspectionId: true,
+            templateItemId: true,
+            url: true,
+            filename: true,
+            latitude: true,
+            longitude: true,
+            timestamp: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
@@ -1522,6 +1542,17 @@ export class InspectionsService {
         updatedAt: result.updatedAt,
       })),
       items: inspection.itemResults.map((item) => this.serializeInspectionItemResult(item)),
+      images: inspection.inspectionImages.map((image) => ({
+        id: image.id,
+        inspectionId: image.inspectionId,
+        templateItemId: image.templateItemId,
+        url: image.url,
+        path: buildInspectionImagePath(image.inspectionId, image.filename),
+        latitude: image.latitude,
+        longitude: image.longitude,
+        timestamp: image.timestamp?.toISOString() ?? null,
+        createdAt: image.createdAt.toISOString(),
+      })),
     };
   }
 

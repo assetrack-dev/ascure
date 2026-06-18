@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { api, ApiError } from '../api';
+import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
 import type { RootStackScreenProps } from '../navigation/types';
@@ -86,6 +86,39 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
 };
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
+
+function resolveServerImageUri(source: string | null | undefined) {
+  if (!source) {
+    return '';
+  }
+  if (/^[a-z][a-z\d+\-.]*:/i.test(source)) {
+    return source;
+  }
+  return source.startsWith('/') ? `${API_ORIGIN}${source}` : `${API_ORIGIN}/${source}`;
+}
+
+// Rehydrate already-uploaded photos from the form response as "uploaded"
+// captures so they (a) satisfy required IMAGE items without forcing a retake on
+// re-open/amend and (b) render as existing thumbnails. The uploaded markers make
+// uploadPhotosForSubmission skip them, so they are never re-uploaded.
+function buildSeededPhotosFromForm(form: InspectionFormResponse): CapturedInspectionPhoto[] {
+  return (form.images ?? [])
+    .filter((image) => Boolean(image.url || image.path))
+    .map((image) => ({
+      id: image.id,
+      uri: resolveServerImageUri(image.url ?? image.path),
+      url: image.url,
+      uploadedImageId: image.id,
+      uploadedUrl: image.url,
+      uploadState: 'uploaded' as const,
+      templateItemId: image.templateItemId ?? undefined,
+      latitude: image.latitude ?? 0,
+      longitude: image.longitude ?? 0,
+      timestamp: image.timestamp ?? image.createdAt ?? '',
+    }));
+}
 
 export function InspectionFormScreen() {
   const theme = useTheme();
@@ -169,6 +202,7 @@ export function InspectionFormScreen() {
       setForm(formResponse);
       setDraftValues(createInitialDraftValues(formResponse));
       setEmergencyItemIds(createInitialEmergencyMap(formResponse));
+      setPhotoList(() => buildSeededPhotosFromForm(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
         await handleUnauthorized(loadError);
@@ -610,6 +644,7 @@ export function InspectionFormScreen() {
       setForm(updatedForm);
       setDraftValues(createInitialDraftValues(updatedForm));
       setEmergencyItemIds(createInitialEmergencyMap(updatedForm));
+      setPhotoList(() => buildSeededPhotosFromForm(updatedForm));
       setSaveNotice('Inspection re-opened. Fix the entries, then submit again.');
     } catch (amendError) {
       if (amendError instanceof ApiError && amendError.status === 401) {

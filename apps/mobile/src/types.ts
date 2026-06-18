@@ -521,6 +521,19 @@ export interface InspectionFormResponse {
     updatedAt: string;
   }>;
   items?: InspectionItemResult[];
+  // Already-uploaded photos (per-item captures carry templateItemId) so the
+  // form can rehydrate them when re-opening/amending a submitted inspection.
+  images?: Array<{
+    id: string;
+    inspectionId?: string;
+    templateItemId?: string | null;
+    url: string;
+    path?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    timestamp?: string | null;
+    createdAt?: string;
+  }>;
 }
 
 export interface SaveInspectionResultItemInput {
