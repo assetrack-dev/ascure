@@ -13,6 +13,7 @@ import {
   FileCheck2,
   MessageSquare,
   RefreshCw,
+  Share2,
   ShieldCheck,
   UserRound,
   Wrench,
@@ -24,6 +25,8 @@ import { clearStoredSession, readStoredSession, refreshStoredSessionUser } from 
 import {
   addDefectComment,
   completeDefectMaintenance,
+  delegateDefect,
+  fetchDefectAssignmentOptions,
   fetchDefectDetail,
   rejectDefect,
   updateDefectAssignment,
@@ -31,8 +34,8 @@ import {
   updateDefectStatus,
   verifyDefect,
   verifyDefectClosure,
+  type DefectAssignmentOption,
 } from "@/lib/defects";
-import { fetchTeams, fetchUsers } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import {
   DEFECT_WORKFLOW_STATUSES,
@@ -45,7 +48,6 @@ import {
   type DefectTimelineEntry,
   type DefectWorkflowStatus,
 } from "@/types/defects";
-import type { ManagedTeam, ManagedUser } from "@/types/users";
 
 const statusOptions: Array<{ label: string; value: DefectWorkflowStatus }> = [
   { label: "Open", value: "OPEN" },
@@ -629,8 +631,15 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [defect, setDefect] = useState<DefectDetail | null>(null);
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [teams, setTeams] = useState<ManagedTeam[]>([]);
+  const [users, setUsers] = useState<DefectAssignmentOption[]>([]);
+  const [teams, setTeams] = useState<DefectAssignmentOption[]>([]);
+  const [subcontractors, setSubcontractors] = useState<DefectAssignmentOption[]>(
+    [],
+  );
+  const [canAssignDefect, setCanAssignDefect] = useState(false);
+  const [canDelegateDefect, setCanDelegateDefect] = useState(false);
+  const [selectedSubcontractorId, setSelectedSubcontractorId] = useState("");
+  const [isDelegating, setIsDelegating] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<DefectWorkflowStatus>("OPEN");
   const [selectedAssignedUserId, setSelectedAssignedUserId] = useState("");
   const [selectedAssignedTeamId, setSelectedAssignedTeamId] = useState("");
@@ -712,13 +721,15 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   const loadAssignmentOptions = useCallback(
     async (token: string) => {
       try {
-        const [nextUsers, nextTeams] = await Promise.all([
-          fetchUsers(token),
-          fetchTeams(token),
-        ]);
+        // Org-scoped dispatch options for THIS defect: the responsible company's
+        // teams/techs + delegable subcontractors (maintenance self-management).
+        const options = await fetchDefectAssignmentOptions(token, defectId);
 
-        setUsers(nextUsers.filter((managedUser) => managedUser.isActive));
-        setTeams(nextTeams.filter((team) => team.isActive));
+        setUsers(options.users);
+        setTeams(options.teams);
+        setSubcontractors(options.subcontractors);
+        setCanAssignDefect(options.canAssign);
+        setCanDelegateDefect(options.canDelegate);
       } catch (optionsError) {
         if (optionsError instanceof ApiError && optionsError.status === 401) {
           handleLogout();
@@ -732,7 +743,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
         );
       }
     },
-    [handleLogout],
+    [defectId, handleLogout],
   );
 
   useEffect(() => {
@@ -742,7 +753,12 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
     if (storedSession?.token) {
       void loadDefect(storedSession.token);
 
-      if (storedSession.user?.role === "ADMIN") {
+      // Load dispatch options for anyone who can manage maintenance — ADMIN, or
+      // a MANAGER (collapsed to VIEWER client-side, so we check the server flag).
+      if (
+        storedSession.user?.role === "ADMIN" ||
+        storedSession.user?.canManageMaintenance
+      ) {
         void loadAssignmentOptions(storedSession.token);
       }
 
@@ -770,9 +786,19 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   // before the flag existed.
   const canGovernQa =
     session?.user?.role === "ADMIN" || Boolean(session?.user?.canGovernQa);
+  // Maintenance dispatch authority (assign within the company / delegate to a
+  // subcontractor). Server-provided because MANAGER collapses to VIEWER
+  // client-side; the defect endpoints still enforce the org-scope.
+  const canManageMaintenance =
+    session?.user?.role === "ADMIN" ||
+    Boolean(session?.user?.canManageMaintenance);
   const canSaveStatus = Boolean(session?.token && defect && !isReadOnly && !isSavingStatus);
   const canSaveAssignment = Boolean(
-    session?.token && defect && !isReadOnly && !isSavingAssignment,
+    session?.token &&
+      defect &&
+      canManageMaintenance &&
+      canAssignDefect &&
+      !isSavingAssignment,
   );
   const canSaveDueDate = Boolean(session?.token && defect && !isReadOnly && !isSavingDueDate);
   // QA governance controls (verify / reject / closure + their notes) follow the
@@ -858,7 +884,7 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
   }
 
   async function handleAssignmentUpdate() {
-    if (!session?.token || !defect || isReadOnly) {
+    if (!session?.token || !defect || !canManageMaintenance) {
       return;
     }
 
@@ -889,6 +915,48 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       );
     } finally {
       setIsSavingAssignment(false);
+    }
+  }
+
+  async function handleDelegate() {
+    if (
+      !session?.token ||
+      !defect ||
+      !canManageMaintenance ||
+      !selectedSubcontractorId
+    ) {
+      return;
+    }
+
+    setIsDelegating(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const nextDefect = await delegateDefect(
+        session.token,
+        defect.id,
+        selectedSubcontractorId,
+      );
+
+      applyDefect(nextDefect);
+      setSelectedSubcontractorId("");
+      setNotice("Defect delegated to the subcontractor's maintenance pool.");
+      // Re-load options so the (now re-routed) defect's delegable set refreshes.
+      void loadAssignmentOptions(session.token);
+    } catch (delegateError) {
+      if (delegateError instanceof ApiError && delegateError.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setError(
+        delegateError instanceof Error
+          ? delegateError.message
+          : "Unable to delegate defect.",
+      );
+    } finally {
+      setIsDelegating(false);
     }
   }
 
@@ -1596,7 +1664,11 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           <select
                             value={selectedAssignedUserId}
                             onChange={(event) => setSelectedAssignedUserId(event.target.value)}
-                            disabled={isReadOnly || isSavingAssignment}
+                            disabled={
+                              !canManageMaintenance ||
+                              !canAssignDefect ||
+                              isSavingAssignment
+                            }
                             className={`mt-2 ${controlClassName}`}
                           >
                             <option value="">Unassigned</option>
@@ -1616,7 +1688,11 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                             <select
                               value={selectedAssignedTeamId}
                               onChange={(event) => setSelectedAssignedTeamId(event.target.value)}
-                              disabled={isReadOnly || isSavingAssignment}
+                              disabled={
+                                !canManageMaintenance ||
+                                !canAssignDefect ||
+                                isSavingAssignment
+                              }
                               className={`mt-2 ${controlClassName}`}
                             >
                               <option value="">Unassigned</option>
@@ -1642,6 +1718,49 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           )}
                           Update Assignment
                         </button>
+
+                        {canManageMaintenance && canDelegateDefect ? (
+                          <div className="space-y-2 border-t border-slate-100 pt-4">
+                            <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                              Delegate to subcontractor
+                            </span>
+                            <p className="text-xs text-[var(--muted)]">
+                              Hand this defect to one of your subcontractors. It
+                              returns to their maintenance pool to claim or assign.
+                            </p>
+                            <select
+                              value={selectedSubcontractorId}
+                              onChange={(event) =>
+                                setSelectedSubcontractorId(event.target.value)
+                              }
+                              disabled={isDelegating}
+                              className={controlClassName}
+                            >
+                              <option value="">Select a subcontractor…</option>
+                              {subcontractors.map((organization) => (
+                                <option
+                                  key={organization.id}
+                                  value={organization.id}
+                                >
+                                  {organization.name || organization.code}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={handleDelegate}
+                              disabled={!selectedSubcontractorId || isDelegating}
+                              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[var(--line)] bg-white px-4 text-sm font-semibold text-[var(--foreground)] shadow-[var(--shadow-soft)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isDelegating ? (
+                                <RefreshCw size={16} className="animate-spin" />
+                              ) : (
+                                <Share2 size={16} />
+                              )}
+                              Delegate
+                            </button>
+                          </div>
+                        ) : null}
 
                         <label className="block border-t border-slate-100 pt-4">
                           <span className="text-xs font-semibold uppercase text-[var(--muted)]">

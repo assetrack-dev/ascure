@@ -13,6 +13,7 @@ import {
   DefectSeverity,
   DefectStatus,
   DefectTimelineEventType,
+  OrganizationType,
   Prisma,
   ResolutionOutcome as DefectResolutionOutcome,
   UserRole,
@@ -41,6 +42,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
+import { DelegateDefectDto } from './dto/delegate-defect.dto';
 import { ListDefectOperationsBoardQueryDto } from './dto/list-defect-operations-board-query.dto';
 import { UploadDefectEvidenceImageDto } from './dto/upload-defect-evidence-image.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
@@ -924,6 +926,14 @@ export class DefectsService {
     this.assertCanAssignDefect(user);
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    // Maintenance self-management: a non-admin (MANAGER) may only dispatch within
+    // their own company. They cannot re-assign work that's been routed/delegated
+    // to ANOTHER company (which they may still SEE via subcontractor oversight),
+    // and the assignee must belong to their org.
+    const assigneeOrgRestriction = this.resolveAssignmentOrgRestriction(
+      user,
+      defect,
+    );
     const hasLegacyAssignedUserId = Object.prototype.hasOwnProperty.call(
       dto,
       'assignedUserId',
@@ -962,10 +972,18 @@ export class DefectsService {
 
     const [updatedAssignedUser, updatedAssignedTeam] = await Promise.all([
       hasAssignedUserId && nextAssignedUserId
-        ? this.findAssignableUser(user.tenantId, nextAssignedUserId)
+        ? this.findAssignableUser(
+            user.tenantId,
+            nextAssignedUserId,
+            assigneeOrgRestriction,
+          )
         : Promise.resolve(null),
       hasAssignedTeamId && nextAssignedTeamId
-        ? this.findAssignableTeam(user.tenantId, nextAssignedTeamId)
+        ? this.findAssignableTeam(
+            user.tenantId,
+            nextAssignedTeamId,
+            assigneeOrgRestriction,
+          )
         : Promise.resolve(null),
     ]);
     const nextAssignedUser = hasAssignedUserId
@@ -1064,6 +1082,242 @@ export class DefectsService {
         },
       });
     });
+
+    return this.getDetail(user, defect.id);
+  }
+
+  /**
+   * Maintenance self-management — the dispatch options for a routed defect: the
+   * teams + technicians of the responsible company a manager can assign to, and
+   * the registered subcontractors they can delegate to. Role/defect-aware:
+   *  - ADMIN on an un-routed defect: tenant-wide teams/users (legacy fallback).
+   *  - otherwise scoped to the defect's maintenance company (a MANAGER's own org).
+   */
+  async getAssignmentOptions(user: RequestUser, defectId: string) {
+    // Same authority gate as the assign/delegate actions this feeds — the roster
+    // it returns (names + emails) is ADMIN/MANAGER-only, so a defect reader
+    // (TECHNICIAN/SUPERVISOR/VIEWER/CLIENT) must not be able to pull it.
+    this.assertCanMutate(user);
+    this.assertCanAssignDefect(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const routedOrgId = defect.maintenanceOrganizationId;
+    const responsibleOrgId =
+      routedOrgId ??
+      (user.role === UserRole.ADMIN ? null : user.organizationId ?? null);
+
+    // A non-admin can dispatch only their OWN company's routed/own work — not a
+    // defect delegated to another company (visible via oversight, not actionable)
+    // — and never tenant-wide: a non-admin with NO resolved responsible org must
+    // get nothing (mirrors resolveAssignmentOrgRestriction, which would reject).
+    const isForeignRouted =
+      user.role !== UserRole.ADMIN &&
+      Boolean(routedOrgId) &&
+      routedOrgId !== user.organizationId;
+    const canAssign =
+      !isForeignRouted &&
+      (user.role === UserRole.ADMIN || Boolean(responsibleOrgId));
+
+    const orgFilter = responsibleOrgId
+      ? { organizationId: responsibleOrgId }
+      : {};
+
+    const [teams, users, subcontractors] = await Promise.all([
+      canAssign
+        ? this.prisma.team.findMany({
+            where: { tenantId: user.tenantId, isActive: true, ...orgFilter },
+            select: { id: true, code: true, name: true },
+            orderBy: { name: 'asc' },
+          })
+        : Promise.resolve([]),
+      canAssign
+        ? this.prisma.user.findMany({
+            where: { tenantId: user.tenantId, isActive: true, ...orgFilter },
+            select: { id: true, name: true, email: true, role: true },
+            orderBy: { name: 'asc' },
+          })
+        : Promise.resolve([]),
+      routedOrgId && canAssign
+        ? this.prisma.organization.findMany({
+            where: {
+              parentOrganizationId: routedOrgId,
+              isActive: true,
+              type: {
+                in: [
+                  OrganizationType.SUBCONTRACTOR,
+                  OrganizationType.MAIN_CONTRACTOR,
+                ],
+              },
+            },
+            select: { id: true, name: true, code: true, type: true },
+            orderBy: { name: 'asc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      responsibleOrganizationId: responsibleOrgId,
+      canAssign,
+      canDelegate: subcontractors.length > 0,
+      teams,
+      users,
+      subcontractors,
+    };
+  }
+
+  /**
+   * Maintenance self-management — delegate a routed defect to one of the routed
+   * company's registered subcontractors. Re-stamps the routing org, clears any
+   * internal assignment, and returns the defect to VERIFIED so the subcontractor
+   * can claim/assign it. The delegating manager keeps oversight visibility via
+   * the subcontractor-child scope branch (see buildScopeContext).
+   */
+  async delegateDefect(
+    user: RequestUser,
+    defectId: string,
+    dto: DelegateDefectDto,
+  ) {
+    this.assertCanMutate(user);
+    this.assertCanAssignDefect(user);
+
+    const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const currentOrgId = defect.maintenanceOrganizationId;
+
+    if (!currentOrgId) {
+      throw new BadRequestException(
+        'Only a defect that has been released and routed to a maintenance company can be delegated.',
+      );
+    }
+
+    if (user.role !== UserRole.ADMIN && currentOrgId !== user.organizationId) {
+      throw new ForbiddenException(
+        'You can only delegate defects routed to your company.',
+      );
+    }
+
+    const lifecycleStatus = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
+    const delegableStatuses: DefectLifecycleStatus[] = [
+      DefectLifecycleStatus.VERIFIED,
+      DefectLifecycleStatus.ASSIGNED,
+      DefectLifecycleStatus.IN_PROGRESS,
+    ];
+    if (!delegableStatuses.includes(lifecycleStatus)) {
+      throw new BadRequestException(
+        'This defect can no longer be delegated — maintenance is already complete, closed, or not yet released.',
+      );
+    }
+
+    if (dto.organizationId === currentOrgId) {
+      throw new BadRequestException(
+        'This defect is already routed to that company.',
+      );
+    }
+
+    const target = await this.prisma.organization.findUnique({
+      where: { id: dto.organizationId },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        isActive: true,
+        tenantId: true,
+        parentOrganizationId: true,
+      },
+    });
+
+    if (!target || !target.isActive) {
+      throw new NotFoundException(
+        'Subcontractor organisation not found or inactive.',
+      );
+    }
+
+    // Defense-in-depth: never route a defect to an org in another tenant
+    // (the parent-FK check below normally keeps it in-family, but the FK is not
+    // tenant-constrained). Tolerant of legacy null-tenant orgs.
+    if (target.tenantId && target.tenantId !== user.tenantId) {
+      throw new BadRequestException('Cannot delegate to an organisation in another tenant.');
+    }
+
+    if (
+      target.type !== OrganizationType.SUBCONTRACTOR &&
+      target.type !== OrganizationType.MAIN_CONTRACTOR
+    ) {
+      throw new BadRequestException(
+        'A defect can only be delegated to a contractor organisation.',
+      );
+    }
+
+    // Delegation must go to a registered subcontractor OF the company the defect
+    // is currently routed to — keeps the hand-off within the contractor family
+    // (and the tenant). Applies to ADMIN too.
+    if (target.parentOrganizationId !== currentOrgId) {
+      throw new BadRequestException(
+        'The target must be a registered subcontractor of the company the defect is routed to.',
+      );
+    }
+
+    const now = new Date();
+
+    const delegated = await this.prisma.$transaction(async (tx) => {
+      // Atomic, single-winner re-route: the write only lands if the defect is
+      // STILL routed to currentOrg and in a delegable state at write time — so a
+      // concurrent claim/assign/delegate can't be silently clobbered (mirrors
+      // claimDefect). A lost race surfaces as a 409, not a stale overwrite.
+      const result = await tx.defect.updateMany({
+        where: {
+          id: defect.id,
+          maintenanceOrganizationId: currentOrgId,
+          lifecycleStatus: { in: delegableStatuses },
+        },
+        data: {
+          maintenanceOrganizationId: target.id,
+          assignedUserId: null,
+          assignedToUserId: null,
+          assignedTeamId: null,
+          assignedToTeamId: null,
+          assignedAt: null,
+          lifecycleStatus: DefectLifecycleStatus.VERIFIED,
+          // Hand off a clean slate — the prior company's in-flight work metadata
+          // must not bleed into the subcontractor's fresh pool, and a stale
+          // dueDate would keep driving SLA/overdue state under the new owner.
+          status: DefectStatus.OPEN,
+          dueDate: null,
+          actionRemark: null,
+          maintenanceNotes: null,
+          resolutionOutcome: null,
+          resolvedAt: null,
+          maintainedByUserId: null,
+          maintainedAt: null,
+        },
+      });
+
+      if (result.count === 0) {
+        return false;
+      }
+
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.ASSIGNMENT_CHANGED,
+          fromLifecycleStatus: lifecycleStatus,
+          toLifecycleStatus: DefectLifecycleStatus.VERIFIED,
+          comment: `Delegated to subcontractor ${target.name}; returned to their maintenance pool.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+
+      return true;
+    });
+
+    if (!delegated) {
+      throw new ConflictException(
+        'This defect just changed state and could not be delegated — refresh and try again.',
+      );
+    }
 
     return this.getDetail(user, defect.id);
   }
@@ -3171,12 +3425,19 @@ export class DefectsService {
       .join(' ');
   }
 
-  private async findAssignableUser(tenantId: string, userId: string) {
+  private async findAssignableUser(
+    tenantId: string,
+    userId: string,
+    restrictToOrganizationId?: string,
+  ) {
     const assignedUser = await this.prisma.user.findFirst({
       where: {
         id: userId,
         tenantId,
         isActive: true,
+        ...(restrictToOrganizationId
+          ? { organizationId: restrictToOrganizationId }
+          : {}),
       },
       select: {
         id: true,
@@ -3187,18 +3448,29 @@ export class DefectsService {
     });
 
     if (!assignedUser) {
-      throw new NotFoundException('Assigned user not found.');
+      throw new NotFoundException(
+        restrictToOrganizationId
+          ? 'You can only assign to a technician in your own company.'
+          : 'Assigned user not found.',
+      );
     }
 
     return assignedUser;
   }
 
-  private async findAssignableTeam(tenantId: string, teamId: string) {
+  private async findAssignableTeam(
+    tenantId: string,
+    teamId: string,
+    restrictToOrganizationId?: string,
+  ) {
     const assignedTeam = await this.prisma.team.findFirst({
       where: {
         id: teamId,
         tenantId,
         isActive: true,
+        ...(restrictToOrganizationId
+          ? { organizationId: restrictToOrganizationId }
+          : {}),
       },
       select: {
         id: true,
@@ -3208,10 +3480,48 @@ export class DefectsService {
     });
 
     if (!assignedTeam) {
-      throw new NotFoundException('Assigned team not found.');
+      throw new NotFoundException(
+        restrictToOrganizationId
+          ? 'You can only assign to a team in your own company.'
+          : 'Assigned team not found.',
+      );
     }
 
     return assignedTeam;
+  }
+
+  /**
+   * Maintenance self-management org-scope for assignment. ADMIN may assign to any
+   * team/user in the tenant (returns undefined = no restriction). A non-admin
+   * (MANAGER) may only dispatch within their own company, and may NOT assign a
+   * defect that's been routed/delegated to a DIFFERENT company (which they may
+   * still see via subcontractor oversight). Returns the org id the assignee must
+   * belong to.
+   */
+  private resolveAssignmentOrgRestriction(
+    user: RequestUser,
+    defect: { maintenanceOrganizationId: string | null },
+  ): string | undefined {
+    if (user.role === UserRole.ADMIN) {
+      return undefined;
+    }
+
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'Your account has no operational company, so it cannot dispatch maintenance work.',
+      );
+    }
+
+    if (
+      defect.maintenanceOrganizationId &&
+      defect.maintenanceOrganizationId !== user.organizationId
+    ) {
+      throw new ForbiddenException(
+        'This defect is routed to another company; you can view it but not assign it.',
+      );
+    }
+
+    return user.organizationId;
   }
 
   private insensitiveContains(value: string): Prisma.StringFilter {
@@ -3400,8 +3710,13 @@ export class DefectsService {
       return inspectionScope;
     }
 
-    const maintenanceOrgId = user.organizationId;
-    if (!maintenanceOrgId) {
+    // The routed-pool org ids (own org; + subcontractor children for a MANAGER's
+    // oversight of delegated work) come pre-computed on the scope context. Fall
+    // back to the user's own org when called without a context.
+    const maintenanceOrgIds =
+      ctx?.maintenanceOrgIds ??
+      (user.organizationId ? [user.organizationId] : []);
+    if (maintenanceOrgIds.length === 0) {
       return inspectionScope;
     }
 
@@ -3409,7 +3724,7 @@ export class DefectsService {
       OR: [
         inspectionScope,
         {
-          maintenanceOrganizationId: maintenanceOrgId,
+          maintenanceOrganizationId: { in: maintenanceOrgIds },
           inspectionItemResult: {
             isDefect: true,
             inspection: { tenantId: user.tenantId },

@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { OrganizationType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RequestUser } from '../interfaces/request-user.interface';
 import { isQaActor } from './qa-actor';
@@ -28,6 +28,15 @@ export interface ScopeContext {
    * scoped to nothing and should see nothing through the QA bypass.
    */
   qaMainheadIds: string[];
+  /**
+   * Organization IDs whose ROUTED maintenance defect pool this user may see
+   * (maintenance handoff Phase 4 + self-management oversight). Always the user's
+   * own operational org; for a MANAGER it additionally includes the company's
+   * active SUBCONTRACTOR child orgs, so a main contractor retains oversight of
+   * work it delegated. Empty when the user has no operational org. Defects are
+   * matched on Defect.maintenanceOrganizationId IN these ids.
+   */
+  maintenanceOrgIds: string[];
 }
 
 export async function buildScopeContext(
@@ -37,13 +46,16 @@ export async function buildScopeContext(
   const isAdmin = user.role === UserRole.ADMIN;
 
   if (isAdmin) {
-    return { isAdmin: true, isQa: false, qaMainheadIds: [] };
+    return { isAdmin: true, isQa: false, qaMainheadIds: [], maintenanceOrgIds: [] };
   }
 
-  const isQa = await isQaActor(prisma, user);
+  const [maintenanceOrgIds, isQa] = await Promise.all([
+    resolveMaintenanceOrgIds(prisma, user),
+    isQaActor(prisma, user),
+  ]);
 
   if (!isQa) {
-    return { isAdmin: false, isQa: false, qaMainheadIds: [] };
+    return { isAdmin: false, isQa: false, qaMainheadIds: [], maintenanceOrgIds };
   }
 
   const [directAccess, regionAccess] = await Promise.all([
@@ -92,5 +104,59 @@ export async function buildScopeContext(
     isAdmin: false,
     isQa: true,
     qaMainheadIds: Array.from(mainheadIds),
+    maintenanceOrgIds,
   };
+}
+
+/**
+ * The org IDs whose routed maintenance defect pool a non-admin user may see: the
+ * user's own operational org, plus — for a MANAGER — the company's entire active
+ * contractor subtree (subcontractors, their subcontractors, …) so a main
+ * contractor keeps oversight of work it delegated, however many levels deep it
+ * was re-delegated. Technicians/supervisors get only their own org → exact-match
+ * visibility (unchanged from Phase 4). The walk is type-filtered to contractor
+ * orgs (mirrors the delegate-target rules) and de-duplicated, so a malformed
+ * org graph can't loop or widen the set beyond contractors.
+ */
+async function resolveMaintenanceOrgIds(
+  prisma: PrismaService,
+  user: RequestUser,
+): Promise<string[]> {
+  if (!user.organizationId) {
+    return [];
+  }
+
+  const ids = new Set<string>([user.organizationId]);
+
+  // Only a MANAGER gets oversight of delegated work; everyone else stays exact-org.
+  if (user.role !== UserRole.MANAGER) {
+    return Array.from(ids);
+  }
+
+  let frontier = [user.organizationId];
+  while (frontier.length > 0) {
+    const children = await prisma.organization.findMany({
+      where: {
+        parentOrganizationId: { in: frontier },
+        isActive: true,
+        type: {
+          in: [
+            OrganizationType.MAIN_CONTRACTOR,
+            OrganizationType.SUBCONTRACTOR,
+          ],
+        },
+      },
+      select: { id: true },
+    });
+
+    frontier = [];
+    for (const child of children) {
+      if (!ids.has(child.id)) {
+        ids.add(child.id);
+        frontier.push(child.id);
+      }
+    }
+  }
+
+  return Array.from(ids);
 }

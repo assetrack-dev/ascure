@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
+import { DelegateDefectDto } from './dto/delegate-defect.dto';
 import { ListDefectOperationsBoardQueryDto } from './dto/list-defect-operations-board-query.dto';
 import { UpdateDefectAssignmentDto } from './dto/update-defect-assignment.dto';
 import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
@@ -87,6 +88,14 @@ export class DefectsController {
     return this.defectsService.updateStatus(user, params.id, dto);
   }
 
+  @Get(':id/assignment-options')
+  getAssignmentOptions(
+    @CurrentUser() user: RequestUser,
+    @Param() params: DefectIdParamDto,
+  ) {
+    return this.defectsService.getAssignmentOptions(user, params.id);
+  }
+
   @Patch(':id/assignment')
   updateAssignment(
     @CurrentUser() user: RequestUser,
@@ -94,6 +103,15 @@ export class DefectsController {
     @Body() dto: UpdateDefectAssignmentDto,
   ) {
     return this.defectsService.updateAssignment(user, params.id, dto);
+  }
+
+  @Patch(':id/delegate')
+  delegateDefect(
+    @CurrentUser() user: RequestUser,
+    @Param() params: DefectIdParamDto,
+    @Body() dto: DelegateDefectDto,
+  ) {
+    return this.defectsService.delegateDefect(user, params.id, dto);
   }
 
   @Patch(':id/claim')

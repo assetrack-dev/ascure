@@ -15,6 +15,7 @@ export interface ApiUser {
   canReassign?: boolean;
   canManageSupervisors?: boolean;
   canManageUsers?: boolean;
+  canManageMaintenance?: boolean;
 }
 
 export interface AuthUser {
@@ -73,6 +74,14 @@ export interface AuthUser {
    * allow-list server-side.
    */
   canManageUsers?: boolean;
+  /**
+   * Server-provided authority to dispatch maintenance work for the company's
+   * routed defect pool — assign a routed defect to the company's own team/tech,
+   * or delegate it to a subcontractor. ADMIN or MANAGER. Mirrors the API gate so
+   * the console can show the assign/delegate controls even though MANAGER
+   * collapses to VIEWER client-side; the defect endpoints still enforce org-scope.
+   */
+  canManageMaintenance?: boolean;
 }
 
 export interface AuthSession {

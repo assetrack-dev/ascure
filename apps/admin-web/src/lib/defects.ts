@@ -1152,6 +1152,99 @@ export async function updateDefectAssignment(
   return defect;
 }
 
+export interface DefectAssignmentOption {
+  id: string;
+  name: string | null;
+  email: string | null;
+  code: string | null;
+  role: string | null;
+  type: string | null;
+}
+
+export interface DefectAssignmentOptions {
+  responsibleOrganizationId: string | null;
+  canAssign: boolean;
+  canDelegate: boolean;
+  teams: DefectAssignmentOption[];
+  users: DefectAssignmentOption[];
+  subcontractors: DefectAssignmentOption[];
+}
+
+function normalizeAssignmentOption(raw: unknown): DefectAssignmentOption | null {
+  const record = asRecord(raw);
+  const id = readString(record, "id");
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    name: readString(record, "name"),
+    email: readString(record, "email"),
+    code: readString(record, "code"),
+    role: readString(record, "role"),
+    type: readString(record, "type"),
+  };
+}
+
+function normalizeAssignmentOptionArray(
+  record: ApiRecord | null,
+  key: string,
+): DefectAssignmentOption[] {
+  return readArray(record, key)
+    .map(normalizeAssignmentOption)
+    .filter((option): option is DefectAssignmentOption => Boolean(option));
+}
+
+/**
+ * Maintenance self-management — the org-scoped dispatch options for a routed
+ * defect: the responsible company's teams + technicians a manager can assign to,
+ * and the registered subcontractors they can delegate to.
+ */
+export async function fetchDefectAssignmentOptions(
+  token: string,
+  defectId: string,
+): Promise<DefectAssignmentOptions> {
+  const record = asRecord(
+    await apiRequest<unknown>(
+      `/defects/${encodeURIComponent(defectId)}/assignment-options`,
+      { token },
+    ),
+  );
+
+  return {
+    responsibleOrganizationId: readString(record, "responsibleOrganizationId"),
+    canAssign: readBoolean(record, "canAssign") ?? false,
+    canDelegate: readBoolean(record, "canDelegate") ?? false,
+    teams: normalizeAssignmentOptionArray(record, "teams"),
+    users: normalizeAssignmentOptionArray(record, "users"),
+    subcontractors: normalizeAssignmentOptionArray(record, "subcontractors"),
+  };
+}
+
+/** Maintenance self-management — delegate a routed defect to a subcontractor. */
+export async function delegateDefect(
+  token: string,
+  defectId: string,
+  organizationId: string,
+): Promise<DefectDetail> {
+  const defect = normalizeDefectDetail(
+    await apiRequest<unknown>(
+      `/defects/${encodeURIComponent(defectId)}/delegate`,
+      {
+        method: "PATCH",
+        token,
+        body: JSON.stringify({ organizationId }),
+      },
+    ),
+  );
+
+  if (!defect) {
+    throw new Error("Unable to read updated defect detail.");
+  }
+
+  return defect;
+}
+
 export async function updateDefectDueDate(
   token: string,
   defectId: string,

@@ -100,6 +100,7 @@ export class AuthService {
     const canReassign = this.resolveCanReassign(requestUser);
     const canManageSupervisors = this.resolveCanManageSupervisors(requestUser);
     const canManageUsers = this.resolveCanManageUsers(requestUser);
+    const canManageMaintenance = this.resolveCanManageMaintenance(requestUser);
 
     return {
       access_token: accessToken,
@@ -118,6 +119,7 @@ export class AuthService {
         canReassign,
         canManageSupervisors,
         canManageUsers,
+        canManageMaintenance,
       },
     };
   }
@@ -178,6 +180,18 @@ export class AuthService {
     return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
   }
 
+  /**
+   * Server-provided authority to dispatch maintenance work for the company's
+   * routed defect pool — assign a routed defect to one of the company's own
+   * teams/technicians, or delegate it to a subcontractor (maintenance handoff
+   * self-management). ADMIN (any) or MANAGER (own company). Exposed as a flag
+   * because the admin console collapses MANAGER to VIEWER client-side; the
+   * defect assign/delegate endpoints still enforce the org-scope server-side.
+   */
+  private resolveCanManageMaintenance(user: RequestUser): boolean {
+    return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+  }
+
   async me(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -212,6 +226,7 @@ export class AuthService {
     const canReassign = this.resolveCanReassign(user);
     const canManageSupervisors = this.resolveCanManageSupervisors(user);
     const canManageUsers = this.resolveCanManageUsers(user);
+    const canManageMaintenance = this.resolveCanManageMaintenance(user);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -223,6 +238,7 @@ export class AuthService {
       canReassign,
       canManageSupervisors,
       canManageUsers,
+      canManageMaintenance,
     };
   }
 

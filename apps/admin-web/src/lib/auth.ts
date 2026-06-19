@@ -34,6 +34,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     canManageSupervisors:
       "canManageSupervisors" in user ? user.canManageSupervisors : undefined,
     canManageUsers: "canManageUsers" in user ? user.canManageUsers : undefined,
+    canManageMaintenance:
+      "canManageMaintenance" in user ? user.canManageMaintenance : undefined,
   };
 }
 
