@@ -19,6 +19,7 @@ import { api, ApiError, isEndpointUnavailableError } from '../api';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
+import { useCapabilities } from '../useCapabilities';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
@@ -97,6 +98,10 @@ const MAP_PICKER_DELTA = 0.004;
 export function CheckInScreen() {
   const navigation = useNavigation<RootStackScreenProps<'CheckIn'>['navigation']>();
   const { token, user, handleUnauthorized } = useSession();
+  // Starting a site visit is an inspection-scope action; block maintenance-only
+  // accounts even if some navigation path reaches this screen (defense in depth —
+  // the Home "+" entry is already hidden for them).
+  const { canInspect, loading: capabilitiesLoading } = useCapabilities();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -602,6 +607,13 @@ export function CheckInScreen() {
   }
 
   async function createVisit(payload: CreateSiteVisitInput) {
+    // Defense in depth: starting a site visit is inspection-scope. The screen
+    // guard already blocks maintenance accounts, but re-assert here to close the
+    // brief capability-loading render race.
+    if (capabilitiesLoading || !canInspect) {
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       setError(null);
@@ -675,6 +687,22 @@ export function CheckInScreen() {
         onCancel={() => setMapPickerState(null)}
         onConfirm={handleConfirmMapCoordinate}
       />
+    );
+  }
+
+  if (!capabilitiesLoading && !canInspect) {
+    return (
+      <Screen
+        title="Pencawang Check-In"
+        actions={<InlineButton label="Back" onPress={() => navigation.goBack()} />}
+      >
+        <Card>
+          <EmptyState
+            title="Inspection access required"
+            description="Starting a site visit is an inspection task, and your account doesn't have inspection access."
+          />
+        </Card>
+      </Screen>
     );
   }
 

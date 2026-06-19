@@ -10,6 +10,7 @@ import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
+import { useCapabilities } from '../useCapabilities';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen } from '../ui';
 import { Theme, useTheme } from '../theme';
@@ -166,6 +167,9 @@ export function MapScreen() {
   const canOpenDrawer =
     typeof (navigation as { openDrawer?: () => void }).openDrawer === 'function';
   const { token, handleUnauthorized } = useSession();
+  // Adding an asset is an inspection-scope action — the map stays viewable for
+  // everyone, but the drop-pin / add-asset entry points are inspection-only.
+  const { canInspect } = useCapabilities();
 
   const handleOpenAssetDetail = useCallback(
     (asset: Asset) =>
@@ -417,6 +421,9 @@ export function MapScreen() {
   }, [centerMapOnCoordinate, currentCoordinate, hasVisibleMapMarkers, isLoading]);
 
   function handleLongPress(event: LongPressEvent) {
+    if (!canInspect) {
+      return;
+    }
     const nextCoordinate = {
       latitude: event.nativeEvent.coordinate.latitude,
       longitude: event.nativeEvent.coordinate.longitude,
@@ -434,6 +441,9 @@ export function MapScreen() {
   // onRegionChangeComplete) so adding an asset is "drop + drag to place" rather
   // than hunting for a spot to long-press. Long-press still works as a shortcut.
   function handleDropPinAtCentre() {
+    if (!canInspect) {
+      return;
+    }
     setSelectedCoordinate({
       latitude: region.latitude,
       longitude: region.longitude,
@@ -623,7 +633,7 @@ export function MapScreen() {
           </>
         ) : null}
 
-        {selectedCoordinate ? (
+        {canInspect && selectedCoordinate ? (
           <View style={styles.selectedPinPanel}>
             <Text style={styles.selectedPinTitle}>Drag pin to adjust location</Text>
             <BodyText muted>
@@ -648,7 +658,7 @@ export function MapScreen() {
           </View>
         ) : null}
 
-        {!isLoading && !selectedCoordinate ? (
+        {canInspect && !isLoading && !selectedCoordinate ? (
           <View style={styles.selectedPinPanel}>
             <AppButton label="Drop Pin to Add Asset" onPress={handleDropPinAtCentre} />
           </View>

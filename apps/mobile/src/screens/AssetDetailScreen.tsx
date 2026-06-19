@@ -21,6 +21,7 @@ import { cachedFetch, readCache, removeFromCachedArray, writeCache } from '../of
 import { dropOfflineAssetCreate, enqueueMutation, isTempId, mintTempId } from '../syncQueue';
 import { buildOfflineInspectionForm } from '../offlineInspection';
 import { useSession } from '../context/AuthContext';
+import { useCapabilities } from '../useCapabilities';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   Asset,
@@ -96,6 +97,8 @@ export function AssetDetailScreen() {
   const { visitId, substationId, assetId, assetSnapshot, operationalSessionId, autoStartInspection } =
     route.params;
   const { token, user, handleUnauthorized } = useSession();
+  // Starting an inspection is inspection-scope — hidden for maintenance accounts.
+  const { canInspect } = useCapabilities();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [asset, setAsset] = useState<AssetDetailResponse | null>(
@@ -177,11 +180,13 @@ export function AssetDetailScreen() {
   // the inspection form automatically once the new pole has loaded (the
   // startInspectionRef guard keeps it to a single run).
   useEffect(() => {
-    if (autoStartInspection && asset && !startInspectionRef.current) {
+    if (autoStartInspection && asset && canInspect && !startInspectionRef.current) {
       handleStartInspection();
     }
+    // Depend on canInspect so a slow capability load doesn't drop the auto-start
+    // (handleStartInspection no-ops until caps resolve; re-run when they do).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStartInspection, asset]);
+  }, [autoStartInspection, asset, canInspect]);
 
   // Keep the session cache in sync with whatever detail is on screen (from a
   // load or an in-screen action) so the next re-entry paints instantly.
@@ -195,7 +200,7 @@ export function AssetDetailScreen() {
   const imageCarouselWidth = Math.max(180, screenWidth - 72);
 
   async function handleStartInspection() {
-    if (!asset || !visitId || startInspectionRef.current) {
+    if (!canInspect || !asset || !visitId || startInspectionRef.current) {
       return;
     }
 
@@ -562,19 +567,23 @@ export function AssetDetailScreen() {
             <Text style={styles.actionButtonGhostText}>Mark Not Found</Text>
           </Pressable>
 
-          <Pressable
-            onPress={handleStartInspection}
-            disabled={!visitId || isStartingInspection}
-            style={({ pressed }) => [
-              styles.actionButton,
-              styles.actionButtonPrimary,
-              (!visitId || isStartingInspection) && styles.disabledButton,
-              pressed && visitId && !isStartingInspection && styles.pressedButton,
-            ]}
-          >
-            {isStartingInspection ? <ActivityIndicator color={theme.colors.textOnPrimary} /> : null}
-            <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
-          </Pressable>
+          {canInspect ? (
+            <Pressable
+              onPress={handleStartInspection}
+              disabled={!visitId || isStartingInspection}
+              style={({ pressed }) => [
+                styles.actionButton,
+                styles.actionButtonPrimary,
+                (!visitId || isStartingInspection) && styles.disabledButton,
+                pressed && visitId && !isStartingInspection && styles.pressedButton,
+              ]}
+            >
+              {isStartingInspection ? (
+                <ActivityIndicator color={theme.colors.textOnPrimary} />
+              ) : null}
+              <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
+            </Pressable>
+          ) : null}
 
           <Pressable
             onPress={handleConfirmDeleteAsset}

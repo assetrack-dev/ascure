@@ -17,7 +17,7 @@ import {
   storeToken,
   storeUser,
 } from '../storage';
-import { clearAllCache } from '../offlineCache';
+import { cachedFetch, clearAllCache } from '../offlineCache';
 import type { SessionUser } from '../types';
 
 // A 401 can mean the token simply expired/was invalidated, or that this account
@@ -149,6 +149,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await Promise.all([storeToken(accessToken), storeUser(sessionUser)]);
     setToken(accessToken);
     setUser(sessionUser);
+    // Prime the offline capabilities cache while we're definitely online, so a
+    // later offline boot serves real capabilities instead of failing closed and
+    // hiding inspection actions from a legitimate inspector. Best-effort.
+    void cachedFetch('my-capabilities', undefined, () =>
+      api.getMyCapabilities(accessToken),
+    ).catch(() => undefined);
   }, []);
 
   const signOut = useCallback(async () => {

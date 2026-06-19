@@ -11,6 +11,7 @@ import {
   getAutoOpenWorkspace,
   getAvailableMobileWorkspaces,
   getInspectionQueueStatusGroup,
+  hasInspectionAuthority,
   type InspectionQueueStatusGroup,
   type MobileWorkspace,
   type MobileWorkspaceId,
@@ -96,6 +97,12 @@ export function HomeScreen() {
   const [capabilities, setCapabilities] = useState<EffectiveCapability[]>([]);
   const workspaces = useMemo(
     () => getAvailableMobileWorkspaces(user, capabilities),
+    [user, capabilities],
+  );
+  // Check-In (starting a site visit) is an inspection-scope action — hide the
+  // header "+" from maintenance-only accounts.
+  const canInspect = useMemo(
+    () => hasInspectionAuthority(user, capabilities),
     [user, capabilities],
   );
   const autoOpenWorkspace = useMemo(
@@ -264,11 +271,15 @@ export function HomeScreen() {
           accessibilityLabel: 'Refresh',
           disabled: isLoading,
         },
-        {
-          icon: 'add',
-          onPress: () => navigation.navigate('CheckIn'),
-          accessibilityLabel: 'Create Check In',
-        },
+        ...(canInspect
+          ? [
+              {
+                icon: 'add' as const,
+                onPress: () => navigation.navigate('CheckIn'),
+                accessibilityLabel: 'Create Check In',
+              },
+            ]
+          : []),
       ]}
     >
       <ErrorBanner message={error} />

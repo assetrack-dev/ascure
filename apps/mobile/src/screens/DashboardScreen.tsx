@@ -12,6 +12,7 @@ import {
   DefectStatus,
 } from '../types';
 import { formatDateTime } from '../utils';
+import { useCapabilities } from '../useCapabilities';
 import {
   AppButton,
   BodyText,
@@ -29,6 +30,8 @@ export function DashboardScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { token, user, handleUnauthorized } = useSession();
+  // Maintenance-only accounts shouldn't see inspection-centric stats.
+  const { canInspect } = useCapabilities();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [teamActivity, setTeamActivity] = useState<DailyTeamActivity | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -110,8 +113,12 @@ export function DashboardScreen() {
       {!isLoading && dashboard ? (
         <>
           <View style={styles.statGrid}>
-            <StatCard label="Total Assets" value={dashboard.totalAssets} />
-            <StatCard label="Total Inspections" value={dashboard.totalInspections} />
+            {canInspect ? (
+              <>
+                <StatCard label="Total Assets" value={dashboard.totalAssets} />
+                <StatCard label="Total Inspections" value={dashboard.totalInspections} />
+              </>
+            ) : null}
             <StatCard label="Total Defects" value={dashboard.totalDefects} />
           </View>
 
@@ -125,7 +132,7 @@ export function DashboardScreen() {
             <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
           </View>
 
-          {canSeeTeamActivity && teamActivity ? (
+          {canSeeTeamActivity && canInspect && teamActivity ? (
             <TeamActivityCard activity={teamActivity} />
           ) : null}
 

@@ -68,33 +68,54 @@ const STANDALONE_SCOPES = new Set<OperationalScope>([
   'LINK_BOX',
 ]);
 
+/**
+ * Inspection authority — STRICT. Only the explicit INSPECTION Workspace Access
+ * code or ADMIN. Never inferred from asset-domain codes (SAVR/SAVT/PENCAWANG/...),
+ * symmetric with the Maintenance gate. This is the single source of truth for
+ * "can this account perform inspection-scope actions" (check-in / start a site
+ * visit / add an asset / start an inspection) — reuse it everywhere, do not
+ * re-derive from role alone.
+ */
+export function hasInspectionAuthority(
+  user: Pick<SessionUser, 'role'>,
+  capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
+): boolean {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  return capabilities.some(
+    (capability) =>
+      normalizeCapabilityCode(capability.code) ===
+      INSPECTION_WORKSPACE_CAPABILITY_CODE,
+  );
+}
+
+/** Maintenance authority — STRICT. Only an explicit MAINTENANCE capability or ADMIN. */
+export function hasMaintenanceAuthority(
+  user: Pick<SessionUser, 'role'>,
+  capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
+): boolean {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  return capabilities.some(
+    (capability) =>
+      normalizeCapabilityCode(capability.code) ===
+      MAINTENANCE_WORKSPACE_CAPABILITY_CODE,
+  );
+}
+
 export function getAvailableMobileWorkspaces(
   user: Pick<SessionUser, 'role'>,
   capabilities: ReadonlyArray<Pick<EffectiveCapability, 'code'>>,
 ): MobileWorkspace[] {
-  const codes = new Set(
-    capabilities.map((capability) => normalizeCapabilityCode(capability.code)),
-  );
-  const isAdmin = user.role === 'ADMIN';
   const workspaces: MobileWorkspace[] = [];
 
-  // Inspection: STRICT. Only the explicit INSPECTION Workspace Access code or
-  // ADMIN. Never inferred from asset-domain codes (SAVR/SAVT/PENCAWANG/...),
-  // symmetric with the Maintenance gate below.
-  const hasInspectionAuthority =
-    isAdmin || codes.has(INSPECTION_WORKSPACE_CAPABILITY_CODE);
-
-  if (hasInspectionAuthority) {
+  if (hasInspectionAuthority(user, capabilities)) {
     workspaces.push(INSPECTION_WORKSPACE);
   }
 
-  // Maintenance: STRICT. Only an explicit MAINTENANCE capability or ADMIN.
-  // Never inferred from the presence of other capabilities, and never
-  // defaulted on.
-  const hasMaintenanceAuthority =
-    isAdmin || codes.has(MAINTENANCE_WORKSPACE_CAPABILITY_CODE);
-
-  if (hasMaintenanceAuthority) {
+  if (hasMaintenanceAuthority(user, capabilities)) {
     workspaces.push(MAINTENANCE_WORKSPACE);
   }
 

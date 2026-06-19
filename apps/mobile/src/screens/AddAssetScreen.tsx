@@ -19,6 +19,7 @@ import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
+import { useCapabilities } from '../useCapabilities';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
@@ -98,6 +99,9 @@ export function AddAssetScreen() {
     initialLongitude,
   } = route.params;
   const { token, handleUnauthorized } = useSession();
+  // Adding/editing an asset is an inspection-scope action — block maintenance
+  // accounts (defense in depth; the Map add-asset entry is already hidden).
+  const { canInspect, loading: capabilitiesLoading } = useCapabilities();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -443,6 +447,13 @@ export function AddAssetScreen() {
   }
 
   async function handleSubmit(intent: SaveIntent = 'detail') {
+    // Defense in depth: never create/update during the capability-loading window
+    // or for a non-inspection account (the screen guard hides the form, but this
+    // closes the brief render race before caps resolve).
+    if (capabilitiesLoading || !canInspect) {
+      return;
+    }
+
     const normalizedAssetCode = normalizeOperationalPayloadText(assetCode);
     const normalizedAssetName = normalizeOperationalPayloadText(assetName);
 
@@ -630,10 +641,27 @@ export function AddAssetScreen() {
   }
 
   const isSaveDisabled =
+    capabilitiesLoading ||
     isLoading ||
     isSubmitting ||
     assetTypes.length === 0 ||
     (!substationId && substations.length === 0);
+
+  if (!capabilitiesLoading && !canInspect) {
+    return (
+      <Screen
+        title={isEditMode ? 'Edit Asset' : 'Add Asset'}
+        actions={<InlineButton label="Back" onPress={() => navigation.goBack()} />}
+      >
+        <Card>
+          <EmptyState
+            title="Inspection access required"
+            description="Adding or editing an asset is an inspection task, and your account doesn't have inspection access."
+          />
+        </Card>
+      </Screen>
+    );
+  }
 
   return (
     <Screen
