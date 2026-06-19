@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CalendarDays, FileText, MapPin, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CalendarDays, Camera, FileText, MapPin, RefreshCw, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  EvidenceImageGrid,
+  buildEvidenceEntries,
+} from "@/components/inspection-evidence-grid";
 import { ApiError } from "@/lib/api";
 import { fetchAssetDetail } from "@/lib/assets";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
@@ -97,6 +101,11 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const isReadOnly = session?.user?.role !== "ADMIN";
   const canReport =
     session?.user?.canReport === true || session?.user?.role === "ADMIN";
+
+  const inspectionImages = useMemo(
+    () => buildEvidenceEntries(asset?.latestInspection?.images ?? []),
+    [asset],
+  );
 
   const handlePreviewReport = useCallback(async () => {
     if (!session?.token || !asset) return;
@@ -266,6 +275,27 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                     </div>
                   </div>
                 </section>
+
+                {asset.latestInspection ? (
+                  <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 text-base font-semibold text-[var(--foreground)]">
+                        <Camera size={17} className="text-[var(--brand)]" />
+                        Inspection Photos
+                      </div>
+                      <span className="text-sm text-[var(--muted)]">
+                        {inspectionImages.length} photos
+                      </span>
+                    </div>
+                    <div className="mt-5">
+                      <EvidenceImageGrid
+                        entries={inspectionImages}
+                        emptyText="No photos captured for this inspection."
+                        titlePrefix="Inspection Image"
+                      />
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">

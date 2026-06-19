@@ -1,5 +1,10 @@
 import { ApiError, apiRequest } from "@/lib/api";
-import type { AssetDetail, AssetInspectionStatus, AssetListItem } from "@/types/assets";
+import type {
+  AssetDetail,
+  AssetInspectionStatus,
+  AssetListItem,
+  InspectionEvidenceImage,
+} from "@/types/assets";
 
 type ApiRecord = Record<string, unknown>;
 
@@ -252,13 +257,29 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
 
   const latestInspection = readLatestInspection(record);
   const images = firstArray(latestInspection, ["images", "inspectionImages"])
-    .map((image) => {
+    .map((image): InspectionEvidenceImage | null => {
       const imageRecord = asRecord(image);
       const url = readString(imageRecord, "url");
 
-      return url ? { url } : null;
+      if (!url) {
+        return null;
+      }
+
+      return {
+        id: readString(imageRecord, "id") ?? url,
+        inspectionId: readString(imageRecord, "inspectionId") ?? "",
+        url,
+        path: readString(imageRecord, "path"),
+        filename: readString(imageRecord, "filename"),
+        mimeType: readString(imageRecord, "mimeType"),
+        sizeBytes: readNumber(imageRecord, "sizeBytes"),
+        latitude: readNumber(imageRecord, "latitude"),
+        longitude: readNumber(imageRecord, "longitude"),
+        timestamp: readString(imageRecord, "timestamp"),
+        createdAt: readString(imageRecord, "createdAt"),
+      };
     })
-    .filter((image): image is { url: string } => Boolean(image));
+    .filter((image): image is InspectionEvidenceImage => Boolean(image));
 
   return {
     ...baseAsset,

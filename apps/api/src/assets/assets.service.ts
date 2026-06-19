@@ -21,6 +21,7 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
+import { buildInspectionImagePath } from '../common/uploads.constants';
 import {
   buildNormalizedKey,
   formatBranchSuffix,
@@ -331,7 +332,16 @@ export class AssetsService {
                 createdAt: 'asc',
               },
               select: {
+                id: true,
+                inspectionId: true,
                 url: true,
+                filename: true,
+                mimeType: true,
+                sizeBytes: true,
+                latitude: true,
+                longitude: true,
+                timestamp: true,
+                createdAt: true,
               },
             },
             results: {
@@ -406,7 +416,17 @@ export class AssetsService {
               severity: item.severity,
             })),
             images: latestInspection.inspectionImages.map((image) => ({
+              id: image.id,
+              inspectionId: image.inspectionId,
               url: image.url,
+              path: buildInspectionImagePath(image.inspectionId, image.filename),
+              filename: image.filename,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              latitude: image.latitude,
+              longitude: image.longitude,
+              timestamp: image.timestamp?.toISOString() ?? null,
+              createdAt: image.createdAt.toISOString(),
             })),
           }
         : null,

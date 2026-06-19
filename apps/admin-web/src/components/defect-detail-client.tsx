@@ -20,7 +20,11 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
-import { API_ORIGIN, ApiError } from "@/lib/api";
+import {
+  EvidenceImageGrid,
+  buildEvidenceEntries,
+} from "@/components/inspection-evidence-grid";
+import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession, refreshStoredSessionUser } from "@/lib/auth";
 import {
   addDefectComment,
@@ -40,7 +44,6 @@ import type { AuthSession } from "@/types/auth";
 import {
   DEFECT_WORKFLOW_STATUSES,
   type DefectDetail,
-  type DefectEvidenceImage,
   type DefectLifecycleStatus,
   type DefectResolutionOutcome,
   type DefectSeverity,
@@ -406,104 +409,6 @@ function CompactMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function getImageSourceUrl(image: DefectEvidenceImage) {
-  const source = image.url || image.path;
-
-  if (!source) {
-    return null;
-  }
-
-  if (/^[a-z][a-z\d+\-.]*:/i.test(source)) {
-    return source;
-  }
-
-  if (source.startsWith("/")) {
-    return `${API_ORIGIN}${source}`;
-  }
-
-  if (source.startsWith("uploads/")) {
-    return `${API_ORIGIN}/${source}`;
-  }
-
-  if (source.startsWith("inspections/")) {
-    return `${API_ORIGIN}/uploads/${source}`;
-  }
-
-  return source;
-}
-
-type EvidenceImageEntry = {
-  image: DefectEvidenceImage;
-  sourceUrl: string;
-};
-
-function formatEvidenceTimestamp(image: DefectEvidenceImage) {
-  return formatDateTime(image.timestamp ?? image.uploadedAt ?? image.createdAt);
-}
-
-function formatEvidenceGps(image: DefectEvidenceImage) {
-  if (
-    typeof image.latitude === "number" &&
-    Number.isFinite(image.latitude) &&
-    typeof image.longitude === "number" &&
-    Number.isFinite(image.longitude)
-  ) {
-    return `${image.latitude.toFixed(6)}, ${image.longitude.toFixed(6)}`;
-  }
-
-  return null;
-}
-
-function EvidenceImageGrid({
-  entries,
-  emptyText,
-  titlePrefix,
-}: {
-  entries: EvidenceImageEntry[];
-  emptyText: string;
-  titlePrefix: string;
-}) {
-  if (entries.length === 0) {
-    return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-sm text-[var(--muted)]">
-        {emptyText}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {entries.map(({ image, sourceUrl }, index) => {
-        const gps = formatEvidenceGps(image);
-
-        return (
-          <a
-            key={`${image.id}-${index}`}
-            href={sourceUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="group block overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
-          >
-            <img
-              src={sourceUrl}
-              alt={image.filename ?? titlePrefix}
-              className="aspect-video w-full object-cover transition group-hover:scale-[1.02]"
-            />
-            <div className="space-y-1 border-t border-slate-200 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">
-                {titlePrefix} {index + 1}
-              </div>
-              <div>{formatEvidenceTimestamp(image)}</div>
-              {gps ? <div>GPS {gps}</div> : null}
-              {image.note ? <div className="line-clamp-2">{image.note}</div> : null}
-            </div>
-          </a>
-        );
-      })}
-    </div>
-  );
-}
-
 function TimelineIcon({ entry }: { entry: DefectTimelineEntry }) {
   if (entry.type === "DEFECT_VERIFIED" || entry.type === "CLOSURE_VERIFIED") {
     return <ShieldCheck size={16} />;
@@ -821,24 +726,15 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
 
   const maintenanceEvidenceImages = useMemo(
     () =>
-      (defect?.maintenanceProofImages?.length
-        ? defect.maintenanceProofImages
-        : defect?.evidenceImages ?? [])
-        .map((image) => ({
-          image,
-          sourceUrl: getImageSourceUrl(image),
-        }))
-        .filter((entry): entry is EvidenceImageEntry => Boolean(entry.sourceUrl)) ?? [],
+      buildEvidenceEntries(
+        defect?.maintenanceProofImages?.length
+          ? defect.maintenanceProofImages
+          : defect?.evidenceImages ?? [],
+      ),
     [defect],
   );
   const inspectionEvidenceImages = useMemo(
-    () =>
-      (defect?.images ?? [])
-        .map((image) => ({
-          image,
-          sourceUrl: getImageSourceUrl(image),
-        }))
-        .filter((entry): entry is EvidenceImageEntry => Boolean(entry.sourceUrl)),
+    () => buildEvidenceEntries(defect?.images ?? []),
     [defect],
   );
   const resolutionGovernance = useMemo(

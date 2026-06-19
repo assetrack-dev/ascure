@@ -14,6 +14,7 @@ import {
   MapPin,
   Radio,
   RefreshCw,
+  Search,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -1118,6 +1119,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [lifecycleError, setLifecycleError] = useState("");
   const [cycleDelta, setCycleDelta] = useState<CycleDelta | null>(null);
   const [contributions, setContributions] = useState<SiteVisitContributions | null>(null);
+  const [assetSearch, setAssetSearch] = useState("");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1364,6 +1366,20 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     );
   }, [visit]);
 
+  const filteredAssetRows = useMemo(() => {
+    const query = assetSearch.trim().toLowerCase();
+    if (!query) {
+      return operationalAssetRows;
+    }
+    return operationalAssetRows.filter((link) => {
+      const type =
+        link.asset.assetType?.name ?? link.asset.assetType?.code ?? "";
+      return [link.asset.assetCode, link.asset.name ?? "", type].some((value) =>
+        value.toLowerCase().includes(query),
+      );
+    });
+  }, [operationalAssetRows, assetSearch]);
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -1571,14 +1587,42 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           Linked Assets
                         </div>
                         <span className="text-sm text-[var(--muted)]">
-                          {operationalAssetRows.length} rows
+                          {filteredAssetRows.length === operationalAssetRows.length
+                            ? `${operationalAssetRows.length} rows`
+                            : `${filteredAssetRows.length} / ${operationalAssetRows.length} rows`}
                         </span>
                       </div>
-                      <div className="mt-5 overflow-x-auto">
-                        {operationalAssetRows.length > 0 ? (
+
+                      {operationalAssetRows.length > 0 ? (
+                        <label className="relative mt-4 block">
+                          <span className="sr-only">Search linked assets</span>
+                          <Search
+                            size={17}
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                          />
+                          <input
+                            type="search"
+                            value={assetSearch}
+                            onChange={(event) => setAssetSearch(event.target.value)}
+                            placeholder="Search by code, name or type"
+                            className="h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
+                          />
+                        </label>
+                      ) : null}
+
+                      <div className="mt-4 max-h-[28rem] overflow-x-auto overflow-y-auto">
+                        {operationalAssetRows.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+                            No linked assets returned for this visit.
+                          </div>
+                        ) : filteredAssetRows.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+                            No assets match your search.
+                          </div>
+                        ) : (
                           <table className="min-w-full text-left text-sm">
                             <thead>
-                              <tr className="border-y border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
+                              <tr className="sticky top-0 z-10 border-y border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
                                 <th className="px-4 py-3">Asset</th>
                                 <th className="px-4 py-3">Type</th>
                                 <th className="px-4 py-3">Source</th>
@@ -1586,8 +1630,20 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {operationalAssetRows.map((link) => (
-                                <tr key={link.id}>
+                              {filteredAssetRows.map((link) => (
+                                <tr
+                                  key={link.id}
+                                  tabIndex={0}
+                                  onClick={() => router.push(`/assets/${link.assetId}`)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      router.push(`/assets/${link.assetId}`);
+                                    }
+                                  }}
+                                  className="cursor-pointer outline-none transition hover:bg-slate-50 focus-visible:bg-slate-50"
+                                  aria-label={`Open asset ${link.asset.assetCode}`}
+                                >
                                   <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-900">
                                     {link.asset.assetCode}
                                   </td>
@@ -1604,10 +1660,6 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                               ))}
                             </tbody>
                           </table>
-                        ) : (
-                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
-                            No linked assets returned for this visit.
-                          </div>
                         )}
                       </div>
                     </section>

@@ -1021,8 +1021,8 @@ const createStyles = (t: Theme) =>
     // it's the dominant element in the header (the generic "Asset Detail" label is
     // demoted to a small eyebrow above it).
     subtitle: {
-      fontSize: 24,
-      lineHeight: 28,
+      fontSize: 48,
+      lineHeight: 56,
       fontWeight: '800',
       color: t.colors.textPrimary,
       textAlign: 'center',

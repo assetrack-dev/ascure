@@ -13,6 +13,20 @@ export interface AssetListItem {
   assetStatus?: string | null;
 }
 
+export interface InspectionEvidenceImage {
+  id: string;
+  inspectionId: string;
+  url: string;
+  path?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timestamp?: string | null;
+  createdAt?: string | null;
+}
+
 export interface AssetDetail extends AssetListItem {
   name: string | null;
   latitude: number | null;
@@ -23,8 +37,6 @@ export interface AssetDetail extends AssetListItem {
     status: string | null;
     submittedAt: string | null;
     remarks?: string | null;
-    images?: Array<{
-      url: string;
-    }>;
+    images?: InspectionEvidenceImage[];
   } | null;
 }
