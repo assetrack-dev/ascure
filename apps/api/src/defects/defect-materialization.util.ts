@@ -35,7 +35,10 @@ export function buildInitialDefectData(
       ? DefectSeverity.CRITICAL
       : item.severity ?? DefectSeverity.MEDIUM,
     isEmergency: item.isEmergency,
-    lifecycleStatus: initialDefectLifecycleStatus(),
+    // Under RELEASE_ON_REPORT, emergencies open VERIFIED (instant release at
+    // submit) while normal defects open DETECTED (dormant until LAPORAN SELESAI).
+    // Other modes ignore isEmergency. See defect-governance.ts.
+    lifecycleStatus: initialDefectLifecycleStatus({ isEmergency: item.isEmergency }),
     createdAt: now,
     updatedAt: now,
   };

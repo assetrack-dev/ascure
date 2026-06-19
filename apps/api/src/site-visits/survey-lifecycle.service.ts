@@ -5,7 +5,9 @@ import {
 } from '@nestjs/common';
 import { Prisma, SiteVisitStatus, SurveyLifecycleStatus, UserRole } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
+import { releaseDefectsOnReport } from '../common/authorization/defect-governance';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
+import { buildVisitReleasePlan } from '../defects/defect-release.util';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportGenerationService } from '../report-generation/report-generation.service';
@@ -105,13 +107,29 @@ export class SurveyLifecycleService {
       data: { laporanSelesaiAt: new Date() },
       // Compile the frozen report, then persist its row INSIDE the status-commit
       // transaction, so the report and the LAPORAN SELESAI status are atomic
-      // (no orphaned report row if the commit fails).
+      // (no orphaned report row if the commit fails). Under RELEASE_ON_REPORT,
+      // this is also the gate where the survey's dormant defects release and
+      // auto-route to the MAINHEAD's maintenance company — appended to the same
+      // commit so release is atomic with reaching LAPORAN SELESAI.
       beforeCommit: async () => {
         const data = await this.reportGeneration.buildSiteVisitReportData(
           user,
           id,
         );
-        return [this.prisma.siteVisitReport.create({ data })];
+        const ops: Prisma.PrismaPromise<unknown>[] = [
+          this.prisma.siteVisitReport.create({ data }),
+        ];
+
+        if (releaseDefectsOnReport()) {
+          const releasePlan = await buildVisitReleasePlan(this.prisma, id, {
+            scope: 'ALL',
+            actorUserId: user.id,
+            now: new Date(),
+          });
+          ops.push(...releasePlan.ops);
+        }
+
+        return ops;
       },
     });
   }

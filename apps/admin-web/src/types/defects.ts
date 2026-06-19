@@ -351,10 +351,20 @@ export interface DefectOperationsBoardFilters {
   q?: string;
 }
 
+export type DefectGovernanceMode =
+  | "INSPECTOR_OWNS"
+  | "QA_GATED"
+  | "RELEASE_ON_REPORT";
+
 export interface DefectOperationsBoardResponse {
   generatedAt: string | null;
   /** True when defects skip the QA/QC gate (INSPECTOR_OWNS) — hide that column. */
   inspectorOwns: boolean;
+  /**
+   * Active defect-governance mode. Under RELEASE_ON_REPORT the first column holds
+   * dormant defects awaiting LAPORAN SELESAI, not QA review.
+   */
+  governanceMode: DefectGovernanceMode;
   filters: DefectOperationsBoardFilters;
   totalCount: number;
   queues: DefectOperationsBoardQueue[];

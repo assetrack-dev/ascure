@@ -18,7 +18,11 @@ import {
   UserRole,
 } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
-import { inspectorOwnsDefects } from '../common/authorization/defect-governance';
+import {
+  inspectorOwnsDefects,
+  releaseDefectsOnReport,
+  resolveDefectGovernanceMode,
+} from '../common/authorization/defect-governance';
 import { buildInitialDefectData } from './defect-materialization.util';
 import { APPSHEET_IMPORT_REPORTING_GROUP_PREFIX } from '../common/import.constants';
 import {
@@ -445,15 +449,7 @@ export class DefectsService {
     await this.ensureDefectsForAccessibleItems(user, ctx);
 
     const defects = await this.prisma.defect.findMany({
-      where: {
-        inspectionItemResult: {
-          isDefect: true,
-          inspection: {
-            tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user, ctx),
-          },
-        },
-      },
+      where: this.defectAccessScope(user, ctx),
       orderBy: {
         createdAt: 'desc',
       },
@@ -624,6 +620,10 @@ export class DefectsService {
       // so the admin board hides the "Awaiting QA/QC" column. Surfaced here so
       // the client can decide without re-reading the governance env.
       inspectorOwns: inspectorOwnsDefects(),
+      // The active defect-governance mode (INSPECTOR_OWNS | QA_GATED |
+      // RELEASE_ON_REPORT). Lets the board relabel/show the first column without
+      // re-deriving it client-side. See defect-governance.ts.
+      governanceMode: resolveDefectGovernanceMode(),
       filters: {
         mainhead: query.mainhead ?? null,
         projectId: query.projectId ?? null,
@@ -676,13 +676,7 @@ export class DefectsService {
       where: {
         isEmergency: true,
         status: { not: DefectStatus.CLOSED },
-        inspectionItemResult: {
-          isDefect: true,
-          inspection: {
-            tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user, ctx),
-          },
-        },
+        ...this.defectAccessScope(user, ctx),
       },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -1717,13 +1711,7 @@ export class DefectsService {
     return this.prisma.defect.findFirst({
       where: {
         id: defectId,
-        inspectionItemResult: {
-          isDefect: true,
-          inspection: {
-            tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user, scope),
-          },
-        },
+        ...this.defectAccessScope(user, scope),
       },
       include: this.defectDetailInclude(),
     });
@@ -1738,13 +1726,7 @@ export class DefectsService {
     return this.prisma.defect.findFirst({
       where: {
         inspectionItemResultId,
-        inspectionItemResult: {
-          isDefect: true,
-          inspection: {
-            tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user, scope),
-          },
-        },
+        ...this.defectAccessScope(user, scope),
       },
       include: this.defectDetailInclude(),
     });
@@ -1957,15 +1939,7 @@ export class DefectsService {
     ctx?: ScopeContext,
   ): Prisma.DefectWhereInput {
     const filters: Prisma.DefectWhereInput[] = [
-      {
-        inspectionItemResult: {
-          isDefect: true,
-          inspection: {
-            tenantId: user.tenantId,
-            ...this.inspectionAccessScope(user, ctx),
-          },
-        },
-      },
+      this.defectAccessScope(user, ctx),
       this.operationsBoardMainheadFilter(query.mainhead),
       this.operationsBoardProjectFilter(query.projectId),
       this.operationsBoardWorkPackageFilter(query.workPackageId),
@@ -2601,12 +2575,25 @@ export class DefectsService {
   private serializeOperationsBoardQueues(
     queueMap: Map<OperationsBoardQueueKey, OperationsBoardQueue>,
   ) {
+    // Under RELEASE_ON_REPORT the first column holds DORMANT defects waiting for
+    // the survey report, not QA review — relabel it for the inspection side.
+    const releaseMode = releaseDefectsOnReport();
+
     return OPERATIONS_BOARD_QUEUES.map((queueDefinition) => {
       const queue = queueMap.get(queueDefinition.key);
       const items = queue?.items ?? [];
+      const relabel =
+        releaseMode && queueDefinition.key === 'awaitingQaQc'
+          ? {
+              title: 'Awaiting Report / Pending Release',
+              description:
+                'Dormant defects awaiting LAPORAN SELESAI to release and route to the maintenance company.',
+            }
+          : null;
 
       return {
         ...queueDefinition,
+        ...(relabel ?? {}),
         count: items.length,
         items,
       };
@@ -3383,6 +3370,53 @@ export class DefectsService {
     // previous hand-rolled behaviour exactly. Canonical matrix lives in
     // common/authorization/site-visit-scope so it cannot drift from site-visits.
     return { siteVisit: siteVisitAccessWhere(user, ctx) };
+  }
+
+  /**
+   * Canonical "which defects may this user see" filter. Combines the inspection
+   * (team / QA / admin) visibility with the maintenance handoff Phase 4 branch:
+   * a maintenance-company user also sees every defect routed to THEIR org
+   * (Defect.maintenanceOrganizationId), even when they are not on the inspecting
+   * team. Self-limiting — only defects explicitly stamped with their org match
+   * (and only RELEASE_ON_REPORT stamps them), so this is a no-op for inspection
+   * companies. The org branch is still tenant-scoped via the inspection chain.
+   */
+  private defectAccessScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.DefectWhereInput {
+    const inspectionScope: Prisma.DefectWhereInput = {
+      inspectionItemResult: {
+        isDefect: true,
+        inspection: {
+          tenantId: user.tenantId,
+          ...this.inspectionAccessScope(user, ctx),
+        },
+      },
+    };
+
+    // ADMIN already sees everything in-tenant through the inspection scope.
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+      return inspectionScope;
+    }
+
+    const maintenanceOrgId = user.organizationId;
+    if (!maintenanceOrgId) {
+      return inspectionScope;
+    }
+
+    return {
+      OR: [
+        inspectionScope,
+        {
+          maintenanceOrganizationId: maintenanceOrgId,
+          inspectionItemResult: {
+            isDefect: true,
+            inspection: { tenantId: user.tenantId },
+          },
+        },
+      ],
+    };
   }
 
   private assertCanMutate(user: RequestUser) {

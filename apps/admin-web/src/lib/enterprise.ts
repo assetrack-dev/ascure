@@ -518,6 +518,10 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
   const activeState = stateChip(readBoolean(record, "isActive"));
   const operationalRegion = nestedRecord(record, "operationalRegion");
   const regionLabel = operationalRegion ? compactLabel(operationalRegion) : null;
+  const maintenanceOrganization = nestedRecord(record, "maintenanceOrganization");
+  const maintenanceLabel = maintenanceOrganization
+    ? compactLabel(maintenanceOrganization)
+    : null;
   const capabilities = capabilityLabels(record);
   const capabilityDisplay = capabilities.map((capability) => capability.displayLabel).join(", ");
   const metrics: EnterpriseMetric[] = [
@@ -530,6 +534,7 @@ function normalizeMainhead(rawMainhead: unknown): EnterpriseDetail | null {
     { label: "Code", value: readString(record, "code") },
     { label: "Status", value: activeState.label },
     { label: "Region", value: regionLabel },
+    { label: "Maintenance Company", value: maintenanceLabel },
     { label: "Capabilities", value: capabilityDisplay || null },
   ];
 

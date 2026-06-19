@@ -172,6 +172,16 @@ const MAINHEAD_INCLUDE = Prisma.validator<Prisma.MainheadInclude>()({
       isActive: true,
     },
   },
+  // Maintenance handoff Phase 2 — the registered maintenance company.
+  maintenanceOrganization: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      type: true,
+      isActive: true,
+    },
+  },
   capabilityAssignments: {
     include: {
       capability: true,
@@ -902,12 +912,19 @@ export class EnterpriseService {
         tx,
       );
 
+      await this.assertMaintenanceOrganizationEligible(
+        dto.maintenanceOrganizationId,
+        tx,
+      );
+
       const mainhead = await tx.mainhead.create({
         data: {
           branchId,
           operationalRegionId: this.normalizeOptionalString(
             dto.operationalRegionId,
           ),
+          maintenanceOrganizationId:
+            this.normalizeOptionalString(dto.maintenanceOrganizationId) ?? null,
           name: this.normalizeRequiredString(dto.name, 'MAINHEAD name'),
           code: this.normalizeOptionalString(dto.code),
           description: this.normalizeOptionalString(dto.description),
@@ -984,6 +1001,22 @@ export class EnterpriseService {
           ? {
               connect: {
                 id: dto.operationalRegionId,
+              },
+            }
+          : {
+              disconnect: true,
+            };
+      }
+
+      if (dto.maintenanceOrganizationId !== undefined) {
+        await this.assertMaintenanceOrganizationEligible(
+          dto.maintenanceOrganizationId,
+          tx,
+        );
+        data.maintenanceOrganization = dto.maintenanceOrganizationId
+          ? {
+              connect: {
+                id: dto.maintenanceOrganizationId,
               },
             }
           : {
@@ -1916,6 +1949,51 @@ export class EnterpriseService {
 
     if (!operationalRegion) {
       throw new NotFoundException(`${label} not found.`);
+    }
+  }
+
+  /**
+   * Maintenance handoff Phase 2 — a MAINHEAD's registered maintenance company
+   * must be an active contractor org (the maintainer is a MAIN_CONTRACTOR that
+   * self-assigns internally or subcontracts; SUBCONTRACTOR is allowed for the
+   * case a sub is registered directly). Null/undefined clears the link.
+   */
+  private async assertMaintenanceOrganizationEligible(
+    maintenanceOrganizationId: string | null | undefined,
+    client: PrismaClientLike = this.prisma,
+  ) {
+    if (!maintenanceOrganizationId) {
+      return;
+    }
+
+    const organization = await client.organization.findUnique({
+      where: {
+        id: maintenanceOrganizationId,
+      },
+      select: {
+        id: true,
+        isActive: true,
+        type: true,
+      },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('Maintenance company not found.');
+    }
+
+    if (!organization.isActive) {
+      throw new BadRequestException(
+        'The selected maintenance company is inactive.',
+      );
+    }
+
+    if (
+      organization.type !== OrganizationType.MAIN_CONTRACTOR &&
+      organization.type !== OrganizationType.SUBCONTRACTOR
+    ) {
+      throw new BadRequestException(
+        'The maintenance company must be a MAIN_CONTRACTOR or SUBCONTRACTOR organisation.',
+      );
     }
   }
 

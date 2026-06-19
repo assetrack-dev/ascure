@@ -769,6 +769,10 @@ function MainheadRollup({
   const showQaQc =
     !board.inspectorOwns ||
     (board.queues.find((queue) => queue.key === "awaitingQaQc")?.count ?? 0) > 0;
+  // Under RELEASE_ON_REPORT the first column holds dormant defects awaiting the
+  // survey report, not QA review.
+  const firstColumnLabel =
+    board.governanceMode === "RELEASE_ON_REPORT" ? "Pending Release" : "QA/QC";
 
   return (
     <section className="rounded-lg border border-[var(--line)] bg-white shadow-[var(--shadow-soft)]">
@@ -784,7 +788,7 @@ function MainheadRollup({
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
               <th className="px-5 py-3">MAINHEAD</th>
               <th className="px-5 py-3">Total</th>
-              {showQaQc ? <th className="px-5 py-3">QA/QC</th> : null}
+              {showQaQc ? <th className="px-5 py-3">{firstColumnLabel}</th> : null}
               <th className="px-5 py-3">Maint. Ready</th>
               <th className="px-5 py-3">In Maint.</th>
               <th className="px-5 py-3">Closure</th>

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { mkdir, writeFile } from 'fs/promises';
@@ -23,6 +24,8 @@ import {
   scopeRequiresQAQC,
 } from '../common/operational-scope';
 import { buildInitialDefectData } from '../defects/defect-materialization.util';
+import { releaseVisitDefects } from '../defects/defect-release.util';
+import { releaseDefectsOnReport } from '../common/authorization/defect-governance';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -72,6 +75,8 @@ const OPERATIONAL_TEXT_KEYWORDS = [
 
 @Injectable()
 export class InspectionsService {
+  private readonly logger = new Logger(InspectionsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly templatesService: TemplatesService,
@@ -594,6 +599,29 @@ export class InspectionsService {
         skipDuplicates: true,
       }),
     ]);
+
+    // Maintenance handoff Phase 3 — emergency-flagged defects bypass the LAPORAN
+    // SELESAI wait: release + route them to the MAINHEAD's maintenance company
+    // immediately. Best-effort; a failure must not fail the submit (the defects
+    // exist and the LAPORAN SELESAI release is the safety net for the rest).
+    if (
+      releaseDefectsOnReport() &&
+      defectCreateData.some((defect) => defect.isEmergency)
+    ) {
+      try {
+        await releaseVisitDefects(this.prisma, inspection.siteVisitId, {
+          scope: 'EMERGENCY',
+          actorUserId: user.id,
+          inspectionId: inspection.id,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Emergency defect release failed for site visit ${inspection.siteVisitId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     return submittedInspection;
   }

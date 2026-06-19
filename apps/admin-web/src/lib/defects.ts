@@ -997,6 +997,11 @@ function normalizeOperationsBoard(payload: unknown): DefectOperationsBoardRespon
   return {
     generatedAt: firstString(record, ["generatedAt"]),
     inspectorOwns: record?.inspectorOwns === true,
+    governanceMode:
+      record?.governanceMode === "QA_GATED" ||
+      record?.governanceMode === "RELEASE_ON_REPORT"
+        ? record.governanceMode
+        : "INSPECTOR_OWNS",
     filters: normalizeBoardFilters(record?.filters),
     totalCount:
       readNumber(record, "totalCount") ??

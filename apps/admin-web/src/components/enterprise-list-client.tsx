@@ -63,6 +63,7 @@ interface EnterpriseFormState {
   organizationId: string;
   branchId: string;
   operationalRegionId: string;
+  maintenanceOrganizationId: string;
   branchName: string;
   branchCode: string;
   region: string;
@@ -201,6 +202,7 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   organizationId: "",
   branchId: "",
   operationalRegionId: "",
+  maintenanceOrganizationId: "",
   branchName: "",
   branchCode: "",
   region: "",
@@ -385,6 +387,9 @@ function createFormFromRow(
     operationalRegionId:
       readRawString(row, "operationalRegionId") ||
       readNestedString(operationalRegion, "id"),
+    maintenanceOrganizationId:
+      readRawString(row, "maintenanceOrganizationId") ||
+      readNestedString(nestedRaw(row, "maintenanceOrganization"), "id"),
     branchName: readNestedString(branch, "name"),
     branchCode: readNestedString(branch, "code"),
     region: readRawString(row, "region") || readNestedString(branch, "region"),
@@ -439,6 +444,7 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     payload.description = form.description.trim() || null;
     payload.isActive = form.isActive;
     payload.operationalRegionId = form.operationalRegionId || null;
+    payload.maintenanceOrganizationId = form.maintenanceOrganizationId || null;
     payload.capabilityIds = form.capabilityIds;
   }
 
@@ -773,6 +779,34 @@ function EnterpriseFormModal({
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Maintenance Company
+                </span>
+                <select
+                  value={values.maintenanceOrganizationId}
+                  onChange={(event) =>
+                    onChange("maintenanceOrganizationId", event.target.value)
+                  }
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">No maintenance company</option>
+                  {options?.organizations
+                    .filter(
+                      (organization) =>
+                        organization.type === "MAIN_CONTRACTOR" ||
+                        organization.type === "SUBCONTRACTOR",
+                    )
+                    .map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                </select>
+                <span className="mt-1 block text-xs text-slate-500">
+                  Defects on this MAINHEAD release to this company at LAPORAN SELESAI.
+                </span>
               </label>
               <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
                 <input

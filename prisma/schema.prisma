@@ -482,6 +482,8 @@ model Organization {
   branches               Branch[]
   teams                  Team[]
   assignedUsers          User[]                             @relation("UserOperationalOrganization")
+  maintainedMainheads    Mainhead[]                         @relation("MainheadMaintenanceOrg")
+  routedDefects          Defect[]                           @relation("DefectMaintenanceOrg")
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
@@ -623,6 +625,11 @@ model Mainhead {
   id                    String               @id @default(uuid()) @db.Uuid
   branchId              String?              @db.Uuid
   operationalRegionId   String?              @db.Uuid
+  // The maintenance company registered for this MAINHEAD (maintenance handoff
+  // Phase 2). At LAPORAN SELESAI a survey's defects release + auto-route to this
+  // org's pool; the org (a MAIN_CONTRACTOR/SUBCONTRACTOR) self-assigns internally
+  // or subcontracts. One maintainer per MAINHEAD; a company can maintain many.
+  maintenanceOrganizationId String?          @db.Uuid
   name                  String
   code                  String?
   description           String?
@@ -631,6 +638,7 @@ model Mainhead {
   updatedAt             DateTime             @updatedAt
   branch                Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
   operationalRegion     OperationalRegion?   @relation(fields: [operationalRegionId], references: [id], onDelete: SetNull)
+  maintenanceOrganization Organization?      @relation("MainheadMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
   teams                 Team[]
   assignedUsers         User[]               @relation("UserOperationalMainhead")
   userAccesses          UserMainheadAccess[]
@@ -643,6 +651,7 @@ model Mainhead {
 
   @@index([branchId])
   @@index([operationalRegionId])
+  @@index([maintenanceOrganizationId])
   @@index([isActive])
 }
 
@@ -1335,6 +1344,12 @@ model Defect {
   verifiedByUserId         String?                @db.Uuid
   maintainedByUserId       String?                @db.Uuid
   closureVerifiedByUserId  String?                @db.Uuid
+  // The maintenance company this defect was routed to on release (maintenance
+  // handoff Phase 3). Stamped from the MAINHEAD's registered maintenance org at
+  // LAPORAN SELESAI (emergencies at inspection submit). Grants the maintenance
+  // company's users cross-company visibility of their pool (Phase 4) even when
+  // they are not on the inspecting team. Null = not yet released / no registry.
+  maintenanceOrganizationId String?               @db.Uuid
   status                   DefectStatus           @default(OPEN)
   severity                 DefectSeverity         @default(MEDIUM)
   isEmergency              Boolean                @default(false)
@@ -1363,6 +1378,7 @@ model Defect {
   verifiedByUser           User?                  @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
   maintainedByUser         User?                  @relation("DefectMaintainedByUser", fields: [maintainedByUserId], references: [id], onDelete: SetNull)
   closureVerifiedByUser    User?                  @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
+  maintenanceOrganization  Organization?          @relation("DefectMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
   evidenceImages           DefectEvidenceImage[]
   timelineEntries          DefectTimelineEntry[]
 
@@ -1373,6 +1389,7 @@ model Defect {
   @@index([verifiedByUserId])
   @@index([maintainedByUserId])
   @@index([closureVerifiedByUserId])
+  @@index([maintenanceOrganizationId])
   @@index([lifecycleStatus])
   @@index([resolutionOutcome])
   @@index([assignedAt])

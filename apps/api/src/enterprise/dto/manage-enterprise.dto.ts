@@ -273,6 +273,13 @@ export class CreateMainheadDto {
   @IsUUID()
   operationalRegionId?: string | null;
 
+  // Maintenance handoff Phase 2 — the maintenance company registered for this
+  // MAINHEAD. Empty string clears the registration (normalized to null).
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  maintenanceOrganizationId?: string | null;
+
   @IsOptional()
   @IsUUID()
   organizationId?: string;
@@ -332,6 +339,13 @@ export class UpdateMainheadDto {
   @IsOptional()
   @IsUUID()
   operationalRegionId?: string | null;
+
+  // Maintenance handoff Phase 2 — the maintenance company registered for this
+  // MAINHEAD. Empty string clears the registration (normalized to null).
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsUUID()
+  maintenanceOrganizationId?: string | null;
 
   @IsOptional()
   @IsUUID()
