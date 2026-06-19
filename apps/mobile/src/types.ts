@@ -847,6 +847,8 @@ export interface ChecklistTemplateItem {
   id: string;
   templateId: string;
   key?: string;
+  /** Named group (section) this item belongs to, when the template is grouped. */
+  groupTitle?: string | null;
   label: string;
   fieldType?: string;
   inputType?: InspectionItemInputType;
@@ -889,6 +891,7 @@ export interface ChecklistTemplate {
   inspectionCount?: number;
   createdAt?: string;
   updatedAt?: string;
+  groups?: { id?: string; title: string; sortOrder: number }[];
   items: ChecklistTemplateItem[];
 }
 

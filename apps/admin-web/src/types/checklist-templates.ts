@@ -119,9 +119,19 @@ export interface ChecklistItemConfig {
   measurement?: ChecklistMeasurementConfig;
 }
 
+export interface ChecklistTemplateGroup {
+  id?: string;
+  title: string;
+  description?: string | null;
+  sortOrder: number;
+}
+
 export interface ChecklistTemplateItem {
   id: string;
   templateId: string;
+  sectionId?: string;
+  /** The named group (section) this item belongs to. */
+  groupTitle?: string | null;
   key?: string;
   label: string;
   fieldType: ChecklistFieldType;
@@ -168,12 +178,19 @@ export interface ChecklistTemplate {
   inspectionCount: number;
   createdAt?: string;
   updatedAt?: string;
+  groups?: ChecklistTemplateGroup[];
   items: ChecklistTemplateItem[];
+}
+
+export interface ChecklistTemplateGroupPayload {
+  title: string;
+  sortOrder?: number;
 }
 
 export interface ChecklistTemplateItemPayload {
   id?: string;
   key?: string;
+  groupTitle?: string;
   label: string;
   fieldType: ChecklistFieldType;
   sortOrder: number;
@@ -200,6 +217,7 @@ export interface CreateChecklistTemplatePayload {
   operationalDomain?: string | null;
   name: string;
   isActive?: boolean;
+  groups?: ChecklistTemplateGroupPayload[];
   items: ChecklistTemplateItemPayload[];
 }
 
@@ -215,5 +233,6 @@ export interface UpdateChecklistTemplatePayload {
   operationalDomain?: string | null;
   name?: string;
   isActive?: boolean;
+  groups?: ChecklistTemplateGroupPayload[];
   items?: ChecklistTemplateItemPayload[];
 }

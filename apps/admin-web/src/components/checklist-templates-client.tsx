@@ -22,6 +22,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Copy,
   GripVertical,
@@ -73,6 +75,8 @@ interface TemplateFormItem {
   id?: string;
   key: string;
   keyTouched: boolean;
+  /** Named group this item belongs to ("" = ungrouped / default section). */
+  groupTitle: string;
   label: string;
   fieldType: ChecklistFieldType;
   isRequired: boolean;
@@ -94,8 +98,13 @@ interface TemplateFormState {
   branchId: string;
   mainheadId: string;
   name: string;
+  /** Ordered named groups. Empty = ungrouped (single default section, legacy behavior). */
+  groups: string[];
   items: TemplateFormItem[];
 }
+
+/** Section title the backend uses for an ungrouped template's single bucket. */
+const DEFAULT_GROUP_TITLE = "Checklist Items";
 
 const FIELD_TYPES: Array<{ label: string; value: ChecklistFieldType }> = [
   { label: "Text", value: "TEXT" },
@@ -210,6 +219,7 @@ function createBlankItem(): TemplateFormItem {
     localId: createLocalId(),
     key: "",
     keyTouched: false,
+    groupTitle: "",
     label: "",
     fieldType: "YES_NO",
     isRequired: true,
@@ -327,6 +337,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     id: item.id,
     key: item.key ?? itemKeyFromLabel(item.label),
     keyTouched: true,
+    groupTitle: item.groupTitle ?? "",
     label: item.label,
     fieldType: normalizeFieldType(item.fieldType ?? item.inputType),
     isRequired: item.isRequired,
@@ -350,6 +361,7 @@ function defaultForm(assetTypeId = "", capabilityId = ""): TemplateFormState {
     branchId: "",
     mainheadId: "",
     name: "",
+    groups: [],
     items: [createBlankItem()],
   };
 }
@@ -608,11 +620,28 @@ function parseOptions(optionsText: string) {
   return options;
 }
 
-function buildPayloadItems(items: TemplateFormItem[]) {
+function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
+  const grouping = groups.length > 0;
+  // An item's effective group: its own group if still valid, else the first group.
+  const effectiveGroup = (item: TemplateFormItem) =>
+    grouping ? (groups.includes(item.groupTitle) ? item.groupTitle : groups[0]) : undefined;
+  // Order items by their group so the global sortOrder keeps each group contiguous
+  // (downstream flat consumers — report/Excel — read items by sortOrder).
+  const orderedItems = grouping
+    ? items
+        .map((item, index) => ({ item, index }))
+        .sort(
+          (left, right) =>
+            groups.indexOf(effectiveGroup(left.item)!) -
+              groups.indexOf(effectiveGroup(right.item)!) || left.index - right.index,
+        )
+        .map((entry) => entry.item)
+    : items;
+
   const payloadItems: ChecklistTemplateItemPayload[] = [];
   const seenKeys = new Set<string>();
 
-  items.forEach((item) => {
+  orderedItems.forEach((item) => {
     const itemIsActive = isFormItemActive(item);
 
     if (!item.id && !itemIsActive) {
@@ -647,6 +676,7 @@ function buildPayloadItems(items: TemplateFormItem[]) {
     payloadItems.push({
       id: item.id,
       key,
+      groupTitle: effectiveGroup(item),
       label,
       fieldType: item.fieldType,
       sortOrder: payloadItems.length + 1,
@@ -753,6 +783,7 @@ interface SortableTemplateItemCardProps {
   item: TemplateFormItem;
   index: number;
   itemCount: number;
+  groups: string[];
   onUpdateItem: (itemLocalId: string, changes: Partial<TemplateFormItem>) => void;
   onRemoveItem: (itemLocalId: string) => void;
 }
@@ -761,6 +792,7 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
   item,
   index,
   itemCount,
+  groups,
   onUpdateItem,
   onRemoveItem,
 }: SortableTemplateItemCardProps) {
@@ -792,6 +824,22 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
           : "border-slate-200 hover:border-slate-300 hover:shadow-[var(--shadow-card)]"
       }`}
     >
+      {groups.length > 0 ? (
+        <label className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-500">Group</span>
+          <select
+            value={groups.includes(item.groupTitle) ? item.groupTitle : groups[0]}
+            onChange={(event) => onUpdateItem(item.localId, { groupTitle: event.target.value })}
+            className="h-9 max-w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-900 outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-teal-100"
+          >
+            {groups.map((group, groupIndex) => (
+              <option key={`${group}-${groupIndex}`} value={group}>
+                {group.trim() || `Group ${groupIndex + 1}`}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className="grid grid-cols-12 items-end gap-3">
         <div className="col-span-12 min-w-0 sm:col-span-6 md:col-span-2 xl:col-span-2">
           <span className="text-xs font-semibold text-slate-500">Order</span>
@@ -1241,6 +1289,73 @@ function TemplateFormModal({
     }));
   }, [updateFormValues]);
 
+  const addGroup = useCallback(() => {
+    updateFormValues((currentValues) => {
+      // Pick the next unused "Group N" so removing a middle group then adding can't
+      // produce a colliding auto-name.
+      const existing = new Set(currentValues.groups.map((group) => group.trim()));
+      let next = currentValues.groups.length + 1;
+      while (existing.has(`Group ${next}`)) {
+        next += 1;
+      }
+      return { ...currentValues, groups: [...currentValues.groups, `Group ${next}`] };
+    });
+  }, [updateFormValues]);
+
+  const renameGroup = useCallback(
+    (index: number, title: string) => {
+      updateFormValues((currentValues) => {
+        const previous = currentValues.groups[index];
+        const groups = currentValues.groups.map((group, groupIndex) =>
+          groupIndex === index ? title : group,
+        );
+        // Keep items pointed at the renamed group.
+        const items =
+          previous === undefined
+            ? currentValues.items
+            : currentValues.items.map((item) =>
+                item.groupTitle === previous ? { ...item, groupTitle: title } : item,
+              );
+
+        return { ...currentValues, groups, items };
+      });
+    },
+    [updateFormValues],
+  );
+
+  const removeGroup = useCallback(
+    (index: number) => {
+      updateFormValues((currentValues) => {
+        const removed = currentValues.groups[index];
+        const groups = currentValues.groups.filter((_, groupIndex) => groupIndex !== index);
+        const fallback = groups[0] ?? "";
+        // Items orphaned by the removed group fall back to the first remaining group
+        // (or "" when the last group is removed → ungrouped again).
+        const items = currentValues.items.map((item) =>
+          item.groupTitle === removed ? { ...item, groupTitle: fallback } : item,
+        );
+
+        return { ...currentValues, groups, items };
+      });
+    },
+    [updateFormValues],
+  );
+
+  const moveGroup = useCallback(
+    (index: number, direction: -1 | 1) => {
+      updateFormValues((currentValues) => {
+        const target = index + direction;
+
+        if (target < 0 || target >= currentValues.groups.length) {
+          return currentValues;
+        }
+
+        return { ...currentValues, groups: arrayMove(currentValues.groups, index, target) };
+      });
+    },
+    [updateFormValues],
+  );
+
   const removeItem = useCallback(
     (itemLocalId: string) => {
       const item = values.items.find((entry) => entry.localId === itemLocalId);
@@ -1564,6 +1679,78 @@ function TemplateFormModal({
 
           <div className="space-y-5 px-5 py-5">
             <section className="min-w-0 rounded-xl border border-slate-200 bg-slate-50">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900">Groups</h3>
+                  <p className="mt-0.5 text-xs text-[var(--muted)]">
+                    Optional. Split the checklist into named groups — on mobile the crew
+                    fills one group at a time. No groups = a single list (as before).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addGroup}
+                  className={`${secondaryButtonClassName} w-full sm:w-auto`}
+                >
+                  <Plus size={16} />
+                  Add Group
+                </button>
+              </div>
+              {values.groups.length > 0 ? (
+                <div className="space-y-2 p-4">
+                  {values.groups.map((group, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-bold text-slate-600">
+                        {index + 1}
+                      </span>
+                      <input
+                        type="text"
+                        value={group}
+                        onChange={(event) => renameGroup(index, event.target.value)}
+                        placeholder={`Group ${index + 1}`}
+                        className={`${inputClassName} min-w-0 flex-1`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => moveGroup(index, -1)}
+                        disabled={index === 0}
+                        aria-label={`Move ${group || `group ${index + 1}`} up`}
+                        title="Move up"
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-300"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveGroup(index, 1)}
+                        disabled={index === values.groups.length - 1}
+                        aria-label={`Move ${group || `group ${index + 1}`} down`}
+                        title="Move down"
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-300"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeGroup(index)}
+                        aria-label={`Remove ${group || `group ${index + 1}`}`}
+                        title="Remove group"
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="px-4 py-3 text-xs text-[var(--muted)]">
+                  No groups yet — the checklist shows as one list. Add a group to organize
+                  items into sections, then pick a group on each item below.
+                </p>
+              )}
+            </section>
+
+            <section className="min-w-0 rounded-xl border border-slate-200 bg-slate-50">
               <div className="border-b border-slate-200 bg-white px-4 py-3">
                 <h3 className="text-sm font-bold text-slate-900">Checklist Items</h3>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
@@ -1580,6 +1767,7 @@ function TemplateFormModal({
                         item={item}
                         index={index}
                         itemCount={values.items.length}
+                        groups={values.groups}
                         onUpdateItem={updateItem}
                         onRemoveItem={removeItem}
                       />
@@ -1860,6 +2048,17 @@ function ChecklistTemplatesContent() {
       .sort((left, right) => left.sortOrder - right.sortOrder)
       .map(formItemFromTemplateItem);
 
+    const loadedGroups = [...(template.groups ?? [])]
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((group) => group.title);
+    // A lone default "Checklist Items" section is the ungrouped case — keep the
+    // editor groupless so existing templates look exactly as before.
+    const groups =
+      loadedGroups.length <= 1 &&
+      (loadedGroups[0] ?? DEFAULT_GROUP_TITLE) === DEFAULT_GROUP_TITLE
+        ? []
+        : loadedGroups;
+
     setSelectedTemplate(template);
     setFormValues({
       assetTypeId: template.assetTypeId,
@@ -1870,6 +2069,7 @@ function ChecklistTemplatesContent() {
       branchId: template.branchId ?? "",
       mainheadId: template.mainheadId ?? "",
       name: template.name,
+      groups,
       items: items.length > 0 ? items : [createBlankItem()],
     });
     setModalError("");
@@ -1964,7 +2164,25 @@ function ChecklistTemplatesContent() {
         scopePayload.mainheadId = formValues.mainheadId;
       }
 
-      const items = buildPayloadItems(formValues.items);
+      // Groups must be uniquely and non-blank named: a blank title would re-home its
+      // items to the first group on save, and a duplicate would silently merge two
+      // groups into one section. Block both with a clear message before saving.
+      const groupTitles = formValues.groups.map((title) => title.trim());
+      if (groupTitles.some((title) => title.length === 0)) {
+        throw new Error("Every group needs a name.");
+      }
+      if (new Set(groupTitles).size !== groupTitles.length) {
+        throw new Error("Group names must be unique — two groups share a title.");
+      }
+
+      const items = buildPayloadItems(formValues.items, formValues.groups);
+      const groups =
+        formValues.groups.length > 0
+          ? formValues.groups.map((title, index) => ({
+              title: title.trim() || `Group ${index + 1}`,
+              sortOrder: index + 1,
+            }))
+          : undefined;
       setIsSaving(true);
       setModalError("");
       setNotice("");
@@ -1977,6 +2195,7 @@ function ChecklistTemplatesContent() {
               ...scopePayload,
               name: trimmedName,
               isActive: false,
+              groups,
               items,
             })
           : selectedTemplate
@@ -1984,6 +2203,7 @@ function ChecklistTemplatesContent() {
               capabilityId: formValues.capabilityId || null,
               ...scopePayload,
               name: trimmedName,
+              groups,
               items,
             })
             : null;

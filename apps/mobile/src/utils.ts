@@ -534,90 +534,152 @@ function comparableTextCandidates(value: DraftValues[string]) {
   return [normalizeComparableText(value)];
 }
 
-export function validateInspectionDraft(
-  form: InspectionFormResponse,
+// Collect the required-item and invalid-number issues for one set of (already
+// visibility-filtered) items. Shared by the whole-form validator and the
+// per-group validator so both enforce identical rules.
+function collectSectionIssues(
+  items: InspectionTemplateItem[],
   draftValues: DraftValues,
   // Item ids that have at least one captured photo. IMAGE fields store their
   // value as photos (tagged with templateItemId), not in draftValues, so the
   // caller passes the set so required IMAGE items can be validated.
+  photoItemIds: Set<string>,
+) {
+  const missingRequired: string[] = [];
+  const invalidNumbers: string[] = [];
+
+  for (const item of items) {
+    const inputType = normalizeInspectionInputType(item.inputType);
+    const rawValue = getDraftValue(item.id, draftValues);
+
+    if (item.isRequired) {
+      if (inputType === 'BOOLEAN') {
+        if (typeof rawValue !== 'boolean') {
+          missingRequired.push(item.label);
+          continue;
+        }
+      }
+
+      if (inputType === 'NUMBER' || inputType === 'READING' || inputType === 'OCR') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+        if (!normalized) {
+          missingRequired.push(item.label);
+          continue;
+        }
+      }
+
+      if (
+        inputType === 'TEXT' ||
+        inputType === 'SELECT' ||
+        inputType === 'DATE' ||
+        inputType === 'DATETIME' ||
+        inputType === 'GPS'
+      ) {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+        if (!normalized) {
+          missingRequired.push(item.label);
+          continue;
+        }
+      }
+
+      if (inputType === 'MULTI_SELECT' && (!Array.isArray(rawValue) || rawValue.length === 0)) {
+        missingRequired.push(item.label);
+        continue;
+      }
+
+      if (inputType === 'IMAGE' && !photoItemIds.has(item.id)) {
+        missingRequired.push(item.label);
+        continue;
+      }
+    }
+
+    if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
+      continue;
+    }
+
+    const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+    if (!normalized) {
+      continue;
+    }
+
+    if (!Number.isFinite(Number(normalized))) {
+      invalidNumbers.push(item.label);
+    }
+  }
+
+  return { missingRequired, invalidNumbers };
+}
+
+function issuesToMessage(missingRequired: string[], invalidNumbers: string[]) {
+  if (missingRequired.length > 0) {
+    return `Please complete required items: ${missingRequired.join(', ')}`;
+  }
+
+  if (invalidNumbers.length > 0) {
+    return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
+  }
+
+  return null;
+}
+
+export function validateInspectionDraft(
+  form: InspectionFormResponse,
+  draftValues: DraftValues,
   photoItemIds: Set<string> = new Set(),
 ) {
   const missingRequiredItems: string[] = [];
   const invalidNumbers: string[] = [];
 
   for (const section of getVisibleInspectionSections(form, draftValues)) {
-    for (const item of section.items) {
-      const inputType = normalizeInspectionInputType(item.inputType);
-      const rawValue = getDraftValue(item.id, draftValues);
-
-      if (item.isRequired) {
-        if (inputType === 'BOOLEAN') {
-          if (typeof rawValue !== 'boolean') {
-            missingRequiredItems.push(item.label);
-            continue;
-          }
-        }
-
-        if (inputType === 'NUMBER' || inputType === 'READING' || inputType === 'OCR') {
-          const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
-
-          if (!normalized) {
-            missingRequiredItems.push(item.label);
-            continue;
-          }
-        }
-
-        if (
-          inputType === 'TEXT' ||
-          inputType === 'SELECT' ||
-          inputType === 'DATE' ||
-          inputType === 'DATETIME' ||
-          inputType === 'GPS'
-        ) {
-          const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
-
-          if (!normalized) {
-            missingRequiredItems.push(item.label);
-            continue;
-          }
-        }
-
-        if (inputType === 'MULTI_SELECT' && (!Array.isArray(rawValue) || rawValue.length === 0)) {
-          missingRequiredItems.push(item.label);
-          continue;
-        }
-
-        if (inputType === 'IMAGE' && !photoItemIds.has(item.id)) {
-          missingRequiredItems.push(item.label);
-          continue;
-        }
-      }
-
-      if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
-        continue;
-      }
-
-      const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
-
-      if (!normalized) {
-        continue;
-      }
-
-      if (!Number.isFinite(Number(normalized))) {
-        invalidNumbers.push(item.label);
-      }
-    }
+    const issues = collectSectionIssues(section.items, draftValues, photoItemIds);
+    missingRequiredItems.push(...issues.missingRequired);
+    invalidNumbers.push(...issues.invalidNumbers);
   }
 
-  if (missingRequiredItems.length > 0) {
-    return `Please complete required items: ${missingRequiredItems.join(', ')}`;
+  return issuesToMessage(missingRequiredItems, invalidNumbers);
+}
+
+/**
+ * Validate a single group's (already visibility-filtered) items. Used by the
+ * per-group "Mark group done" action so each group is held to the same required
+ * and valid-number rules the final submit enforces.
+ */
+export function validateInspectionSectionItems(
+  items: InspectionTemplateItem[],
+  draftValues: DraftValues,
+  photoItemIds: Set<string> = new Set(),
+) {
+  const { missingRequired, invalidNumbers } = collectSectionIssues(
+    items,
+    draftValues,
+    photoItemIds,
+  );
+
+  return issuesToMessage(missingRequired, invalidNumbers);
+}
+
+/** Whether an item carries any answer — drives a group card's progress chip. */
+export function isInspectionItemAnswered(
+  item: InspectionTemplateItem,
+  draftValues: DraftValues,
+  photoItemIds: Set<string> = new Set(),
+) {
+  if (normalizeInspectionInputType(item.inputType) === 'IMAGE') {
+    return photoItemIds.has(item.id);
   }
 
-  if (invalidNumbers.length === 0) {
-    return null;
-  }
+  return !isDraftValueEmpty(getDraftValue(item.id, draftValues));
+}
 
-  return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
+export function countAnsweredInspectionItems(
+  items: InspectionTemplateItem[],
+  draftValues: DraftValues,
+  photoItemIds: Set<string> = new Set(),
+) {
+  return items.filter((item) => isInspectionItemAnswered(item, draftValues, photoItemIds)).length;
 }
 
 export function validateInspectionDraftForSave(

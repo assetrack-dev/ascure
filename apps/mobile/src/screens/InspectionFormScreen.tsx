@@ -39,8 +39,10 @@ import {
   normalizeInspectionInputType,
   normalizeOperationalText,
   normalizeSelectOptions,
+  countAnsweredInspectionItems,
   validateInspectionDraft,
   validateInspectionDraftForSave,
+  validateInspectionSectionItems,
 } from '../utils';
 import {
   AppButton,
@@ -149,6 +151,11 @@ export function InspectionFormScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [photoUploadNotice, setPhotoUploadNotice] = useState<string | null>(null);
+  // Per-group state for the grouped checklist flow (ephemeral; not persisted).
+  // completedSections = groups the crew explicitly marked done; expandedSections
+  // = which group cards are open.
+  const [completedSections, setCompletedSections] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const overlayCaptureRef = useRef<View>(null);
   const photosRef = useRef<CapturedInspectionPhoto[]>([]);
   const removingPhotoIdsRef = useRef<Set<string>>(new Set());
@@ -173,6 +180,30 @@ export function InspectionFormScreen() {
   );
   const isTemplateEmpty = !isLoading && Boolean(form) && checklistItemCount === 0;
   const isBusy = isLoading || isSavingDraft || isSubmitting || isCapturingPhoto;
+
+  // IMAGE answers live as captured photos (tagged by templateItemId), not in
+  // draftValues — the per-group validators need this to check required photos.
+  const photoItemIds = useMemo(
+    () =>
+      new Set(
+        photos
+          .map((photo) => photo.templateItemId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    [photos],
+  );
+  // The grouped (one-card-per-group) flow only applies to genuinely multi-group
+  // templates while editing. A single-group or read-only checklist renders as one
+  // open list, exactly as before.
+  const isGroupedChecklist = !isReadOnly && checklistSections.length > 1;
+  const isSectionComplete = useCallback(
+    (section: InspectionTemplateSection) =>
+      completedSections.has(section.id) &&
+      validateInspectionSectionItems(section.items, draftValues, photoItemIds) === null,
+    [completedSections, draftValues, photoItemIds],
+  );
+  const allSectionsComplete =
+    !isGroupedChecklist || checklistSections.every((section) => isSectionComplete(section));
 
   const loadForm = useCallback(async () => {
     try {
@@ -293,6 +324,33 @@ export function InspectionFormScreen() {
       ...current,
       [itemId]: value,
     }));
+  }
+
+  function toggleSection(sectionId: string) {
+    setExpandedSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  }
+
+  function handleMarkSectionDone(section: InspectionTemplateSection) {
+    const message = validateInspectionSectionItems(section.items, draftValues, photoItemIds);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setError(null);
+    setCompletedSections((current) => new Set(current).add(section.id));
+    setExpandedSections((current) => {
+      const next = new Set(current);
+      next.delete(section.id);
+      return next;
+    });
   }
 
   function toggleEmergency(itemId: string, nextValue: boolean) {
@@ -703,6 +761,11 @@ export function InspectionFormScreen() {
       return;
     }
 
+    if (isGroupedChecklist && !allSectionsComplete) {
+      setError('Please complete and mark every group done before submitting.');
+      return;
+    }
+
     const photoItemIds = new Set(
       photosRef.current
         .map((photo) => photo.templateItemId)
@@ -992,6 +1055,16 @@ export function InspectionFormScreen() {
                   draftValues={draftValues}
                   emergencyItemIds={emergencyItemIds}
                   isSubmitted={Boolean(isReadOnly)}
+                  collapsible={isGroupedChecklist}
+                  expanded={!isGroupedChecklist || expandedSections.has(section.id)}
+                  complete={isSectionComplete(section)}
+                  answeredCount={countAnsweredInspectionItems(
+                    section.items,
+                    draftValues,
+                    photoItemIds,
+                  )}
+                  onToggleSection={() => toggleSection(section.id)}
+                  onMarkSectionDone={() => handleMarkSectionDone(section)}
                   onUpdateDraftValue={updateDraftValue}
                   onToggleEmergency={toggleEmergency}
                   onScanReading={handleScanReading}
@@ -1154,6 +1227,12 @@ function ChecklistSectionCard({
   draftValues,
   emergencyItemIds,
   isSubmitted,
+  collapsible,
+  expanded,
+  complete,
+  answeredCount,
+  onToggleSection,
+  onMarkSectionDone,
   onUpdateDraftValue,
   onToggleEmergency,
   onScanReading,
@@ -1169,6 +1248,12 @@ function ChecklistSectionCard({
   draftValues: DraftValues;
   emergencyItemIds: Record<string, boolean>;
   isSubmitted: boolean;
+  collapsible: boolean;
+  expanded: boolean;
+  complete: boolean;
+  answeredCount: number;
+  onToggleSection: () => void;
+  onMarkSectionDone: () => void;
   onUpdateDraftValue: (
     itemId: string,
     value: DraftValues[string],
@@ -1189,50 +1274,94 @@ function ChecklistSectionCard({
     ? normalizedTitle
     : section.title;
   const sectionTone = getSectionTone(sectionTitle);
+  const totalCount = section.items.length;
+  // Chip: explicitly-done wins, else in-progress if any answers, else not started.
+  const chip = complete
+    ? { bg: '#dcfce7', fg: '#166534', label: 'Done' }
+    : answeredCount > 0
+      ? { bg: '#fef9c3', fg: '#854d0e', label: `${answeredCount}/${totalCount}` }
+      : { bg: '#f1f5f9', fg: '#64748b', label: 'Not started' };
+  const showItems = !collapsible || expanded;
+
+  const header = (
+    <View style={styles.sectionHeader}>
+      <View
+        style={[
+          styles.sectionIndexBadge,
+          {
+            backgroundColor: sectionTone.surface,
+            borderColor: sectionTone.border,
+          },
+        ]}
+      >
+        <Text style={[styles.sectionIndexText, { color: sectionTone.accent }]}>
+          {String(sectionIndex + 1).padStart(2, '0')}
+        </Text>
+      </View>
+      <View style={styles.sectionHeaderText}>
+        <Text style={styles.sectionHeading}>{sectionTitle}</Text>
+        <Text style={styles.sectionMeta}>{totalCount} checks</Text>
+      </View>
+      {collapsible ? (
+        <View style={styles.sectionHeaderStatus}>
+          <View style={[styles.sectionChip, { backgroundColor: chip.bg }]}>
+            <Text style={[styles.sectionChipText, { color: chip.fg }]}>{chip.label}</Text>
+          </View>
+          <Text style={styles.sectionChevron}>{expanded ? '▾' : '▸'}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
 
   return (
     <View style={[styles.sectionCard, { borderColor: sectionTone.border }]}>
       <View style={[styles.sectionTopRail, { backgroundColor: sectionTone.accent }]} />
-      <View style={styles.sectionHeader}>
-        <View
-          style={[
-            styles.sectionIndexBadge,
-            {
-              backgroundColor: sectionTone.surface,
-              borderColor: sectionTone.border,
-            },
-          ]}
-        >
-          <Text style={[styles.sectionIndexText, { color: sectionTone.accent }]}>
-            {String(sectionIndex + 1).padStart(2, '0')}
-          </Text>
-        </View>
-        <View style={styles.sectionHeaderText}>
-          <Text style={styles.sectionHeading}>{sectionTitle}</Text>
-          <Text style={styles.sectionMeta}>{section.items.length} checks</Text>
-        </View>
-      </View>
-      <View style={styles.sectionItems}>
-        {section.items.map((item) => (
-          <ChecklistItemCard
-            key={item.id}
-            item={item}
-            value={draftValues[item.id]}
-            isEmergency={Boolean(emergencyItemIds[item.id])}
-            disabled={isSubmitted}
-            onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
-            onToggleEmergency={(nextValue) => onToggleEmergency(item.id, nextValue)}
-            onScanReading={() => onScanReading(item.id)}
-            scanning={scanningItemId === item.id}
-            scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
-            itemPhotos={photos.filter((photo) => photo.templateItemId === item.id)}
-            capturing={capturingItemId === item.id}
-            onCapturePhoto={() => onCaptureItemPhoto(item.id)}
-            onRemovePhoto={onRemoveItemPhoto}
-            onPreviewPhoto={onPreviewPhoto}
-          />
-        ))}
-      </View>
+      {collapsible ? (
+        <Pressable onPress={onToggleSection} accessibilityRole="button">
+          {header}
+        </Pressable>
+      ) : (
+        header
+      )}
+      {collapsible && !showItems ? (
+        <Pressable onPress={onToggleSection} style={styles.sectionShowChecklist}>
+          <Text style={styles.sectionShowChecklistText}>Show Checklist</Text>
+        </Pressable>
+      ) : null}
+      {showItems ? (
+        <>
+          <View style={styles.sectionItems}>
+            {section.items.map((item) => (
+              <ChecklistItemCard
+                key={item.id}
+                item={item}
+                value={draftValues[item.id]}
+                isEmergency={Boolean(emergencyItemIds[item.id])}
+                disabled={isSubmitted}
+                onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
+                onToggleEmergency={(nextValue) => onToggleEmergency(item.id, nextValue)}
+                onScanReading={() => onScanReading(item.id)}
+                scanning={scanningItemId === item.id}
+                scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
+                itemPhotos={photos.filter((photo) => photo.templateItemId === item.id)}
+                capturing={capturingItemId === item.id}
+                onCapturePhoto={() => onCaptureItemPhoto(item.id)}
+                onRemovePhoto={onRemoveItemPhoto}
+                onPreviewPhoto={onPreviewPhoto}
+              />
+            ))}
+          </View>
+          {collapsible && !isSubmitted ? (
+            <View style={styles.sectionDoneRow}>
+              <AppButton
+                label={complete ? 'Group done ✓' : 'Mark group done'}
+                onPress={onMarkSectionDone}
+                variant={complete ? 'secondary' : 'primary'}
+              />
+            </View>
+          ) : null}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -2224,6 +2353,41 @@ const createStyles = (t: Theme) =>
   sectionItems: {
     padding: 10,
     gap: 8,
+    backgroundColor: t.colors.surfaceMuted,
+  },
+  sectionHeaderStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  sectionChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sectionChevron: {
+    fontSize: 16,
+    color: t.colors.textSecondary,
+  },
+  sectionShowChecklist: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: t.colors.card,
+  },
+  sectionShowChecklistText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: t.colors.primary,
+  },
+  sectionDoneRow: {
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 12,
     backgroundColor: t.colors.surfaceMuted,
   },
   photoCardHeader: {

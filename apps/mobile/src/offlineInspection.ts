@@ -7,13 +7,55 @@ import type {
   SiteVisit,
 } from './types';
 
+// Re-group the resolved template's flat items back into their named groups so an
+// offline-started inspection shows the same group cards (and per-group flow) as
+// an online one. An ungrouped template collapses to a single section titled after
+// the template — exactly as before. Item ids are the real server template-item
+// ids (so the queued submission's templateItemIds are valid once reconciled).
+function buildOfflineTemplateSections(
+  template: ChecklistTemplate,
+): InspectionFormResponse['template']['sections'] {
+  const sortedItems = [...template.items].sort((a, b) => a.sortOrder - b.sortOrder);
+  const groupTitleFor = (item: ChecklistTemplate['items'][number]) =>
+    item.groupTitle?.trim() || template.name;
+
+  const orderedTitles: string[] = [];
+  const seen = new Set<string>();
+  for (const item of sortedItems) {
+    const title = groupTitleFor(item);
+    if (!seen.has(title)) {
+      seen.add(title);
+      orderedTitles.push(title);
+    }
+  }
+
+  return orderedTitles.map((title, index) => ({
+    id: `offline-section-${template.id}-${index}`,
+    title,
+    description: null,
+    sortOrder: index,
+    items: sortedItems
+      .filter((item) => groupTitleFor(item) === title)
+      .map((item) => ({
+        id: item.id,
+        key: item.key ?? item.id,
+        label: item.label,
+        helperText: null,
+        inputType: item.inputType ?? 'TEXT',
+        isRequired: item.isRequired,
+        isDefectTrigger: item.isDefectTrigger,
+        severity: item.severity ?? null,
+        sortOrder: item.sortOrder,
+        optionsJson: item.optionsJson ?? null,
+        value: null,
+      })),
+  }));
+}
+
 // Builds an InspectionFormResponse on-device for an inspection STARTED offline,
 // so the checklist renders, validates and submits exactly as a server-issued
 // form would. The shape mirrors the API serializer
-// (inspections.service.ts serializeInspectionForm): the flat resolved-template
-// items are wrapped into a single synthetic section, and each item carries the
-// real server template-item id (so the queued submission's templateItemIds are
-// valid once the inspection is reconciled). Values start empty (fresh draft).
+// (inspections.service.ts serializeInspectionForm). Values start empty (fresh draft).
 export function buildOfflineInspectionForm(params: {
   inspectionId: string;
   assetId: string;
@@ -107,29 +149,7 @@ export function buildOfflineInspectionForm(params: {
       mainheadId: template.mainheadId ?? null,
       operationalScope: template.operationalScope ?? null,
       requiresQAQC: template.requiresQAQC ?? null,
-      sections: [
-        {
-          id: `offline-section-${template.id}`,
-          title: template.name,
-          description: null,
-          sortOrder: 0,
-          items: [...template.items]
-            .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map((item) => ({
-              id: item.id,
-              key: item.key ?? item.id,
-              label: item.label,
-              helperText: null,
-              inputType: item.inputType ?? 'TEXT',
-              isRequired: item.isRequired,
-              isDefectTrigger: item.isDefectTrigger,
-              severity: item.severity ?? null,
-              sortOrder: item.sortOrder,
-              optionsJson: item.optionsJson ?? null,
-              value: null,
-            })),
-        },
-      ],
+      sections: buildOfflineTemplateSections(template),
     },
     results: [],
     items: [],

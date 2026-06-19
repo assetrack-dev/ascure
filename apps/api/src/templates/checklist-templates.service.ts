@@ -16,6 +16,7 @@ import {
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  ChecklistTemplateGroupInputDto,
   ChecklistTemplateItemInputDto,
   CreateChecklistTemplateDto,
   ResolveInspectionTemplateQueryDto,
@@ -163,6 +164,8 @@ type DesiredChecklistItem = {
   isDefectTrigger: boolean;
   severity: DefectSeverity;
   sectionId?: string;
+  /** The named group (section title) this item should live under, when grouped. */
+  groupTitle?: string;
 };
 
 type ChecklistShowIfConfig = {
@@ -202,6 +205,9 @@ type ChecklistItemV2Config = {
 };
 
 const CHECKLIST_ITEM_CONFIG_VERSION = 2;
+
+/** Section title used when a template has no named groups (the legacy single bucket). */
+const DEFAULT_SECTION_TITLE = 'Checklist Items';
 
 @Injectable()
 export class ChecklistTemplatesService {
@@ -283,17 +289,13 @@ export class ChecklistTemplatesService {
           publishedAt: templateWillBeActive ? new Date() : null,
         },
       });
-      const section = await tx.inspectionTemplateSection.create({
-        data: {
-          templateId: template.id,
-          title: 'Checklist Items',
-          description: null,
-          sortOrder: 1,
-        },
-      });
+      const groupTitles = this.orderedGroupTitles(dto.groups, items);
+      const sectionMap = await this.ensureSections(tx, template.id, groupTitles, []);
 
       await tx.inspectionTemplateItem.createMany({
-        data: this.buildCreateManyItems(template.id, section.id, items),
+        data: this.buildCreateManyItems(template.id, items, (item) =>
+          this.sectionIdForItem(item, sectionMap, groupTitles),
+        ),
       });
 
       return template;
@@ -817,11 +819,12 @@ export class ChecklistTemplatesService {
     template: ChecklistTemplateRecord,
     dto: UpdateChecklistTemplateDto,
   ) {
+    const sectionTitleById = this.buildSectionTitleMap(template);
     const existingItems = this.flattenItems(template);
     const desiredItems =
       dto.items === undefined
-        ? existingItems.map((item) => this.fromExistingItem(item))
-        : this.normalizeIncomingItems(existingItems, dto.items);
+        ? existingItems.map((item) => this.fromExistingItem(item, sectionTitleById))
+        : this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById);
     const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive =
       dto.isActive ??
@@ -865,17 +868,13 @@ export class ChecklistTemplatesService {
           publishedAt: nextIsActive ? new Date() : null,
         },
       });
-      const section = await tx.inspectionTemplateSection.create({
-        data: {
-          templateId: nextTemplate.id,
-          title: 'Checklist Items',
-          description: null,
-          sortOrder: 1,
-        },
-      });
+      const groupTitles = this.orderedGroupTitles(dto.groups, desiredItems);
+      const sectionMap = await this.ensureSections(tx, nextTemplate.id, groupTitles, []);
 
       await tx.inspectionTemplateItem.createMany({
-        data: this.buildCreateManyItems(nextTemplate.id, section.id, desiredItems),
+        data: this.buildCreateManyItems(nextTemplate.id, desiredItems, (item) =>
+          this.sectionIdForItem(item, sectionMap, groupTitles),
+        ),
       });
 
       return nextTemplate;
@@ -889,9 +888,12 @@ export class ChecklistTemplatesService {
     template: ChecklistTemplateRecord,
     dto: UpdateChecklistTemplateDto,
   ) {
+    const sectionTitleById = this.buildSectionTitleMap(template);
     const existingItems = this.flattenItems(template);
     const desiredItems =
-      dto.items === undefined ? null : this.normalizeIncomingItems(existingItems, dto.items);
+      dto.items === undefined
+        ? null
+        : this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById);
     const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive = dto.isActive ?? template.isActive;
 
@@ -942,7 +944,7 @@ export class ChecklistTemplatesService {
       });
 
       if (desiredItems) {
-        await this.saveItemsInPlace(tx, template, desiredItems);
+        await this.saveItemsInPlace(tx, template, desiredItems, dto.groups);
       }
     });
   }
@@ -951,13 +953,23 @@ export class ChecklistTemplatesService {
     tx: Prisma.TransactionClient,
     template: ChecklistTemplateRecord,
     desiredItems: DesiredChecklistItem[],
+    groups: ChecklistTemplateGroupInputDto[] | undefined,
   ) {
     const existingItems = this.flattenItems(template);
     const existingById = new Map(existingItems.map((item) => [item.id, item]));
-    const defaultSection = await this.findOrCreateChecklistSection(tx, template);
     const usedKeys = new Set(existingItems.map((item) => item.key));
 
+    const groupTitles = this.orderedGroupTitles(groups, desiredItems);
+    const sectionMap = await this.ensureSections(
+      tx,
+      template.id,
+      groupTitles,
+      template.sections,
+    );
+
     for (const item of desiredItems) {
+      const sectionId = this.sectionIdForItem(item, sectionMap, groupTitles);
+
       if (item.id && existingById.has(item.id)) {
         await tx.inspectionTemplateItem.update({
           where: {
@@ -967,6 +979,7 @@ export class ChecklistTemplatesService {
             key: item.key ?? existingById.get(item.id)?.key,
             label: item.label,
             inputType: item.inputType,
+            sectionId,
             optionsJson:
               item.optionsJson === null
                 ? Prisma.DbNull
@@ -984,7 +997,7 @@ export class ChecklistTemplatesService {
       await tx.inspectionTemplateItem.create({
         data: {
           templateId: template.id,
-          sectionId: defaultSection.id,
+          sectionId,
           key: this.buildUniqueItemKey(item.label, usedKeys),
           label: item.label,
           helperText: null,
@@ -1001,34 +1014,114 @@ export class ChecklistTemplatesService {
         },
       });
     }
-  }
 
-  private async findOrCreateChecklistSection(
-    tx: Prisma.TransactionClient,
-    template: ChecklistTemplateRecord,
-  ) {
-    const existingSection = template.sections[0];
-
-    if (existingSection) {
-      return existingSection;
-    }
-
-    return tx.inspectionTemplateSection.create({
-      data: {
+    // Drop any now-empty groups left behind after items were re-grouped. Only
+    // sections with zero items are removed, so cascade-delete can't touch items.
+    await tx.inspectionTemplateSection.deleteMany({
+      where: {
         templateId: template.id,
-        title: 'Checklist Items',
-        description: null,
-        sortOrder: 1,
-      },
-      select: {
-        id: true,
+        id: { notIn: Array.from(new Set(sectionMap.values())) },
+        items: { none: {} },
       },
     });
+  }
+
+  /** Map of sectionId → section title for the template's current groups. */
+  private buildSectionTitleMap(template: ChecklistTemplateRecord) {
+    return new Map(template.sections.map((section) => [section.id, section.title]));
+  }
+
+  /**
+   * The ordered, de-duplicated list of group titles for a save. Explicit `groups`
+   * (sorted) come first, then any group referenced only by an item, in first
+   * appearance order. Falls back to the single default section when nothing is
+   * grouped, so legacy/ungrouped payloads behave exactly as before.
+   */
+  private orderedGroupTitles(
+    groups: ChecklistTemplateGroupInputDto[] | undefined,
+    items: DesiredChecklistItem[],
+  ): string[] {
+    const titles: string[] = [];
+    const seen = new Set<string>();
+    const add = (raw: string | undefined) => {
+      const title = raw?.trim();
+      if (!title || seen.has(title)) {
+        return;
+      }
+      seen.add(title);
+      titles.push(title);
+    };
+
+    [...(groups ?? [])]
+      .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+      .forEach((group) => add(group.title));
+    items.forEach((item) => add(item.groupTitle));
+
+    if (titles.length === 0) {
+      titles.push(DEFAULT_SECTION_TITLE);
+    }
+
+    return titles;
+  }
+
+  /**
+   * Ensure a section exists for each group title (reusing an existing section of
+   * the same title, else creating one) and that their order matches `orderedTitles`.
+   * Returns a title → sectionId map.
+   */
+  private async ensureSections(
+    tx: Prisma.TransactionClient,
+    templateId: string,
+    orderedTitles: string[],
+    existingSections: ChecklistTemplateRecord['sections'],
+  ): Promise<Map<string, string>> {
+    const existingByTitle = new Map(
+      existingSections.map((section) => [section.title, section]),
+    );
+    const map = new Map<string, string>();
+
+    for (let index = 0; index < orderedTitles.length; index += 1) {
+      const title = orderedTitles[index];
+      const sortOrder = index + 1;
+      const existing = existingByTitle.get(title);
+
+      if (existing) {
+        if (existing.sortOrder !== sortOrder) {
+          await tx.inspectionTemplateSection.update({
+            where: { id: existing.id },
+            data: { sortOrder },
+          });
+        }
+        map.set(title, existing.id);
+        continue;
+      }
+
+      const created = await tx.inspectionTemplateSection.create({
+        data: { templateId, title, description: null, sortOrder },
+        select: { id: true },
+      });
+      map.set(title, created.id);
+    }
+
+    return map;
+  }
+
+  /** Resolve which section an item belongs to (its group, or the first/default group). */
+  private sectionIdForItem(
+    item: DesiredChecklistItem,
+    sectionMap: Map<string, string>,
+    orderedTitles: string[],
+  ): string {
+    const title = item.groupTitle?.trim();
+    const resolved = title ? sectionMap.get(title) : undefined;
+
+    return resolved ?? sectionMap.get(orderedTitles[0])!;
   }
 
   private normalizeIncomingItems(
     existingItems: ChecklistTemplateItemRecord[],
     incomingItems: ChecklistTemplateItemInputDto[],
+    sectionTitleById?: Map<string, string>,
   ): DesiredChecklistItem[] {
     const existingById = new Map(existingItems.map((item) => [item.id, item]));
     const referencedExistingIds = new Set<string>();
@@ -1038,6 +1131,9 @@ export class ChecklistTemplatesService {
       const inputType = this.normalizeInputType(item.inputType ?? item.fieldType, existingItem?.inputType);
       const label = this.normalizeRequiredText(item.label, 'Item label');
       const key = this.normalizeIncomingItemKey(item.key, existingItem?.key, label, usedKeys);
+      const groupTitle =
+        item.groupTitle?.trim() ||
+        (existingItem ? sectionTitleById?.get(existingItem.sectionId) : undefined);
 
       if (existingItem) {
         referencedExistingIds.add(existingItem.id);
@@ -1047,6 +1143,7 @@ export class ChecklistTemplatesService {
         id: existingItem?.id,
         key,
         sectionId: existingItem?.sectionId,
+        groupTitle,
         label,
         inputType,
         optionsJson: this.normalizeOptionsJson(inputType, item, existingItem),
@@ -1064,7 +1161,7 @@ export class ChecklistTemplatesService {
       }
 
       desiredItems.push({
-        ...this.fromExistingItem(item),
+        ...this.fromExistingItem(item, sectionTitleById),
         key: this.normalizeIncomingItemKey(undefined, item.key, item.label, usedKeys),
         isActive: false,
       });
@@ -1073,11 +1170,15 @@ export class ChecklistTemplatesService {
     return desiredItems;
   }
 
-  private fromExistingItem(item: ChecklistTemplateItemRecord): DesiredChecklistItem {
+  private fromExistingItem(
+    item: ChecklistTemplateItemRecord,
+    sectionTitleById?: Map<string, string>,
+  ): DesiredChecklistItem {
     return {
       id: item.id,
       key: item.key,
       sectionId: item.sectionId,
+      groupTitle: sectionTitleById?.get(item.sectionId),
       label: item.label,
       inputType: item.inputType,
       optionsJson: this.normalizeExistingOptionsJson(item.inputType, item.optionsJson),
@@ -1091,14 +1192,14 @@ export class ChecklistTemplatesService {
 
   private buildCreateManyItems(
     templateId: string,
-    sectionId: string,
     items: DesiredChecklistItem[],
+    resolveSectionId: (item: DesiredChecklistItem) => string,
   ) {
     const usedKeys = new Set<string>();
 
     return items.map((item) => ({
       templateId,
-      sectionId,
+      sectionId: resolveSectionId(item),
       key: item.key && !usedKeys.has(item.key) ? this.reserveKey(item.key, usedKeys) : this.buildUniqueItemKey(item.label, usedKeys),
       label: item.label,
       helperText: null,
@@ -1894,6 +1995,7 @@ export class ChecklistTemplatesService {
   ) {
     const items = this.flattenItems(template).filter((item) => !options.onlyActiveItems || item.isActive);
     const capability = template.capability ?? template.assetType.capability ?? null;
+    const sectionTitleById = this.buildSectionTitleMap(template);
 
     return {
       id: template.id,
@@ -1922,12 +2024,22 @@ export class ChecklistTemplatesService {
       itemCount: items.filter((item) => item.isActive).length,
       inspectionCount: template._count.inspections,
       resolutionSource: options.resolutionSource,
+      groups: [...template.sections]
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+        .map((section) => ({
+          id: section.id,
+          title: section.title,
+          description: section.description,
+          sortOrder: section.sortOrder,
+        })),
       items: items.map((item) => {
         const config = this.readChecklistConfig(item.optionsJson);
 
         return {
           id: item.id,
           templateId: item.templateId,
+          sectionId: item.sectionId,
+          groupTitle: sectionTitleById.get(item.sectionId) ?? null,
           key: item.key,
           label: item.label,
           fieldType: this.serializeFieldType(item.inputType),

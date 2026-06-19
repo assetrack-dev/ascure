@@ -127,6 +127,17 @@ export class ChecklistTemplateMeasurementConfigInputDto {
   requiresImage?: boolean;
 }
 
+export class ChecklistTemplateGroupInputDto {
+  @IsString()
+  @MaxLength(255)
+  title!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sortOrder?: number;
+}
+
 export class ChecklistTemplateItemInputDto {
   @IsOptional()
   @IsUUID()
@@ -136,6 +147,16 @@ export class ChecklistTemplateItemInputDto {
   @IsString()
   @MaxLength(100)
   key?: string;
+
+  /**
+   * The named group (checklist section) this item belongs to. Optional — when
+   * absent the item falls into the first/default group, so ungrouped templates
+   * behave exactly as before.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  groupTitle?: string;
 
   @IsString()
   @MaxLength(255)
@@ -241,6 +262,12 @@ export class CreateChecklistTemplateDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ChecklistTemplateGroupInputDto)
+  groups?: ChecklistTemplateGroupInputDto[];
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -294,6 +321,12 @@ export class UpdateChecklistTemplateDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ChecklistTemplateGroupInputDto)
+  groups?: ChecklistTemplateGroupInputDto[];
 
   @IsOptional()
   @IsArray()
