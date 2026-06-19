@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   PixelRatio,
   Pressable,
@@ -19,6 +20,8 @@ import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
+  DefectAssignmentOption,
+  DefectAssignmentOptions,
   DefectDetail,
   DefectEvidenceImage,
   DefectResolutionOutcome,
@@ -78,6 +81,27 @@ export function DefectDetailScreen() {
     'start' | 'capture' | 'complete' | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  // Maintenance-manager dispatch (self-management): assign within the company or
+  // delegate to a subcontractor. Gated to managers; the server is authoritative.
+  const canDispatch = user.role === 'MANAGER' || user.role === 'ADMIN';
+  const [dispatchOptions, setDispatchOptions] =
+    useState<DefectAssignmentOptions | null>(null);
+  const [selectedAssignTeamId, setSelectedAssignTeamId] = useState<string | null>(
+    null,
+  );
+  const [selectedAssignUserId, setSelectedAssignUserId] = useState<string | null>(
+    null,
+  );
+  const [selectedDelegateOrgId, setSelectedDelegateOrgId] = useState<
+    string | null
+  >(null);
+  const [dispatchAction, setDispatchAction] = useState<
+    'assign' | 'delegate' | null
+  >(null);
+  // Tracks the defect currently in focus so a late assignment-options response
+  // for a defect we've navigated away from (EmergencyWatcher can swap defectId
+  // in place) is ignored rather than clobbering the new defect's options.
+  const dispatchDefectIdRef = useRef(defectId);
   const overlayCaptureRef = useRef<View>(null);
   const overlayPromiseHandlersRef = useRef<{
     resolve: (uri: string) => void;
@@ -127,11 +151,115 @@ export function DefectDetailScreen() {
     loadDefectDetail();
   }, [loadDefectDetail]);
 
+  const loadDispatchOptions = useCallback(async () => {
+    if (!canDispatch) {
+      return;
+    }
+    const requestedDefectId = defectId;
+    try {
+      const options = await api.getDefectAssignmentOptions(token, defectId);
+      if (dispatchDefectIdRef.current !== requestedDefectId) {
+        return;
+      }
+      setDispatchOptions(options);
+    } catch (optionsError) {
+      if (optionsError instanceof ApiError && optionsError.status === 401) {
+        await handleUnauthorized(optionsError);
+        return;
+      }
+      if (dispatchDefectIdRef.current !== requestedDefectId) {
+        return;
+      }
+      // ONLY a genuine 403 means "this account can't dispatch" — then hide the
+      // panel. A transient/offline blip keeps whatever options we already had so
+      // a network hiccup doesn't silently collapse the card (offline-prone field
+      // app); the defect itself surfaces its own load error.
+      if (optionsError instanceof ApiError && optionsError.status === 403) {
+        setDispatchOptions(null);
+      }
+    }
+  }, [canDispatch, defectId, handleUnauthorized, token]);
+
   useEffect(() => {
+    loadDispatchOptions();
+  }, [loadDispatchOptions]);
+
+  useEffect(() => {
+    dispatchDefectIdRef.current = defectId;
     setProofPhotos([]);
     setPendingOverlayPhoto(null);
     overlayPromiseHandlersRef.current = null;
+    setSelectedAssignTeamId(null);
+    setSelectedAssignUserId(null);
+    setSelectedDelegateOrgId(null);
+    // Drop the previous defect's options immediately so the Dispatch card never
+    // renders a stale roster while the refetch is in flight.
+    setDispatchOptions(null);
   }, [defectId]);
+
+  async function handleAssignDispatch() {
+    if (!selectedAssignTeamId && !selectedAssignUserId) {
+      return;
+    }
+    try {
+      setDispatchAction('assign');
+      setError(null);
+      const updated = await api.assignDefect(token, defectId, {
+        assignedToTeamId: selectedAssignTeamId,
+        assignedToUserId: selectedAssignUserId,
+      });
+      setDefect(updated);
+      setSelectedAssignTeamId(null);
+      setSelectedAssignUserId(null);
+      await loadDispatchOptions();
+    } catch (assignError) {
+      if (assignError instanceof ApiError && assignError.status === 401) {
+        await handleUnauthorized(assignError);
+        return;
+      }
+      const message =
+        assignError instanceof Error
+          ? assignError.message
+          : 'Unable to assign defect.';
+      setError(message);
+      // The Dispatch card sits well down the scroll, so also surface the failure
+      // at the point of action (the top error banner is off-screen here).
+      Alert.alert('Assign failed', message);
+    } finally {
+      setDispatchAction(null);
+    }
+  }
+
+  async function handleDelegateDispatch() {
+    if (!selectedDelegateOrgId) {
+      return;
+    }
+    try {
+      setDispatchAction('delegate');
+      setError(null);
+      const updated = await api.delegateDefect(
+        token,
+        defectId,
+        selectedDelegateOrgId,
+      );
+      setDefect(updated);
+      setSelectedDelegateOrgId(null);
+      await loadDispatchOptions();
+    } catch (delegateError) {
+      if (delegateError instanceof ApiError && delegateError.status === 401) {
+        await handleUnauthorized(delegateError);
+        return;
+      }
+      const message =
+        delegateError instanceof Error
+          ? delegateError.message
+          : 'Unable to delegate defect.';
+      setError(message);
+      Alert.alert('Delegate failed', message);
+    } finally {
+      setDispatchAction(null);
+    }
+  }
 
   useEffect(() => {
     if (!pendingOverlayPhoto) {
@@ -518,6 +646,120 @@ export function DefectDetailScreen() {
                 />
               ) : null}
             </View>
+
+            {canDispatch &&
+            dispatchOptions &&
+            (dispatchOptions.canAssign || dispatchOptions.canDelegate) ? (
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Dispatch</Text>
+
+                {dispatchOptions.canAssign ? (
+                  <>
+                    {dispatchOptions.teams.length > 0 ? (
+                      <View style={styles.outcomeWrap}>
+                        <Text style={styles.controlLabel}>Assign to team</Text>
+                        {dispatchOptions.teams.map((team) => (
+                          <DispatchPill
+                            key={team.id}
+                            label={optionLabel(team)}
+                            selected={selectedAssignTeamId === team.id}
+                            disabled={dispatchAction !== null}
+                            onPress={() => {
+                              setSelectedAssignTeamId(team.id);
+                              setSelectedAssignUserId(null);
+                            }}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+
+                    {dispatchOptions.users.length > 0 ? (
+                      <View style={styles.outcomeWrap}>
+                        <Text style={styles.controlLabel}>Or a technician</Text>
+                        {dispatchOptions.users.map((member) => (
+                          <DispatchPill
+                            key={member.id}
+                            label={optionLabel(member)}
+                            selected={selectedAssignUserId === member.id}
+                            disabled={dispatchAction !== null}
+                            onPress={() => {
+                              setSelectedAssignUserId(member.id);
+                              setSelectedAssignTeamId(null);
+                            }}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+
+                    <View style={styles.actionStack}>
+                      <Pressable
+                        disabled={
+                          dispatchAction !== null ||
+                          (!selectedAssignTeamId && !selectedAssignUserId)
+                        }
+                        onPress={handleAssignDispatch}
+                        style={({ pressed }) => [
+                          styles.maintenanceButton,
+                          styles.maintenanceButtonBlue,
+                          (dispatchAction !== null ||
+                            (!selectedAssignTeamId && !selectedAssignUserId)) &&
+                            styles.disabledButton,
+                          pressed && dispatchAction === null && styles.pressedButton,
+                        ]}
+                      >
+                        {dispatchAction === 'assign' ? (
+                          <ActivityIndicator color={theme.colors.info} />
+                        ) : null}
+                        <Text style={styles.maintenanceButtonBlueText}>
+                          {dispatchAction === 'assign' ? 'Assigning...' : 'Assign'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
+
+                {dispatchOptions.canDelegate ? (
+                  <>
+                    <View style={styles.outcomeWrap}>
+                      <Text style={styles.controlLabel}>
+                        Delegate to subcontractor
+                      </Text>
+                      {dispatchOptions.subcontractors.map((organization) => (
+                        <DispatchPill
+                          key={organization.id}
+                          label={optionLabel(organization)}
+                          selected={selectedDelegateOrgId === organization.id}
+                          disabled={dispatchAction !== null}
+                          onPress={() => setSelectedDelegateOrgId(organization.id)}
+                        />
+                      ))}
+                    </View>
+                    <View style={styles.actionStack}>
+                      <Pressable
+                        disabled={dispatchAction !== null || !selectedDelegateOrgId}
+                        onPress={handleDelegateDispatch}
+                        style={({ pressed }) => [
+                          styles.maintenanceButton,
+                          styles.maintenanceButtonNeutral,
+                          (dispatchAction !== null || !selectedDelegateOrgId) &&
+                            styles.disabledButton,
+                          pressed && dispatchAction === null && styles.pressedButton,
+                        ]}
+                      >
+                        {dispatchAction === 'delegate' ? (
+                          <ActivityIndicator color={theme.colors.textPrimary} />
+                        ) : null}
+                        <Text style={styles.maintenanceButtonNeutralText}>
+                          {dispatchAction === 'delegate'
+                            ? 'Delegating...'
+                            : 'Delegate'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
+              </View>
+            ) : null}
 
             {canShowMaintenanceActions ? (
               <View style={styles.card}>
@@ -1005,6 +1247,42 @@ function OutcomeButton({
     >
       <Text style={[styles.outcomeButtonText, isSelected && styles.outcomeButtonTextSelected]}>
         {formatEnumLabel(outcome)}
+      </Text>
+    </Pressable>
+  );
+}
+
+function optionLabel(option: DefectAssignmentOption): string {
+  return option.name || option.email || option.code || option.id;
+}
+
+function DispatchPill({
+  label,
+  selected,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.outcomeButton,
+        selected && styles.outcomeButtonSelected,
+        disabled && styles.disabledButton,
+        pressed && !disabled && styles.pressedButton,
+      ]}
+    >
+      <Text style={[styles.outcomeButtonText, selected && styles.outcomeButtonTextSelected]}>
+        {label}
       </Text>
     </Pressable>
   );

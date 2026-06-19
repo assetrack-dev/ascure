@@ -790,6 +790,26 @@ export type DefectDetail = {
   maintenanceProofImages?: DefectEvidenceImage[];
 };
 
+/** A dispatch target (team / technician / subcontractor) for a routed defect. */
+export interface DefectAssignmentOption {
+  id: string;
+  name: string | null;
+  email?: string | null;
+  code?: string | null;
+  role?: string | null;
+  type?: string | null;
+}
+
+/** Maintenance-manager dispatch options for a routed defect (self-management). */
+export interface DefectAssignmentOptions {
+  responsibleOrganizationId: string | null;
+  canAssign: boolean;
+  canDelegate: boolean;
+  teams: DefectAssignmentOption[];
+  users: DefectAssignmentOption[];
+  subcontractors: DefectAssignmentOption[];
+}
+
 export interface InspectionItemResult {
   id: string;
   inspectionId?: string;

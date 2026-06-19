@@ -10,6 +10,7 @@ import {
   CreateAssetInput,
   DailyTeamActivity,
   DashboardData,
+  DefectAssignmentOptions,
   DefectDetail,
   DefectEvidenceImage,
   DefectEvidenceImageUploadInput,
@@ -635,6 +636,38 @@ export const api = {
     return request<DefectDetail>(`/defects/${defectId}/claim`, {
       method: 'PATCH',
       token,
+    });
+  },
+
+  // Maintenance self-management (manager dispatch). The options endpoint is
+  // ADMIN/MANAGER-gated server-side; non-managers get a 403.
+  getDefectAssignmentOptions(token: string, defectId: string) {
+    return request<DefectAssignmentOptions>(
+      `/defects/${defectId}/assignment-options`,
+      { token },
+    );
+  },
+
+  assignDefect(
+    token: string,
+    defectId: string,
+    input: { assignedToTeamId?: string | null; assignedToUserId?: string | null },
+  ) {
+    return request<DefectDetail>(`/defects/${defectId}/assignment`, {
+      method: 'PATCH',
+      token,
+      body: {
+        assignedToTeamId: input.assignedToTeamId ?? null,
+        assignedToUserId: input.assignedToUserId ?? null,
+      },
+    });
+  },
+
+  delegateDefect(token: string, defectId: string, organizationId: string) {
+    return request<DefectDetail>(`/defects/${defectId}/delegate`, {
+      method: 'PATCH',
+      token,
+      body: { organizationId },
     });
   },
 
