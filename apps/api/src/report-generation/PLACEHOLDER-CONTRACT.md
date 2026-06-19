@@ -87,6 +87,11 @@ Boolean flags can gate a whole section so empty tables don't render:
 ## Notes
 
 - A missing photo file is skipped silently — it never aborts the report.
-- Images are scaled to fit a ~340×255 px box, preserving aspect ratio.
+- Images are scaled to fit a ~130×175 px box, preserving aspect ratio. The box
+  is deliberately small so a photo fits inside a narrow multi-up image cell:
+  a docx cell narrower than the rendered image does not shrink it — LibreOffice
+  clips the right/bottom edge (which was cropping the GPS/timestamp watermark).
+  For larger photos, widen the template's image cells AND raise the box
+  (`MAX_IMAGE_WIDTH`/`MAX_IMAGE_HEIGHT` in `report-image.util.ts`) together.
 - An asset with no submitted inspection, or whose scope has no active template,
   is skipped from the compiled survey report (recorded in the report metadata).

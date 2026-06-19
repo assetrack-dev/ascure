@@ -13,9 +13,21 @@ const EXTENSION_TO_FORMAT: Record<string, ImageContent['format']> = {
   '.bmp': MimeType.Bmp,
 };
 
-/** The box a report photo is scaled to fit (points/px). Aspect ratio preserved. */
-const MAX_IMAGE_WIDTH = 340;
-const MAX_IMAGE_HEIGHT = 255;
+/**
+ * The box each report photo is scaled to fit, aspect ratio preserved. The units
+ * are PIXELS — easy-template-x renders an image's width/height as px → EMU at
+ * 96 dpi (px * 9525). Sized to fit inside a narrow multi-up image cell in the
+ * report template: a docx table cell narrower than the rendered image does NOT
+ * shrink it — LibreOffice CLIPS the right/bottom edge, which was cropping the
+ * burned-in GPS/timestamp watermark at the photo's bottom-right.
+ *
+ * 130 px ≈ 1.35 in fits the SAVR template's ~1.45 in (≈2288 dxa) image cells
+ * with margin to spare. To render LARGER report photos, widen the template's
+ * image cells AND raise these two values together — the cell can't enlarge a
+ * photo, only this box can.
+ */
+const MAX_IMAGE_WIDTH = 130;
+const MAX_IMAGE_HEIGHT = 175;
 
 /**
  * Photo records store either a `storageKey` (relative to the uploads dir, e.g.
