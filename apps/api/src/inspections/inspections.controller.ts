@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -27,6 +28,14 @@ class InspectionIdParamDto {
 class InspectionImageParamDto {
   @IsUUID()
   inspectionId!: string;
+}
+
+class InspectionImageDeleteParamDto {
+  @IsUUID()
+  inspectionId!: string;
+
+  @IsUUID()
+  imageId!: string;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -85,5 +94,17 @@ export class InspectionsController {
     @Body() dto: UploadInspectionImageDto,
   ) {
     return this.inspectionsService.uploadImage(user, params.inspectionId, file, dto);
+  }
+
+  @Delete(':inspectionId/images/:imageId')
+  deleteImage(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionImageDeleteParamDto,
+  ) {
+    return this.inspectionsService.deleteImage(
+      user,
+      params.inspectionId,
+      params.imageId,
+    );
   }
 }

@@ -153,14 +153,17 @@ const FALLBACK_FEEDER_LINE_COLORS = [
 const FEEDER_LINE_OFFSET_AMOUNT = 0.000025;
 const MAP_CONTROL_RADIUS = 8;
 
-console.log('MAP API KEY:', process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
-
 export function MapScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<AppDrawerScreenProps<'AssetMap'>['navigation']>();
   const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
-  const { visitId, substationId } = route.params ?? {};
+  const { visitId, substationId, focusAssetId, focusLatitude, focusLongitude } =
+    route.params ?? {};
+  // When opened from the Asset Detail mini-map, centre on that asset instead of
+  // the user's current location.
+  const hasAssetFocus =
+    typeof focusLatitude === 'number' && typeof focusLongitude === 'number';
   // This screen is reused both as the drawer's AssetMap and as a root-stack
   // VisitAssetMap pushed from VisitDetail. Only the drawer instance has
   // openDrawer; the pushed instance shows a Back button instead (issue #6).
@@ -198,7 +201,14 @@ export function MapScreen() {
   const [showFeederLines, setShowFeederLines] = useState(false);
   const [showSequenceWarnings, setShowSequenceWarnings] = useState(false);
   const [mapFilters, setMapFilters] = useState<MapFilters>(INITIAL_MAP_FILTERS);
-  const [region, setRegion] = useState<Region>(DEFAULT_REGION);
+  const [region, setRegion] = useState<Region>(
+    hasAssetFocus
+      ? createCurrentLocationRegion({
+          latitude: focusLatitude as number,
+          longitude: focusLongitude as number,
+        })
+      : DEFAULT_REGION,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const {
@@ -367,14 +377,18 @@ export function MapScreen() {
           const nextDefectMarkers = await loadDefectMarkers(token, assetList);
           setDefectMarkers(nextDefectMarkers);
 
-          const nextRegion = createRegion([
-            ...assetList.map(getAssetCoordinate).filter(isCoordinate),
-            ...nextDefectMarkers.map((defect) => ({
-              latitude: defect.latitude,
-              longitude: defect.longitude,
-            })),
-          ]);
-          setRegion(nextRegion);
+          // When opened to focus a specific asset, keep that centre — don't
+          // re-fit the camera to the whole substation once the poles arrive.
+          if (!hasAssetFocus) {
+            const nextRegion = createRegion([
+              ...assetList.map(getAssetCoordinate).filter(isCoordinate),
+              ...nextDefectMarkers.map((defect) => ({
+                latitude: defect.latitude,
+                longitude: defect.longitude,
+              })),
+            ]);
+            setRegion(nextRegion);
+          }
         }
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
@@ -391,7 +405,7 @@ export function MapScreen() {
         }
       }
     },
-    [handleUnauthorized, substationId, token, visitId],
+    [handleUnauthorized, hasAssetFocus, substationId, token, visitId],
   );
 
   // Refetch when the Map regains focus (e.g. returning after submitting an
@@ -415,10 +429,31 @@ export function MapScreen() {
   }, [requestCurrentLocation]);
 
   useEffect(() => {
-    if (!isLoading && currentCoordinate && !hasVisibleMapMarkers) {
+    // Don't yank the view to current location when we were asked to focus a
+    // specific asset.
+    if (
+      !hasAssetFocus &&
+      !isLoading &&
+      currentCoordinate &&
+      !hasVisibleMapMarkers
+    ) {
       centerMapOnCoordinate(currentCoordinate);
     }
-  }, [centerMapOnCoordinate, currentCoordinate, hasVisibleMapMarkers, isLoading]);
+  }, [centerMapOnCoordinate, currentCoordinate, hasAssetFocus, hasVisibleMapMarkers, isLoading]);
+
+  // One-shot centre on the asset passed from Asset Detail (the initial region is
+  // already set to it; this re-animates once the native map is mounted).
+  const hasFocusedOnAssetRef = useRef(false);
+  useEffect(() => {
+    if (hasFocusedOnAssetRef.current || !hasAssetFocus) {
+      return;
+    }
+    hasFocusedOnAssetRef.current = true;
+    centerMapOnCoordinate({
+      latitude: focusLatitude as number,
+      longitude: focusLongitude as number,
+    });
+  }, [centerMapOnCoordinate, focusLatitude, focusLongitude, hasAssetFocus]);
 
   function handleLongPress(event: LongPressEvent) {
     if (!canInspect) {
@@ -464,7 +499,14 @@ export function MapScreen() {
           coordinate={coordinate}
           title={asset.assetCode}
           description={asset.name ?? asset.assetType.name}
-          pinColor={assetMarkerColor(asset)}
+          // Highlight the asset we were opened to focus (from Asset Detail) so
+          // it's distinguishable from its neighbours, and draw it on top.
+          pinColor={
+            focusAssetId && asset.id === focusAssetId
+              ? '#7c3aed'
+              : assetMarkerColor(asset)
+          }
+          zIndex={focusAssetId && asset.id === focusAssetId ? 10 : undefined}
           onPress={() => handleOpenAssetDetail(asset)}
         />,
       ];
@@ -527,6 +569,7 @@ export function MapScreen() {
   }, [
     filteredAssets,
     filteredDefectMarkers,
+    focusAssetId,
     handleOpenAssetDetail,
     handleOpenDefectDetail,
     selectedCoordinate,

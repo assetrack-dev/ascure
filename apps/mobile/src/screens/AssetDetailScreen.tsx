@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { cachedFetch, readCache, removeFromCachedArray, writeCache } from '../offlineCache';
@@ -521,7 +522,14 @@ export function AssetDetailScreen() {
           </View>
           <View style={styles.headerTitleWrap}>
             <Text style={styles.title}>Asset Detail</Text>
-            <Text style={styles.subtitle}>{asset.assetCode || 'No asset code available'}</Text>
+            <Text
+              style={styles.subtitle}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {asset.assetCode || 'No asset code available'}
+            </Text>
           </View>
           <View style={[styles.headerSide, styles.headerSideRight]}>
             <HeaderIconButton
@@ -615,6 +623,51 @@ export function AssetDetailScreen() {
             accuracyMeters={gpsAccuracyMeters}
           />
         </View>
+
+        {typeof asset.latitude === 'number' && typeof asset.longitude === 'number' ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Location</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open this asset's location in the map"
+              onPress={() =>
+                navigation.navigate('VisitAssetMap', {
+                  visitId,
+                  substationId,
+                  focusAssetId: asset.id,
+                  focusLatitude: asset.latitude as number,
+                  focusLongitude: asset.longitude as number,
+                })
+              }
+              style={({ pressed }) => [
+                styles.miniMapWrap,
+                pressed && styles.pressedButton,
+              ]}
+            >
+              <MapView
+                provider={PROVIDER_GOOGLE}
+                style={styles.miniMap}
+                pointerEvents="none"
+                liteMode
+                region={{
+                  latitude: asset.latitude,
+                  longitude: asset.longitude,
+                  latitudeDelta: 0.004,
+                  longitudeDelta: 0.004,
+                }}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: asset.latitude,
+                    longitude: asset.longitude,
+                  }}
+                  title={asset.assetCode || undefined}
+                />
+              </MapView>
+            </Pressable>
+            <Text style={styles.miniMapHint}>Tap the map to open it at this asset.</Text>
+          </View>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Latest Inspection</Text>
@@ -956,16 +1009,22 @@ const createStyles = (t: Theme) =>
       gap: 2,
     },
     title: {
-      fontSize: 18,
-      lineHeight: 24,
+      fontSize: 11,
+      lineHeight: 14,
       fontWeight: '700',
-      color: t.colors.textPrimary,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: t.colors.textSecondary,
       textAlign: 'center',
     },
+    // The asset code = NO TIANG RONDAAN. Field crew identify the pole by this, so
+    // it's the dominant element in the header (the generic "Asset Detail" label is
+    // demoted to a small eyebrow above it).
     subtitle: {
-      fontSize: 12,
-      lineHeight: 17,
-      color: t.colors.textSecondary,
+      fontSize: 24,
+      lineHeight: 28,
+      fontWeight: '800',
+      color: t.colors.textPrimary,
       textAlign: 'center',
     },
     content: {
@@ -986,6 +1045,22 @@ const createStyles = (t: Theme) =>
       lineHeight: 20,
       fontWeight: '600',
       color: t.colors.textPrimary,
+    },
+    miniMapWrap: {
+      borderRadius: t.radius.card,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    miniMap: {
+      width: '100%',
+      height: 150,
+    },
+    miniMapHint: {
+      fontSize: 12,
+      lineHeight: 16,
+      color: t.colors.textSecondary,
+      textAlign: 'center',
     },
     infoRow: {
       flexDirection: 'row',

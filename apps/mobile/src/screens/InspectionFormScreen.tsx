@@ -151,6 +151,7 @@ export function InspectionFormScreen() {
   const [photoUploadNotice, setPhotoUploadNotice] = useState<string | null>(null);
   const overlayCaptureRef = useRef<View>(null);
   const photosRef = useRef<CapturedInspectionPhoto[]>([]);
+  const removingPhotoIdsRef = useRef<Set<string>>(new Set());
   const photoUploadPromisesRef = useRef<Record<string, Promise<void>>>({});
   const overlayPromiseHandlersRef = useRef<{
     resolve: (uri: string) => void;
@@ -615,8 +616,38 @@ export function InspectionFormScreen() {
     }
   }
 
-  function handleRemovePhoto(photoId: string) {
-    setPhotoList((current) => current.filter((photo) => photo.id !== photoId));
+  async function handleRemovePhoto(photoId: string) {
+    if (removingPhotoIdsRef.current.has(photoId)) {
+      return;
+    }
+    const photo = photosRef.current.find((entry) => entry.id === photoId);
+
+    // A freshly-captured local photo (no server id) is just dropped from state.
+    // An already-uploaded image (seeded when amending) must ALSO be deleted
+    // server-side — otherwise it silently reappears the next time the inspection
+    // is amended (the form re-seeds from the persisted rows).
+    if (photo?.uploadedImageId && !isTempId(inspectionId)) {
+      removingPhotoIdsRef.current.add(photoId);
+      setError(null);
+      try {
+        await api.deleteInspectionImage(token, inspectionId, photo.uploadedImageId);
+      } catch (deleteError) {
+        if (deleteError instanceof ApiError && deleteError.status === 401) {
+          await handleUnauthorized(deleteError);
+          return;
+        }
+        setError(
+          deleteError instanceof Error
+            ? deleteError.message
+            : 'Unable to delete the photo — check your connection and try again.',
+        );
+        return; // keep the thumbnail so it's clear the photo was not removed
+      } finally {
+        removingPhotoIdsRef.current.delete(photoId);
+      }
+    }
+
+    setPhotoList((current) => current.filter((entry) => entry.id !== photoId));
   }
 
   async function createOverlayPhoto(photo: PendingOverlayPhoto) {

@@ -822,6 +822,13 @@ export const api = {
     return uploadInspectionImage(token, inspectionId, photo);
   },
 
+  deleteInspectionImage(token: string, inspectionId: string, imageId: string) {
+    return request<{ id: string; deleted: boolean }>(
+      `/inspections/${inspectionId}/images/${imageId}`,
+      { method: 'DELETE', token },
+    );
+  },
+
   uploadSiteVisitImage(token: string, siteVisitId: string, photo: SiteVisitImageUploadInput) {
     return uploadSiteVisitImage(token, siteVisitId, photo);
   },

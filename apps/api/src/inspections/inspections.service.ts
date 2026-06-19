@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, unlink, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { extname, resolve } from 'path';
 import {
@@ -685,6 +685,63 @@ export class InspectionsService {
     });
 
     return this.serializeInspectionImage(image, dto.type ?? null);
+  }
+
+  /**
+   * Remove a single inspection image (e.g. deleting/replacing a photo while
+   * amending). Same editability gate as uploadImage — the visit must be open —
+   * and the image must belong to the (accessible) inspection. The DB row is the
+   * source of truth; the on-disk file is removed best-effort.
+   */
+  async deleteImage(user: RequestUser, inspectionId: string, imageId: string) {
+    this.assertCanMutate(user);
+
+    const inspection = await this.prisma.inspection.findFirst({
+      where: {
+        id: inspectionId,
+        tenantId: user.tenantId,
+        ...this.inspectionAccessScope(user),
+      },
+      select: {
+        id: true,
+        siteVisit: {
+          select: {
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!inspection) {
+      throw new NotFoundException('Inspection not found.');
+    }
+
+    this.assertVisitEditable(inspection.siteVisit.status);
+
+    const image = await this.prisma.inspectionImage.findFirst({
+      where: {
+        id: imageId,
+        inspectionId: inspection.id,
+      },
+      select: {
+        id: true,
+        filename: true,
+      },
+    });
+
+    if (!image) {
+      throw new NotFoundException('Image not found.');
+    }
+
+    await this.prisma.inspectionImage.delete({ where: { id: image.id } });
+
+    try {
+      await unlink(resolve(buildInspectionImagesDirectory(inspection.id), image.filename));
+    } catch {
+      // File may already be gone; the row deletion is what matters.
+    }
+
+    return { id: image.id, deleted: true };
   }
 
   private serializeInspectionItemResult(item: {

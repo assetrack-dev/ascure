@@ -6,10 +6,21 @@ import type { DrawerScreenProps } from '@react-navigation/drawer';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Asset } from '../types';
 
+/** Shared params for the (single) MapScreen, mounted as AssetMap + VisitAssetMap.
+ *  The optional focus* fields open the map centred on a specific asset (used by
+ *  the Asset Detail mini-map "tap to open"). */
+export type AssetMapParams = {
+  visitId?: string;
+  substationId?: string;
+  focusAssetId?: string;
+  focusLatitude?: number;
+  focusLongitude?: number;
+};
+
 export type AppDrawerParamList = {
   Home: undefined;
   Dashboard: undefined;
-  AssetMap: { visitId?: string; substationId?: string } | undefined;
+  AssetMap: AssetMapParams | undefined;
   DefectList: undefined;
   SyncQueue: undefined;
 };
@@ -23,7 +34,7 @@ export type RootStackParamList = {
   VisitAssets: { visitId: string; substationId: string };
   // Full-screen map pushed ON TOP of VisitDetail (root stack) so "back" returns
   // to the visit, not the drawer's Workspace. Reuses MapScreen (ADR/issue #6).
-  VisitAssetMap: { visitId?: string; substationId?: string } | undefined;
+  VisitAssetMap: AssetMapParams | undefined;
   AssetDetail: {
     visitId?: string;
     substationId?: string;
