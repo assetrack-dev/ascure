@@ -327,15 +327,11 @@ export function InspectionFormScreen() {
   }
 
   function toggleSection(sectionId: string) {
-    setExpandedSections((current) => {
-      const next = new Set(current);
-      if (next.has(sectionId)) {
-        next.delete(sectionId);
-      } else {
-        next.add(sectionId);
-      }
-      return next;
-    });
+    // Accordion: opening a group collapses any other open group, so only one
+    // group card is expanded at a time (prevents confusion across a long list).
+    setExpandedSections((current) =>
+      current.has(sectionId) ? new Set() : new Set([sectionId]),
+    );
   }
 
   function handleMarkSectionDone(section: InspectionTemplateSection) {
