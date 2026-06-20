@@ -156,6 +156,7 @@ type DesiredChecklistItem = {
   id?: string;
   key?: string;
   label: string;
+  helperText?: string | null;
   inputType: InspectionItemInputType;
   optionsJson: Prisma.InputJsonValue | null;
   sortOrder: number;
@@ -978,6 +979,7 @@ export class ChecklistTemplatesService {
           data: {
             key: item.key ?? existingById.get(item.id)?.key,
             label: item.label,
+            helperText: item.helperText ?? null,
             inputType: item.inputType,
             sectionId,
             optionsJson:
@@ -1000,7 +1002,7 @@ export class ChecklistTemplatesService {
           sectionId,
           key: this.buildUniqueItemKey(item.label, usedKeys),
           label: item.label,
-          helperText: null,
+          helperText: item.helperText ?? null,
           inputType: item.inputType,
           isRequired: item.isRequired,
           isActive: item.isActive,
@@ -1118,6 +1120,21 @@ export class ChecklistTemplatesService {
     return resolved ?? sectionMap.get(orderedTitles[0])!;
   }
 
+  /** Trim a per-item hint to null (blank → none). When the field is omitted
+   *  entirely from the payload, keep whatever the item already had. */
+  private normalizeHelperText(
+    incoming: string | null | undefined,
+    existing?: string | null,
+  ): string | null {
+    if (incoming === undefined) {
+      return existing ?? null;
+    }
+
+    const trimmed = incoming?.trim();
+
+    return trimmed ? trimmed : null;
+  }
+
   private normalizeIncomingItems(
     existingItems: ChecklistTemplateItemRecord[],
     incomingItems: ChecklistTemplateItemInputDto[],
@@ -1145,6 +1162,7 @@ export class ChecklistTemplatesService {
         sectionId: existingItem?.sectionId,
         groupTitle,
         label,
+        helperText: this.normalizeHelperText(item.helperText, existingItem?.helperText),
         inputType,
         optionsJson: this.normalizeOptionsJson(inputType, item, existingItem),
         sortOrder: item.sortOrder ?? index + 1,
@@ -1180,6 +1198,7 @@ export class ChecklistTemplatesService {
       sectionId: item.sectionId,
       groupTitle: sectionTitleById?.get(item.sectionId),
       label: item.label,
+      helperText: item.helperText,
       inputType: item.inputType,
       optionsJson: this.normalizeExistingOptionsJson(item.inputType, item.optionsJson),
       sortOrder: item.sortOrder,
@@ -1202,7 +1221,7 @@ export class ChecklistTemplatesService {
       sectionId: resolveSectionId(item),
       key: item.key && !usedKeys.has(item.key) ? this.reserveKey(item.key, usedKeys) : this.buildUniqueItemKey(item.label, usedKeys),
       label: item.label,
-      helperText: null,
+      helperText: item.helperText ?? null,
       inputType: item.inputType,
       isRequired: item.isRequired,
       isActive: item.isActive,
@@ -2042,6 +2061,7 @@ export class ChecklistTemplatesService {
           groupTitle: sectionTitleById.get(item.sectionId) ?? null,
           key: item.key,
           label: item.label,
+          helperText: item.helperText,
           fieldType: this.serializeFieldType(item.inputType),
           inputType: item.inputType,
           options: this.serializeOptions(item.inputType, item.optionsJson),

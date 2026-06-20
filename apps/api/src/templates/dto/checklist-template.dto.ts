@@ -162,6 +162,13 @@ export class ChecklistTemplateItemInputDto {
   @MaxLength(255)
   label!: string;
 
+  /** Optional per-item hint shown to the inspector under the field — "what kind
+   *  of answer is expected" (e.g. "Measure in metres, e.g. 5.8"). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  helperText?: string | null;
+
   @IsOptional()
   @IsInt()
   @Min(1)

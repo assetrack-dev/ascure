@@ -134,6 +134,7 @@ export interface ChecklistTemplateItem {
   groupTitle?: string | null;
   key?: string;
   label: string;
+  helperText?: string | null;
   fieldType: ChecklistFieldType;
   inputType?: string;
   options: ChecklistTemplateOption[];
@@ -192,6 +193,7 @@ export interface ChecklistTemplateItemPayload {
   key?: string;
   groupTitle?: string;
   label: string;
+  helperText?: string | null;
   fieldType: ChecklistFieldType;
   sortOrder: number;
   isRequired: boolean;

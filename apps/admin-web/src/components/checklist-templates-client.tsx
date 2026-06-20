@@ -78,6 +78,8 @@ interface TemplateFormItem {
   /** Named group this item belongs to ("" = ungrouped / default section). */
   groupTitle: string;
   label: string;
+  /** Optional hint shown to the inspector under the field ("expected answer"). */
+  helperText: string;
   fieldType: ChecklistFieldType;
   isRequired: boolean;
   isActive: boolean;
@@ -221,6 +223,7 @@ function createBlankItem(): TemplateFormItem {
     keyTouched: false,
     groupTitle: "",
     label: "",
+    helperText: "",
     fieldType: "YES_NO",
     isRequired: true,
     isActive: true,
@@ -339,6 +342,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     keyTouched: true,
     groupTitle: item.groupTitle ?? "",
     label: item.label,
+    helperText: item.helperText ?? "",
     fieldType: normalizeFieldType(item.fieldType ?? item.inputType),
     isRequired: item.isRequired,
     isActive: item.isActive !== false,
@@ -678,6 +682,7 @@ function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
       key,
       groupTitle: effectiveGroup(item),
       label,
+      helperText: item.helperText.trim() || null,
       fieldType: item.fieldType,
       sortOrder: payloadItems.length + 1,
       isRequired: item.isRequired,
@@ -878,6 +883,21 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             maxLength={255}
             required={isFormItemActive(item)}
           />
+        </label>
+
+        <label className="col-span-12 block min-w-0">
+          <span className="text-sm font-semibold text-slate-700">Hint / expected answer</span>
+          <input
+            type="text"
+            value={item.helperText}
+            onChange={(event) => onUpdateItem(item.localId, { helperText: event.target.value })}
+            className={`${inputClassName} mt-1.5`}
+            maxLength={500}
+            placeholder="Shown under this field on the inspector's form — e.g. Measure in metres, e.g. 5.8"
+          />
+          <span className="mt-1.5 block text-xs text-slate-500">
+            Optional guidance for the inspector. Pure hint — doesn't affect PASS/FAIL or the recorded answer.
+          </span>
         </label>
 
         <label className="col-span-12 block min-w-0 sm:col-span-6 md:col-span-3 xl:col-span-3">
