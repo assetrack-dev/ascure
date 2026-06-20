@@ -136,42 +136,112 @@ export function formatRondaan(memberships: PoleMembership[]): string {
 
 /**
  * Suggest the next NO TIANG RONDAAN after `lastCode`, for the field "tag the
- * next pole" helper: bump the pole number by one, preserving the feeder
- * letter(s) and any FP<n> origin. Returns null when there's nothing sensible to
- * suggest — an unparseable code, a branch (".../1"), or a converging multi-
- * feeder code ("E 4 & F 2") where the next pole is ambiguous and the crew should
- * type it. Always just a suggestion; callers keep the field editable.
- *   "A 3" -> "A 4"   "FP1 A 3" -> "FP1 A 4"   "CD 2" -> "CD 3"
+ * next pole" helper. It advances each feeder line at its FINEST active level by
+ * one, preserving everything above that level and any FP<n> origin:
+ *   - a trunk pole bumps its base index ......... "A 4"        -> "A 5"
+ *   - feeders on a shared run bump together ..... "CD 2"       -> "CD 3"
+ *   - converging feeders advance per feeder ..... "A 4 & B 1"  -> "A 5 & B 2"
+ *   - a branch bumps only its DEEPEST level ..... "D 5/1/2/5"  -> "D 5/1/2/6"
+ *     (its leg suffix is preserved) ............. "C 4/4/1A"   -> "C 4/4/2A"
+ *   - a pole on several lineages walks them all:
+ *                              "D 5/1/2 & C 3/4/1" -> "D 5/1/3 & C 3/4/2"
+ * The suggestion mirrors the order the crew typed the feeders in (it is NOT
+ * canonicalised), so whatever they tag flows straight into the next suggestion.
+ * Returns null only when there's nothing safe to advance: an unparseable code,
+ * or a partially-mistyped one (so a typo can never silently drop a feeder).
+ * Always just a suggestion; callers keep the field editable. Topology forks — a
+ * brand-new branch leg, going deeper, or jumping to a sibling — are left for the
+ * crew to type and the sequence checker to validate.
  */
 export function suggestNextPoleCode(lastCode: string): string | null {
-  const parsed = parsePoleCode(lastCode).filter((entry) => entry.isValid);
+  const parsed = parsePoleCode(lastCode);
 
-  if (parsed.length === 0) {
+  // Suggest only when EVERY segment is well-formed (a partially-mistyped code
+  // like "A 4 & garbage" must not silently drop the bad feeder) and the whole
+  // pole shares one FP origin.
+  if (parsed.length === 0 || parsed.some((entry) => !entry.isValid)) {
     return null;
   }
 
-  // Only a single plain base group qualifies: every segment shares one base
-  // number and one FP origin, with no branch parts. This deliberately skips
-  // branches and converging multi-feeder codes (ambiguous "next").
   const [first] = parsed;
-  const isPlainBaseGroup = parsed.every(
-    (entry) =>
-      entry.branchParts.length === 0 &&
-      entry.baseNumber === first.baseNumber &&
-      entry.feederPillar === first.feederPillar,
-  );
 
-  if (!isPlainBaseGroup) {
+  if (!parsed.every((entry) => entry.feederPillar === first.feederPillar)) {
     return null;
   }
 
-  const nextMemberships = parsed.map<PoleMembership>((entry) => ({
-    feeder: entry.feeder,
-    index: entry.baseNumber + 1,
-    ...(entry.feederPillar !== undefined ? { feederPillar: entry.feederPillar } : {}),
-  }));
+  return renderPreservingOrder(parsed.map(advanceToNextPole)) || null;
+}
 
-  return formatRondaan(nextMemberships) || null;
+/**
+ * Advance one parsed feeder segment to the next pole along its current line: a
+ * trunk segment (no branch) bumps its base index; a branch segment keeps its
+ * base and upper lineage and bumps only the deepest level, preserving that
+ * level's leg suffix.
+ */
+function advanceToNextPole(entry: ParsedPoleCode): PoleMembership {
+  const origin =
+    entry.feederPillar !== undefined ? { feederPillar: entry.feederPillar } : {};
+  const deepest = entry.branchParts[entry.branchParts.length - 1];
+
+  if (!deepest) {
+    return { feeder: entry.feeder, index: entry.baseNumber + 1, ...origin };
+  }
+
+  const branchParts = entry.branchParts.map((part) => ({ ...part }));
+  branchParts[branchParts.length - 1] = { ...deepest, number: deepest.number + 1 };
+
+  return { feeder: entry.feeder, index: entry.baseNumber, branchParts, ...origin };
+}
+
+/**
+ * Render memberships back to a RONDAAN string PRESERVING the order the crew
+ * typed them — unlike `formatRondaan`, which canonicalises (sorts) for a stable
+ * stored label. Used only by the field suggestion so the offered code mirrors
+ * the crew's own sequence. Consecutive feeders that share an (index, branch)
+ * still collapse into one letter-run (CD), differing groups join with " & " in
+ * encounter order, and the FP origin is prefixed once.
+ */
+function renderPreservingOrder(memberships: PoleMembership[]): string {
+  const groups: MembershipGroup[] = [];
+  let feederPillar: number | undefined;
+
+  for (const membership of memberships) {
+    const feeder = membership.feeder.trim().toUpperCase();
+
+    if (!feeder || !Number.isInteger(membership.index) || membership.index <= 0) {
+      continue;
+    }
+
+    if (
+      feederPillar === undefined &&
+      membership.feederPillar !== undefined &&
+      Number.isInteger(membership.feederPillar) &&
+      membership.feederPillar > 0
+    ) {
+      feederPillar = membership.feederPillar;
+    }
+
+    const branchSuffix = resolveBranchSuffix(membership);
+    const last = groups[groups.length - 1];
+
+    if (last && last.index === membership.index && last.branchSuffix === branchSuffix) {
+      if (!last.feeders.includes(feeder)) {
+        last.feeders.push(feeder);
+      }
+    } else {
+      groups.push({ index: membership.index, branchSuffix, feeders: [feeder] });
+    }
+  }
+
+  const body = groups
+    .map((group) => `${combineFeeders(group.feeders)} ${group.index}${group.branchSuffix}`)
+    .join(' & ');
+
+  if (!body) {
+    return '';
+  }
+
+  return feederPillar !== undefined ? `FP${feederPillar} ${body}` : body;
 }
 
 /** Map a parsed pole code (one feeder segment) to a membership. The backfill
