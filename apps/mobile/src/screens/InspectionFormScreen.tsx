@@ -1029,17 +1029,6 @@ export function InspectionFormScreen() {
             </Text>
           </View>
 
-          <InspectionPhotoSection
-            photos={photos}
-            isBusy={isBusy}
-            isCapturingPhoto={isCapturingPhoto}
-            isSubmitted={Boolean(isReadOnly)}
-            onTakePhoto={handleTakePhoto}
-            onOpenPhoto={setSelectedPhotoUri}
-            onRetakePhoto={handleRetakePhoto}
-            onRemovePhoto={handleRemovePhoto}
-          />
-
           {checklistItemCount === 0 ? (
             <EmptyState
               title="No active checklist items"
@@ -1078,6 +1067,17 @@ export function InspectionFormScreen() {
               ))}
             </View>
           )}
+
+          <InspectionPhotoSection
+            photos={photos}
+            isBusy={isBusy}
+            isCapturingPhoto={isCapturingPhoto}
+            isSubmitted={Boolean(isReadOnly)}
+            onTakePhoto={handleTakePhoto}
+            onOpenPhoto={setSelectedPhotoUri}
+            onRetakePhoto={handleRetakePhoto}
+            onRemovePhoto={handleRemovePhoto}
+          />
 
           {pendingOverlayPhoto ? (
             <View pointerEvents="none" style={styles.overlayCaptureRoot}>
