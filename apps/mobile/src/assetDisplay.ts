@@ -89,8 +89,9 @@ export function getNoTiangLama(asset: Asset): string | null {
 
 /**
  * Row display labels for an asset: the primary title is NO TIANG RONDAAN and the
- * subtitle leads with NO TIANG LAMA (per field validation feedback). Each falls
- * back gracefully so a row is never blank when a pole number is missing.
+ * subtitle is the NO TIANG LAMA value itself — no "NTL" label prefix, and blank
+ * when there is no LAMA. Title falls back gracefully so a row is never blank when
+ * a pole number is missing.
  */
 export function getAssetRowLabels(asset: Asset): { title: string; subtitle: string | null } {
   const noTiangRondaan = getNoTiangRondaan(asset);
@@ -99,7 +100,7 @@ export function getAssetRowLabels(asset: Asset): { title: string; subtitle: stri
 
   const subtitleParts: string[] = [];
   if (noTiangLama && noTiangLama !== title) {
-    subtitleParts.push(`NTL ${noTiangLama}`);
+    subtitleParts.push(noTiangLama);
   }
   if (noTiangRondaan && noTiangRondaan !== title) {
     subtitleParts.push(`NTR ${noTiangRondaan}`);
