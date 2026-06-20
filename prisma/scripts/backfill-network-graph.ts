@@ -160,36 +160,44 @@ async function processSubstation(
     const asset = assetById.get(assetId)!;
     const update: AssetUpdate = {};
 
-    for (const m of memberships) {
-      feederCodes.add(m.feeder);
-      membershipPlans.push({
-        assetId,
-        feederCode: m.feeder,
-        sequenceIndex: m.baseNumber,
-        branchSuffix: formatBranchSuffix(m.branchParts),
-      });
-    }
+    // Feeder-Pillar poles (FP<n>) can't be represented in the structured graph
+    // yet (no column), so skip their feeder/membership/fed-from planning — they
+    // stay string-only, matching the live syncPoleMemberships guard. The LAMA
+    // backfill below is origin-independent and still applies.
+    const isFeederPillar = memberships.some((m) => m.feederPillar !== undefined);
 
-    // fed-from: resolve from the primary (lowest) membership; flag ambiguity.
-    const ordered = [...memberships].sort(
-      (a, b) => a.feeder.localeCompare(b.feeder) || a.baseNumber - b.baseNumber,
-    );
-    const resolvedParents = new Set<string>();
-    for (const m of memberships) {
-      const pk = parentKeyOf(m);
-      if (!pk) continue;
-      const parentId = keyToAssetId.get(pk);
-      if (parentId && parentId !== assetId) resolvedParents.add(parentId);
-    }
-    if (resolvedParents.size > 1) ambiguousParents.push(asset.assetCode);
+    if (!isFeederPillar) {
+      for (const m of memberships) {
+        feederCodes.add(m.feeder);
+        membershipPlans.push({
+          assetId,
+          feederCode: m.feeder,
+          sequenceIndex: m.baseNumber,
+          branchSuffix: formatBranchSuffix(m.branchParts),
+        });
+      }
 
-    const primaryParentKey = parentKeyOf(ordered[0]);
-    if (primaryParentKey) {
-      const parentId = keyToAssetId.get(primaryParentKey);
-      if (parentId && parentId !== assetId) {
-        if (asset.fedFromAssetId == null) update.fedFromAssetId = parentId;
-      } else {
-        unresolvedParents.push(`${asset.assetCode} -> ${primaryParentKey}`);
+      // fed-from: resolve from the primary (lowest) membership; flag ambiguity.
+      const ordered = [...memberships].sort(
+        (a, b) => a.feeder.localeCompare(b.feeder) || a.baseNumber - b.baseNumber,
+      );
+      const resolvedParents = new Set<string>();
+      for (const m of memberships) {
+        const pk = parentKeyOf(m);
+        if (!pk) continue;
+        const parentId = keyToAssetId.get(pk);
+        if (parentId && parentId !== assetId) resolvedParents.add(parentId);
+      }
+      if (resolvedParents.size > 1) ambiguousParents.push(asset.assetCode);
+
+      const primaryParentKey = parentKeyOf(ordered[0]);
+      if (primaryParentKey) {
+        const parentId = keyToAssetId.get(primaryParentKey);
+        if (parentId && parentId !== assetId) {
+          if (asset.fedFromAssetId == null) update.fedFromAssetId = parentId;
+        } else {
+          unresolvedParents.push(`${asset.assetCode} -> ${primaryParentKey}`);
+        }
       }
     }
 
@@ -207,6 +215,7 @@ async function processSubstation(
         feeder: m.feeder,
         index: m.baseNumber,
         branchParts: m.branchParts,
+        ...(m.feederPillar !== undefined ? { feederPillar: m.feederPillar } : {}),
       })),
     );
     if (canonical && canonical !== normalizePoleInput(asset.assetCode)) {

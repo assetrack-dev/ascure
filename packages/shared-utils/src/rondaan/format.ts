@@ -35,6 +35,11 @@ export interface PoleMembership {
   /** Canonical branch suffix as stored (e.g. "/1A"); takes precedence over
    *  branchParts when set, so DB rows render without re-parsing. */
   branchSuffix?: string;
+  /** Optional Feeder-Pillar origin (`<n>` in `FP<n>`): the pole's feeder runs
+   *  from a Feeder Pillar (Pencawang→FP→pole). Rendered as a single leading
+   *  `FP<n>` prefix. A pole has at most one origin, so all of its memberships
+   *  share this value. */
+  feederPillar?: number;
 }
 
 interface MembershipGroup {
@@ -85,12 +90,24 @@ export function formatMembership(membership: PoleMembership): string {
  */
 export function formatRondaan(memberships: PoleMembership[]): string {
   const groups = new Map<string, MembershipGroup>();
+  let feederPillar: number | undefined;
 
   for (const membership of memberships) {
     const feeder = membership.feeder.trim().toUpperCase();
 
     if (!feeder || !Number.isInteger(membership.index) || membership.index <= 0) {
       continue;
+    }
+
+    // A pole has one origin; take the first valid Feeder-Pillar seen and prefix
+    // the whole rendered code with it once (FP1 E 4 & F 2), not per segment.
+    if (
+      feederPillar === undefined &&
+      membership.feederPillar !== undefined &&
+      Number.isInteger(membership.feederPillar) &&
+      membership.feederPillar > 0
+    ) {
+      feederPillar = membership.feederPillar;
     }
 
     const branchSuffix = resolveBranchSuffix(membership);
@@ -104,11 +121,17 @@ export function formatRondaan(memberships: PoleMembership[]): string {
     groups.set(key, group);
   }
 
-  return Array.from(groups.values())
+  const body = Array.from(groups.values())
     .map((group) => ({ ...group, feeders: [...group.feeders].sort() }))
     .sort(compareGroups)
     .map((group) => `${combineFeeders(group.feeders)} ${group.index}${group.branchSuffix}`)
     .join(' & ');
+
+  if (!body) {
+    return '';
+  }
+
+  return feederPillar !== undefined ? `FP${feederPillar} ${body}` : body;
 }
 
 /** Map a parsed pole code (one feeder segment) to a membership. The backfill
@@ -119,6 +142,7 @@ export function membershipFromParsed(parsed: ParsedPoleCode): PoleMembership {
     feeder: parsed.feeder,
     index: parsed.baseNumber,
     branchParts: parsed.branchParts,
+    ...(parsed.feederPillar !== undefined ? { feederPillar: parsed.feederPillar } : {}),
   };
 }
 

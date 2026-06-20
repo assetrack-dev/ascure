@@ -956,6 +956,16 @@ export class AssetsService {
     if (memberships.length === 0) {
       return;
     }
+    // Feeder-Pillar origin (FP<n>) has no column in the structured membership
+    // graph yet, so skip these poles — persisting "FP1 A 1" as a bare A-1 Feeder
+    // membership would conflate it with the direct A line and drop the prefix
+    // from the rendered NO TIANG RONDAAN. They stay string-only: with no
+    // memberships, renderNoTiangRondaan returns null and callers fall back to the
+    // assetCode mirror (which holds "FP1 A 1"). Structured FP backfill is a later
+    // migration (PoleFeederMembership.feederPillar).
+    if (memberships.some((membership) => membership.feederPillar !== undefined)) {
+      return;
+    }
 
     const feederIdByCode = new Map<string, string>();
     for (const membership of memberships) {
@@ -988,6 +998,11 @@ export class AssetsService {
     const { substationId, assetId, assetCode } = params;
     const memberships = parsePoleCode(assetCode).filter((parsed) => parsed.isValid);
     if (memberships.length === 0) {
+      return;
+    }
+    // Feeder-Pillar poles aren't in the structured graph (see syncPoleMemberships),
+    // so there's no membership key to resolve a parent against — skip.
+    if (memberships.some((membership) => membership.feederPillar !== undefined)) {
       return;
     }
     const primary = [...memberships].sort(
