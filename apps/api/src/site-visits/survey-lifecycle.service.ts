@@ -91,7 +91,19 @@ export class SurveyLifecycleService {
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.PERLU_PINDAAN,
       allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
-      data: { amendmentRequestedAt: new Date(), amendmentRemark: remark },
+      data: {
+        amendmentRequestedAt: new Date(),
+        amendmentRemark: remark,
+        // Re-OPEN the visit. The inspector usually presses "Complete Visit"
+        // before submitting for review, which sets status=COMPLETED (terminal).
+        // assertVisitEditable then blocks every amend/save/submit path, so a
+        // bounce-back that only flips the lifecycle leaves the inspector unable
+        // to act on it. Restore an active status and clear the completion stamps
+        // (the inverse of complete()) so the amendment is actually workable.
+        status: SiteVisitStatus.IN_PROGRESS,
+        completedAt: null,
+        endedAt: null,
+      },
       remark,
     });
   }
