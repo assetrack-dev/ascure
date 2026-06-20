@@ -1275,47 +1275,79 @@ function ChecklistSectionCard({
     : section.title;
   const sectionTone = getSectionTone(sectionTitle);
   const totalCount = section.items.length;
+  // A completed group turns the whole header green; otherwise it follows the section tone.
+  const doneTone = DONE_SECTION_TONE;
   // Chip: explicitly-done wins, else in-progress if any answers, else not started.
+  // When done, the chip goes solid green so it stays distinct against the green header.
   const chip = complete
-    ? { bg: '#dcfce7', fg: '#166534', label: 'Done' }
+    ? { bg: doneTone.chip, fg: '#ffffff', label: 'Done' }
     : answeredCount > 0
       ? { bg: '#fef9c3', fg: '#854d0e', label: `${answeredCount}/${totalCount}` }
       : { bg: '#f1f5f9', fg: '#64748b', label: 'Not started' };
   const showItems = !collapsible || expanded;
 
   const header = (
-    <View style={styles.sectionHeader}>
+    <View
+      style={[
+        styles.sectionHeader,
+        complete && {
+          backgroundColor: doneTone.headerBg,
+          borderBottomColor: doneTone.border,
+        },
+      ]}
+    >
       <View
         style={[
           styles.sectionIndexBadge,
           {
-            backgroundColor: sectionTone.surface,
-            borderColor: sectionTone.border,
+            backgroundColor: complete ? doneTone.badgeBg : sectionTone.surface,
+            borderColor: complete ? doneTone.border : sectionTone.border,
           },
         ]}
       >
-        <Text style={[styles.sectionIndexText, { color: sectionTone.accent }]}>
+        <Text
+          style={[
+            styles.sectionIndexText,
+            { color: complete ? doneTone.text : sectionTone.accent },
+          ]}
+        >
           {String(sectionIndex + 1).padStart(2, '0')}
         </Text>
       </View>
       <View style={styles.sectionHeaderText}>
-        <Text style={styles.sectionHeading}>{sectionTitle}</Text>
-        <Text style={styles.sectionMeta}>{totalCount} checks</Text>
+        <Text style={[styles.sectionHeading, complete && { color: doneTone.text }]}>
+          {sectionTitle}
+        </Text>
+        <Text style={[styles.sectionMeta, complete && { color: doneTone.meta }]}>
+          {totalCount} checks
+        </Text>
       </View>
       {collapsible ? (
         <View style={styles.sectionHeaderStatus}>
           <View style={[styles.sectionChip, { backgroundColor: chip.bg }]}>
             <Text style={[styles.sectionChipText, { color: chip.fg }]}>{chip.label}</Text>
           </View>
-          <Text style={styles.sectionChevron}>{expanded ? '▾' : '▸'}</Text>
+          <Text style={[styles.sectionChevron, complete && { color: doneTone.text }]}>
+            {expanded ? '▾' : '▸'}
+          </Text>
         </View>
       ) : null}
     </View>
   );
 
   return (
-    <View style={[styles.sectionCard, { borderColor: sectionTone.border }]}>
-      <View style={[styles.sectionTopRail, { backgroundColor: sectionTone.accent }]} />
+    <View
+      style={[
+        styles.sectionCard,
+        { borderColor: complete ? doneTone.border : sectionTone.border },
+      ]}
+    >
+      <View
+        style={[
+          styles.sectionTopRail,
+          { backgroundColor: complete ? doneTone.chip : sectionTone.accent },
+        ]}
+      />
       {collapsible ? (
         <Pressable onPress={onToggleSection} accessibilityRole="button">
           {header}
@@ -2038,6 +2070,16 @@ function formatFieldType(value: string) {
 
   return normalized || 'UNKNOWN';
 }
+
+// Green "done" palette — applied to the whole group header once it's marked done.
+const DONE_SECTION_TONE = {
+  headerBg: '#dcfce7', // green-100 header field
+  badgeBg: '#bbf7d0', // green-200 index badge
+  border: '#86efac', // green-300 borders
+  chip: '#16a34a', // green-600 solid chip + top rail
+  text: '#166534', // green-800 title / badge / chevron
+  meta: '#15803d', // green-700 subtext
+};
 
 function getSectionTone(sectionTitle: string) {
   const normalizedTitle = sectionTitle.trim().toUpperCase();
