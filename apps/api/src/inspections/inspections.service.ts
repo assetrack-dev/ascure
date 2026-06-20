@@ -1447,9 +1447,18 @@ export class InspectionsService {
 
       case InspectionItemInputType.MULTI_SELECT: {
         const selectedValues = this.normalizeMultiSelectValue(templateItem, input);
+        // v1 "Other (free text)": when the item allows it, the custom answer
+        // rides in valueText alongside the validated picks; otherwise any stray
+        // valueText is ignored. Never affects defect logic.
+        const allowOther = this.multiSelectAllowsOther(templateItem.optionsJson);
+        const otherText =
+          allowOther && typeof input.valueText === 'string'
+            ? input.valueText.trim() || null
+            : null;
 
         return {
           ...baseValueData,
+          valueText: otherText,
           valueJson:
             selectedValues === null
               ? Prisma.DbNull
@@ -1541,7 +1550,10 @@ export class InspectionsService {
     },
     input: SaveInspectionResultItemDto,
   ) {
-    const rawValues = input.valueJson ?? input.valueText;
+    // valueJson carries the configured picks; valueText is reserved for the
+    // optional free-text "Other" answer (handled in buildResultValueData), so it
+    // is NOT interpreted as a pick here.
+    const rawValues = input.valueJson;
 
     if (rawValues === undefined || rawValues === null || rawValues === '') {
       return null;
@@ -1579,6 +1591,17 @@ export class InspectionsService {
     }
 
     return uniqueValues;
+  }
+
+  /** Whether a MULTI_SELECT item opts into a free-text "Other" answer (the v1
+   *  `allowOther` flag in the v2 optionsJson config object). */
+  private multiSelectAllowsOther(optionsJson: Prisma.JsonValue | null | undefined): boolean {
+    return (
+      !!optionsJson &&
+      typeof optionsJson === 'object' &&
+      !Array.isArray(optionsJson) &&
+      (optionsJson as { allowOther?: unknown }).allowOther === true
+    );
   }
 
   private hasStoredValue(

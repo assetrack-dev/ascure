@@ -114,6 +114,7 @@ export interface ChecklistItemConfig {
   version: 2;
   fieldType: ChecklistFieldType;
   options?: ChecklistTemplateOption[];
+  allowOther?: boolean;
   showIf?: ChecklistShowIfConfig;
   image?: ChecklistImageConfig;
   measurement?: ChecklistMeasurementConfig;
@@ -195,6 +196,7 @@ export interface ChecklistTemplateItemPayload {
   label: string;
   helperText?: string | null;
   fieldType: ChecklistFieldType;
+  allowOther?: boolean;
   sortOrder: number;
   isRequired: boolean;
   isActive: boolean;

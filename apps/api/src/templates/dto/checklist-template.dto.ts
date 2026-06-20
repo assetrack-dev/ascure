@@ -194,6 +194,12 @@ export class ChecklistTemplateItemInputDto {
   @IsBoolean()
   isDefectTrigger?: boolean;
 
+  /** MULTI_SELECT only — allow a free-text "Other" answer beyond the configured
+   *  options (v1: recorded as text, never a defect). */
+  @IsOptional()
+  @IsBoolean()
+  allowOther?: boolean;
+
   @IsOptional()
   @IsIn(CHECKLIST_TEMPLATE_DEFECT_SEVERITIES)
   severity?: DefectSeverity;

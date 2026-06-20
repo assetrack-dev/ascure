@@ -81,6 +81,8 @@ interface TemplateFormItem {
   /** Optional hint shown to the inspector under the field ("expected answer"). */
   helperText: string;
   fieldType: ChecklistFieldType;
+  /** MULTI_SELECT only — allow a free-text "Other" answer beyond the options. */
+  allowOther: boolean;
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
@@ -225,6 +227,7 @@ function createBlankItem(): TemplateFormItem {
     label: "",
     helperText: "",
     fieldType: "YES_NO",
+    allowOther: false,
     isRequired: true,
     isActive: true,
     isDefectTrigger: true,
@@ -344,6 +347,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     label: item.label,
     helperText: item.helperText ?? "",
     fieldType: normalizeFieldType(item.fieldType ?? item.inputType),
+    allowOther: config?.allowOther ?? false,
     isRequired: item.isRequired,
     isActive: item.isActive !== false,
     isDefectTrigger: item.isDefectTrigger,
@@ -684,6 +688,7 @@ function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
       label,
       helperText: item.helperText.trim() || null,
       fieldType: item.fieldType,
+      allowOther: item.fieldType === "MULTI_SELECT" ? item.allowOther : undefined,
       sortOrder: payloadItems.length + 1,
       isRequired: item.isRequired,
       isActive: itemIsActive,
@@ -1026,6 +1031,18 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             creates a defect when chosen) — works for any language. Prefix is
             optional; e.g. <code>Rosak | rosak | defect</code>.
           </span>
+        </label>
+      ) : null}
+
+      {item.fieldType === "MULTI_SELECT" ? (
+        <label className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            checked={item.allowOther}
+            onChange={(event) => onUpdateItem(item.localId, { allowOther: event.target.checked })}
+            className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+          />
+          <span className="whitespace-nowrap">Allow &quot;Other&quot; (free text)</span>
         </label>
       ) : null}
 

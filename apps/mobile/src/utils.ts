@@ -143,7 +143,12 @@ export function createInitialDraftValues(form: InspectionFormResponse): DraftVal
       }
 
       if (inputType === 'MULTI_SELECT') {
-        values[item.id] = normalizeStoredMultiSelectValue(item.value?.valueJson);
+        const picks = normalizeStoredMultiSelectValue(item.value?.valueJson);
+        // Rehydrate a free-text "Other" answer (stored in valueText) as the
+        // sentinel entry so amend/re-open shows it.
+        const other =
+          typeof item.value?.valueText === 'string' ? item.value.valueText.trim() : '';
+        values[item.id] = other ? [...picks, `${OTHER_VALUE_PREFIX}${other}`] : picks;
         continue;
       }
 
@@ -224,6 +229,23 @@ export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
   }
 
   return options;
+}
+
+/** Sentinel prefix marking the free-text "Other" entry inside a MULTI_SELECT
+ *  draft value array. Device-side only — buildResultsPayload strips it, sending
+ *  the typed text as valueText and the configured picks as valueJson. The
+ *  unusual token avoids colliding with any configured option value. */
+export const OTHER_VALUE_PREFIX = '__other__:';
+
+/** Whether a MULTI_SELECT item opts into a free-text "Other" answer (the
+ *  allowOther flag in its v2 optionsJson config). */
+export function readMultiSelectAllowOther(optionsJson: unknown): boolean {
+  return (
+    !!optionsJson &&
+    typeof optionsJson === 'object' &&
+    !Array.isArray(optionsJson) &&
+    (optionsJson as { allowOther?: unknown }).allowOther === true
+  );
 }
 
 export function createInitialChecklistDraftValues(form: InspectionFormResponse): ChecklistDraftValues {
@@ -773,9 +795,20 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
       }
 
       if (inputType === 'MULTI_SELECT') {
+        const entries = Array.isArray(rawValue) ? rawValue : [];
+        const picks = entries.filter(
+          (entry): entry is string =>
+            typeof entry === 'string' && !entry.startsWith(OTHER_VALUE_PREFIX),
+        );
+        const otherEntry = entries.find(
+          (entry): entry is string =>
+            typeof entry === 'string' && entry.startsWith(OTHER_VALUE_PREFIX),
+        );
+        const otherText = otherEntry ? otherEntry.slice(OTHER_VALUE_PREFIX.length).trim() : '';
         supportedResults.push({
           templateItemId: item.id,
-          valueJson: Array.isArray(rawValue) && rawValue.length > 0 ? rawValue : null,
+          valueJson: picks.length > 0 ? picks : null,
+          valueText: otherText ? otherText : null,
         });
         continue;
       }
@@ -927,9 +960,17 @@ export function getInspectionDraftDisplayValue(
       return null;
     }
 
-    return rawValue
-      .map((value) => getSelectOptionLabel(item, value) ?? value)
-      .join(', ');
+    // Render the "Other" sentinel as its plain typed text (no internal token
+    // leaks into the remark/report); configured picks render as their labels.
+    const parts = rawValue
+      .map((value) =>
+        value.startsWith(OTHER_VALUE_PREFIX)
+          ? value.slice(OTHER_VALUE_PREFIX.length).trim()
+          : getSelectOptionLabel(item, value) ?? value,
+      )
+      .filter((part) => part.length > 0);
+
+    return parts.length > 0 ? parts.join(', ') : null;
   }
 
   if (inputType === 'IMAGE') {
@@ -1145,11 +1186,18 @@ export function getInspectionItemResultValue(
   }
 
   if (inputType === 'MULTI_SELECT') {
-    if (!Array.isArray(rawValue) || rawValue.length === 0) {
-      return 'NA';
+    const entries = Array.isArray(rawValue) ? rawValue : [];
+    // The free-text "Other" entry (sentinel) is recorded only — it NEVER drives
+    // PASS/FAIL, so typed Other text can't raise a defect (v1). Only configured
+    // picks are inferred; an Other-only answer still counts as answered (PASS).
+    const picks = entries.filter((entry) => !entry.startsWith(OTHER_VALUE_PREFIX));
+    const hasOther = entries.some((entry) => entry.startsWith(OTHER_VALUE_PREFIX));
+
+    if (picks.length === 0) {
+      return hasOther ? 'PASS' : 'NA';
     }
 
-    return rawValue.some((value) => inferSelectInspectionResult(item, value) === 'FAIL')
+    return picks.some((value) => inferSelectInspectionResult(item, value) === 'FAIL')
       ? 'FAIL'
       : 'PASS';
   }

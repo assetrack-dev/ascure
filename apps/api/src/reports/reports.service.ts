@@ -1004,8 +1004,12 @@ function resolveTemplateCell(
 
     case InspectionItemInputType.MULTI_SELECT: {
       const json = result?.valueJson;
-      if (Array.isArray(json)) {
-        return sanitizeText(json.map((v) => String(v)).join(', '));
+      const picks = Array.isArray(json) ? json.map((v) => String(v)) : [];
+      // v1 "Other (free text)" rides in valueText alongside the picks; append it.
+      const other = result?.valueText?.trim() ? result.valueText.trim() : '';
+      const parts = other ? [...picks, other] : picks;
+      if (parts.length > 0) {
+        return sanitizeText(parts.join(', '));
       }
       return sanitizeText(result?.valueText ?? '');
     }

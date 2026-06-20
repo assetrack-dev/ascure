@@ -39,6 +39,8 @@ import {
   normalizeInspectionInputType,
   normalizeOperationalText,
   normalizeSelectOptions,
+  OTHER_VALUE_PREFIX,
+  readMultiSelectAllowOther,
   countAnsweredInspectionItems,
   validateInspectionDraft,
   validateInspectionDraftForSave,
@@ -1764,6 +1766,9 @@ function MultiSelectField({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const options = normalizeSelectOptions(item.optionsJson);
   const selectedValues = new Set(value);
+  const allowOther = readMultiSelectAllowOther(item.optionsJson);
+  const otherEntry = value.find((entry) => entry.startsWith(OTHER_VALUE_PREFIX));
+  const otherText = otherEntry ? otherEntry.slice(OTHER_VALUE_PREFIX.length) : '';
 
   if (options.length === 0) {
     return (
@@ -1805,6 +1810,27 @@ function MultiSelectField({
           />
         ) : null}
       </View>
+      {allowOther ? (
+        <View style={{ marginTop: 10 }}>
+          <TextField
+            label="Other (specify)"
+            value={otherText}
+            onChangeText={(nextText) => {
+              const withoutOther = value.filter(
+                (entry) => !entry.startsWith(OTHER_VALUE_PREFIX),
+              );
+              onChange(
+                nextText.length > 0
+                  ? [...withoutOther, `${OTHER_VALUE_PREFIX}${nextText}`]
+                  : withoutOther,
+              );
+            }}
+            placeholder="Type an answer not in the list"
+            editable={!disabled}
+            autoCapitalize="characters"
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

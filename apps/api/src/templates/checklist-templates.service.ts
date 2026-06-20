@@ -200,6 +200,9 @@ type ChecklistItemV2Config = {
   version: 2;
   fieldType: string;
   options?: TemplateSelectOption[];
+  /** MULTI_SELECT only — when true, the inspector may add a free-text "Other"
+   *  answer beyond the configured options (v1: recorded as text, never a defect). */
+  allowOther?: boolean;
   showIf?: ChecklistShowIfConfig;
   image?: ChecklistImageConfig;
   measurement?: ChecklistMeasurementConfig;
@@ -1331,6 +1334,19 @@ export class ChecklistTemplatesService {
       }
 
       config.options = normalizedOptions;
+    }
+
+    // v1 "Other (free text)" — MULTI_SELECT only. Preserve an existing flag when
+    // the payload omits it (e.g. a non-item edit / new version).
+    if (inputType === InspectionItemInputType.MULTI_SELECT) {
+      const allowOther =
+        item.allowOther === undefined
+          ? this.readChecklistConfig(rawOptionsJson)?.allowOther === true
+          : item.allowOther === true;
+
+      if (allowOther) {
+        config.allowOther = true;
+      }
     }
 
     if (inputType === InspectionItemInputType.IMAGE) {
