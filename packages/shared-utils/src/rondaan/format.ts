@@ -134,6 +134,46 @@ export function formatRondaan(memberships: PoleMembership[]): string {
   return feederPillar !== undefined ? `FP${feederPillar} ${body}` : body;
 }
 
+/**
+ * Suggest the next NO TIANG RONDAAN after `lastCode`, for the field "tag the
+ * next pole" helper: bump the pole number by one, preserving the feeder
+ * letter(s) and any FP<n> origin. Returns null when there's nothing sensible to
+ * suggest — an unparseable code, a branch (".../1"), or a converging multi-
+ * feeder code ("E 4 & F 2") where the next pole is ambiguous and the crew should
+ * type it. Always just a suggestion; callers keep the field editable.
+ *   "A 3" -> "A 4"   "FP1 A 3" -> "FP1 A 4"   "CD 2" -> "CD 3"
+ */
+export function suggestNextPoleCode(lastCode: string): string | null {
+  const parsed = parsePoleCode(lastCode).filter((entry) => entry.isValid);
+
+  if (parsed.length === 0) {
+    return null;
+  }
+
+  // Only a single plain base group qualifies: every segment shares one base
+  // number and one FP origin, with no branch parts. This deliberately skips
+  // branches and converging multi-feeder codes (ambiguous "next").
+  const [first] = parsed;
+  const isPlainBaseGroup = parsed.every(
+    (entry) =>
+      entry.branchParts.length === 0 &&
+      entry.baseNumber === first.baseNumber &&
+      entry.feederPillar === first.feederPillar,
+  );
+
+  if (!isPlainBaseGroup) {
+    return null;
+  }
+
+  const nextMemberships = parsed.map<PoleMembership>((entry) => ({
+    feeder: entry.feeder,
+    index: entry.baseNumber + 1,
+    ...(entry.feederPillar !== undefined ? { feederPillar: entry.feederPillar } : {}),
+  }));
+
+  return formatRondaan(nextMemberships) || null;
+}
+
 /** Map a parsed pole code (one feeder segment) to a membership. The backfill
  *  that migrates the legacy assetCode string into stored memberships uses
  *  exactly this. */

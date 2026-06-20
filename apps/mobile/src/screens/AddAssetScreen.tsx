@@ -37,6 +37,8 @@ import {
 import { Theme, useTheme } from '../theme';
 import { Asset, AssetStatus, AssetType, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
+import { suggestNextPoleCode } from '../utils/feederSequence';
+import { loadLastPoleCode, storeLastPoleCode } from '../storage';
 
 type Coordinate = {
   latitude: number;
@@ -171,6 +173,7 @@ export function AddAssetScreen() {
   const [isOperationalStatusMenuOpen, setIsOperationalStatusMenuOpen] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [suggestedCode, setSuggestedCode] = useState<string | null>(null);
 
   const selectedSubstation = useMemo(
     () => substations.find((substation) => substation.id === selectedSubstationId) ?? null,
@@ -195,6 +198,36 @@ export function AddAssetScreen() {
       SAVR_OPERATIONAL_STATUS_OPTIONS[0],
     [operationalStatus],
   );
+
+  // Suggest the next NO TIANG RONDAAN from the last code entered in this
+  // Pencawang (tappable chip; the field stays empty). New SAVR poles only —
+  // skips edit mode and non-SAVR asset types.
+  useEffect(() => {
+    const target = substationId ?? selectedSubstationId;
+
+    if (assetToEdit || !isSAVRWorkflow || !target) {
+      setSuggestedCode(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    loadLastPoleCode(target)
+      .then((last) => {
+        if (!cancelled) {
+          setSuggestedCode(last ? suggestNextPoleCode(last) : null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuggestedCode(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assetToEdit, isSAVRWorkflow, substationId, selectedSubstationId]);
 
   useEffect(() => {
     setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
@@ -556,6 +589,7 @@ export function AddAssetScreen() {
 
       try {
         const savedAsset = await api.createAsset(token, createInput);
+        await storeLastPoleCode(targetSubstationId, normalizedAssetCode);
         proceedAfterSave(savedAsset, intent);
       } catch (createError) {
         // Offline (server unreachable) → queue the create and optimistically open
@@ -604,6 +638,7 @@ export function AddAssetScreen() {
             prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
           ]);
 
+          await storeLastPoleCode(targetSubstationId, normalizedAssetCode);
           proceedAfterSave(optimisticAsset, intent);
           return;
         }
@@ -818,6 +853,22 @@ export function AddAssetScreen() {
               }
               autoCapitalize="characters"
             />
+            {suggestedCode && !assetCode ? (
+              <Pressable
+                onPress={() => setAssetCode(suggestedCode)}
+                accessibilityRole="button"
+                accessibilityLabel={`Use suggested NO TIANG RONDAAN ${suggestedCode}`}
+                style={({ pressed }) => [
+                  styles.suggestionChip,
+                  pressed && styles.suggestionChipPressed,
+                ]}
+              >
+                <Text style={styles.suggestionChipText} numberOfLines={1}>
+                  Next: {suggestedCode}
+                </Text>
+                <Text style={styles.suggestionChipHint}>Tap to use</Text>
+              </Pressable>
+            ) : null}
             <TextField
               label={assetNameLabel}
               value={assetName}
@@ -1239,6 +1290,34 @@ function getMetadataCoordinateSource(
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
+    suggestionChip: {
+      marginTop: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.infoBorder,
+      backgroundColor: t.colors.infoSoft,
+    },
+    suggestionChipPressed: {
+      backgroundColor: t.colors.surfacePressed,
+    },
+    suggestionChipText: {
+      flexShrink: 1,
+      fontSize: 15,
+      fontWeight: '700',
+      color: t.colors.infoText,
+    },
+    suggestionChipHint: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: t.colors.infoText,
+      opacity: 0.8,
+    },
     dropdownField: {
       minHeight: 52,
       borderRadius: 8,

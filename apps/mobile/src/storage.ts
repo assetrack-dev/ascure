@@ -42,3 +42,46 @@ export async function storeUser(user: SessionUser) {
 export async function removeStoredUser() {
   await AsyncStorage.removeItem(USER_KEY);
 }
+
+const LAST_POLE_CODE_KEY = '@ascure/mobile/last-pole-code';
+
+// Remembers the last NO TIANG RONDAAN the crew entered, keyed by Pencawang
+// (substation), so Add Asset can suggest the next pole in sequence. Persisted so
+// a feeder walk resumes after an app restart. Best-effort: any IO/parse failure
+// just means no suggestion.
+async function loadLastPoleCodeMap(): Promise<Record<string, string>> {
+  const raw = await AsyncStorage.getItem(LAST_POLE_CODE_KEY);
+
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    await AsyncStorage.removeItem(LAST_POLE_CODE_KEY);
+    return {};
+  }
+}
+
+export async function loadLastPoleCode(substationId: string): Promise<string | null> {
+  if (!substationId) {
+    return null;
+  }
+
+  const map = await loadLastPoleCodeMap();
+  const value = map[substationId];
+
+  return typeof value === 'string' && value ? value : null;
+}
+
+export async function storeLastPoleCode(substationId: string, code: string): Promise<void> {
+  if (!substationId || !code) {
+    return;
+  }
+
+  const map = await loadLastPoleCodeMap();
+  map[substationId] = code;
+  await AsyncStorage.setItem(LAST_POLE_CODE_KEY, JSON.stringify(map));
+}
