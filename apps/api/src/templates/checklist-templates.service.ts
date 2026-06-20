@@ -897,7 +897,7 @@ export class ChecklistTemplatesService {
     const desiredItems =
       dto.items === undefined
         ? null
-        : this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById);
+        : this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById, false);
     const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive = dto.isActive ?? template.isActive;
 
@@ -962,6 +962,20 @@ export class ChecklistTemplatesService {
     const existingItems = this.flattenItems(template);
     const existingById = new Map(existingItems.map((item) => [item.id, item]));
     const usedKeys = new Set(existingItems.map((item) => item.key));
+
+    // Hard-delete items the payload dropped. saveItemsInPlace only runs for DRAFT
+    // templates (non-draft item edits go through createPatchedVersion), so a
+    // dropped item has no inspection results and is a real delete — not a
+    // deactivate. Empty keep-list ⇒ every existing item was removed.
+    const keepItemIds = desiredItems
+      .map((item) => item.id)
+      .filter((id): id is string => Boolean(id));
+    await tx.inspectionTemplateItem.deleteMany({
+      where: {
+        templateId: template.id,
+        ...(keepItemIds.length > 0 ? { id: { notIn: keepItemIds } } : {}),
+      },
+    });
 
     const groupTitles = this.orderedGroupTitles(groups, desiredItems);
     const sectionMap = await this.ensureSections(
@@ -1142,6 +1156,7 @@ export class ChecklistTemplatesService {
     existingItems: ChecklistTemplateItemRecord[],
     incomingItems: ChecklistTemplateItemInputDto[],
     sectionTitleById?: Map<string, string>,
+    carryRemovedAsInactive = true,
   ): DesiredChecklistItem[] {
     const existingById = new Map(existingItems.map((item) => [item.id, item]));
     const referencedExistingIds = new Set<string>();
@@ -1176,16 +1191,22 @@ export class ChecklistTemplatesService {
       };
     });
 
-    for (const item of existingItems) {
-      if (referencedExistingIds.has(item.id)) {
-        continue;
-      }
+    // New-version saves (createPatchedVersion) carry items the payload no longer
+    // references as INACTIVE so historical inspection results still resolve. The
+    // in-place DRAFT path passes carryRemovedAsInactive=false — removed items are
+    // hard-deleted by saveItemsInPlace (a draft has no results to preserve).
+    if (carryRemovedAsInactive) {
+      for (const item of existingItems) {
+        if (referencedExistingIds.has(item.id)) {
+          continue;
+        }
 
-      desiredItems.push({
-        ...this.fromExistingItem(item, sectionTitleById),
-        key: this.normalizeIncomingItemKey(undefined, item.key, item.label, usedKeys),
-        isActive: false,
-      });
+        desiredItems.push({
+          ...this.fromExistingItem(item, sectionTitleById),
+          key: this.normalizeIncomingItemKey(undefined, item.key, item.label, usedKeys),
+          isActive: false,
+        });
+      }
     }
 
     return desiredItems;
