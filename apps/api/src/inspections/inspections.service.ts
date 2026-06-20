@@ -226,8 +226,84 @@ export class InspectionsService {
 
   async getForm(user: RequestUser, inspectionId: string) {
     const inspection = await this.getAccessibleInspection(inspectionId, user);
+    const reboundInspection = await this.rebindUntouchedDraftTemplate(user, inspection);
+
+    return this.serializeInspectionForm(reboundInspection ?? inspection);
+  }
+
+  /** Serialize an inspection's form WITHOUT the untouched-draft re-bind — used to
+   *  return the just-persisted state after a save/amend. Re-binding to a newer
+   *  template version is a form-open concern only, so it must not fire as a
+   *  side effect of saving. */
+  private async reloadForm(user: RequestUser, inspectionId: string) {
+    const inspection = await this.getAccessibleInspection(inspectionId, user);
 
     return this.serializeInspectionForm(inspection);
+  }
+
+  /**
+   * Untouched-draft template re-bind. A DRAFT inspection that has no answers and
+   * no photos yet is NOT locked to its checklist version: when the form is
+   * opened, re-resolve the currently active template for its asset/visit and
+   * switch to it if a newer version has since been activated. Once the crew
+   * enters anything (an answer or a photo) the version is locked — re-pointing
+   * then would orphan their data, since a new template version is a fresh
+   * template row with brand-new item IDs. Best-effort: skips read-only viewers,
+   * closed visits, and any resolution failure (keeps the current binding), and
+   * writes only when the active version actually differs.
+   */
+  private async rebindUntouchedDraftTemplate(
+    user: RequestUser,
+    inspection: Awaited<ReturnType<InspectionsService['getAccessibleInspection']>>,
+  ) {
+    if (user.role === UserRole.VIEWER) {
+      return null;
+    }
+
+    if (inspection.completionStatus !== InspectionCompletionStatus.DRAFT) {
+      return null;
+    }
+
+    const isUntouched =
+      inspection.itemResults.length === 0 &&
+      inspection.results.length === 0 &&
+      inspection.inspectionImages.length === 0;
+
+    if (!isUntouched) {
+      return null;
+    }
+
+    const visitActive = (
+      ACTIVE_SITE_VISIT_STATUSES as readonly SiteVisitStatus[]
+    ).includes(inspection.siteVisit.status);
+
+    if (!visitActive) {
+      return null;
+    }
+
+    let activeTemplateId: string;
+    try {
+      const resolution = await this.templatesService.resolveActiveTemplate(user, {
+        assetId: inspection.assetId,
+        siteVisitId: inspection.siteVisitId,
+        operationalSessionId: inspection.operationalSessionId ?? undefined,
+      });
+      activeTemplateId = resolution.template.id;
+    } catch {
+      // No active template (or resolution failed) — keep the existing binding.
+      return null;
+    }
+
+    if (activeTemplateId === inspection.templateId) {
+      return null;
+    }
+
+    await this.prisma.inspection.update({
+      where: { id: inspection.id },
+      data: { templateId: activeTemplateId },
+    });
+
+    return this.getAccessibleInspection(inspection.id, user);
   }
 
   async getDetail(user: RequestUser, inspectionId: string) {
@@ -324,7 +400,7 @@ export class InspectionsService {
       await this.saveLegacyTemplateResults(inspection, dto.results ?? []);
     }
 
-    return this.getForm(user, inspectionId);
+    return this.reloadForm(user, inspectionId);
   }
 
   private async assertInspectionDefectEvidenceEditable(inspectionId: string) {
@@ -438,7 +514,7 @@ export class InspectionsService {
       }),
     ]);
 
-    return this.getForm(user, inspectionId);
+    return this.reloadForm(user, inspectionId);
   }
 
   private async saveStructuredItemResults(
