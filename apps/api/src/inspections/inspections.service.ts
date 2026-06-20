@@ -9,7 +9,6 @@ import { mkdir, unlink, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { extname, resolve } from 'path';
 import {
-  DefectLifecycleStatus,
   DefectSeverity,
   InspectionCompletionStatus,
   InspectionItemInputType,
@@ -25,7 +24,10 @@ import {
 } from '../common/operational-scope';
 import { buildInitialDefectData } from '../defects/defect-materialization.util';
 import { releaseVisitDefects } from '../defects/defect-release.util';
-import { releaseDefectsOnReport } from '../common/authorization/defect-governance';
+import {
+  MAINTENANCE_LOCKED_DEFECT_STATUSES,
+  releaseDefectsOnReport,
+} from '../common/authorization/defect-governance';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -404,19 +406,15 @@ export class InspectionsService {
   }
 
   private async assertInspectionDefectEvidenceEditable(inspectionId: string) {
-    const governedDefect = await this.prisma.defect.findFirst({
+    // Only a defect that maintenance has actually taken over locks the
+    // inspection's evidence. A VERIFIED-but-unclaimed defect (the default under
+    // INSPECTOR_OWNS) is still inspector-owned and editable. This uses the SAME
+    // status set as amendInspection's re-open gate, so "could re-open" always
+    // implies "can save" — see MAINTENANCE_LOCKED_DEFECT_STATUSES.
+    const maintainedDefect = await this.prisma.defect.findFirst({
       where: {
         lifecycleStatus: {
-          in: [
-            DefectLifecycleStatus.UNDER_REVIEW,
-            DefectLifecycleStatus.VERIFIED,
-            DefectLifecycleStatus.REJECTED,
-            DefectLifecycleStatus.ASSIGNED,
-            DefectLifecycleStatus.IN_PROGRESS,
-            DefectLifecycleStatus.COMPLETED,
-            DefectLifecycleStatus.VERIFICATION_PENDING,
-            DefectLifecycleStatus.CLOSED,
-          ],
+          in: MAINTENANCE_LOCKED_DEFECT_STATUSES,
         },
         inspectionItemResult: {
           inspectionId,
@@ -427,9 +425,9 @@ export class InspectionsService {
       },
     });
 
-    if (governedDefect) {
+    if (maintainedDefect) {
       throw new BadRequestException(
-        'Defect evidence already entered governance review and cannot be overwritten.',
+        'A defect on this inspection is already in maintenance, so its evidence cannot be overwritten. Resolve the defect first.',
       );
     }
   }
@@ -482,13 +480,7 @@ export class InspectionsService {
         where: {
           inspectionItemResultId: { in: itemResultIds },
           lifecycleStatus: {
-            in: [
-              DefectLifecycleStatus.ASSIGNED,
-              DefectLifecycleStatus.IN_PROGRESS,
-              DefectLifecycleStatus.COMPLETED,
-              DefectLifecycleStatus.VERIFICATION_PENDING,
-              DefectLifecycleStatus.CLOSED,
-            ],
+            in: MAINTENANCE_LOCKED_DEFECT_STATUSES,
           },
         },
         select: { id: true },

@@ -13,6 +13,7 @@ import {
   DefectSeverity,
   DefectStatus,
   DefectTimelineEventType,
+  InspectionCompletionStatus,
   OrganizationType,
   Prisma,
   ResolutionOutcome as DefectResolutionOutcome,
@@ -1869,6 +1870,9 @@ export class DefectsService {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
+          // Live defects exist only for SUBMITTED inspections — never materialize
+          // one from a draft / amended-not-yet-resubmitted inspection.
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
           ...this.inspectionAccessScope(user, ctx),
           // Foundation/baseline imports are historical observations, not live
           // work — never materialize live Defects from them (null-safe: normal
@@ -1916,6 +1920,8 @@ export class DefectsService {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
+          // Live defects exist only for SUBMITTED inspections (see list()).
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
           ...this.inspectionAccessScope(user, ctx),
           // Foundation/baseline imports never become live Defects (see list()).
           OR: [
@@ -3700,6 +3706,9 @@ export class DefectsService {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
+          // A draft / amended inspection has no live defects — never surface or
+          // act on one (keeps a re-opened inspection off the board until submit).
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
           ...this.inspectionAccessScope(user, ctx),
         },
       },
@@ -3727,7 +3736,10 @@ export class DefectsService {
           maintenanceOrganizationId: { in: maintenanceOrgIds },
           inspectionItemResult: {
             isDefect: true,
-            inspection: { tenantId: user.tenantId },
+            inspection: {
+              tenantId: user.tenantId,
+              completionStatus: InspectionCompletionStatus.SUBMITTED,
+            },
           },
         },
       ],

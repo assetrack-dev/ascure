@@ -1,5 +1,28 @@
 import { DefectLifecycleStatus } from '@prisma/client';
 
+/**
+ * Defect lifecycle statuses where MAINTENANCE has taken the defect over —
+ * assigned to a crew, in progress, completed, awaiting verification, or closed.
+ * Once a defect is in any of these, the originating inspection's evidence is
+ * locked: it can no longer be amended or its results overwritten, because the
+ * maintenance record depends on it.
+ *
+ * A VERIFIED / UNDER_REVIEW / REJECTED defect is deliberately NOT here: under
+ * INSPECTOR_OWNS a defect opens VERIFIED (maintenance-ready) the moment it's
+ * detected, but the inspector still OWNS it until maintenance actually claims it,
+ * so the inspection stays amendable/editable. Shared by inspections.service's
+ * `amendInspection` (can-reopen gate) and `assertInspectionDefectEvidenceEditable`
+ * (can-save gate) so the two can never disagree — a mismatch previously let an
+ * inspection be re-opened to a draft it could then never save.
+ */
+export const MAINTENANCE_LOCKED_DEFECT_STATUSES: DefectLifecycleStatus[] = [
+  DefectLifecycleStatus.ASSIGNED,
+  DefectLifecycleStatus.IN_PROGRESS,
+  DefectLifecycleStatus.COMPLETED,
+  DefectLifecycleStatus.VERIFICATION_PENDING,
+  DefectLifecycleStatus.CLOSED,
+];
+
 export type DefectGovernanceMode =
   | 'INSPECTOR_OWNS'
   | 'QA_GATED'

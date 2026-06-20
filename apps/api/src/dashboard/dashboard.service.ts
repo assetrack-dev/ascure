@@ -760,6 +760,10 @@ export class DashboardService {
           is: null,
         },
         inspection: {
+          // Live defects exist only for SUBMITTED inspections (parity with
+          // defects.service) — never materialize one from a draft / amended
+          // inspection.
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
           ...this.accessibleInspectionWhere(user, ctx),
           // Foundation/baseline imports are historical observations — never
           // materialize live Defects from them (parity with defects.service,
