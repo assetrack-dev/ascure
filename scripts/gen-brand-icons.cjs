@@ -27,6 +27,11 @@ const FG_TX = (1000 - 640.02 * FG_SCALE) / 2 - 511.0 * FG_SCALE;
 const FG_TY = (1000 - 684.86 * FG_SCALE) / 2 - 47.01 * FG_SCALE;
 const FG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"><path fill="#FFFFFF" fill-rule="nonzero" d="${MARK_D}" transform="translate(${FG_TX.toFixed(2)} ${FG_TY.toFixed(2)}) scale(${FG_SCALE})"/></svg>`;
 
+// Android LEGACY round launcher icon (pre-API-26 fallback): the mark on a FULL
+// #2563EB circle. A circular crop of the squircle tile would leave transparent
+// gaps at the diagonals, so the round variant gets its own full-bleed circle.
+const ROUND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"><circle cx="500" cy="500" r="500" fill="#2563EB"/><path fill="#FFFFFF" fill-rule="nonzero" d="${MARK_D}" transform="translate(-276.580 136.069) scale(0.93450)"/></svg>`;
+
 const root = path.resolve(__dirname, '..');
 
 // keep the SVG source of truth in the repo
@@ -47,5 +52,33 @@ const tileTargets = [
   const fgOut = path.join(root, 'apps/mobile/assets/brand/adaptive-foreground.png');
   await sharp(Buffer.from(FG_SVG)).resize(1024, 1024).png().toFile(fgOut);
   console.log('wrote apps/mobile/assets/brand/adaptive-foreground.png', fs.statSync(fgOut).size, 'bytes');
+
+  // --- Android NATIVE launcher icons (legacy + adaptive) written straight into
+  //     the prebuilt res/, so the APK ships the brand icon WITHOUT expo prebuild
+  //     (which would clobber the android/ c++_shared + AF_UNIX build fixes). ---
+  const ANDROID_RES = path.join(root, 'apps/mobile/android/app/src/main/res');
+  const legacyPx = { mdpi: 48, hdpi: 72, xhdpi: 96, xxhdpi: 144, xxxhdpi: 192 };
+  const fgPx = { mdpi: 108, hdpi: 162, xhdpi: 216, xxhdpi: 324, xxxhdpi: 432 };
+  const toWebp = (svg, size, file) =>
+    sharp(Buffer.from(svg)).resize(size, size).webp({ lossless: true }).toFile(file);
+  for (const d of Object.keys(legacyPx)) {
+    const dir = path.join(ANDROID_RES, `mipmap-${d}`);
+    fs.mkdirSync(dir, { recursive: true });
+    await toWebp(TILE_SVG, legacyPx[d], path.join(dir, 'ic_launcher.webp'));
+    await toWebp(ROUND_SVG, legacyPx[d], path.join(dir, 'ic_launcher_round.webp'));
+    await toWebp(FG_SVG, fgPx[d], path.join(dir, 'ic_launcher_foreground.webp'));
+    console.log(`wrote mipmap-${d}/ ic_launcher + ic_launcher_round + ic_launcher_foreground`);
+  }
+  const anydpi = path.join(ANDROID_RES, 'mipmap-anydpi-v26');
+  fs.mkdirSync(anydpi, { recursive: true });
+  const adaptiveXml =
+    '<?xml version="1.0" encoding="utf-8"?>\n' +
+    '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n' +
+    '    <background android:drawable="@color/iconBackground"/>\n' +
+    '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n' +
+    '</adaptive-icon>\n';
+  fs.writeFileSync(path.join(anydpi, 'ic_launcher.xml'), adaptiveXml);
+  fs.writeFileSync(path.join(anydpi, 'ic_launcher_round.xml'), adaptiveXml);
+  console.log('wrote mipmap-anydpi-v26/ic_launcher{,_round}.xml (adaptive: @color/iconBackground + @mipmap/ic_launcher_foreground)');
   console.log('DONE');
 })().catch((e) => { console.error('RENDER_FAILED:', e.message); process.exit(3); });
