@@ -5,9 +5,11 @@ import { captureRef } from 'react-native-view-shot';
 import {
   ActivityIndicator,
   Image,
+  LayoutChangeEvent,
   Modal,
   PixelRatio,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -160,6 +162,14 @@ export function InspectionFormScreen() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const overlayCaptureRef = useRef<View>(null);
   const photosRef = useRef<CapturedInspectionPhoto[]>([]);
+  // Per-group scroll anchoring: checklistStackY = the stack's top within the
+  // ScrollView; sectionTops[id] = each group header's top within the stack.
+  // After "Mark group done" collapses a group we scroll its header back to the
+  // top, so the crew lands at the header level instead of stranded at the bottom
+  // of a long checklist.
+  const scrollRef = useRef<ScrollView>(null);
+  const checklistStackY = useRef(0);
+  const sectionTops = useRef<Record<string, number>>({});
   const removingPhotoIdsRef = useRef<Set<string>>(new Set());
   const photoUploadPromisesRef = useRef<Record<string, Promise<void>>>({});
   const overlayPromiseHandlersRef = useRef<{
@@ -348,6 +358,16 @@ export function InspectionFormScreen() {
       const next = new Set(current);
       next.delete(section.id);
       return next;
+    });
+    // Bring the just-completed group's header to the top of the viewport. Its
+    // top doesn't move when the group collapses (everything above it is static),
+    // so the captured offset stays valid; rAF lets the collapse re-render first.
+    const targetY = Math.max(
+      0,
+      checklistStackY.current + (sectionTops.current[section.id] ?? 0) - 12,
+    );
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
     });
   }
 
@@ -929,6 +949,7 @@ export function InspectionFormScreen() {
           : 'Checklist'
       }
       keyboardAware
+      scrollRef={scrollRef}
       actions={
         <>
           <InlineButton
@@ -1033,12 +1054,20 @@ export function InspectionFormScreen() {
               description="Activate a checklist template before submitting."
             />
           ) : (
-            <View style={styles.checklistStack}>
+            <View
+              style={styles.checklistStack}
+              onLayout={(event) => {
+                checklistStackY.current = event.nativeEvent.layout.y;
+              }}
+            >
               {checklistSections.map((section, sectionIndex) => (
                 <ChecklistSectionCard
                   key={section.id}
                   section={section}
                   sectionIndex={sectionIndex}
+                  onLayout={(event) => {
+                    sectionTops.current[section.id] = event.nativeEvent.layout.y;
+                  }}
                   draftValues={draftValues}
                   emergencyItemIds={emergencyItemIds}
                   isSubmitted={Boolean(isReadOnly)}
@@ -1222,6 +1251,7 @@ function InspectionPhotoSection({
 function ChecklistSectionCard({
   section,
   sectionIndex,
+  onLayout,
   draftValues,
   emergencyItemIds,
   isSubmitted,
@@ -1243,6 +1273,7 @@ function ChecklistSectionCard({
 }: {
   section: InspectionTemplateSection;
   sectionIndex: number;
+  onLayout: (event: LayoutChangeEvent) => void;
   draftValues: DraftValues;
   emergencyItemIds: Record<string, boolean>;
   isSubmitted: boolean;
@@ -1335,6 +1366,7 @@ function ChecklistSectionCard({
 
   return (
     <View
+      onLayout={onLayout}
       style={[
         styles.sectionCard,
         { borderColor: complete ? doneTone.border : sectionTone.border },

@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -49,6 +49,7 @@ export function Screen({
   footer,
   scroll = true,
   keyboardAware = false,
+  scrollRef,
 }: {
   title: string;
   subtitle?: string;
@@ -60,11 +61,12 @@ export function Screen({
   footer?: ReactNode;
   scroll?: boolean;
   keyboardAware?: boolean;
+  scrollRef?: RefObject<ScrollView | null>;
 }) {
   const { theme, styles } = useStyles();
   const headerRightActions = rightActions ?? (rightAction ? [rightAction] : []);
   const content = scroll ? (
-    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       {children}
     </ScrollView>
   ) : (
