@@ -30,8 +30,11 @@ export function DashboardScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { token, user, handleUnauthorized } = useSession();
-  // Maintenance-only accounts shouldn't see inspection-centric stats.
-  const { canInspect } = useCapabilities();
+  // Inspection-centric stats vs maintenance/defect stats are gated separately so
+  // each crew sees only what's relevant to their work (requirement: don't show
+  // defect numbers to an inspection-only team, or inspection counts to a
+  // maintenance-only team).
+  const { canInspect, canMaintain, loading: capsLoading } = useCapabilities();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [teamActivity, setTeamActivity] = useState<DailyTeamActivity | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,6 +44,10 @@ export function DashboardScreen() {
   // don't see the card (and the API would only ever return their own team).
   const canSeeTeamActivity =
     user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'SUPERVISOR';
+
+  // Defect stats belong to maintenance work + oversight roles. An inspection-only
+  // technician shouldn't see defect numbers; a manager/supervisor oversees both.
+  const showDefectStats = canMaintain || canSeeTeamActivity;
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -103,53 +110,78 @@ export function DashboardScreen() {
       }}
     >
       <ErrorBanner message={error} />
-      {isLoading ? (
+      {/* Wait for BOTH the dashboard data AND the user's capabilities before
+          deciding which cards to show — otherwise the body renders for a beat
+          with every card gated off (caps still resolving) and the screen flashes
+          empty. Suppress the skeleton once an error is shown (the Try Again card
+          handles that). */}
+      {(isLoading || capsLoading) && !error ? (
         <>
           <SkeletonCard />
           <SkeletonCard />
         </>
       ) : null}
 
-      {!isLoading && dashboard ? (
+      {!isLoading && !capsLoading && dashboard ? (
         <>
-          <View style={styles.statGrid}>
-            {canInspect ? (
-              <>
-                <StatCard label="Total Assets" value={dashboard.totalAssets} />
-                <StatCard label="Total Inspections" value={dashboard.totalInspections} />
-              </>
-            ) : null}
-            <StatCard label="Total Defects" value={dashboard.totalDefects} />
-          </View>
+          {canInspect || showDefectStats ? (
+            <View style={styles.statGrid}>
+              {canInspect ? (
+                <>
+                  <StatCard label="Total Assets" value={dashboard.totalAssets} />
+                  <StatCard label="Total Inspections" value={dashboard.totalInspections} />
+                </>
+              ) : null}
+              {showDefectStats ? (
+                <StatCard label="Total Defects" value={dashboard.totalDefects} />
+              ) : null}
+            </View>
+          ) : null}
 
-          <View style={styles.statGrid}>
-            <StatusStatCard label="Open" value={dashboard.openDefects} status="OPEN" />
-            <StatusStatCard
-              label="In Progress"
-              value={dashboard.inProgressDefects}
-              status="IN_PROGRESS"
-            />
-            <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
-          </View>
+          {showDefectStats ? (
+            <View style={styles.statGrid}>
+              <StatusStatCard label="Open" value={dashboard.openDefects} status="OPEN" />
+              <StatusStatCard
+                label="In Progress"
+                value={dashboard.inProgressDefects}
+                status="IN_PROGRESS"
+              />
+              <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
+            </View>
+          ) : null}
 
-          {canSeeTeamActivity && canInspect && teamActivity ? (
+          {canSeeTeamActivity && teamActivity ? (
             <TeamActivityCard activity={teamActivity} />
           ) : null}
 
-          <Card>
-            <SectionTitle>Recent Defects</SectionTitle>
-            {dashboard.recentDefects.length === 0 ? (
-              <BodyText muted>No recent defects found.</BodyText>
-            ) : (
-              dashboard.recentDefects.map((defect) => (
-                <RecentDefectRow
-                  key={defect.id}
-                  defect={defect}
-                  onPress={() => navigation.navigate('DefectDetail', { defectId: defect.id })}
-                />
-              ))
-            )}
-          </Card>
+          {showDefectStats ? (
+            <Card>
+              <SectionTitle>Recent Defects</SectionTitle>
+              {dashboard.recentDefects.length === 0 ? (
+                <BodyText muted>No recent defects found.</BodyText>
+              ) : (
+                dashboard.recentDefects.map((defect) => (
+                  <RecentDefectRow
+                    key={defect.id}
+                    defect={defect}
+                    onPress={() => navigation.navigate('DefectDetail', { defectId: defect.id })}
+                  />
+                ))
+              )}
+            </Card>
+          ) : null}
+
+          {/* A user with no inspection/maintenance/oversight scope would otherwise
+              see a completely blank screen — give them an explanation instead. */}
+          {!canInspect && !showDefectStats && !(canSeeTeamActivity && teamActivity) ? (
+            <Card>
+              <SectionTitle>No data for your role</SectionTitle>
+              <BodyText muted>
+                Your account has no inspection or maintenance workspace access yet.
+                Contact your manager to be granted access.
+              </BodyText>
+            </Card>
+          ) : null}
         </>
       ) : null}
 

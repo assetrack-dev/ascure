@@ -16,6 +16,7 @@ export interface ApiUser {
   canManageSupervisors?: boolean;
   canManageUsers?: boolean;
   canManageMaintenance?: boolean;
+  canReviewSurvey?: boolean;
 }
 
 export interface AuthUser {
@@ -82,6 +83,14 @@ export interface AuthUser {
    * collapses to VIEWER client-side; the defect endpoints still enforce org-scope.
    */
   canManageMaintenance?: boolean;
+  /**
+   * Server-provided authority to review + approve a submitted survey (the
+   * technician/supervisor → MANAGER → DC gate) — ADMIN or MANAGER. Mirrors the
+   * API gate so the admin console can show the manager approve / send-back
+   * controls even though MANAGER collapses to VIEWER client-side; the lifecycle
+   * endpoints still enforce the role + company scope server-side.
+   */
+  canReviewSurvey?: boolean;
 }
 
 export interface AuthSession {

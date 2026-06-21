@@ -121,6 +121,27 @@ export class SiteVisitsController {
     return this.surveyLifecycleService.markRondaanSelesai(user, params.id);
   }
 
+  @Post(':id/lifecycle/manager-approve')
+  managerApprove(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.surveyLifecycleService.managerApprove(user, params.id);
+  }
+
+  @Post(':id/lifecycle/manager-request-amendment')
+  managerRequestAmendment(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @Body() dto: RequestSurveyAmendmentDto,
+  ) {
+    return this.surveyLifecycleService.managerRequestAmendment(
+      user,
+      params.id,
+      dto.remark,
+    );
+  }
+
   @Post(':id/lifecycle/request-amendment')
   requestAmendment(
     @CurrentUser() user: RequestUser,

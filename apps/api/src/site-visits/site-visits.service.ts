@@ -1123,7 +1123,18 @@ export class SiteVisitsService {
       'COMPLETED',
     );
 
-    await this.prisma.$transaction([
+    // Completing the visit is the field crew's "submit for review": advance the
+    // survey to RONDAAN SELESAI so it enters the technician/supervisor → MANAGER
+    // → DC review chain. Conservative — only advances from a pre-review state
+    // (never regresses a survey the manager/DC has already moved on), so a
+    // re-completion after an amendment bounce-back (PERLU PINDAAN → IN_PROGRESS)
+    // correctly re-submits it for manager review.
+    const submitsForReview =
+      siteVisit.lifecycleStatus === null ||
+      siteVisit.lifecycleStatus === SurveyLifecycleStatus.DALAM_RONDAAN ||
+      siteVisit.lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN;
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.siteVisit.update({
         where: {
           id: siteVisit.id,
@@ -1138,10 +1149,32 @@ export class SiteVisitsService {
               ? undefined
               : this.normalizeOperationalString(dto.completionNotes),
           ...this.buildSnapshotBackfill(siteVisit),
+          ...(submitsForReview
+            ? {
+                lifecycleStatus: SurveyLifecycleStatus.RONDAAN_SELESAI,
+                rondaanSelesaiAt: completedAt,
+              }
+            : {}),
         },
       }),
       this.prisma.siteVisitTeamContribution.create({ data: contributionData }),
-    ]);
+    ];
+
+    if (submitsForReview) {
+      ops.push(
+        this.prisma.siteVisitLifecycleEvent.create({
+          data: {
+            siteVisitId: siteVisit.id,
+            fromStatus: siteVisit.lifecycleStatus,
+            toStatus: SurveyLifecycleStatus.RONDAAN_SELESAI,
+            remark: 'Submitted for manager review on visit completion.',
+            createdByUserId: user.id,
+          },
+        }),
+      );
+    }
+
+    await this.prisma.$transaction(ops);
 
     return this.getById(user, siteVisit.id);
   }
@@ -2320,6 +2353,7 @@ export class SiteVisitsService {
       lifecycle: {
         status: siteVisit.lifecycleStatus,
         rondaanSelesaiAt: siteVisit.rondaanSelesaiAt,
+        managerApprovedAt: siteVisit.managerApprovedAt,
         amendmentRequestedAt: siteVisit.amendmentRequestedAt,
         amendmentRemark: siteVisit.amendmentRemark,
         laporanSelesaiAt: siteVisit.laporanSelesaiAt,

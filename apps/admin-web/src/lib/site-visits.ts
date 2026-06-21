@@ -476,6 +476,7 @@ function normalizeLifecycleStatus(value: string | null): SurveyLifecycleStatus |
   if (
     normalizedValue === "DALAM_RONDAAN" ||
     normalizedValue === "RONDAAN_SELESAI" ||
+    normalizedValue === "DISAHKAN_PENGURUS" ||
     normalizedValue === "PERLU_PINDAAN" ||
     normalizedValue === "LAPORAN_SELESAI" ||
     normalizedValue === "ARKIB"
@@ -496,6 +497,7 @@ function normalizeLifecycleState(rawState: unknown): SurveyLifecycleState | null
   return {
     status: normalizeLifecycleStatus(firstString(record, ["status"])),
     rondaanSelesaiAt: firstString(record, ["rondaanSelesaiAt"]),
+    managerApprovedAt: firstString(record, ["managerApprovedAt"]),
     amendmentRequestedAt: firstString(record, ["amendmentRequestedAt"]),
     amendmentRemark: firstString(record, ["amendmentRemark"]),
     laporanSelesaiAt: firstString(record, ["laporanSelesaiAt"]),
@@ -619,7 +621,13 @@ export async function fetchSiteVisitDetail(
 async function transitionSurveyLifecycle(
   token: string,
   siteVisitId: string,
-  action: "rondaan-selesai" | "request-amendment" | "generate-report" | "archive",
+  action:
+    | "rondaan-selesai"
+    | "manager-approve"
+    | "manager-request-amendment"
+    | "request-amendment"
+    | "generate-report"
+    | "archive",
   body?: Record<string, unknown>,
 ): Promise<SiteVisitDetail> {
   const payload = await apiRequest<unknown>(
@@ -642,6 +650,22 @@ async function transitionSurveyLifecycle(
 /** Inspector marks the walk-through done (→ RONDAAN SELESAI). */
 export function markRondaanSelesai(token: string, siteVisitId: string) {
   return transitionSurveyLifecycle(token, siteVisitId, "rondaan-selesai");
+}
+
+/** Manager approves the submitted survey, pushing it to DC (→ DISAHKAN PENGURUS). */
+export function managerApproveSurvey(token: string, siteVisitId: string) {
+  return transitionSurveyLifecycle(token, siteVisitId, "manager-approve");
+}
+
+/** Manager bounces the survey back to the field crew (→ PERLU PINDAAN). */
+export function managerRequestAmendment(
+  token: string,
+  siteVisitId: string,
+  remark: string,
+) {
+  return transitionSurveyLifecycle(token, siteVisitId, "manager-request-amendment", {
+    remark,
+  });
 }
 
 /** DC sends the survey back for amendments (→ PERLU PINDAAN). */

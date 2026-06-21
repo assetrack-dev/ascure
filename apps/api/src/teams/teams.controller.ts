@@ -21,13 +21,13 @@ export class TeamsController {
   }
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateTeamDto) {
     return this.teamsService.create(user, dto);
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   update(
     @CurrentUser() user: RequestUser,
     @Param() params: TeamIdParamDto,
@@ -37,7 +37,7 @@ export class TeamsController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   updateStatus(
     @CurrentUser() user: RequestUser,
     @Param() params: TeamIdParamDto,

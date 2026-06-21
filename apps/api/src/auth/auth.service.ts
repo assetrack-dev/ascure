@@ -101,6 +101,7 @@ export class AuthService {
     const canManageSupervisors = this.resolveCanManageSupervisors(requestUser);
     const canManageUsers = this.resolveCanManageUsers(requestUser);
     const canManageMaintenance = this.resolveCanManageMaintenance(requestUser);
+    const canReviewSurvey = this.resolveCanReviewSurvey(requestUser);
 
     return {
       access_token: accessToken,
@@ -120,6 +121,7 @@ export class AuthService {
         canManageSupervisors,
         canManageUsers,
         canManageMaintenance,
+        canReviewSurvey,
       },
     };
   }
@@ -192,6 +194,18 @@ export class AuthService {
     return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
   }
 
+  /**
+   * Server-provided authority to review + approve a submitted survey (the
+   * technician/supervisor → MANAGER → DC gate). ADMIN (any survey) or MANAGER
+   * (own company — the lifecycle endpoint still enforces company scope, since a
+   * manager can only see their own company's visits). Exposed as a flag because
+   * the admin console collapses MANAGER to VIEWER client-side, so role alone
+   * can't decide whether to show the manager approve / send-back controls.
+   */
+  private resolveCanReviewSurvey(user: RequestUser): boolean {
+    return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+  }
+
   async me(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -227,6 +241,7 @@ export class AuthService {
     const canManageSupervisors = this.resolveCanManageSupervisors(user);
     const canManageUsers = this.resolveCanManageUsers(user);
     const canManageMaintenance = this.resolveCanManageMaintenance(user);
+    const canReviewSurvey = this.resolveCanReviewSurvey(user);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -239,6 +254,7 @@ export class AuthService {
       canManageSupervisors,
       canManageUsers,
       canManageMaintenance,
+      canReviewSurvey,
     };
   }
 

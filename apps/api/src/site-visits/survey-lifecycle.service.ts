@@ -17,6 +17,7 @@ import { SiteVisitsService } from './site-visits.service';
 const LIFECYCLE_LABEL: Record<SurveyLifecycleStatus, string> = {
   DALAM_RONDAAN: 'DALAM RONDAAN',
   RONDAAN_SELESAI: 'RONDAAN SELESAI',
+  DISAHKAN_PENGURUS: 'DISAHKAN PENGURUS',
   PERLU_PINDAAN: 'PERLU PINDAAN',
   LAPORAN_SELESAI: 'LAPORAN SELESAI',
   ARKIB: 'ARKIB',
@@ -44,15 +45,31 @@ interface TransitionOptions {
 
 /**
  * The one PE-survey lifecycle (north-star §4), driven on the per-PE-per-cycle
- * SiteVisit:
+ * SiteVisit. The review chain is technician/supervisor → MANAGER → DC:
  *
- *   DALAM RONDAAN → RONDAAN SELESAI ⟲ PERLU PINDAAN → LAPORAN SELESAI → ARKIB
+ *   DALAM RONDAAN
+ *     → RONDAAN SELESAI         (field crew submitted; pending manager review)
+ *       → DISAHKAN PENGURUS     (the team's MANAGER approved; pending DC checking)
+ *       ⟲ PERLU PINDAAN         (manager sent it back to the crew to amend)
+ *     DISAHKAN PENGURUS
+ *       → LAPORAN SELESAI        (DC checked + generated the report)
+ *       ⟲ PERLU PINDAAN          (DC sent it back to the crew to amend)
+ *     LAPORAN SELESAI → ARKIB
+ *   PERLU PINDAAN → RONDAAN SELESAI (crew re-submits; re-enters manager review)
  *
- * Roles (the relaxed governance):
- *  - Inspector owns "RONDAAN SELESAI" — competence-based, authoritative on submit.
+ * Roles:
+ *  - Inspector/supervisor owns "RONDAAN SELESAI" — competence-based, authoritative
+ *    on submit. In practice the field crew reaches it by completing the visit
+ *    (site-visits.service.complete), which submits the survey for manager review.
+ *  - MANAGER owns the review gate: "DISAHKAN PENGURUS" (approve, push to DC) or a
+ *    bounce-back to "PERLU PINDAAN". Scope is enforced by getLifecycleState
+ *    (a MANAGER only sees their own company's visits), so a manager can only
+ *    review their own company's surveys.
  *  - DC (governance authority) owns the survey-level amendment "PERLU PINDAAN"
- *    and the final "ARKIB". This is where the old defect-level QA reject moves to.
- *  - Report generation (REPORTING authority) is the gate into "LAPORAN SELESAI".
+ *    (now from DISAHKAN PENGURUS) and the final "ARKIB". The DC only ever sees a
+ *    survey the manager already approved — the manager step is a hard gate.
+ *  - Report generation (REPORTING authority) is the gate into "LAPORAN SELESAI",
+ *    reachable only from DISAHKAN PENGURUS (so every report has manager sign-off).
  *
  * Every transition appends a SiteVisitLifecycleEvent so governance is provable.
  * This service is additive: it does not yet retire the OperationalSession /
@@ -67,7 +84,9 @@ export class SurveyLifecycleService {
     private readonly reportGeneration: ReportGenerationService,
   ) {}
 
-  /** Inspector marks the walk-through done. */
+  /** Inspector / supervisor marks the walk-through done — submits the survey
+   *  for the team manager's review. (The field crew normally reaches this by
+   *  completing the visit; this is also the explicit admin-console fallback.) */
   async markRondaanSelesai(user: RequestUser, id: string) {
     this.assertCanMutate(user);
     return this.transition(user, id, {
@@ -81,7 +100,48 @@ export class SurveyLifecycleService {
     });
   }
 
-  /** DC sends the survey back for data-quality amendments. */
+  /** The team's MANAGER approves the submitted survey — the gate that pushes it
+   *  on to DC checking. Scope (a manager only sees their own company's visits) is
+   *  enforced by getLifecycleState inside transition(). */
+  async managerApprove(user: RequestUser, id: string) {
+    this.assertManagerReview(user, 'Approving a survey for the DC');
+    return this.transition(user, id, {
+      to: SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
+      data: { managerApprovedAt: new Date() },
+    });
+  }
+
+  /** The team's MANAGER bounces the submitted survey back to the field crew for
+   *  amendments (before it ever reaches the DC). Mirrors the DC bounce-back: it
+   *  re-opens the visit so the crew can actually edit + re-submit. */
+  async managerRequestAmendment(
+    user: RequestUser,
+    id: string,
+    remarkInput: string,
+  ) {
+    this.assertManagerReview(user, 'Requesting survey amendments');
+    const remark = remarkInput.trim();
+    if (!remark) {
+      throw new BadRequestException('An amendment remark is required.');
+    }
+    return this.transition(user, id, {
+      to: SurveyLifecycleStatus.PERLU_PINDAAN,
+      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
+      data: {
+        amendmentRequestedAt: new Date(),
+        amendmentRemark: remark,
+        // Re-OPEN the visit so the crew can act on it (see requestAmendment).
+        status: SiteVisitStatus.IN_PROGRESS,
+        completedAt: null,
+        endedAt: null,
+      },
+      remark,
+    });
+  }
+
+  /** DC sends the survey back for data-quality amendments. Only reachable after
+   *  the manager has approved (DISAHKAN PENGURUS). */
   async requestAmendment(user: RequestUser, id: string, remarkInput: string) {
     await this.assertGovernance(user, 'Requesting survey amendments');
     const remark = remarkInput.trim();
@@ -90,7 +150,7 @@ export class SurveyLifecycleService {
     }
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.PERLU_PINDAAN,
-      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
+      allowedFrom: [SurveyLifecycleStatus.DISAHKAN_PENGURUS],
       data: {
         amendmentRequestedAt: new Date(),
         amendmentRemark: remark,
@@ -108,14 +168,16 @@ export class SurveyLifecycleService {
     });
   }
 
-  /** DC generates the report — the gate into LAPORAN SELESAI. The frozen
-   *  compiled PDF is produced as part of this transition; if compilation fails
-   *  the survey stays in RONDAAN SELESAI so it can be retried. */
+  /** DC generates the report — the gate into LAPORAN SELESAI. Only reachable
+   *  after the manager has approved (DISAHKAN PENGURUS), so every compiled report
+   *  carries manager sign-off. The frozen compiled PDF is produced as part of
+   *  this transition; if compilation fails the survey stays in DISAHKAN PENGURUS
+   *  so it can be retried. */
   async generateReport(user: RequestUser, id: string) {
     await this.assertReporting(user);
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.LAPORAN_SELESAI,
-      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
+      allowedFrom: [SurveyLifecycleStatus.DISAHKAN_PENGURUS],
       data: { laporanSelesaiAt: new Date() },
       // Compile the frozen report, then persist its row INSIDE the status-commit
       // transaction, so the report and the LAPORAN SELESAI status are atomic
@@ -213,6 +275,23 @@ export class SurveyLifecycleService {
         'This role is read-only for operational workflow actions.',
       );
     }
+  }
+
+  /**
+   * Manager review authority (the technician/supervisor → MANAGER → DC gate).
+   * ADMIN may act on any survey; a MANAGER on their own company's surveys only.
+   * Company scope itself is enforced by getLifecycleState (which runs the
+   * role-aware access filter and 404s anything out of scope), so this only needs
+   * to gate the role. SUPERVISOR/TECHNICIAN submit but do not approve their own
+   * work — the separation of submit vs approve is the point of the gate.
+   */
+  private assertManagerReview(user: RequestUser, action: string) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
+    }
+    throw new ForbiddenException(
+      `${action} requires manager authority (ADMIN or a MANAGER).`,
+    );
   }
 
   private async assertGovernance(user: RequestUser, action: string) {

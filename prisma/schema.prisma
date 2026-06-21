@@ -49,10 +49,21 @@ enum SiteVisitValidationStatus {
 // SiteVisit — the "cycle survey". Replaces the OperationalSession governance
 // machine and absorbs the survey-level "reject" (PERLU PINDAAN) that the old
 // defect-QA flow used to own.
-//   DALAM_RONDAAN → RONDAAN_SELESAI ⟲ PERLU_PINDAAN → LAPORAN_SELESAI → ARKIB
+//
+// Review chain (technician/supervisor → MANAGER → DC):
+//   DALAM_RONDAAN
+//     → RONDAAN_SELESAI       (field crew finished + submitted; pending manager review)
+//       → DISAHKAN_PENGURUS   (the team's MANAGER approved; pending DC checking)
+//       ⟲ PERLU_PINDAAN       (manager sent it back to the crew to amend)
+//     DISAHKAN_PENGURUS
+//       → LAPORAN_SELESAI      (DC checked + generated the report)
+//       ⟲ PERLU_PINDAAN        (DC sent it back to the crew to amend)
+//     LAPORAN_SELESAI → ARKIB
+//   PERLU_PINDAAN → RONDAAN_SELESAI (crew re-submits; re-enters manager review)
 enum SurveyLifecycleStatus {
   DALAM_RONDAAN
   RONDAAN_SELESAI
+  DISAHKAN_PENGURUS
   PERLU_PINDAAN
   LAPORAN_SELESAI
   ARKIB
@@ -1009,6 +1020,7 @@ model SiteVisit {
   validationSummary     String?
   lifecycleStatus       SurveyLifecycleStatus?
   rondaanSelesaiAt      DateTime?
+  managerApprovedAt     DateTime?
   amendmentRequestedAt  DateTime?
   amendmentRemark       String?
   laporanSelesaiAt      DateTime?

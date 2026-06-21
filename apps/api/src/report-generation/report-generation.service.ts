@@ -405,9 +405,15 @@ export class ReportGenerationService {
         'This site visit is cancelled; no report can be compiled.',
       );
     }
-    if (siteVisit.lifecycleStatus !== SurveyLifecycleStatus.RONDAAN_SELESAI) {
+    // The DC compiles the report once the team's MANAGER has approved the survey
+    // (DISAHKAN PENGURUS) — the gate the lifecycle's generateReport() enforces.
+    // This re-check runs at compile time (inside generateReport's beforeCommit,
+    // before the status flips to LAPORAN SELESAI), so the committed status here is
+    // still DISAHKAN PENGURUS; it must match the lifecycle gate or report
+    // generation throws on every call.
+    if (siteVisit.lifecycleStatus !== SurveyLifecycleStatus.DISAHKAN_PENGURUS) {
       throw new BadRequestException(
-        'A report is only compiled from RONDAAN SELESAI.',
+        'A report is only compiled from DISAHKAN PENGURUS (after manager approval).',
       );
     }
 

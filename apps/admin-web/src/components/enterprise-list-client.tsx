@@ -61,6 +61,7 @@ interface EnterpriseFormState {
   status: string;
   isActive: boolean;
   organizationId: string;
+  parentOrganizationId: string;
   branchId: string;
   operationalRegionId: string;
   maintenanceOrganizationId: string;
@@ -200,6 +201,7 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   status: "ACTIVE",
   isActive: true,
   organizationId: "",
+  parentOrganizationId: "",
   branchId: "",
   operationalRegionId: "",
   maintenanceOrganizationId: "",
@@ -383,6 +385,9 @@ function createFormFromRow(
           : null,
         "id",
       ),
+    parentOrganizationId:
+      readRawString(row, "parentOrganizationId") ||
+      readNestedString(nestedRaw(row, "parentOrganization"), "id"),
     branchId: readRawString(row, "branchId") || readNestedString(branch, "id"),
     operationalRegionId:
       readRawString(row, "operationalRegionId") ||
@@ -420,6 +425,9 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
   if (kind === "organizations") {
     payload.type = form.type || "SUBCONTRACTOR";
     payload.isActive = form.isActive;
+    // The contractor hierarchy link: a SUBCONTRACTOR's parent is its
+    // MAIN_CONTRACTOR (or any higher org). Null = a top-level organization.
+    payload.parentOrganizationId = form.parentOrganizationId || null;
     payload.capabilityIds = form.capabilityIds;
   }
 
@@ -564,6 +572,8 @@ function EnterpriseFormModal({
   options,
   error,
   isSaving,
+  lockTeamOrganization = false,
+  ownCompanyName,
   onChange,
   onClose,
   onSubmit,
@@ -574,6 +584,10 @@ function EnterpriseFormModal({
   options: EnterpriseOptions | null;
   error: string;
   isSaving: boolean;
+  /** Manager creating/editing a team: hide the org/branch/mainhead pickers — the
+   *  team is bound to the manager's own company server-side. */
+  lockTeamOrganization?: boolean;
+  ownCompanyName?: string | null;
   onChange: <K extends keyof EnterpriseFormState>(
     field: K,
     value: EnterpriseFormState[K],
@@ -672,6 +686,33 @@ function EnterpriseFormModal({
                   Active
                 </label>
               </div>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Parent Organization
+                </span>
+                <select
+                  value={values.parentOrganizationId}
+                  onChange={(event) =>
+                    onChange("parentOrganizationId", event.target.value)
+                  }
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="">None (top-level organization)</option>
+                  {options?.organizations
+                    .filter((organization) => organization.type !== "CLIENT")
+                    .map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {optionLabel(organization)}
+                      </option>
+                    ))}
+                </select>
+                <span className="mt-1 block text-xs text-slate-500">
+                  A subcontractor&apos;s parent is its main contractor. This sets the
+                  Main&nbsp;Contractor&nbsp;&rarr;&nbsp;Subcontractor hierarchy — a main
+                  contractor oversees the work it delegates to its subcontractors,
+                  while each subcontractor still manages its own teams.
+                </span>
+              </label>
               <CapabilityPicker
                 values={values.capabilityIds}
                 options={options}
@@ -828,53 +869,66 @@ function EnterpriseFormModal({
 
           {kind === "teams" ? (
             <>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Organization</span>
-                  <select
-                    value={values.organizationId}
-                    onChange={(event) => onChange("organizationId", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                  >
-                    <option value="">No organization</option>
-                    {options?.organizations.map((organization) => (
-                      <option key={organization.id} value={organization.id}>
-                        {optionLabel(organization)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">Branch</span>
-                  <select
-                    value={values.branchId}
-                    onChange={(event) => onChange("branchId", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                  >
-                    <option value="">No branch</option>
-                    {options?.branches.map((branch) => (
-                      <option key={branch.id} value={branch.id}>
-                        {optionLabel(branch)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
-                  <select
-                    value={values.mainheadId}
-                    onChange={(event) => onChange("mainheadId", event.target.value)}
-                    className={`${inputClassName} mt-1.5`}
-                  >
-                    <option value="">No MAINHEAD</option>
-                    {options?.mainheads.map((mainhead) => (
-                      <option key={mainhead.id} value={mainhead.id}>
-                        {optionLabel(mainhead)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+              {lockTeamOrganization ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                  This team is added to your company
+                  {ownCompanyName ? (
+                    <span className="font-semibold text-slate-800">
+                      {" "}
+                      ({ownCompanyName})
+                    </span>
+                  ) : null}{" "}
+                  automatically.
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Organization</span>
+                    <select
+                      value={values.organizationId}
+                      onChange={(event) => onChange("organizationId", event.target.value)}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">No organization</option>
+                      {options?.organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {optionLabel(organization)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Branch</span>
+                    <select
+                      value={values.branchId}
+                      onChange={(event) => onChange("branchId", event.target.value)}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">No branch</option>
+                      {options?.branches.map((branch) => (
+                        <option key={branch.id} value={branch.id}>
+                          {optionLabel(branch)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+                    <select
+                      value={values.mainheadId}
+                      onChange={(event) => onChange("mainheadId", event.target.value)}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">No MAINHEAD</option>
+                      {options?.mainheads.map((mainhead) => (
+                        <option key={mainhead.id} value={mainhead.id}>
+                          {optionLabel(mainhead)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
               <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
                 <input
                   type="checkbox"
@@ -1374,6 +1428,16 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   // Server flag: ADMIN or MANAGER. Role alone is insufficient because the admin
   // console collapses MANAGER to VIEWER client-side (ADR 0002 §3).
   const canManageSupervisors = Boolean(session?.user?.canManageSupervisors);
+  // Raw backend role (MANAGER collapses to VIEWER client-side).
+  const isManager = (session?.user?.sourceRole ?? "") === "MANAGER";
+  // A MANAGER manages their OWN company's teams (create / edit / activate). The
+  // /teams endpoints enforce the company scope server-side. Every other
+  // enterprise kind stays admin-only.
+  const canMutate = isAdmin || (kind === "teams" && isManager);
+  // On the teams form a manager has no company picker — their team is created in
+  // their own company automatically (mirrors the manager user-provisioning form).
+  const lockTeamOrganization = canMutate && !isAdmin && kind === "teams";
+  const ownCompanyName = session?.user?.organizationName ?? null;
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -1390,7 +1454,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   <ShieldCheck size={14} />
-                  {isAdmin ? "Admin access" : "Read-only"}
+                  {isAdmin ? "Admin access" : canMutate ? "Manage access" : "Read-only"}
                 </span>
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                   {rows.length} total
@@ -1411,7 +1475,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
               <button
                 type="button"
                 onClick={openCreateModal}
-                disabled={!isAdmin}
+                disabled={!canMutate}
                 className={primaryButtonClassName}
               >
                 <Plus size={16} />
@@ -1593,7 +1657,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                               <button
                                 type="button"
                                 onClick={(event) => openEditModal(row, event)}
-                                disabled={!isAdmin}
+                                disabled={!canMutate}
                                 className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                               >
                                 <Pencil size={14} />
@@ -1602,7 +1666,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                               <button
                                 type="button"
                                 onClick={(event) => requestStatusToggle(row, event)}
-                                disabled={!isAdmin || statusRowId === row.id}
+                                disabled={!canMutate || statusRowId === row.id}
                                 className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                               >
                                 <Power size={14} />
@@ -1626,7 +1690,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
                       <p className="mt-4 text-sm font-semibold text-slate-900">
                         {config.emptyLabel}
                       </p>
-                      {isAdmin ? (
+                      {canMutate ? (
                         <button
                           type="button"
                           onClick={openCreateModal}
@@ -1657,6 +1721,8 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
           options={options}
           error={modalError}
           isSaving={isSaving}
+          lockTeamOrganization={lockTeamOrganization}
+          ownCompanyName={ownCompanyName}
           onChange={updateForm}
           onClose={closeModal}
           onSubmit={handleSubmit}

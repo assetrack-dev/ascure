@@ -154,6 +154,7 @@ export interface SiteVisitImage {
 export type SurveyLifecycleStatus =
   | "DALAM_RONDAAN"
   | "RONDAAN_SELESAI"
+  | "DISAHKAN_PENGURUS"
   | "PERLU_PINDAAN"
   | "LAPORAN_SELESAI"
   | "ARKIB";
@@ -161,6 +162,7 @@ export type SurveyLifecycleStatus =
 export interface SurveyLifecycleState {
   status: SurveyLifecycleStatus | null;
   rondaanSelesaiAt: string | null;
+  managerApprovedAt: string | null;
   amendmentRequestedAt: string | null;
   amendmentRemark: string | null;
   laporanSelesaiAt: string | null;

@@ -28,6 +28,8 @@ import {
   fetchSiteVisitContributions,
   fetchSiteVisitDetail,
   generateSurveyReport,
+  managerApproveSurvey,
+  managerRequestAmendment,
   markRondaanSelesai,
   openNextCycle,
   reassignSiteVisit,
@@ -51,6 +53,8 @@ import type {
 
 type LifecycleAction =
   | "rondaan-selesai"
+  | "manager-approve"
+  | "manager-request-amendment"
   | "request-amendment"
   | "generate-report"
   | "archive"
@@ -62,7 +66,8 @@ const LIFECYCLE_MAIN_STEPS: {
   caption: string;
 }[] = [
   { key: "DALAM_RONDAAN", label: "Dalam Rondaan", caption: "Inspecting" },
-  { key: "RONDAAN_SELESAI", label: "Rondaan Selesai", caption: "Inspector done" },
+  { key: "RONDAAN_SELESAI", label: "Rondaan Selesai", caption: "Pending manager" },
+  { key: "DISAHKAN_PENGURUS", label: "Disahkan Pengurus", caption: "Pending DC" },
   { key: "LAPORAN_SELESAI", label: "Laporan Selesai", caption: "Report generated" },
   { key: "ARKIB", label: "Arkib", caption: "Archived" },
 ];
@@ -70,9 +75,11 @@ const LIFECYCLE_MAIN_STEPS: {
 const LIFECYCLE_STEP_INDEX: Record<SurveyLifecycleStatus, number> = {
   DALAM_RONDAAN: 0,
   RONDAAN_SELESAI: 1,
+  // Sent back to the crew — show it back at the early (pre-manager) step.
   PERLU_PINDAAN: 1,
-  LAPORAN_SELESAI: 2,
-  ARKIB: 3,
+  DISAHKAN_PENGURUS: 2,
+  LAPORAN_SELESAI: 3,
+  ARKIB: 4,
 };
 
 function lifecycleLabel(status: SurveyLifecycleStatus) {
@@ -400,12 +407,15 @@ function GisPanel({ visit }: { visit: SiteVisitDetail }) {
 interface SurveyLifecyclePanelProps {
   visit: SiteVisitDetail;
   canInspect: boolean;
+  canReviewSurvey: boolean;
   canGovern: boolean;
   canReport: boolean;
   pendingAction: LifecycleAction | null;
   error: string;
   downloadingReport: boolean;
   onRondaanSelesai: () => void;
+  onManagerApprove: () => void;
+  onManagerRequestAmendment: (remark: string) => void;
   onRequestAmendment: (remark: string) => void;
   onGenerateReport: () => void;
   onArchive: () => void;
@@ -416,12 +426,15 @@ interface SurveyLifecyclePanelProps {
 function SurveyLifecyclePanel({
   visit,
   canInspect,
+  canReviewSurvey,
   canGovern,
   canReport,
   pendingAction,
   error,
   downloadingReport,
   onRondaanSelesai,
+  onManagerApprove,
+  onManagerRequestAmendment,
   onRequestAmendment,
   onGenerateReport,
   onArchive,
@@ -436,6 +449,14 @@ function SurveyLifecyclePanel({
   const isPerluPindaan = status === "PERLU_PINDAAN";
   const isCancelled = visit.status === "CANCELLED";
   const isBusy = pendingAction !== null;
+
+  // Who may send the survey back for amendments from the CURRENT state: the
+  // MANAGER while it's pending their review (RONDAAN SELESAI), or the DC after
+  // the manager has approved it (DISAHKAN PENGURUS). The dialog routes to the
+  // matching handler.
+  const canManagerAmend = status === "RONDAAN_SELESAI" && canReviewSurvey;
+  const canDcAmend = status === "DISAHKAN_PENGURUS" && canGovern;
+  const amendmentVisible = canManagerAmend || canDcAmend;
 
   const primaryBtn =
     "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
@@ -567,12 +588,40 @@ function SurveyLifecyclePanel({
                 <CheckCircle2 size={15} />
               )}
               {status === "PERLU_PINDAAN"
-                ? "Re-submit (Rondaan Selesai)"
-                : "Mark Rondaan Selesai"}
+                ? "Re-submit for manager review"
+                : "Submit for manager review"}
             </button>
           ) : null}
 
-          {status === "RONDAAN_SELESAI" && canReport ? (
+          {status === "RONDAAN_SELESAI" && canReviewSurvey ? (
+            <button
+              type="button"
+              onClick={onManagerApprove}
+              disabled={isBusy}
+              className={primaryBtn}
+            >
+              {pendingAction === "manager-approve" ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={15} />
+              )}
+              Approve (Disahkan Pengurus)
+            </button>
+          ) : null}
+
+          {amendmentVisible ? (
+            <button
+              type="button"
+              onClick={() => setAmendmentOpen((open) => !open)}
+              disabled={isBusy}
+              className={amberBtn}
+            >
+              <AlertTriangle size={15} />{" "}
+              {canManagerAmend ? "Send back to crew" : "Request amendment"}
+            </button>
+          ) : null}
+
+          {status === "DISAHKAN_PENGURUS" && canReport ? (
             <button
               type="button"
               onClick={onGenerateReport}
@@ -585,17 +634,6 @@ function SurveyLifecyclePanel({
                 <CheckCircle2 size={15} />
               )}
               Generate report (Laporan Selesai)
-            </button>
-          ) : null}
-
-          {status === "RONDAAN_SELESAI" && canGovern ? (
-            <button
-              type="button"
-              onClick={() => setAmendmentOpen((open) => !open)}
-              disabled={isBusy}
-              className={amberBtn}
-            >
-              <AlertTriangle size={15} /> Request amendment
             </button>
           ) : null}
 
@@ -633,10 +671,12 @@ function SurveyLifecyclePanel({
         </div>
       )}
 
-      {amendmentOpen && status === "RONDAAN_SELESAI" && canGovern ? (
+      {amendmentOpen && amendmentVisible ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <label className="block text-xs font-semibold uppercase text-amber-800">
-            Amendment remark (required)
+            {canManagerAmend
+              ? "Manager review — what must the crew fix? (required)"
+              : "Amendment remark (required)"}
           </label>
           <textarea
             value={amendmentRemark}
@@ -650,13 +690,19 @@ function SurveyLifecyclePanel({
               type="button"
               disabled={isBusy || amendmentRemark.trim().length === 0}
               onClick={() => {
-                onRequestAmendment(amendmentRemark.trim());
+                const remark = amendmentRemark.trim();
+                if (canManagerAmend) {
+                  onManagerRequestAmendment(remark);
+                } else {
+                  onRequestAmendment(remark);
+                }
                 setAmendmentRemark("");
                 setAmendmentOpen(false);
               }}
               className={amberBtn}
             >
-              {pendingAction === "request-amendment" ? (
+              {pendingAction === "manager-request-amendment" ||
+              pendingAction === "request-amendment" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <AlertTriangle size={15} />
@@ -1213,6 +1259,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   // (ADMIN). DC governance (amendments / archive) and report generation reuse the
   // server-provided authority flags, so the UI shows exactly what the API allows.
   const canInspect = isAdmin;
+  // Manager review gate (technician/supervisor → MANAGER → DC). ADMIN or a
+  // MANAGER (server flag, since MANAGER collapses to VIEWER client-side). The
+  // lifecycle endpoint still enforces the role + the manager's company scope.
+  const canReviewSurvey = isAdmin || (session?.user?.canReviewSurvey ?? false);
   const canGovern = isAdmin || (session?.user?.canGovernQa ?? false);
   const canReport = isAdmin || (session?.user?.canReport ?? false);
   // Server-computed flag (ADMIN / MANAGER / SUPERVISOR) — the admin console can't read
@@ -1251,6 +1301,25 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     if (!token) return;
     void runLifecycle("rondaan-selesai", () => markRondaanSelesai(token, siteVisitId));
   }, [runLifecycle, session?.token, siteVisitId]);
+
+  const handleManagerApprove = useCallback(() => {
+    const token = session?.token;
+    if (!token) return;
+    void runLifecycle("manager-approve", () =>
+      managerApproveSurvey(token, siteVisitId),
+    );
+  }, [runLifecycle, session?.token, siteVisitId]);
+
+  const handleManagerRequestAmendment = useCallback(
+    (remark: string) => {
+      const token = session?.token;
+      if (!token) return;
+      void runLifecycle("manager-request-amendment", () =>
+        managerRequestAmendment(token, siteVisitId, remark),
+      );
+    },
+    [runLifecycle, session?.token, siteVisitId],
+  );
 
   const handleRequestAmendment = useCallback(
     (remark: string) => {
@@ -1477,11 +1546,14 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                 <SurveyLifecyclePanel
                   visit={visit}
                   canInspect={canInspect}
+                  canReviewSurvey={canReviewSurvey}
                   canGovern={canGovern}
                   canReport={canReport}
                   pendingAction={pendingAction}
                   error={lifecycleError}
                   onRondaanSelesai={handleRondaanSelesai}
+                  onManagerApprove={handleManagerApprove}
+                  onManagerRequestAmendment={handleManagerRequestAmendment}
                   onRequestAmendment={handleRequestAmendment}
                   downloadingReport={downloadingReport}
                   onGenerateReport={handleGenerateReport}

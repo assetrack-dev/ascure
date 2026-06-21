@@ -48,6 +48,21 @@ interface AppShellProps {
   onLogout: () => void;
 }
 
+// A MANAGER runs their own company: an explicit, closed nav allow-list of the
+// operational surfaces they own (every tab's data is company-scoped server-side).
+// This intentionally overrides the per-item adminOnly/capability gates — it both
+// reveals Teams (otherwise adminOnly) and hides everything not in the list
+// (Network, Defects, Reports, Imports, the org/region/asset-type admin tools).
+const MANAGER_NAV_HREFS = new Set<string>([
+  "/dashboard",
+  "/operations-board",
+  "/assets",
+  "/map",
+  "/site-visits",
+  "/users",
+  "/teams",
+]);
+
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
   const navItems: NavItem[] = [
@@ -178,16 +193,30 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       requiresManageUsers: true,
     },
   ];
+  // The raw backend role: the admin web collapses MANAGER/SUPERVISOR/TECHNICIAN
+  // to VIEWER via normalizeRole, so user.role alone would mis-gate them.
+  // sourceRole is undefined for ADMIN/VIEWER/CLIENT, so the user.role fallback
+  // still holds for those.
+  const effectiveRole = user?.sourceRole ?? user?.role ?? "";
+  // Title-case the REAL backend role for the footer badge (roleLabel would
+  // collapse MANAGER back to "Viewer", which is misleading now that managers get
+  // an elevated nav + team-management powers).
+  const effectiveRoleLabel = effectiveRole
+    ? effectiveRole.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : roleLabel(user?.role);
+
   const visibleNavItems = navItems.filter((item) => {
+    // MANAGER: closed allow-list (see MANAGER_NAV_HREFS) — overrides every other
+    // gate so a manager sees exactly their company's operational surfaces.
+    if (effectiveRole === "MANAGER") {
+      return MANAGER_NAV_HREFS.has(item.href);
+    }
+
     if (item.adminOnly && user?.role !== "ADMIN") {
       return false;
     }
 
-    // Gate on the raw backend role (sourceRole): the admin web collapses
-    // MANAGER/SUPERVISOR/TECHNICIAN to VIEWER via normalizeRole, so user.role
-    // alone would hide role-gated items from MANAGER/SUPERVISOR. sourceRole is
-    // undefined for ADMIN/VIEWER/CLIENT, so the user.role fallback still holds.
-    if (item.roles && !item.roles.includes(user?.sourceRole ?? user?.role ?? "")) {
+    if (item.roles && !item.roles.includes(effectiveRole)) {
       return false;
     }
 
@@ -272,7 +301,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
           <div className="rounded-xl border border-[var(--chrome-line)] bg-[var(--chrome-active)] p-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase text-[var(--on-chrome-muted)]">
               <ShieldCheck size={16} />
-              {roleLabel(user?.role)}
+              {effectiveRoleLabel}
             </div>
             <p className="mt-3 truncate text-sm font-semibold">{user?.name ?? "ASCURE User"}</p>
             <p className="mt-1 truncate text-xs text-[var(--on-chrome-muted)]">{user?.email ?? "Signed in"}</p>

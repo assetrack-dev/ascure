@@ -78,10 +78,26 @@ export class TeamsService {
   constructor(private readonly prisma: PrismaService) {}
 
   list(user: RequestUser) {
+    // ADMIN sees every team in the tenant (incl. inactive). A MANAGER manages
+    // only their own company, so they see only their company's teams (incl.
+    // inactive, so they can reactivate); a manager with no company sees nothing.
+    // Everyone else (picker consumers) gets the active set, unchanged.
+    let scope: Prisma.TeamWhereInput;
+    if (user.role === UserRole.ADMIN) {
+      scope = {};
+    } else if (user.role === UserRole.MANAGER) {
+      if (!user.organizationId) {
+        return Promise.resolve([]);
+      }
+      scope = { organizationId: user.organizationId };
+    } else {
+      scope = { isActive: true };
+    }
+
     return this.prisma.team.findMany({
       where: {
         tenantId: user.tenantId,
-        ...(user.role === UserRole.ADMIN ? {} : { isActive: true }),
+        ...scope,
       },
       include: TEAM_INCLUDE,
       orderBy: [
@@ -96,11 +112,19 @@ export class TeamsService {
   }
 
   async create(user: RequestUser, dto: CreateTeamDto) {
+    // A MANAGER can only create teams inside their own company; ADMIN is
+    // unrestricted. This both fills in the org for a manager (their form has no
+    // org picker) and rejects any attempt to plant a team in another company.
+    const organizationId = this.resolveManagedOrganizationId(
+      user,
+      dto.organizationId,
+    );
+
     try {
       return await this.prisma.$transaction(async (tx) => {
         await this.assertTeamCodeAvailable(tx, user.tenantId, dto.code);
         const operationalLinks = await this.resolveOperationalLinks(tx, {
-          organizationId: dto.organizationId,
+          organizationId,
           branchId: dto.branchId,
           mainheadId: dto.mainheadId,
         });
@@ -158,6 +182,20 @@ export class TeamsService {
           throw new NotFoundException('Team not found.');
         }
 
+        // A MANAGER may only edit teams in their own company, and may not move a
+        // team out of it. ADMIN is unrestricted.
+        this.assertManagerOrgScope(user, existingTeam.organizationId);
+        // Clamp the target org and USE the clamped value (don't discard it): for
+        // a MANAGER, resolveManagedOrganizationId(null) returns their own org, so
+        // an explicit `organizationId: null` can never orphan/move the team out of
+        // their company. (A bare resolveManagedOrganizationId call whose result is
+        // thrown away would let `{ organizationId: null }` slip past — null is not
+        // "another org" — and re-derive the org from a foreign branch/mainhead.)
+        const targetOrganizationId =
+          dto.organizationId === undefined
+            ? existingTeam.organizationId
+            : this.resolveManagedOrganizationId(user, dto.organizationId);
+
         if (dto.code !== undefined) {
           await this.assertTeamCodeAvailable(tx, user.tenantId, dto.code, id);
         }
@@ -168,10 +206,7 @@ export class TeamsService {
           dto.mainheadId !== undefined;
         const operationalLinks = shouldResolveOperationalLinks
           ? await this.resolveOperationalLinks(tx, {
-              organizationId:
-                dto.organizationId === undefined
-                  ? existingTeam.organizationId
-                  : dto.organizationId,
+              organizationId: targetOrganizationId,
               branchId:
                 dto.branchId === undefined ? existingTeam.branchId : dto.branchId,
               mainheadId:
@@ -180,6 +215,13 @@ export class TeamsService {
                   : dto.mainheadId,
             })
           : null;
+
+        // Belt-and-suspenders: a branch/mainhead can re-derive the org inside
+        // resolveOperationalLinks, so re-assert the final org is still in the
+        // manager's company (ADMIN unrestricted).
+        if (operationalLinks) {
+          this.assertManagerOrgScope(user, operationalLinks.organizationId);
+        }
 
         const data: Prisma.TeamUncheckedUpdateInput = {};
 
@@ -244,12 +286,16 @@ export class TeamsService {
       },
       select: {
         id: true,
+        organizationId: true,
       },
     });
 
     if (!team) {
       throw new NotFoundException('Team not found.');
     }
+
+    // A MANAGER may only activate/deactivate teams in their own company.
+    this.assertManagerOrgScope(user, team.organizationId);
 
     return this.prisma.team.update({
       where: {
@@ -312,6 +358,58 @@ export class TeamsService {
     });
 
     return this.buildSupervisorView(user, team);
+  }
+
+  /**
+   * Resolve the organization a team create/move may target for the actor. ADMIN
+   * is unrestricted (returns the requested org as-is). A MANAGER is locked to
+   * their own company: their form carries no org picker, so a missing/own org is
+   * filled in, and any other org is rejected (they can't plant or move a team
+   * into another company). Mirrors users.service resolveCreateScope.
+   */
+  private resolveManagedOrganizationId(
+    user: RequestUser,
+    requestedOrganizationId: string | null | undefined,
+  ): string | null | undefined {
+    if (user.role === UserRole.ADMIN) {
+      return requestedOrganizationId;
+    }
+
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'Your account is not linked to a company; ask an administrator to assign one before managing teams.',
+      );
+    }
+
+    if (
+      requestedOrganizationId != null &&
+      requestedOrganizationId !== user.organizationId
+    ) {
+      throw new ForbiddenException(
+        'You can only create or move teams within your own company.',
+      );
+    }
+
+    return user.organizationId;
+  }
+
+  /**
+   * Guard that a non-ADMIN actor (a MANAGER) is operating on a team in their own
+   * company. ADMIN passes unconditionally.
+   */
+  private assertManagerOrgScope(
+    user: RequestUser,
+    teamOrganizationId: string | null,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+
+    if (!user.organizationId || teamOrganizationId !== user.organizationId) {
+      throw new ForbiddenException(
+        'You can only manage teams in your own company.',
+      );
+    }
   }
 
   /**

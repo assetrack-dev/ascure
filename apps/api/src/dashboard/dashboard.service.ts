@@ -17,6 +17,7 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import {
   calculateOperationalHealthStatus,
   parseOperationalOverdueThresholdHours,
@@ -285,6 +286,7 @@ export class DashboardService {
         where: {
           tenantId: user.tenantId,
           isActive: true,
+          ...this.teamAccessWhere(user, ctx),
         },
         select: {
           id: true,
@@ -666,49 +668,7 @@ export class DashboardService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
-    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
-      return {};
-    }
-
-    if (ctx?.isQa) {
-      return {
-        mainheadId: { in: ctx.qaMainheadIds },
-      };
-    }
-
-    const ownTeamMembership: Prisma.TeamWhereInput = {
-      members: {
-        some: {
-          userId: user.id,
-          isActive: true,
-        },
-      },
-    };
-
-    if (user.role === UserRole.MANAGER && user.organizationId) {
-      return {
-        team: {
-          OR: [{ organizationId: user.organizationId }, ownTeamMembership],
-        },
-      };
-    }
-
-    if (user.role === UserRole.SUPERVISOR) {
-      return {
-        team: {
-          OR: [
-            {
-              supervisors: {
-                some: { supervisorUserId: user.id, isActive: true },
-              },
-            },
-            ownTeamMembership,
-          ],
-        },
-      };
-    }
-
-    return { team: ownTeamMembership };
+    return siteVisitAccessWhere(user, ctx);
   }
 
   /**
@@ -839,13 +799,27 @@ export class DashboardService {
 
   private accessibleAssetWhere(
     user: RequestUser,
-    _ctx?: ScopeContext,
+    ctx?: ScopeContext,
   ): Prisma.AssetWhereInput {
-    // Assets are not gated by team membership today; tenant scoping is
-    // sufficient. The ctx parameter is accepted for signature symmetry with
-    // the other accessible*Where helpers under Governance G3.
+    // The Asset row carries no team/region/mainhead column, so scope is applied
+    // transitively through the site visits that touch it — an asset is visible
+    // if it has an inspection in a site visit the user may see, or it was
+    // created during such a visit (mirrors AssetsService.listMapAssets). ADMIN /
+    // QA-admin see every asset in the tenant. This is the fix for the dashboard
+    // "Total Assets" counting every team's poles regardless of the viewer's
+    // scope.
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+      return { tenantId: user.tenantId };
+    }
+
+    const scopeWhere = siteVisitAccessWhere(user, ctx);
+
     return {
       tenantId: user.tenantId,
+      OR: [
+        { inspections: { some: { siteVisit: scopeWhere } } },
+        { createdDuringVisit: scopeWhere },
+      ],
     };
   }
 
@@ -882,69 +856,73 @@ export class DashboardService {
   }
 
   /**
-   * Governance Fix Package G3 — QA bypass on inspection reads.
-   *
-   * - ADMIN     : empty filter.
-   * - QA actor  : inspection's site visit must belong to a QA-accessible MAINHEAD.
-   * - Other     : legacy team membership via siteVisit.team.
+   * Inspection visibility for the dashboard reads. Delegates to the canonical
+   * role-aware site-visit filter (common/authorization/site-visit-scope) so the
+   * dashboard totals match every other surface: ADMIN sees the tenant, QA its
+   * MAINHEADs, MANAGER its whole company, SUPERVISOR its supervised teams, and
+   * everyone else their own teams. Previously this used a narrow own-team-
+   * membership filter, so a MANAGER's dashboard under-counted (only their
+   * personal teams, not their company).
    */
   private inspectionAccessScope(
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.InspectionWhereInput {
-    if (user.role === 'ADMIN' || ctx?.isAdmin) {
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
       return {};
     }
 
-    if (ctx?.isQa) {
-      return {
-        siteVisit: {
-          mainheadId: { in: ctx.qaMainheadIds },
-        },
-      };
-    }
-
     return {
-      siteVisit: {
-        team: {
-          members: {
-            some: {
-              userId: user.id,
-              isActive: true,
-            },
-          },
-        },
-      },
+      siteVisit: siteVisitAccessWhere(user, ctx),
     };
   }
 
   /**
-   * Governance Fix Package G3 — QA bypass on site visit reads.
+   * Site visit visibility for the dashboard reads — the canonical role-aware
+   * filter (see inspectionAccessScope).
    */
   private siteVisitAccessScope(
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
-    if (user.role === 'ADMIN' || ctx?.isAdmin) {
+    return siteVisitAccessWhere(user, ctx);
+  }
+
+  /**
+   * Team visibility for dashboard reference lists (e.g. the active-field-teams
+   * label map). Mirrors the site-visit access matrix so a MANAGER's dashboard
+   * only references their own company's teams, not every team in the tenant.
+   */
+  private teamAccessWhere(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.TeamWhereInput {
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
       return {};
     }
 
     if (ctx?.isQa) {
+      return { mainheadId: { in: ctx.qaMainheadIds } };
+    }
+
+    const ownTeamMembership: Prisma.TeamWhereInput = {
+      members: { some: { userId: user.id, isActive: true } },
+    };
+
+    if (user.role === UserRole.MANAGER && user.organizationId) {
+      return { OR: [{ organizationId: user.organizationId }, ownTeamMembership] };
+    }
+
+    if (user.role === UserRole.SUPERVISOR) {
       return {
-        mainheadId: { in: ctx.qaMainheadIds },
+        OR: [
+          { supervisors: { some: { supervisorUserId: user.id, isActive: true } } },
+          ownTeamMembership,
+        ],
       };
     }
 
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
-        },
-      },
-    };
+    return ownTeamMembership;
   }
 
   private activeSiteVisitStatuses() {
