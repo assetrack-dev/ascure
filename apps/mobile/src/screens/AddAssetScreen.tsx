@@ -398,7 +398,13 @@ export function AddAssetScreen() {
           : Promise.resolve<Asset[]>([]),
       ]);
       const formCoordinate = parseFormCoordinate(latitude, longitude);
-      const coordinate = currentLocation?.coordinate ?? formCoordinate ?? DEFAULT_MAP_PICKER_COORDINATE;
+      // When EDITING an existing pole, open the picker on its SAVED location
+      // (the form already holds it) so the crosshair lands on the pole — not
+      // wherever the surveyor happens to be standing now. A brand-new pole still
+      // defaults to the current GPS fix.
+      const coordinate = isEditMode
+        ? formCoordinate ?? currentLocation?.coordinate ?? DEFAULT_MAP_PICKER_COORDINATE
+        : currentLocation?.coordinate ?? formCoordinate ?? DEFAULT_MAP_PICKER_COORDINATE;
 
       setMapPickerAssets(neighbours.filter((asset) => asset.id !== assetToEdit?.id));
       setMapPickerState({
