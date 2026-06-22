@@ -1204,6 +1204,75 @@ export class SiteVisitsService {
     return this.getById(user, siteVisit.id);
   }
 
+  /** ADMIN preview of a survey deletion — what gets removed vs kept. */
+  async previewDeleteWithAssets(user: RequestUser, id: string) {
+    this.assertAdmin(user);
+    const plan = await this.resolveSurveyDeletionPlan(user, id);
+    return {
+      siteVisitId: plan.visit.id,
+      pencawang:
+        plan.visit.pencawangName?.trim() ||
+        plan.visit.pencawangCode?.trim() ||
+        plan.visit.substation?.name?.trim() ||
+        plan.visit.substation?.code?.trim() ||
+        null,
+      inspections: plan.inspectionCount,
+      createdAssets: plan.createdAssetIds.length,
+      assetsToDelete: plan.deletableAssetIds.length,
+      sharedAssetsKept: plan.sharedAssetIds.length,
+    };
+  }
+
+  /**
+   * ADMIN: hard-delete a site survey AND the poles created during it (skipping
+   * poles shared with another survey). Order matters — the visit's inspections
+   * are onDelete:Restrict, so they're cleared first (cascading their results /
+   * defects / inspection images); the created-and-unshared poles are then hard-
+   * deleted (cascade mirrors AssetsService.hardDeleteAssets: inspection / link /
+   * session rows first, then the asset → feeder memberships + NOP tie edges);
+   * finally the visit is deleted, cascading its users / participants / asset
+   * links / reassignments / contributions / lifecycle events / frozen report (the
+   * SiteVisit-level Image rows are SetNull, matching asset-delete behaviour). One
+   * transaction = all-or-nothing.
+   */
+  async deleteWithAssets(user: RequestUser, id: string) {
+    this.assertAdmin(user);
+    const plan = await this.resolveSurveyDeletionPlan(user, id);
+    const deletable = plan.deletableAssetIds;
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Clear this survey's inspections (Inspection.siteVisit is Restrict).
+      await tx.inspection.deleteMany({
+        where: { siteVisitId: id, tenantId: user.tenantId },
+      });
+
+      // 2. Hard-delete the poles created during this survey (minus shared ones).
+      if (deletable.length > 0) {
+        await tx.inspection.deleteMany({
+          where: { assetId: { in: deletable }, tenantId: user.tenantId },
+        });
+        await tx.siteVisitAsset.deleteMany({ where: { assetId: { in: deletable } } });
+        await tx.operationalSessionAsset.deleteMany({
+          where: { assetId: { in: deletable } },
+        });
+        await tx.asset.deleteMany({
+          where: { id: { in: deletable }, tenantId: user.tenantId },
+        });
+      }
+
+      // 3. Delete the survey itself (cascades its remaining children).
+      await tx.siteVisit.delete({ where: { id } });
+    });
+
+    return {
+      deleted: true,
+      siteVisitId: id,
+      deletedInspections: plan.inspectionCount,
+      deletedAssets: deletable.length,
+      skippedSharedAssets: plan.sharedAssetIds.length,
+    };
+  }
+
   /**
    * Open the next annual cycle (north-star §2/§4): a fresh survey against the
    * same persistent poles, mirroring the prior survey's substation / team /
@@ -2443,6 +2512,74 @@ export class SiteVisitsService {
     if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
       throw new ForbiddenException('This role is read-only for operational workflow actions.');
     }
+  }
+
+  private assertAdmin(user: RequestUser) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only an administrator can delete a site survey.');
+    }
+  }
+
+  /**
+   * Resolve what an admin "delete this survey + its assets" would remove. The
+   * deletable poles are those CREATED during this survey (Asset.createdDuringVisitId)
+   * MINUS any also referenced by another survey (an inspection or asset link in a
+   * different site visit) — those shared poles are KEPT so deleting one survey can
+   * never corrupt another (owner decision 2026-06-22). Tenant-scoped.
+   */
+  private async resolveSurveyDeletionPlan(user: RequestUser, id: string) {
+    const visit = await this.prisma.siteVisit.findFirst({
+      where: { id, tenantId: user.tenantId },
+      select: {
+        id: true,
+        pencawangCode: true,
+        pencawangName: true,
+        substation: { select: { name: true, code: true } },
+      },
+    });
+
+    if (!visit) {
+      throw new NotFoundException('Site visit not found.');
+    }
+
+    const createdAssets = await this.prisma.asset.findMany({
+      where: { createdDuringVisitId: id, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    const createdAssetIds = createdAssets.map((asset) => asset.id);
+
+    let sharedAssetIds: string[] = [];
+    if (createdAssetIds.length > 0) {
+      const [sharedByInspection, sharedByLink] = await Promise.all([
+        this.prisma.inspection.findMany({
+          where: { assetId: { in: createdAssetIds }, siteVisitId: { not: id } },
+          select: { assetId: true },
+          distinct: ['assetId'],
+        }),
+        this.prisma.siteVisitAsset.findMany({
+          where: { assetId: { in: createdAssetIds }, siteVisitId: { not: id } },
+          select: { assetId: true },
+          distinct: ['assetId'],
+        }),
+      ]);
+      sharedAssetIds = Array.from(
+        new Set([
+          ...sharedByInspection.map((row) => row.assetId),
+          ...sharedByLink.map((row) => row.assetId),
+        ]),
+      );
+    }
+
+    const sharedSet = new Set(sharedAssetIds);
+    const deletableAssetIds = createdAssetIds.filter(
+      (assetId) => !sharedSet.has(assetId),
+    );
+
+    const inspectionCount = await this.prisma.inspection.count({
+      where: { siteVisitId: id, tenantId: user.tenantId },
+    });
+
+    return { visit, createdAssetIds, deletableAssetIds, sharedAssetIds, inspectionCount };
   }
 
   private assertVisitIsMutable(siteVisit: { status: SiteVisitStatus }) {

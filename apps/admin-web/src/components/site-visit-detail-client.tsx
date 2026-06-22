@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -24,9 +25,11 @@ import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
+  deleteSiteVisit,
   fetchCycleDelta,
   fetchSiteVisitContributions,
   fetchSiteVisitDetail,
+  fetchSurveyDeletePreview,
   generateSurveyReport,
   managerApproveSurvey,
   managerRequestAmendment,
@@ -34,6 +37,7 @@ import {
   openNextCycle,
   reassignSiteVisit,
   requestSurveyAmendment,
+  type SurveyDeletePreview,
 } from "@/lib/site-visits";
 import { downloadCompiledReport } from "@/lib/report-templates";
 import { fetchTeams, type TeamOption } from "@/lib/teams";
@@ -1153,6 +1157,195 @@ function ReassignTeamPanel({
   );
 }
 
+function DeleteStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "danger" | "neutral";
+}) {
+  const className =
+    tone === "danger"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : "border-slate-200 bg-slate-50 text-slate-600";
+  return (
+    <div className={`rounded-lg border p-3 text-center ${className}`}>
+      <p className="text-2xl font-bold">{value}</p>
+      <p className="text-xs font-semibold uppercase">{label}</p>
+    </div>
+  );
+}
+
+/**
+ * ADMIN-only danger zone: hard-delete this survey + the poles created during it
+ * (poles shared with another survey are kept). Loads a server preview of what
+ * will be removed, and requires typing the Pencawang code to arm the delete.
+ */
+function DeleteSurveyPanel({
+  visit,
+  token,
+  onDeleted,
+  onUnauthorized,
+}: {
+  visit: SiteVisitDetail;
+  token: string | null;
+  onDeleted: () => void;
+  onUnauthorized: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<SurveyDeletePreview | null>(null);
+  const [previewError, setPreviewError] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const confirmTarget =
+    visit.pencawangCode?.trim() ||
+    visit.pencawangName?.trim() ||
+    visit.substation?.code?.trim() ||
+    visit.substation?.name?.trim() ||
+    "DELETE";
+
+  const openPanel = useCallback(async () => {
+    setOpen(true);
+    setError("");
+    setPreviewError("");
+    setPreview(null);
+    setConfirmText("");
+    if (!token) return;
+    try {
+      setPreview(await fetchSurveyDeletePreview(token, visit.id));
+    } catch (previewLoadError) {
+      if (previewLoadError instanceof ApiError && previewLoadError.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      setPreviewError(
+        previewLoadError instanceof Error
+          ? previewLoadError.message
+          : "Unable to load the deletion preview.",
+      );
+    }
+  }, [token, visit.id, onUnauthorized]);
+
+  const canConfirm =
+    Boolean(token) && !submitting && confirmText.trim() === confirmTarget;
+
+  const submit = useCallback(async () => {
+    if (!token || confirmText.trim() !== confirmTarget) {
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await deleteSiteVisit(token, visit.id);
+      onDeleted();
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError && deleteError.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete this survey.",
+      );
+      setSubmitting(false);
+    }
+  }, [token, confirmText, confirmTarget, visit.id, onDeleted, onUnauthorized]);
+
+  const dangerBtn =
+    "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300";
+  const subtleBtn =
+    "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400";
+
+  return (
+    <section className="rounded-xl border border-red-200 bg-red-50/50 p-5 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-base font-semibold text-red-700">
+            <Trash2 size={17} />
+            Danger zone — delete survey
+          </div>
+          <p className="mt-1 text-sm text-red-900/80">
+            Permanently deletes this survey and the poles created during it — its
+            inspections, photos, compiled report and history. Poles also used by
+            another survey/cycle are kept. This cannot be undone.
+          </p>
+        </div>
+        {!open ? (
+          <button type="button" onClick={() => void openPanel()} className={dangerBtn}>
+            <Trash2 size={15} /> Delete survey
+          </button>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="mt-4 rounded-lg border border-red-200 bg-white p-4">
+          {previewError ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {previewError}
+            </div>
+          ) : preview ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <DeleteStat label="Poles to delete" value={preview.assetsToDelete} tone="danger" />
+              <DeleteStat label="Inspections" value={preview.inspections} tone="danger" />
+              <DeleteStat label="Shared poles kept" value={preview.sharedAssetsKept} tone="neutral" />
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--muted)]">Loading deletion preview…</p>
+          )}
+
+          <label className="mt-4 block text-xs font-semibold uppercase text-red-800">
+            Type <span className="font-mono text-red-900">{confirmTarget}</span> to confirm
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(event) => setConfirmText(event.target.value)}
+            placeholder={confirmTarget}
+            className="mt-1.5 w-full rounded-md border border-red-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+          />
+
+          {error ? (
+            <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              disabled={!canConfirm}
+              onClick={() => void submit()}
+              className={dangerBtn}
+            >
+              {submitting ? (
+                <RefreshCw size={15} className="animate-spin" />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              Permanently delete
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setError("");
+              }}
+              className={subtleBtn}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -1821,6 +2014,15 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
 
                   <GisPanel visit={visit} />
                 </div>
+
+                {isAdmin ? (
+                  <DeleteSurveyPanel
+                    visit={visit}
+                    token={session?.token ?? null}
+                    onDeleted={() => router.push("/site-visits")}
+                    onUnauthorized={handleLogout}
+                  />
+                ) : null}
               </div>
             ) : (
               <div className="rounded-xl border border-[var(--line)] bg-white p-8 text-center text-sm text-[var(--muted)] shadow-[var(--shadow-card)]">

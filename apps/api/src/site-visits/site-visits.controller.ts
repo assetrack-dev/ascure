@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -11,8 +12,11 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsUUID } from 'class-validator';
+import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CancelSiteVisitDto } from './dto/cancel-site-visit.dto';
 import { CompleteSiteVisitDto } from './dto/complete-site-visit.dto';
@@ -29,7 +33,7 @@ class SiteVisitIdParamDto {
   id!: string;
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('site-visits')
 export class SiteVisitsController {
   constructor(
@@ -191,6 +195,23 @@ export class SiteVisitsController {
     @Param() params: SiteVisitIdParamDto,
   ) {
     return this.siteVisitsService.getContributions(user, params.id);
+  }
+
+  // --- ADMIN: delete a survey together with the poles created during it ---
+
+  @Get(':id/delete-preview')
+  @Roles(UserRole.ADMIN)
+  previewDelete(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.siteVisitsService.previewDeleteWithAssets(user, params.id);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.ADMIN)
+  delete(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
+    return this.siteVisitsService.deleteWithAssets(user, params.id);
   }
 
   @Get(':id')

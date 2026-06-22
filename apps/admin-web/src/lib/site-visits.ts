@@ -687,6 +687,49 @@ export function archiveSurvey(token: string, siteVisitId: string) {
   return transitionSurveyLifecycle(token, siteVisitId, "archive");
 }
 
+export interface SurveyDeletePreview {
+  siteVisitId: string;
+  pencawang: string | null;
+  /** Inspections that will be deleted with the survey. */
+  inspections: number;
+  /** Poles created during this survey. */
+  createdAssets: number;
+  /** Poles that WILL be deleted (created here, not shared with another survey). */
+  assetsToDelete: number;
+  /** Poles KEPT because another survey/cycle also references them. */
+  sharedAssetsKept: number;
+}
+
+export interface SurveyDeleteResult {
+  deleted: boolean;
+  siteVisitId: string;
+  deletedInspections: number;
+  deletedAssets: number;
+  skippedSharedAssets: number;
+}
+
+/** ADMIN: preview what deleting this survey (+ its created poles) would remove. */
+export async function fetchSurveyDeletePreview(
+  token: string,
+  siteVisitId: string,
+): Promise<SurveyDeletePreview> {
+  return apiRequest<SurveyDeletePreview>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/delete-preview`,
+    { token },
+  );
+}
+
+/** ADMIN: hard-delete the survey + the poles created during it (shared poles kept). */
+export async function deleteSiteVisit(
+  token: string,
+  siteVisitId: string,
+): Promise<SurveyDeleteResult> {
+  return apiRequest<SurveyDeleteResult>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}`,
+    { method: "DELETE", token },
+  );
+}
+
 /** Open the next annual cycle — a fresh survey against the same poles. */
 export async function openNextCycle(
   token: string,
