@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
@@ -25,6 +26,10 @@ import { PublicModule } from './public/public.module';
       isGlobal: true,
       envFilePath: ['../../.env', '.env'],
     }),
+    // Rate-limiting baseline. NOT registered as a global guard — only routes
+    // that opt in with @UseGuards(ThrottlerGuard) are throttled (currently just
+    // POST /auth/login), so the mobile sync/upload bursts are untouched.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     PrismaModule,
     AuthModule,
     UsersModule,

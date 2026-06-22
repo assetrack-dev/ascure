@@ -9,6 +9,12 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const port = Number(process.env.PORT ?? 3000);
 
+  // Behind nginx (one hop): trust X-Forwarded-For so req.ip is the real client
+  // IP, not the proxy. Lets the login rate-limiter throttle per client instead
+  // of lumping every request under the proxy's address. (nginx must forward
+  // X-Forwarded-For — the standard reverse-proxy header.)
+  app.set('trust proxy', 1);
+
   app.setGlobalPrefix('api/v1');
   app.useStaticAssets(UPLOADS_DIRECTORY, {
     prefix: '/uploads/',
