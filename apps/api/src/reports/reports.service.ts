@@ -362,7 +362,13 @@ export class ReportsService {
         createdBy: { select: { email: true } },
         template: { select: { name: true, version: true } },
         siteVisit: {
-          select: { pencawangName: true, pencawangCode: true },
+          select: {
+            pencawangName: true,
+            pencawangCode: true,
+            mainhead: true,
+            mainheadRecord: { select: { name: true } },
+            team: { select: { name: true, code: true } },
+          },
         },
         asset: {
           select: {
@@ -453,6 +459,97 @@ export class ReportsService {
     const columns = [...columnsByKey.values()].sort(
       (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
     );
+
+    // --- Owner's fixed SAVR arrangement ("SUSUNAN UNTUK ML DOWNLOAD") ---------
+    // Every SAVR mainhead uses the fixed column layout; the MAINHEAD named
+    // "KUANTAN" keeps the dynamic, template-driven layout below (unchanged).
+    // Item columns are matched to the live template items BY (normalized) LABEL,
+    // so a label that differs from the template's will come through blank — the
+    // headers in SAVR_FIXED_ITEM_LABELS were taken verbatim from a real export.
+    const itemsByLabel = new Map<
+      string,
+      { inputType: InspectionItemInputType; itemIds: Set<string> }
+    >();
+    for (const item of templateItems) {
+      const norm = normalizeChecklistLabel(item.label);
+      const existing = itemsByLabel.get(norm);
+      if (existing) {
+        existing.itemIds.add(item.id);
+      } else {
+        itemsByLabel.set(norm, {
+          inputType: item.inputType,
+          itemIds: new Set([item.id]),
+        });
+      }
+    }
+
+    const isKuantanMainhead =
+      normalizeChecklistLabel(resolveExportMainheadName(chosen)) ===
+      KUANTAN_MAINHEAD_NAME;
+
+    if (!isKuantanMainhead) {
+      const fixedWorkbook = new Workbook();
+      fixedWorkbook.creator = 'ASCURE';
+      fixedWorkbook.created = new Date();
+      const fixedSheet = fixedWorkbook.addWorksheet('CHECKLIST');
+      fixedSheet.addRow([...SAVR_FIXED_META_HEADERS, ...SAVR_FIXED_ITEM_LABELS]);
+      fixedSheet.getRow(1).font = { bold: true };
+
+      for (const insp of chosen) {
+        const resultByItemId = new Map<string, (typeof insp.results)[number]>();
+        for (const r of insp.results) {
+          resultByItemId.set(r.templateItemId, r);
+        }
+        const verdictByItemId = new Map<string, InspectionItemResultValue>();
+        for (const ir of insp.itemResults) {
+          if (ir.checklistItemId) {
+            verdictByItemId.set(ir.checklistItemId, ir.result);
+          }
+        }
+
+        const meta: (string | number)[] = [
+          sanitizeText(
+            insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
+          ),
+          formatDate(insp.submittedAt ?? insp.createdAt),
+          insp.asset.latitude != null && insp.asset.longitude != null
+            ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+            : '',
+          sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
+          sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
+          sanitizeText(insp.asset.assetCode),
+          sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        ];
+
+        const itemCells = SAVR_FIXED_ITEM_LABELS.map((label) => {
+          const col = itemsByLabel.get(normalizeChecklistLabel(label));
+          if (!col) {
+            return '';
+          }
+          let result: (typeof insp.results)[number] | undefined;
+          let verdict: InspectionItemResultValue | undefined;
+          for (const id of col.itemIds) {
+            if (!result) result = resultByItemId.get(id);
+            if (!verdict) verdict = verdictByItemId.get(id);
+          }
+          return resolveTemplateCell(col.inputType, result, verdict);
+        });
+
+        fixedSheet.addRow([...meta, ...itemCells]);
+      }
+
+      fixedSheet.columns.forEach((column, index) => {
+        column.width = index < SAVR_FIXED_META_HEADERS.length ? 18 : 16;
+      });
+
+      const fixedArrayBuffer = await fixedWorkbook.xlsx.writeBuffer();
+      const fixedBuffer = Buffer.from(fixedArrayBuffer as ArrayBuffer);
+      const fixedSafe =
+        (substation.name || substation.code || 'PENCAWANG')
+          .replace(/[^A-Za-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '') || 'PENCAWANG';
+      return { buffer: fixedBuffer, filename: `${fixedSafe}_CHECKLIST.xlsx` };
+    }
 
     const META_HEADERS = [
       'Pencawang Code',
@@ -1040,6 +1137,107 @@ function resolveTemplateCell(
       return '';
     }
   }
+}
+
+/**
+ * Owner's fixed SAVR checklist arrangement ("SUSUNAN UNTUK ML DOWNLOAD",
+ * 2026-06-22): the exact column order for the "Download Checklist" export,
+ * applied to every SAVR mainhead EXCEPT "KUANTAN" (which keeps the dynamic,
+ * template-driven layout). Item columns are matched to the live template items
+ * by normalized label, so these item headers must match the checklist item
+ * labels verbatim (whitespace-insensitive). Photo (IMAGE) values are not
+ * embedded — the GAMBAR KELEGAAN columns surface the OCR reading.
+ */
+const SAVR_FIXED_META_HEADERS = [
+  'TEAM',
+  'DATE',
+  'LOCATION',
+  'Pencawang Code',
+  'Pencawang Name',
+  'NO TIANG RONDAAN',
+  'NO TIANG LAMA',
+];
+
+const SAVR_FIXED_ITEM_LABELS = [
+  'JENIS TIANG',
+  'SAIZ TIANG',
+  'ABC (SPAN) - 3 X 185',
+  'ABC (SPAN) - 3 X 95',
+  'BARE (SPAN) - 7 /173 (3 PHASE)',
+  'BARE (SPAN) - 7 /122 (SINGLE PHASE)',
+  'BARE (SPAN) - 3 /132',
+  'ABC (SPAN) - 3 X 16',
+  'ABC (SPAN) - 1 X 16',
+  'PVC (SPAN) - 9 /064 (3 PHASE)',
+  'PVC (SPAN) - 7 /083 (SINGLE PHASE)',
+  'PVC (SPAN) - 7 /044',
+  'TIANG - REPUT / RETAK',
+  'TIANG - CONDONG',
+  'TIANG - NO. TIANG PUDAR / TIADA',
+  'TALIAN (UTAMA / SERVIS) - PENGGUNAAN IPC / MARUKU  JOINT BAGI SAMBUNGAN TENGAH',
+  'TALIAN (UTAMA / SERVIS) - PERLU RENTIS',
+  'TALIAN (UTAMA / SERVIS) - TIDAK PATUH GROUND CLEARANCE',
+  'UMBANG - KENDUR / PUTUS',
+  'UMBANG - ULAN (CREEPERS)',
+  'UMBANG - TIADA STAY INSULATOR / ROSAK',
+  'UMBANG - STAY PLATE / PANGKAL STAY TERBONGKAH',
+  'UMBANG - TERBANG / SUPPORT POLE',
+  'IPC - KESAN BAKAR',
+  'IPC - TIDAK CUKUP',
+  'BLACK BOX - KESAN BAKAR',
+  'BIL BLACK BOX',
+  'JUMPER - TIADA UV SLEEVE',
+  'JUMPER - KESAN BAKAR',
+  'PENANGKAP KILAT - ROSAK',
+  'SERVIS - TALIAN SERVIS BERADA DI ATAS BUMBUNG',
+  'SERVIS - WON PIECE TANGGAL',
+  'BILANGAN SERVIS MELIBATKAN 1 PENGGUNA SAHAJA',
+  'PEMBUMIAN - TIADA SAMBUNGAN KE NEUTRAL',
+  'PAPAN TANDA  -  OFF POINT / BEKALAN DUA HALA - PAPAN TANDA PUDAR / ROSAK / TIADA',
+  'SESALUR KAKI LIMA - WAYAR TANGGAL',
+  'SESALUR KAKI LIMA - DALAM RUMAH / RENOVATION',
+  'SESALUR KAKI LIMA - JUNCTION BOX / IPC',
+  'SESALUR KAKI LIMA - JUNCTION BOX TANGGAL / KESAN BAKAR',
+  'BIL LVPT CAP BANK',
+  'CATITAN',
+  'GAMBAR KELEGAAN 1',
+  'KEADAAN DI TAPAK 1',
+  'GAMBAR KELEGAAN 2',
+  'KEADAAN DI TAPAK 2',
+  'GAMBAR KELEGAAN 3',
+  'KEADAAN DI TAPAK 3',
+  'KAWASAN - LAIN - LAIN (SILA NYATAKAN)',
+];
+
+/** The one mainhead that keeps the legacy dynamic checklist layout. */
+const KUANTAN_MAINHEAD_NAME = 'KUANTAN';
+
+/** Whitespace-insensitive, case-insensitive label key for matching. */
+function normalizeChecklistLabel(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+/**
+ * The MAINHEAD a per-Pencawang export belongs to — taken from the inspections'
+ * site visit (the linked MAINHEAD record, else the free-text mainhead). Returns
+ * the first non-empty one (a Pencawang's inspections share a mainhead).
+ */
+function resolveExportMainheadName(
+  inspections: {
+    siteVisit: {
+      mainhead: string | null;
+      mainheadRecord: { name: string } | null;
+    } | null;
+  }[],
+): string {
+  for (const insp of inspections) {
+    const name =
+      insp.siteVisit?.mainheadRecord?.name ?? insp.siteVisit?.mainhead ?? '';
+    if (name && name.trim()) {
+      return name;
+    }
+  }
+  return '';
 }
 
 function resolveImageUrl(
