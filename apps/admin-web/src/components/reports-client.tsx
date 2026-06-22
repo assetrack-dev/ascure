@@ -44,6 +44,7 @@ function ReportsContent() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [substations, setSubstations] = useState<ReportSubstation[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [mainhead, setMainhead] = useState("ALL");
   const [status, setStatus] = useState("ALL");
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -103,10 +104,42 @@ function ReportsContent() {
     void loadData(storedSession.token);
   }, [loadData]);
 
+  // Distinct MAINHEAD options across the Pencawang list (for the mainhead filter).
+  const mainheadOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          substations
+            .map((substation) => substation.mainhead?.trim())
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [substations],
+  );
+
+  // The Pencawang dropdown is narrowed to the selected MAINHEAD.
+  const visibleSubstations = useMemo(
+    () =>
+      mainhead === "ALL"
+        ? substations
+        : substations.filter((substation) => substation.mainhead === mainhead),
+    [substations, mainhead],
+  );
+
   const selectedSubstation = useMemo(
     () => substations.find((substation) => substation.id === selectedId) ?? null,
     [substations, selectedId],
   );
+
+  // If the chosen MAINHEAD no longer contains the selected Pencawang, clear it.
+  useEffect(() => {
+    if (
+      selectedId &&
+      !visibleSubstations.some((substation) => substation.id === selectedId)
+    ) {
+      setSelectedId("");
+    }
+  }, [visibleSubstations, selectedId]);
 
   async function handleDownload() {
     if (!session?.token || !selectedSubstation || isDownloading) {
@@ -226,7 +259,27 @@ function ReportsContent() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,210px)_auto] sm:items-end">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,190px)_minmax(0,1fr)_minmax(0,180px)_auto] sm:items-end">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Mainhead</span>
+                <select
+                  value={mainhead}
+                  onChange={(event) => {
+                    setMainhead(event.target.value);
+                    setNotice("");
+                  }}
+                  disabled={isLoading || mainheadOptions.length === 0}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="ALL">All mainheads</option>
+                  {mainheadOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Pencawang</span>
                 <select
@@ -235,7 +288,7 @@ function ReportsContent() {
                     setSelectedId(event.target.value);
                     setNotice("");
                   }}
-                  disabled={isLoading || substations.length === 0}
+                  disabled={isLoading || visibleSubstations.length === 0}
                   className={`${inputClassName} mt-1.5`}
                 >
                   <option value="">
@@ -243,9 +296,11 @@ function ReportsContent() {
                       ? "Loading Pencawang list…"
                       : substations.length === 0
                         ? "No Pencawang available"
-                        : "Select a Pencawang"}
+                        : visibleSubstations.length === 0
+                          ? "No Pencawang for this mainhead"
+                          : "Select a Pencawang"}
                   </option>
-                  {substations.map((substation) => (
+                  {visibleSubstations.map((substation) => (
                     <option key={substation.id} value={substation.id}>
                       {substation.code} - {substation.name}
                     </option>

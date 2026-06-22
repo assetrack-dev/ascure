@@ -150,15 +150,52 @@ export class ReportsService {
     }
   }
 
-  /** Pencawang (substation) options for the report selector — tenant scoped. */
+  /** Pencawang (substation) options for the report selector — tenant scoped.
+   *  Each carries its MAINHEAD (for the report page's mainhead filter). A
+   *  Substation isn't linked to a MAINHEAD directly, so it's derived from the
+   *  Pencawang's site visits (linked MAINHEAD record, else free-text), taking
+   *  the most recent visit's. */
   async listSubstations(user: RequestUser) {
     await this.assertCanReport(user);
 
-    return this.prisma.substation.findMany({
+    const substations = await this.prisma.substation.findMany({
       where: { tenantId: user.tenantId, isActive: true },
       orderBy: [{ name: 'asc' }],
       select: { id: true, code: true, name: true, location: true },
     });
+
+    if (substations.length === 0) {
+      return [] as Array<(typeof substations)[number] & { mainhead: string | null }>;
+    }
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: {
+        tenantId: user.tenantId,
+        substationId: { in: substations.map((s) => s.id) },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        substationId: true,
+        mainhead: true,
+        mainheadRecord: { select: { name: true } },
+      },
+    });
+
+    const mainheadBySubstation = new Map<string, string>();
+    for (const visit of visits) {
+      if (mainheadBySubstation.has(visit.substationId)) {
+        continue; // first seen = most recent (ordered desc)
+      }
+      const name = (visit.mainheadRecord?.name ?? visit.mainhead ?? '').trim();
+      if (name) {
+        mainheadBySubstation.set(visit.substationId, name);
+      }
+    }
+
+    return substations.map((substation) => ({
+      ...substation,
+      mainhead: mainheadBySubstation.get(substation.id) ?? null,
+    }));
   }
 
   /**
