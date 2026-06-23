@@ -5,6 +5,7 @@ coverage/
 .env
 .env.*
 !/.env.example
+!apps/api/.env.test.example
 
 .DS_Store
 Thumbs.db

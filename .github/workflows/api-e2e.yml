@@ -1,0 +1,62 @@
+name: API e2e (authz)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'prisma/**'
+      - 'packages/shared-utils/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/api-e2e.yml'
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ascure
+          POSTGRES_PASSWORD: ascure
+          POSTGRES_DB: ascure_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ascure"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # The test-env loader does NOT override an already-set DATABASE_URL, so this
+      # CI value wins over apps/api/.env.test (which isn't present in CI anyway).
+      DATABASE_URL: postgresql://ascure:ascure@localhost:5432/ascure_test?schema=public
+      JWT_SECRET: ci-test-secret-not-for-production
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --config.allowUnusedPatches=true
+
+      - name: Build shared-utils
+        run: pnpm --filter @ascure/shared-utils build
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Run authorization e2e suite
+        run: pnpm --filter @ascure/api test
