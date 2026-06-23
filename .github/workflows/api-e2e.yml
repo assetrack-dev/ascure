@@ -9,7 +9,14 @@ on:
       - 'pnpm-lock.yaml'
       - '.github/workflows/api-e2e.yml'
   push:
-    branches: [main]
+    branches: [main, feature/mobile-ui-pass-1]
+    paths:
+      - 'apps/api/**'
+      - 'prisma/**'
+      - 'packages/shared-utils/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/api-e2e.yml'
+  workflow_dispatch:
 
 jobs:
   e2e:
