@@ -1,0 +1,10 @@
+{
+  "rootDir": "..",
+  "roots": ["<rootDir>/test/unit"],
+  "testEnvironment": "node",
+  "testRegex": ".unit-spec\\.ts$",
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.spec.json" }]
+  }
+}
