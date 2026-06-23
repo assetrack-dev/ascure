@@ -72,6 +72,14 @@ export const IDS = {
     a: 'a0000000-0000-4000-8000-00000000000a',
     b: 'a0000000-0000-4000-8000-00000000000b',
   },
+  // OperationalSession uses a DIFFERENT scope (company-assignment + QA-assignment,
+  // not team membership): session A is assigned to company A; session B is
+  // assigned to company B but names a company-A user (supA) as its QA reviewer,
+  // so supA can see B through the QA branch while techA cannot.
+  session: {
+    a: 'b0000000-0000-4000-8000-00000000000a',
+    b: 'b0000000-0000-4000-8000-00000000000b',
+  },
 } as const;
 
 export const EMAILS = {
@@ -233,6 +241,13 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
     data: [
       { id: IDS.defect.a, inspectionItemResultId: IDS.itemResult.a, status: 'OPEN', severity: 'MEDIUM', lifecycleStatus: 'VERIFIED' },
       { id: IDS.defect.b, inspectionItemResultId: IDS.itemResult.b, status: 'OPEN', severity: 'MEDIUM', lifecycleStatus: 'VERIFIED' },
+    ],
+  });
+
+  await prisma.operationalSession.createMany({
+    data: [
+      { id: IDS.session.a, sessionNo: 'OPS-A-1', workspaceId: IDS.tenant.t1, organizationId: IDS.org.a, assignedCompanyId: IDS.org.a, scope: 'SAVR', status: 'ASSIGNED' },
+      { id: IDS.session.b, sessionNo: 'OPS-B-1', workspaceId: IDS.tenant.t1, organizationId: IDS.org.b, assignedCompanyId: IDS.org.b, assignedQaUserId: IDS.user.supA, scope: 'SAVR', status: 'ASSIGNED' },
     ],
   });
 }
