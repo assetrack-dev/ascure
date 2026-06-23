@@ -167,6 +167,22 @@ async function ensureUserCapability(userId: string, capabilityId: string) {
 }
 
 async function main() {
+  // Safety guard (security plan E1): this seed creates demo accounts with KNOWN
+  // passwords (admin@ascure.local / Admin123!, etc.). Refuse to run against a
+  // production-looking database so a stray `prisma db seed` can never re-create
+  // or re-enable them on prod. Override deliberately with ALLOW_PROD_SEED=true.
+  const targetDbName =
+    /\/([^/?]+)(?:\?|$)/.exec(process.env.DATABASE_URL ?? '')?.[1] ?? '';
+  const looksProduction =
+    /prod/i.test(targetDbName) || process.env.NODE_ENV === 'production';
+  if (looksProduction && process.env.ALLOW_PROD_SEED !== 'true') {
+    throw new Error(
+      `Refusing to seed: the target database ("${targetDbName}") looks like ` +
+        'production. This seed creates demo accounts with known passwords. ' +
+        'If you really mean to, re-run with ALLOW_PROD_SEED=true.',
+    );
+  }
+
   const passwordSaltRounds = 10;
   const adminPasswordHash = await bcrypt.hash('Admin123!', passwordSaltRounds);
   const managerPasswordHash = await bcrypt.hash('Manager123!', passwordSaltRounds);
