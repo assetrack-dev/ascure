@@ -30,6 +30,9 @@ export const IDS = {
   org: {
     a: '0a000000-0000-4000-8000-000000000001',
     b: '0b000000-0000-4000-8000-000000000001',
+    // A maintenance company — the registered maintainer that a defect routes to
+    // under RELEASE_ON_REPORT. Not an inspecting company.
+    maint: '0c000000-0000-4000-8000-000000000001',
   },
   user: {
     adminT1: '10000000-0000-4000-8000-000000000001',
@@ -40,6 +43,7 @@ export const IDS = {
     mgrB: '10000000-0000-4000-8000-0000000000b1',
     techB: '10000000-0000-4000-8000-0000000000b3',
     adminT2: '10000000-0000-4000-8000-0000000000c2',
+    maint: '10000000-0000-4000-8000-0000000000d1',
   },
   team: {
     a: '20000000-0000-4000-8000-00000000000a',
@@ -67,10 +71,13 @@ export const IDS = {
   itemResult: {
     a: '90000000-0000-4000-8000-00000000000a',
     b: '90000000-0000-4000-8000-00000000000b',
+    routed: '90000000-0000-4000-8000-00000000000c',
   },
   defect: {
     a: 'a0000000-0000-4000-8000-00000000000a',
     b: 'a0000000-0000-4000-8000-00000000000b',
+    // A defect on company A's inspection, routed to the maintenance company.
+    routed: 'a0000000-0000-4000-8000-00000000000c',
   },
   // OperationalSession uses a DIFFERENT scope (company-assignment + QA-assignment,
   // not team membership): session A is assigned to company A; session B is
@@ -91,6 +98,7 @@ export const EMAILS = {
   mgrB: 'manager.b@authz.test',
   techB: 'tech.b@authz.test',
   adminT2: 'admin.t2@authz.test',
+  maintUser: 'maint.user@authz.test',
 } as const;
 
 /** Truncate every table in the public schema (fast, deterministic reset). */
@@ -249,5 +257,23 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
       { id: IDS.session.a, sessionNo: 'OPS-A-1', workspaceId: IDS.tenant.t1, organizationId: IDS.org.a, assignedCompanyId: IDS.org.a, scope: 'SAVR', status: 'ASSIGNED' },
       { id: IDS.session.b, sessionNo: 'OPS-B-1', workspaceId: IDS.tenant.t1, organizationId: IDS.org.b, assignedCompanyId: IDS.org.b, assignedQaUserId: IDS.user.supA, scope: 'SAVR', status: 'ASSIGNED' },
     ],
+  });
+
+  // Maintenance-handoff (RELEASE_ON_REPORT) fixture: a maintenance company + a
+  // user in it + a defect on company A's SUBMITTED inspection stamped with
+  // maintenanceOrganizationId = MaintCo (as if released + routed at LAPORAN
+  // SELESAI). The maint-org branch of defectAccessScope should grant MaintCo
+  // cross-company visibility of exactly this routed defect — and nothing else.
+  await prisma.organization.create({
+    data: { id: IDS.org.maint, name: 'Maintenance Co', code: 'MNT', type: 'MAIN_CONTRACTOR', tenantId: IDS.tenant.t1 },
+  });
+  await prisma.user.create({
+    data: { id: IDS.user.maint, tenantId: IDS.tenant.t1, email: EMAILS.maintUser, name: 'Maint User', passwordHash, role: 'TECHNICIAN', organizationId: IDS.org.maint },
+  });
+  await prisma.inspectionItemResult.create({
+    data: { id: IDS.itemResult.routed, inspectionId: IDS.inspection.a, label: 'Routed condition', result: 'FAIL', isDefect: true, severity: 'HIGH' },
+  });
+  await prisma.defect.create({
+    data: { id: IDS.defect.routed, inspectionItemResultId: IDS.itemResult.routed, maintenanceOrganizationId: IDS.org.maint, status: 'OPEN', severity: 'HIGH', lifecycleStatus: 'VERIFIED' },
   });
 }
