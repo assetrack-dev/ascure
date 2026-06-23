@@ -11,6 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
 import { IsUUID } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -66,7 +67,7 @@ export class SiteVisitsController {
   }
 
   @Post(':id/images')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', IMAGE_UPLOAD_OPTIONS))
   uploadImage(
     @CurrentUser() user: RequestUser,
     @Param() params: SiteVisitIdParamDto,

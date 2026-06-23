@@ -8,6 +8,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { SPREADSHEET_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -24,7 +25,7 @@ export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
 
   @Post('validate')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', SPREADSHEET_UPLOAD_OPTIONS))
   validate(
     @CurrentUser() user: RequestUser,
     @UploadedFile() file: UploadedExcel,
@@ -35,7 +36,7 @@ export class ImportsController {
   }
 
   @Post('commit')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', SPREADSHEET_UPLOAD_OPTIONS))
   commit(
     @CurrentUser() user: RequestUser,
     @UploadedFile() file: UploadedExcel,

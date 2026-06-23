@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -78,7 +79,7 @@ export class InspectionsController {
   }
 
   @Post(':inspectionId/images')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', IMAGE_UPLOAD_OPTIONS))
   uploadImage(
     @CurrentUser() user: RequestUser,
     @Param() params: InspectionImageParamDto,

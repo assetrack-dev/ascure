@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
+import { MulterExceptionFilter } from './common/filters/multer-exception.filter';
 import { UPLOADS_DIRECTORY } from './common/uploads.constants';
 
 /**
@@ -71,4 +72,8 @@ export function configureApp(app: NestExpressApplication): void {
       transformOptions: { enableImplicitConversion: true },
     }),
   );
+
+  // Map multer upload errors (oversize → 413, other → 400) to clean responses
+  // instead of a 500.
+  app.useGlobalFilters(new MulterExceptionFilter());
 }

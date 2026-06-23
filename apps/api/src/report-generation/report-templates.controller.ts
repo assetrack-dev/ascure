@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { DOCX_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -43,7 +44,7 @@ export class ReportTemplatesController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', DOCX_UPLOAD_OPTIONS))
   upload(
     @CurrentUser() user: RequestUser,
     @UploadedFile()
