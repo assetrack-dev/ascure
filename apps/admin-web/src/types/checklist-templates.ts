@@ -81,6 +81,12 @@ export interface ChecklistTemplateOption {
    * items (replaces fragile keyword guessing for Bahasa Malaysia labels).
    */
   isDefect?: boolean;
+  /**
+   * Per-option defect severity (only on a defect option). When set, a defect
+   * raised by picking this option uses THIS severity instead of the item-level
+   * one — e.g. KUANTAN's A→CRITICAL / B→HIGH / C→LOW classification.
+   */
+  severity?: DefectSeverity;
 }
 
 export type ChecklistShowIfOperator =

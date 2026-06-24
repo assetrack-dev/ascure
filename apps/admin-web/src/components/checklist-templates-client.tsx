@@ -297,8 +297,12 @@ function optionLines(options: ChecklistTemplateOption[] | undefined) {
           ? option.label
           : `${option.label} | ${option.value}`;
       const withPrefix = option.prefix ? `${baseLine} | ${option.prefix}` : baseLine;
+      const withDefect = option.isDefect ? `${withPrefix} | defect` : withPrefix;
 
-      return option.isDefect ? `${withPrefix} | defect` : withPrefix;
+      // Per-option severity rides as a final token (e.g. KUANTAN "A | A | defect | CRITICAL").
+      return option.isDefect && option.severity
+        ? `${withDefect} | ${option.severity}`
+        : withDefect;
     })
     .join("\n");
 }
@@ -596,6 +600,7 @@ function parseOptions(optionsText: string) {
     // keyword "defect", which flags this option as a defect (result = FAIL).
     let prefix: string | undefined;
     let isDefect = false;
+    let severity: DefectSeverity | undefined;
     for (const token of rest) {
       const normalizedToken = token.trim();
 
@@ -605,6 +610,11 @@ function parseOptions(optionsText: string) {
 
       if (normalizedToken.toLowerCase() === "defect") {
         isDefect = true;
+      } else if (
+        DEFECT_SEVERITY_OPTIONS.some((option) => option.value === normalizedToken.toUpperCase())
+      ) {
+        // A severity keyword (LOW/MEDIUM/HIGH/CRITICAL) → per-option defect severity.
+        severity = normalizedToken.toUpperCase() as DefectSeverity;
       } else if (prefix === undefined) {
         prefix = normalizedToken;
       }
@@ -624,6 +634,10 @@ function parseOptions(optionsText: string) {
     }
     if (isDefect) {
       option.isDefect = true;
+    }
+    // Severity only rides on a defect option (overrides the item severity).
+    if (isDefect && severity) {
+      option.severity = severity;
     }
 
     options.push(option);
@@ -1048,13 +1062,17 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
             value={item.optionsText}
             onChange={(event) => onUpdateItem(item.localId, { optionsText: event.target.value })}
             className={`${textareaClassName} mt-1.5`}
-            placeholder="REPOT/RETAK | REPOT_RETAK | T | defect"
+            placeholder={"A - Super Critical | A | defect | CRITICAL\nB - Critical | B | defect | HIGH\nC - Minor | C | defect | LOW"}
           />
           <span className="mt-1.5 block text-xs text-slate-500">
             One option per line: <code>Label | value | prefix</code>. Append{" "}
             <code>| defect</code> to flag an option as a defect (records FAIL and
-            creates a defect when chosen) — works for any language. Prefix is
-            optional; e.g. <code>Rosak | rosak | defect</code>.
+            creates a defect when chosen) — works for any language. To set that
+            defect&apos;s severity per option, add a level after it —{" "}
+            <code>| CRITICAL</code> / <code>HIGH</code> / <code>MEDIUM</code> /{" "}
+            <code>LOW</code> (e.g. KUANTAN&apos;s{" "}
+            <code>A - Super Critical | A | defect | CRITICAL</code>); without one
+            the item&apos;s default severity is used. Prefix is optional.
           </span>
         </label>
       ) : null}

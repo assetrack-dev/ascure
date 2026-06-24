@@ -398,7 +398,14 @@ export class InspectionsService {
     }
 
     if (hasStructuredItems) {
-      await this.saveStructuredItemResults(inspection, dto.items ?? []);
+      // The chosen option value(s) per item arrive in the parallel `results`
+      // payload — pass them so a defect option's own severity (e.g. KUANTAN's
+      // A/B/C) can override the item-level severity on the raised defect.
+      await this.saveStructuredItemResults(
+        inspection,
+        dto.items ?? [],
+        this.buildChosenValuesByTemplateItem(dto.results ?? []),
+      );
     }
 
     if (hasLegacyResults) {
@@ -512,9 +519,72 @@ export class InspectionsService {
     return this.reloadForm(user, inspectionId);
   }
 
+  /** Map templateItemId → chosen option value(s) from the structured `results`
+   *  payload (valueText for single-select, valueJson array for multi-select).
+   *  Lets the save path resolve a defect option's per-option severity. */
+  private buildChosenValuesByTemplateItem(
+    results: SaveInspectionResultItemDto[],
+  ): Map<string, string[]> {
+    const chosen = new Map<string, string[]>();
+    for (const result of results) {
+      const values: string[] = [];
+      if (typeof result.valueText === 'string' && result.valueText.trim()) {
+        values.push(result.valueText.trim());
+      }
+      if (Array.isArray(result.valueJson)) {
+        for (const entry of result.valueJson) {
+          if (typeof entry === 'string' && entry.trim()) {
+            values.push(entry.trim());
+          }
+        }
+      }
+      if (values.length > 0) {
+        chosen.set(result.templateItemId, values);
+      }
+    }
+    return chosen;
+  }
+
+  /** A raised defect's severity: a chosen defect option's own severity wins
+   *  (highest if several were picked), else the item-level severity, else
+   *  MEDIUM. YES/NO items (no per-option severity) are unchanged. */
+  private resolveDefectSeverity(
+    templateItem:
+      | { optionsJson: Prisma.JsonValue | null; severity: DefectSeverity }
+      | null
+      | undefined,
+    chosenValues: string[] | undefined,
+  ): DefectSeverity {
+    const fallback = templateItem?.severity ?? DefectSeverity.MEDIUM;
+    if (!templateItem || !chosenValues || chosenValues.length === 0) {
+      return fallback;
+    }
+    const options = normalizeTemplateSelectOptions(templateItem.optionsJson);
+    if (!options) {
+      return fallback;
+    }
+    const rank: Record<DefectSeverity, number> = {
+      [DefectSeverity.LOW]: 0,
+      [DefectSeverity.MEDIUM]: 1,
+      [DefectSeverity.HIGH]: 2,
+      [DefectSeverity.CRITICAL]: 3,
+    };
+    const chosen = new Set(chosenValues);
+    let best: DefectSeverity | null = null;
+    for (const option of options) {
+      if (option.isDefect && option.severity && chosen.has(option.value)) {
+        if (!best || rank[option.severity] > rank[best]) {
+          best = option.severity;
+        }
+      }
+    }
+    return best ?? fallback;
+  }
+
   private async saveStructuredItemResults(
     inspection: Awaited<ReturnType<InspectionsService['getAccessibleInspection']>>,
     items: SaveInspectionItemResultDto[],
+    chosenValuesByTemplateItem: Map<string, string[]> = new Map(),
   ) {
     const templateItems = this.flattenTemplateItems(inspection.template.sections);
     const templateItemIds = new Set(templateItems.map((item) => item.id));
@@ -542,10 +612,15 @@ export class InspectionsService {
       // Emergency only carries meaning on an actual defect — an inspector
       // flagging a dangerous-to-public condition on a failed item.
       const isEmergency = isDefect && item.isEmergency === true;
-      const severity =
-        templateItem && templateItem.isDefectTrigger !== false
-          ? templateItem.severity ?? DefectSeverity.MEDIUM
-          : null;
+      // Severity only on an actual defect (blank otherwise — KUANTAN "no defect"
+      // is a blank pick). A chosen defect option may carry its own severity
+      // (A/B/C); resolveDefectSeverity prefers it, else the item-level severity.
+      const severity = isDefect
+        ? this.resolveDefectSeverity(
+            templateItem,
+            checklistItemId ? chosenValuesByTemplateItem.get(checklistItemId) : undefined,
+          )
+        : null;
       // Work-type carried from the template item so the materialized defect can
       // be packaged/filtered by the maintenance company (null = SELENGGARAAN).
       const maintenanceCategory = templateItem?.maintenanceCategory ?? null;

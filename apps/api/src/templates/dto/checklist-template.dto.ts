@@ -65,6 +65,10 @@ export class ChecklistTemplateOptionInputDto {
   @IsOptional()
   @IsBoolean()
   isDefect?: boolean;
+
+  @IsOptional()
+  @IsEnum(DefectSeverity)
+  severity?: DefectSeverity;
 }
 
 export const CHECKLIST_TEMPLATE_SHOW_IF_OPERATORS = [
