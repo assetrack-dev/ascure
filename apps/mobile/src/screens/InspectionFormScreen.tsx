@@ -161,7 +161,10 @@ export function InspectionFormScreen() {
         ...baseRoutes.map((route) => ({ name: route.name, params: route.params })),
         {
           name: 'VisitAssetMap',
-          params: { visitId, substationId, successMessage },
+          // focusAssetId zooms the map onto the pole just inspected (the map
+          // resolves its coordinate from the loaded list) so the crew continues
+          // from where they were rather than the whole-substation overview.
+          params: { visitId, substationId, successMessage, focusAssetId: form?.inspection.assetId },
         },
       ];
 

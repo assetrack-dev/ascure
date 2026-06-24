@@ -160,10 +160,13 @@ export function MapScreen() {
   const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
   const { visitId, substationId, focusAssetId, focusLatitude, focusLongitude, successMessage } =
     route.params ?? {};
-  // When opened from the Asset Detail mini-map, centre on that asset instead of
-  // the user's current location.
-  const hasAssetFocus =
+  // Focus = open the map centred + zoomed on one pole instead of the user's
+  // location. Two callers: the Asset Detail mini-map passes explicit coords; the
+  // post-submit redirect passes just the inspected asset id and we resolve its
+  // coordinate from the loaded asset list ("zoom to the last saved location").
+  const hasExplicitFocusCoordinate =
     typeof focusLatitude === 'number' && typeof focusLongitude === 'number';
+  const hasAssetFocus = hasExplicitFocusCoordinate || Boolean(focusAssetId);
   // This screen is reused both as the drawer's AssetMap and as a root-stack
   // VisitAssetMap pushed from VisitDetail. Only the drawer instance has
   // openDrawer; the pushed instance shows a Back button instead (issue #6).
@@ -202,7 +205,7 @@ export function MapScreen() {
   const [showSequenceWarnings, setShowSequenceWarnings] = useState(false);
   const [mapFilters, setMapFilters] = useState<MapFilters>(INITIAL_MAP_FILTERS);
   const [region, setRegion] = useState<Region>(
-    hasAssetFocus
+    hasExplicitFocusCoordinate
       ? createCurrentLocationRegion({
           latitude: focusLatitude as number,
           longitude: focusLongitude as number,
@@ -378,9 +381,18 @@ export function MapScreen() {
           const nextDefectMarkers = await loadDefectMarkers(token, assetList);
           setDefectMarkers(nextDefectMarkers);
 
-          // When opened to focus a specific asset, keep that centre — don't
-          // re-fit the camera to the whole substation once the poles arrive.
-          if (!hasAssetFocus) {
+          // Centre on the focus target — explicit coords (Asset Detail), or the
+          // just-inspected pole resolved from this fresh list (post-submit "zoom
+          // to last saved location") — if we can; otherwise fit the substation.
+          const focusCoordinate = hasExplicitFocusCoordinate
+            ? { latitude: focusLatitude as number, longitude: focusLongitude as number }
+            : getAssetCoordinate(
+                focusAssetId ? assetList.find((asset) => asset.id === focusAssetId) : undefined,
+              );
+
+          if (focusCoordinate) {
+            setRegion(createCurrentLocationRegion(focusCoordinate));
+          } else {
             const nextRegion = createRegion([
               ...assetList.map(getAssetCoordinate).filter(isCoordinate),
               ...nextDefectMarkers.map((defect) => ({
@@ -406,7 +418,16 @@ export function MapScreen() {
         }
       }
     },
-    [handleUnauthorized, hasAssetFocus, substationId, token, visitId],
+    [
+      handleUnauthorized,
+      hasExplicitFocusCoordinate,
+      focusAssetId,
+      focusLatitude,
+      focusLongitude,
+      substationId,
+      token,
+      visitId,
+    ],
   );
 
   // Refetch when the Map regains focus (e.g. returning after submitting an
@@ -461,19 +482,28 @@ export function MapScreen() {
     }
   }, [centerMapOnCoordinate, currentCoordinate, hasAssetFocus, hasVisibleMapMarkers, isLoading]);
 
-  // One-shot centre on the asset passed from Asset Detail (the initial region is
-  // already set to it; this re-animates once the native map is mounted).
+  // Resolve the focus target's coordinate: explicit coords win; otherwise look up
+  // the focused asset (e.g. the pole just inspected) once the list has loaded.
+  const resolvedFocusCoordinate = useMemo<Coordinate | null>(() => {
+    if (hasExplicitFocusCoordinate) {
+      return { latitude: focusLatitude as number, longitude: focusLongitude as number };
+    }
+    if (!focusAssetId) {
+      return null;
+    }
+    return getAssetCoordinate(assets.find((asset) => asset.id === focusAssetId));
+  }, [hasExplicitFocusCoordinate, focusLatitude, focusLongitude, focusAssetId, assets]);
+
+  // One-shot centre + zoom on the focus target once its coordinate is known
+  // (explicit immediately; an asset id after the poles load).
   const hasFocusedOnAssetRef = useRef(false);
   useEffect(() => {
-    if (hasFocusedOnAssetRef.current || !hasAssetFocus) {
+    if (hasFocusedOnAssetRef.current || !resolvedFocusCoordinate) {
       return;
     }
     hasFocusedOnAssetRef.current = true;
-    centerMapOnCoordinate({
-      latitude: focusLatitude as number,
-      longitude: focusLongitude as number,
-    });
-  }, [centerMapOnCoordinate, focusLatitude, focusLongitude, hasAssetFocus]);
+    centerMapOnCoordinate(resolvedFocusCoordinate);
+  }, [centerMapOnCoordinate, resolvedFocusCoordinate]);
 
   function handleLongPress(event: LongPressEvent) {
     if (!canInspect) {
