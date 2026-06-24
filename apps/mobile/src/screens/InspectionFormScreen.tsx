@@ -1119,7 +1119,7 @@ export function InspectionFormScreen() {
           {!isReadOnly ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Declare emergency"
+              accessibilityLabel="Report emergency"
               onPress={() => setEmergencySheetVisible(true)}
               disabled={isDeclaringEmergency}
               style={({ pressed }) => [
@@ -1127,7 +1127,7 @@ export function InspectionFormScreen() {
                 (pressed || isDeclaringEmergency) && styles.declareEmergencyButtonPressed,
               ]}
             >
-              <Text style={styles.declareEmergencyButtonText}>🚨 Declare emergency</Text>
+              <Text style={styles.declareEmergencyButtonText}>🚨 Report Emergency</Text>
             </Pressable>
           ) : null}
 

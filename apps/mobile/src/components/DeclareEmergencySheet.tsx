@@ -140,7 +140,7 @@ export function DeclareEmergencySheet({
         <View style={styles.sheet}>
           <View style={styles.grabber} />
           <View style={styles.header}>
-            <Text style={styles.title}>Declare emergency</Text>
+            <Text style={styles.title}>Report Emergency</Text>
             <View style={styles.criticalPill}>
               <Text style={styles.criticalPillText}>CRITICAL</Text>
             </View>
