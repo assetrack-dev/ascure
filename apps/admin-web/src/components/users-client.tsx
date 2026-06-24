@@ -1353,10 +1353,10 @@ function UsersContent() {
                   <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                        <th className="min-w-56 px-5 py-3.5 font-semibold">Name</th>
-                        <th className="min-w-64 px-5 py-3.5 font-semibold">Email</th>
+                        <th className="min-w-44 px-5 py-3.5 font-semibold">Name</th>
+                        <th className="min-w-48 px-5 py-3.5 font-semibold">Email</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Role</th>
-                        <th className="min-w-64 px-5 py-3.5 font-semibold">Scope</th>
+                        <th className="min-w-44 px-5 py-3.5 font-semibold">Scope</th>
                         <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
                         <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">
                           Actions
@@ -1398,23 +1398,23 @@ function UsersContent() {
                                 </div>
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                              {user.email}
+                            <td className="px-5 py-4 text-slate-700">
+                              <div className="max-w-48 truncate">{user.email}</div>
                             </td>
                             <td className="whitespace-nowrap px-5 py-4">
                               <RoleBadge role={user.role} />
                             </td>
                             <td className="px-5 py-4 text-slate-700">
-                              <div className="max-w-72 truncate font-medium text-slate-900">
+                              <div className="max-w-44 truncate font-medium text-slate-900">
                                 {scopeLabel}
                               </div>
                               {userCapabilities ? (
-                                <div className="mt-1 max-w-72 truncate text-xs text-[var(--muted)]">
+                                <div className="mt-1 max-w-44 truncate text-xs text-[var(--muted)]">
                                   {userCapabilities}
                                 </div>
                               ) : null}
                               {regionAccess ? (
-                                <div className="mt-1 max-w-72 truncate text-xs text-[var(--muted)]">
+                                <div className="mt-1 max-w-44 truncate text-xs text-[var(--muted)]">
                                   Regions: {regionAccess}
                                 </div>
                               ) : null}

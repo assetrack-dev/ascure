@@ -668,7 +668,7 @@ function DefectsContent() {
             ) : (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(200px,1fr)_repeat(7,minmax(130px,auto))_auto]">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     <label className="relative block">
                       <span className="sr-only">Search defects</span>
                       <Search

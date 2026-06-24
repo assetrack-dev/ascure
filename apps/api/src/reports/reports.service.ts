@@ -161,11 +161,17 @@ export class ReportsService {
     const substations = await this.prisma.substation.findMany({
       where: { tenantId: user.tenantId, isActive: true },
       orderBy: [{ name: 'asc' }],
-      select: { id: true, code: true, name: true, location: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        location: true,
+        _count: { select: { assets: true } },
+      },
     });
 
     if (substations.length === 0) {
-      return [] as Array<(typeof substations)[number] & { mainhead: string | null }>;
+      return [];
     }
 
     const visits = await this.prisma.siteVisit.findMany({
@@ -192,9 +198,10 @@ export class ReportsService {
       }
     }
 
-    return substations.map((substation) => ({
+    return substations.map(({ _count, ...substation }) => ({
       ...substation,
       mainhead: mainheadBySubstation.get(substation.id) ?? null,
+      assetCount: _count.assets,
     }));
   }
 

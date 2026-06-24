@@ -68,6 +68,12 @@ function NetworkContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [substations, setSubstations] = useState<ReportSubstation[]>([]);
+  // Hide empty Pencawang (no poles) from the picker so blank/test substations
+  // don't clutter the network view. The full list still backs id lookups.
+  const visibleSubstations = useMemo(
+    () => substations.filter((substation) => substation.assetCount > 0),
+    [substations],
+  );
   const [selectedId, setSelectedId] = useState("");
   const [network, setNetwork] = useState<SubstationNetwork | null>(null);
   const [isolation, setIsolation] = useState<FeederIsolation | null>(null);
@@ -397,17 +403,17 @@ function NetworkContent() {
                   setSelectedId(event.target.value);
                   void loadNetwork(event.target.value);
                 }}
-                disabled={isLoading || substations.length === 0}
+                disabled={isLoading || visibleSubstations.length === 0}
                 className={`${inputClassName} mt-1.5`}
               >
                 <option value="">
                   {isLoading
                     ? "Loading…"
-                    : substations.length === 0
+                    : visibleSubstations.length === 0
                       ? "No Pencawang available"
                       : "Select a Pencawang"}
                 </option>
-                {substations.map((substation) => (
+                {visibleSubstations.map((substation) => (
                   <option key={substation.id} value={substation.id}>
                     {substation.code} - {substation.name}
                   </option>
