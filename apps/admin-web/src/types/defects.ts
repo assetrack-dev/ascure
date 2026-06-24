@@ -143,6 +143,11 @@ export interface DefectListItem {
   assetId?: string;
   assetCode: string;
   assetType?: string | null;
+  substation?: {
+    code?: string | null;
+    name?: string | null;
+    location?: string | null;
+  } | null;
   defectType: string;
   severity: DefectSeverity | null;
   status: DefectStatus;

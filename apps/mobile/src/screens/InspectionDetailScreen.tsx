@@ -235,8 +235,11 @@ export function InspectionDetailScreen() {
                                 activeOpacity={0.85}
                                 onPress={() =>
                                   navigation.navigate('ImagePreview', {
-                                    uri: imageUri,
-                                    title: image.type || 'Inspection Image',
+                                    images: groupImages.map((groupImage) => ({
+                                      uri: getImageSourceUri(groupImage) ?? '',
+                                      title: groupImage.type || 'Inspection Image',
+                                    })),
+                                    index,
                                   })
                                 }
                               >

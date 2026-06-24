@@ -65,6 +65,7 @@ import type {
   ChecklistTemplateScopeLevel,
   ChecklistTemplateStatus,
   DefectSeverity,
+  MaintenanceCategory,
 } from "@/types/checklist-templates";
 
 type StatusFilter = "ALL" | ChecklistTemplateStatus;
@@ -87,6 +88,8 @@ interface TemplateFormItem {
   isActive: boolean;
   isDefectTrigger: boolean;
   severity: DefectSeverity;
+  /** Maintenance work-type for defects from this item. null = SELENGGARAAN. */
+  maintenanceCategory: MaintenanceCategory | null;
   optionsText: string;
   imageConfig: ChecklistImageConfig;
   measurementConfig: ChecklistMeasurementConfig;
@@ -232,6 +235,7 @@ function createBlankItem(): TemplateFormItem {
     isActive: true,
     isDefectTrigger: true,
     severity: "MEDIUM",
+    maintenanceCategory: null,
     optionsText: "",
     imageConfig: defaultImageConfig(),
     measurementConfig: defaultMeasurementConfig(),
@@ -352,6 +356,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     isActive: item.isActive !== false,
     isDefectTrigger: item.isDefectTrigger,
     severity: item.severity ?? "MEDIUM",
+    maintenanceCategory: item.maintenanceCategory ?? null,
     optionsText: optionLines(item.options),
     imageConfig: item.imageConfig ?? config?.image ?? defaultImageConfig(),
     measurementConfig: item.measurementConfig ?? config?.measurement ?? defaultMeasurementConfig(),
@@ -694,6 +699,7 @@ function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
       isActive: itemIsActive,
       isDefectTrigger: item.isDefectTrigger,
       severity: item.severity,
+      maintenanceCategory: item.maintenanceCategory,
       options,
       optionsJson: buildItemOptionsJson(item, options),
       showIf: item.showIf,
@@ -990,24 +996,43 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
 
       {item.isDefectTrigger ? (
         <div className="mt-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <label className="block min-w-0 sm:max-w-xs">
-            <span className="text-sm font-semibold text-slate-700">Severity</span>
-            <select
-              value={item.severity}
-              onChange={(event) =>
-                onUpdateItem(item.localId, {
-                  severity: event.target.value as DefectSeverity,
-                })
-              }
-              className={`${inputClassName} mt-1.5`}
-            >
-              {DEFECT_SEVERITY_OPTIONS.map((severity) => (
-                <option key={severity.value} value={severity.value}>
-                  {severity.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+            <label className="block min-w-0 sm:max-w-xs">
+              <span className="text-sm font-semibold text-slate-700">Severity</span>
+              <select
+                value={item.severity}
+                onChange={(event) =>
+                  onUpdateItem(item.localId, {
+                    severity: event.target.value as DefectSeverity,
+                  })
+                }
+                className={`${inputClassName} mt-1.5`}
+              >
+                {DEFECT_SEVERITY_OPTIONS.map((severity) => (
+                  <option key={severity.value} value={severity.value}>
+                    {severity.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block min-w-0 sm:max-w-xs">
+              <span className="text-sm font-semibold text-slate-700">Work-type</span>
+              <select
+                value={item.maintenanceCategory ?? ""}
+                onChange={(event) =>
+                  onUpdateItem(item.localId, {
+                    maintenanceCategory:
+                      (event.target.value || null) as MaintenanceCategory | null,
+                  })
+                }
+                className={`${inputClassName} mt-1.5`}
+              >
+                <option value="">Selenggaraan (default)</option>
+                <option value="RENTIS">Rentis</option>
+                <option value="CAT_TIANG">Cat tiang</option>
+              </select>
+            </label>
+          </div>
           <div className="flex min-h-10 items-center">
             <SeverityBadge severity={item.severity} />
           </div>

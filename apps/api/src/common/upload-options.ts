@@ -44,6 +44,25 @@ export const IMAGE_UPLOAD_OPTIONS = uploadOptions(
   ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'],
 );
 
+/**
+ * Defect evidence — photos OR a short clip (e.g. an emergency NCV live-current
+ * check, or maintenance proof). Allows the image types plus mp4/quicktime at a
+ * higher cap; the mobile caps recording at ~30s so a clip stays well under this.
+ */
+export const EVIDENCE_MEDIA_UPLOAD_OPTIONS = uploadOptions(
+  60 * MB,
+  [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'video/mp4',
+    'video/quicktime',
+  ],
+  ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.mp4', '.mov'],
+);
+
 /** AppSheet / masterlist spreadsheet imports. */
 export const SPREADSHEET_UPLOAD_OPTIONS = uploadOptions(
   25 * MB,

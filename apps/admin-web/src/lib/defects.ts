@@ -360,6 +360,8 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
   }
 
   const asset = nestedRecord(record, "asset");
+  const substationRecord =
+    nestedRecord(record, "substation") ?? nestedRecord(asset, "substation");
   const date = readDate(record);
   const inspectionItemResultId = firstString(record, ["inspectionItemResultId", "itemResultId"]);
   const assignedUser =
@@ -427,6 +429,13 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
     assetCode,
     assetType:
       firstString(record, ["assetType"]) ?? firstString(nestedRecord(asset, "assetType"), ["name", "code"]),
+    substation: substationRecord
+      ? {
+          code: firstString(substationRecord, ["code"]),
+          name: firstString(substationRecord, ["name"]),
+          location: firstString(substationRecord, ["location"]),
+        }
+      : null,
     defectType:
       firstString(record, ["defectType", "type", "label", "defectTitle", "title", "code"]) ??
       "Unspecified defect",

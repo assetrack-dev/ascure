@@ -42,6 +42,7 @@ type SortDirection = "asc" | "desc";
 type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
 type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
+type PencawangFilter = "ALL" | string;
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -179,6 +180,18 @@ function formatSlaState(state: DefectListItem["slaState"]) {
 
 function formatAssignee(defect: DefectListItem) {
   return defect.assignedTo?.trim() || "Unassigned";
+}
+
+function pencawangKeyOf(defect: DefectListItem) {
+  return defect.substation?.code?.trim() || defect.substation?.name?.trim() || "";
+}
+
+function pencawangLabelOf(defect: DefectListItem) {
+  return (
+    defect.substation?.name?.trim() ||
+    defect.substation?.code?.trim() ||
+    pencawangKeyOf(defect)
+  );
 }
 
 function toDateInputValue(date: string | null) {
@@ -393,6 +406,7 @@ function DefectsContent() {
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [assignedUserFilter, setAssignedUserFilter] = useState<AssignedUserFilter>("ALL");
+  const [pencawangFilter, setPencawangFilter] = useState<PencawangFilter>("ALL");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -444,6 +458,7 @@ function DefectsContent() {
     severityFilter,
     statusFilter,
     assignedUserFilter,
+    pencawangFilter,
     overdueOnly,
     startDate,
     endDate,
@@ -472,6 +487,24 @@ function DefectsContent() {
     );
   }, [defects]);
 
+  const pencawangOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    defects.forEach((defect) => {
+      const key = pencawangKeyOf(defect);
+
+      if (!key || options.has(key)) {
+        return;
+      }
+
+      options.set(key, pencawangLabelOf(defect));
+    });
+
+    return Array.from(options.entries()).sort((left, right) =>
+      left[1].localeCompare(right[1], "en", { numeric: true, sensitivity: "base" }),
+    );
+  }, [defects]);
+
   const filteredDefects = useMemo(() => {
     const normalizedSearch = normalizeSearchText(search);
 
@@ -485,6 +518,8 @@ function DefectsContent() {
         (assignedUserFilter === "UNASSIGNED"
           ? !defect.assignedUserId
           : defect.assignedUserId === assignedUserFilter);
+      const matchesPencawang =
+        pencawangFilter === "ALL" || pencawangKeyOf(defect) === pencawangFilter;
       const matchesOverdue = !overdueOnly || Boolean(defect.isOverdue);
       const matchesStartDate = !startDate || (defectDate && defectDate >= startDate);
       const matchesEndDate = !endDate || (defectDate && defectDate <= endDate);
@@ -503,6 +538,8 @@ function DefectsContent() {
           formatAssignee(defect),
           formatSlaState(defect.slaState),
           defect.location,
+          defect.substation?.name,
+          defect.substation?.code,
           defect.remark,
           defect.actionRemark,
         ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
@@ -511,6 +548,7 @@ function DefectsContent() {
         matchesSeverity &&
         matchesStatus &&
         matchesAssignedUser &&
+        matchesPencawang &&
         matchesOverdue &&
         matchesStartDate &&
         matchesEndDate &&
@@ -519,6 +557,7 @@ function DefectsContent() {
     });
   }, [
     assignedUserFilter,
+    pencawangFilter,
     defects,
     endDate,
     overdueOnly,
@@ -571,6 +610,7 @@ function DefectsContent() {
     setSeverityFilter("ALL");
     setStatusFilter("ALL");
     setAssignedUserFilter("ALL");
+    setPencawangFilter("ALL");
     setOverdueOnly(false);
     setStartDate("");
     setEndDate("");
@@ -628,7 +668,7 @@ function DefectsContent() {
             ) : (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                 <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(6,minmax(135px,auto))_auto]">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(200px,1fr)_repeat(7,minmax(130px,auto))_auto]">
                     <label className="relative block">
                       <span className="sr-only">Search defects</span>
                       <Search
@@ -671,6 +711,24 @@ function DefectsContent() {
                         {STATUS_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="sr-only">Pencawang</span>
+                      <select
+                        value={pencawangFilter}
+                        onChange={(event) =>
+                          setPencawangFilter(event.target.value as PencawangFilter)
+                        }
+                        className={filterControlClassName}
+                      >
+                        <option value="ALL">All Pencawang</option>
+                        {pencawangOptions.map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
                           </option>
                         ))}
                       </select>

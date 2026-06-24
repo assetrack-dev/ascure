@@ -14,7 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -31,7 +31,6 @@ import {
   buildChecklistItemsPayloadFromDraft,
   buildResultsPayload,
   createInitialDraftValues,
-  createInitialEmergencyMap,
   formatDateTime,
   getBooleanDefectValue,
   getInspectionItemResultValue,
@@ -70,6 +69,10 @@ import {
   InspectionTemplateSection,
   InspectionTemplateItem,
 } from '../types';
+import {
+  DeclareEmergencySheet,
+  EmergencyMedia,
+} from '../components/DeclareEmergencySheet';
 
 type PhotoUploadState = 'uploading' | 'uploaded' | 'error';
 
@@ -135,13 +138,41 @@ export function InspectionFormScreen() {
   const { token, handleUnauthorized } = useSession();
   const { isOffline } = useSync();
 
-  function goBackToVisit(successMessage: string) {
-    navigation.popTo('VisitDetail', { visitId, substationId, successMessage });
+  // After a submit we land the crew on the substation Map (not the visit
+  // summary) so they can tap the next pole and keep inspecting — cutting the
+  // extra "open Map" tap. Rebuild the stack so the map sits directly on top of
+  // the visit it belongs to (VisitDetail → VisitAssetMap), regardless of how the
+  // form was reached (visit list, map, or Add-Asset), so Back from the map
+  // returns to the visit rather than the just-submitted form. When no
+  // VisitDetail is in the stack (legacy operational-session flow) the map is
+  // pushed on top — still lands on the map without injecting an invalid visit.
+  function goToMapAfterSubmit(successMessage: string) {
+    navigation.dispatch((state) => {
+      const visitDetailIndex = state.routes.findIndex(
+        (route) => route.name === 'VisitDetail',
+      );
+      const baseRoutes =
+        visitDetailIndex >= 0
+          ? state.routes.slice(0, visitDetailIndex + 1)
+          : state.routes;
+      // Rebuild as a partial (keyless) state so we can append the new map route
+      // without minting a route key by hand; React Navigation rehydrates it.
+      const routes = [
+        ...baseRoutes.map((route) => ({ name: route.name, params: route.params })),
+        {
+          name: 'VisitAssetMap',
+          params: { visitId, substationId, successMessage },
+        },
+      ];
+
+      return CommonActions.reset({ index: routes.length - 1, routes });
+    });
   }
 
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
-  const [emergencyItemIds, setEmergencyItemIds] = useState<Record<string, boolean>>({});
+  const [emergencySheetVisible, setEmergencySheetVisible] = useState(false);
+  const [isDeclaringEmergency, setIsDeclaringEmergency] = useState(false);
   const [scanningItemId, setScanningItemId] = useState<string | null>(null);
   const [capturingItemId, setCapturingItemId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
@@ -245,7 +276,6 @@ export function InspectionFormScreen() {
 
       setForm(formResponse);
       setDraftValues(createInitialDraftValues(formResponse));
-      setEmergencyItemIds(createInitialEmergencyMap(formResponse));
       setPhotoList(() => buildSeededPhotosFromForm(formResponse));
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
@@ -371,23 +401,63 @@ export function InspectionFormScreen() {
     });
   }
 
-  function toggleEmergency(itemId: string, nextValue: boolean) {
+  async function handleDeclareEmergency(payload: {
+    note: string;
+    media: EmergencyMedia | null;
+  }) {
+    // Instant declare needs the server (Option 1). An offline-created pole has no
+    // server id yet — tell the inspector to sync first rather than silently fail.
+    if (isTempId(inspectionId)) {
+      setEmergencySheetVisible(false);
+      setError(
+        'Sync this pole first — an emergency report needs a connection to send immediately.',
+      );
+      return;
+    }
+
+    setIsDeclaringEmergency(true);
+    setError(null);
     setSaveNotice(null);
-    setEmergencyItemIds((current) => {
-      if (Boolean(current[itemId]) === nextValue) {
-        return current;
+
+    try {
+      const { defectId } = await api.declareEmergency(token, inspectionId, {
+        note: payload.note,
+      });
+
+      if (payload.media) {
+        try {
+          await api.uploadDefectEvidenceMedia(token, defectId, {
+            uri: payload.media.uri,
+            contentType: payload.media.contentType,
+            evidenceType: 'EMERGENCY',
+            note: payload.note,
+          });
+        } catch {
+          // The alert is already out — a media-upload failure must not block it.
+          setEmergencySheetVisible(false);
+          setSaveNotice(
+            'Emergency reported. The photo/clip did not upload — you can add it from the defect later.',
+          );
+          return;
+        }
       }
 
-      const next = { ...current };
-
-      if (nextValue) {
-        next[itemId] = true;
-      } else {
-        delete next[itemId];
+      setEmergencySheetVisible(false);
+      setSaveNotice('Emergency reported. The response team has been alerted.');
+    } catch (declareError) {
+      if (declareError instanceof ApiError && declareError.status === 401) {
+        await handleUnauthorized(declareError);
+        return;
       }
 
-      return next;
-    });
+      setError(
+        declareError instanceof Error
+          ? declareError.message
+          : 'Unable to report the emergency.',
+      );
+    } finally {
+      setIsDeclaringEmergency(false);
+    }
   }
 
   function updatePhoto(photoId: string, changes: Partial<CapturedInspectionPhoto>) {
@@ -750,7 +820,6 @@ export function InspectionFormScreen() {
       const updatedForm = await api.amendInspection(token, inspectionId);
       setForm(updatedForm);
       setDraftValues(createInitialDraftValues(updatedForm));
-      setEmergencyItemIds(createInitialEmergencyMap(updatedForm));
       setPhotoList(() => buildSeededPhotosFromForm(updatedForm));
       setSaveNotice('Inspection re-opened. Fix the entries, then submit again.');
     } catch (amendError) {
@@ -810,7 +879,6 @@ export function InspectionFormScreen() {
 
     const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
       includeEmpty: true,
-      emergencyByItemId: emergencyItemIds,
     });
     const submissionPayload = {
       results: supportedResults,
@@ -826,7 +894,7 @@ export function InspectionFormScreen() {
         payload: submissionPayload,
         photos: photosRef.current,
       });
-      goBackToVisit('Inspection saved to Sync Queue. It will sync when connection returns.');
+      goToMapAfterSubmit('Inspection saved to Sync Queue. It will sync when connection returns.');
       return;
     }
 
@@ -842,7 +910,7 @@ export function InspectionFormScreen() {
       await api.submitInspection(token, inspectionId);
       await cleanupLocalInspectionPhotos(photosRef.current);
 
-      goBackToVisit('Inspection submitted successfully.');
+      goToMapAfterSubmit('Inspection submitted successfully.');
     } catch (submitError) {
       if (submitError instanceof ApiError && submitError.status === 401) {
         await handleUnauthorized(submitError);
@@ -860,7 +928,7 @@ export function InspectionFormScreen() {
           errorMessage: message,
         });
 
-        goBackToVisit('Inspection saved to Sync Queue. It will retry when connection returns.');
+        goToMapAfterSubmit('Inspection saved to Sync Queue. It will retry when connection returns.');
         return;
       }
 
@@ -903,9 +971,7 @@ export function InspectionFormScreen() {
       return;
     }
 
-    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues, {
-      emergencyByItemId: emergencyItemIds,
-    });
+    const checklistItems = buildChecklistItemsPayloadFromDraft(form, draftValues);
 
     if (isTempId(inspectionId)) {
       // No server draft for an offline-created inspection — keep editing in-form
@@ -926,7 +992,6 @@ export function InspectionFormScreen() {
 
       setForm(savedForm);
       setDraftValues(createInitialDraftValues(savedForm));
-      setEmergencyItemIds(createInitialEmergencyMap(savedForm));
       setSaveNotice(`Draft saved ${formatDraftSavedTime(new Date())}.`);
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.status === 401) {
@@ -1048,6 +1113,28 @@ export function InspectionFormScreen() {
             </Text>
           </View>
 
+          {!isReadOnly ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Declare emergency"
+              onPress={() => setEmergencySheetVisible(true)}
+              disabled={isDeclaringEmergency}
+              style={({ pressed }) => [
+                styles.declareEmergencyButton,
+                (pressed || isDeclaringEmergency) && styles.declareEmergencyButtonPressed,
+              ]}
+            >
+              <Text style={styles.declareEmergencyButtonText}>🚨 Declare emergency</Text>
+            </Pressable>
+          ) : null}
+
+          <DeclareEmergencySheet
+            visible={emergencySheetVisible}
+            isSending={isDeclaringEmergency}
+            onCancel={() => setEmergencySheetVisible(false)}
+            onSend={handleDeclareEmergency}
+          />
+
           {checklistItemCount === 0 ? (
             <EmptyState
               title="No active checklist items"
@@ -1069,7 +1156,6 @@ export function InspectionFormScreen() {
                     sectionTops.current[section.id] = event.nativeEvent.layout.y;
                   }}
                   draftValues={draftValues}
-                  emergencyItemIds={emergencyItemIds}
                   isSubmitted={Boolean(isReadOnly)}
                   collapsible={isGroupedChecklist}
                   expanded={!isGroupedChecklist || expandedSections.has(section.id)}
@@ -1082,7 +1168,6 @@ export function InspectionFormScreen() {
                   onToggleSection={() => toggleSection(section.id)}
                   onMarkSectionDone={() => handleMarkSectionDone(section)}
                   onUpdateDraftValue={updateDraftValue}
-                  onToggleEmergency={toggleEmergency}
                   onScanReading={handleScanReading}
                   scanningItemId={scanningItemId}
                   onCaptureItemPhoto={handleCaptureItemPhoto}
@@ -1253,7 +1338,6 @@ function ChecklistSectionCard({
   sectionIndex,
   onLayout,
   draftValues,
-  emergencyItemIds,
   isSubmitted,
   collapsible,
   expanded,
@@ -1262,7 +1346,6 @@ function ChecklistSectionCard({
   onToggleSection,
   onMarkSectionDone,
   onUpdateDraftValue,
-  onToggleEmergency,
   onScanReading,
   scanningItemId,
   onCaptureItemPhoto,
@@ -1275,7 +1358,6 @@ function ChecklistSectionCard({
   sectionIndex: number;
   onLayout: (event: LayoutChangeEvent) => void;
   draftValues: DraftValues;
-  emergencyItemIds: Record<string, boolean>;
   isSubmitted: boolean;
   collapsible: boolean;
   expanded: boolean;
@@ -1287,7 +1369,6 @@ function ChecklistSectionCard({
     itemId: string,
     value: DraftValues[string],
   ) => void;
-  onToggleEmergency: (itemId: string, nextValue: boolean) => void;
   onScanReading: (itemId: string) => void;
   scanningItemId: string | null;
   onCaptureItemPhoto: (itemId: string) => void;
@@ -1398,10 +1479,8 @@ function ChecklistSectionCard({
                 key={item.id}
                 item={item}
                 value={draftValues[item.id]}
-                isEmergency={Boolean(emergencyItemIds[item.id])}
                 disabled={isSubmitted}
                 onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
-                onToggleEmergency={(nextValue) => onToggleEmergency(item.id, nextValue)}
                 onScanReading={() => onScanReading(item.id)}
                 scanning={scanningItemId === item.id}
                 scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
@@ -1418,7 +1497,7 @@ function ChecklistSectionCard({
               <AppButton
                 label={complete ? 'Group done ✓' : 'Mark group done'}
                 onPress={onMarkSectionDone}
-                variant={complete ? 'secondary' : 'primary'}
+                variant={complete ? 'secondary' : 'success'}
               />
             </View>
           ) : null}
@@ -1431,10 +1510,8 @@ function ChecklistSectionCard({
 function ChecklistItemCard({
   item,
   value,
-  isEmergency,
   disabled,
   onChange,
-  onToggleEmergency,
   onScanReading,
   scanning,
   scanPhotoUri,
@@ -1446,10 +1523,8 @@ function ChecklistItemCard({
 }: {
   item: InspectionTemplateItem;
   value: DraftValues[string] | undefined;
-  isEmergency: boolean;
   disabled: boolean;
   onChange: (value: DraftValues[string]) => void;
-  onToggleEmergency: (nextValue: boolean) => void;
   onScanReading: () => void;
   scanning: boolean;
   scanPhotoUri?: string;
@@ -1463,11 +1538,6 @@ function ChecklistItemCard({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
-  // An emergency flag only makes sense once the item is recorded as a defect
-  // (a FAIL on a defect-trigger item). Showing it elsewhere would be noise.
-  const isDefectNow =
-    item.isDefectTrigger !== false &&
-    getInspectionItemResultValue(item, value ?? null) === 'FAIL';
 
   return (
     <View style={styles.itemCard}>
@@ -1634,41 +1704,6 @@ function ChecklistItemCard({
             Unsupported field type: {formatFieldType(item.inputType)}.
           </Text>
         </View>
-      ) : null}
-      {isDefectNow || isEmergency ? (
-        <Pressable
-          accessibilityRole="switch"
-          accessibilityState={{ checked: isEmergency, disabled }}
-          disabled={disabled}
-          onPress={() => onToggleEmergency(!isEmergency)}
-          style={({ pressed }) => [
-            styles.emergencyToggle,
-            isEmergency && styles.emergencyToggleActive,
-            disabled && styles.emergencyToggleDisabled,
-            pressed && !disabled && styles.emergencyTogglePressed,
-          ]}
-        >
-          <View style={styles.emergencyToggleTextWrap}>
-            <Text
-              style={[
-                styles.emergencyToggleText,
-                isEmergency && styles.emergencyToggleTextActive,
-              ]}
-            >
-              {isEmergency
-                ? '🚨 Emergency — Immediate Action'
-                : '🚨 Flag Emergency'}
-            </Text>
-            <Text style={styles.emergencyToggleHint} numberOfLines={2}>
-              {isEmergency
-                ? 'Maintenance will be alerted to respond immediately.'
-                : 'Dangerous to public — alert maintenance for immediate action.'}
-            </Text>
-          </View>
-          <View style={[styles.emergencyCheck, isEmergency && styles.emergencyCheckActive]}>
-            {isEmergency ? <Text style={styles.emergencyCheckMark}>✓</Text> : null}
-          </View>
-        </Pressable>
       ) : null}
     </View>
   );
@@ -2853,64 +2888,19 @@ const createStyles = (t: Theme) =>
     fontWeight: '600',
     color: t.colors.dangerText,
   },
-  emergencyToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: t.colors.dangerBorder,
-    backgroundColor: t.colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 52,
-  },
-  emergencyToggleActive: {
-    backgroundColor: t.colors.dangerSoft,
-    borderColor: t.colors.danger,
-  },
-  emergencyToggleDisabled: {
-    opacity: 0.6,
-  },
-  emergencyTogglePressed: {
-    opacity: 0.9,
-  },
-  emergencyToggleTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  emergencyToggleText: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '800',
-    color: t.colors.dangerText,
-  },
-  emergencyToggleTextActive: {
-    color: t.colors.danger,
-  },
-  emergencyToggleHint: {
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '600',
-    color: t.colors.textSecondary,
-  },
-  emergencyCheck: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: t.colors.dangerBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: t.colors.card,
-  },
-  emergencyCheckActive: {
+  declareEmergencyButton: {
     backgroundColor: t.colors.danger,
-    borderColor: t.colors.danger,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 14,
   },
-  emergencyCheckMark: {
-    fontSize: 14,
-    fontWeight: '900',
+  declareEmergencyButtonPressed: {
+    opacity: 0.85,
+  },
+  declareEmergencyButtonText: {
+    fontSize: 15,
+    fontWeight: '800',
     color: t.colors.textOnPrimary,
   },
   imageCaptureField: {

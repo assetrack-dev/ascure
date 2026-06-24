@@ -850,6 +850,27 @@ export const api = {
   },
 
   /**
+   * Per-pole emergency (Option 1 — instant). Reports a dangerous condition on the
+   * pole right away, independent of completing/submitting the checklist. Returns
+   * the created emergency defect id so the caller can attach a photo / short clip.
+   */
+  declareEmergency(token: string, inspectionId: string, input: { note?: string }) {
+    return request<{ defectId: string; inspectionItemResultId: string }>(
+      `/inspections/${inspectionId}/declare-emergency`,
+      { method: 'POST', token, body: input },
+    );
+  },
+
+  /** Attach a photo OR short video to a defect (e.g. an emergency NCV clip). */
+  uploadDefectEvidenceMedia(
+    token: string,
+    defectId: string,
+    media: DefectEvidenceMediaUploadInput,
+  ) {
+    return uploadDefectEvidenceMedia(token, defectId, media);
+  },
+
+  /**
    * Offline-sync heartbeat (ADR 0002 §4): report how many mutations are still
    * queued locally so the server can gate reassignment of this team's work
    * until the device has flushed. Best-effort — callers ignore failures.
@@ -1030,6 +1051,82 @@ async function uploadDefectEvidenceImage(
   } finally {
     if (uploadUri !== photo.uri) {
       void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(() => undefined);
+    }
+  }
+}
+
+export interface DefectEvidenceMediaUploadInput {
+  uri: string;
+  /** image/jpeg (default), video/mp4, or video/quicktime. */
+  contentType?: string;
+  evidenceType?: string;
+  note?: string;
+  latitude?: number;
+  longitude?: number;
+  timestamp?: string;
+}
+
+async function uploadDefectEvidenceMedia(
+  token: string,
+  defectId: string,
+  media: DefectEvidenceMediaUploadInput,
+) {
+  const url = `${API_BASE_URL}/defects/${defectId}/evidence-images`;
+  const contentType = media.contentType ?? 'image/jpeg';
+  const ext =
+    contentType === 'video/mp4'
+      ? '.mp4'
+      : contentType === 'video/quicktime'
+        ? '.mov'
+        : '.jpg';
+  const stamp = (media.timestamp ?? new Date().toISOString()).replace(
+    /[^0-9A-Za-z_-]/g,
+    '-',
+  );
+  const filename = `evidence_${stamp || String(Date.now())}${ext}`;
+  const uploadUri = await createUploadFileUri(media.uri, filename);
+
+  const parameters: Record<string, string> = {};
+  if (media.evidenceType) parameters.evidenceType = media.evidenceType;
+  if (media.note) parameters.note = media.note;
+  if (typeof media.latitude === 'number' && Number.isFinite(media.latitude)) {
+    parameters.latitude = String(media.latitude);
+  }
+  if (typeof media.longitude === 'number' && Number.isFinite(media.longitude)) {
+    parameters.longitude = String(media.longitude);
+  }
+  if (media.timestamp) parameters.timestamp = media.timestamp;
+
+  try {
+    const response = await FileSystem.uploadAsync(url, uploadUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: contentType,
+      parameters,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = tryParsePayload(response.body);
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiError(
+        extractErrorMessage(payload, response.status),
+        response.status,
+        payload,
+      );
+    }
+
+    return payload as DefectEvidenceImage;
+  } catch (error) {
+    logNetworkError({ url, method: 'POST upload', error });
+    throw error;
+  } finally {
+    if (uploadUri !== media.uri) {
+      void FileSystem.deleteAsync(uploadUri, { idempotent: true }).catch(
+        () => undefined,
+      );
     }
   }
 }

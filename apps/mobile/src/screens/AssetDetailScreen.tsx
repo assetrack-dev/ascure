@@ -796,8 +796,11 @@ export function AssetDetailScreen() {
                         activeOpacity={0.85}
                         onPress={() =>
                           navigation.navigate('ImagePreview', {
-                            uri: imageUri,
-                            title: image.type || 'Inspection Image',
+                            images: images.map((carouselImage) => ({
+                              uri: getImageSourceUri(carouselImage) ?? '',
+                              title: carouselImage.type || 'Inspection Image',
+                            })),
+                            index,
                           })
                         }
                       >

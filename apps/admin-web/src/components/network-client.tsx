@@ -19,6 +19,7 @@ import {
   fetchSubstationNetwork,
   setTieEdgeState,
   type FeederIsolation,
+  type RadialEdge,
   type SubstationNetwork,
 } from "@/lib/network";
 import type { AuthSession } from "@/types/auth";
@@ -301,6 +302,18 @@ function NetworkContent() {
     () => new Set(isolation?.backfeed.map((b) => b.tieEdgeId) ?? []),
     [isolation],
   );
+  // Group radial spans by pole-pair so a multi-feeder run (same two poles on >1
+  // feeder) draws as parallel, per-feeder lines instead of overlapping into one.
+  const radialGroups = useMemo(() => {
+    const groups = new Map<string, RadialEdge[]>();
+    for (const edge of network?.edges.radial ?? []) {
+      const key = `${edge.from}->${edge.to}`;
+      const list = groups.get(key) ?? [];
+      list.push(edge);
+      groups.set(key, list);
+    }
+    return groups;
+  }, [network]);
   const poleLabelById = useMemo(
     () => new Map(network?.poles.map((pole) => [pole.id, pole.noTiangRondaan]) ?? []),
     [network],
@@ -441,14 +454,28 @@ function NetworkContent() {
                       const a = layout.positions.get(edge.from);
                       const b = layout.positions.get(edge.to);
                       if (!a || !b) return null;
+                      // Offset parallel spans (same pole-pair on >1 feeder) along the
+                      // perpendicular so each feeder's conductor shows as its own line.
+                      const group = radialGroups.get(`${edge.from}->${edge.to}`) ?? [edge];
+                      const idx = Math.max(0, group.indexOf(edge));
+                      const dx = b.x - a.x;
+                      const dy = b.y - a.y;
+                      const len = Math.hypot(dx, dy) || 1;
+                      const offset = (idx - (group.length - 1) / 2) * 5;
+                      const ox = (-dy / len) * offset;
+                      const oy = (dx / len) * offset;
                       return (
                         <line
-                          key={`r-${edge.from}-${edge.to}`}
-                          x1={a.x}
-                          y1={a.y}
-                          x2={b.x}
-                          y2={b.y}
-                          stroke="#94A3B8"
+                          key={`r-${edge.from}-${edge.to}-${edge.feeder ?? idx}`}
+                          x1={a.x + ox}
+                          y1={a.y + oy}
+                          x2={b.x + ox}
+                          y2={b.y + oy}
+                          stroke={
+                            edge.feeder
+                              ? feederColor(edge.feeder, network.feeders)
+                              : "#94A3B8"
+                          }
                           strokeWidth={2}
                         />
                       );
@@ -475,19 +502,28 @@ function NetworkContent() {
                       const pos = layout.positions.get(pole.id);
                       if (!pos) return null;
                       const dead = deEnergizedIds.has(pole.id);
-                      const color = dead
+                      const primary = dead
                         ? "#DC2626"
                         : feederColor(pole.feeders[0] ?? "", network.feeders);
+                      // A pole stays ONE node — a multi-feeder pole is shown two-tone
+                      // (outer ring = 2nd feeder, inner = 1st) rather than duplicated.
+                      const secondary =
+                        !dead && pole.feeders.length > 1
+                          ? feederColor(pole.feeders[1], network.feeders)
+                          : null;
                       return (
                         <g key={pole.id}>
                           <circle
                             cx={pos.x}
                             cy={pos.y}
                             r={8}
-                            fill={color}
+                            fill={secondary ?? primary}
                             stroke="#ffffff"
                             strokeWidth={2}
                           />
+                          {secondary ? (
+                            <circle cx={pos.x} cy={pos.y} r={4} fill={primary} />
+                          ) : null}
                           <text
                             x={pos.x + 13}
                             y={pos.y + 4}

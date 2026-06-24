@@ -15,6 +15,23 @@ export type AssetMapParams = {
   focusAssetId?: string;
   focusLatitude?: number;
   focusLongitude?: number;
+  // One-shot confirmation banner shown after the map is opened from a submitted
+  // inspection (cleared once read so it doesn't reappear on re-focus).
+  successMessage?: string;
+};
+
+/** One image in the full-screen preview. `uri` may be absolute or a server
+ *  relative path (resolved by the preview screen). */
+export type ImagePreviewImage = { uri: string; title?: string };
+
+/** Full-screen image preview params. Pass `images` + `index` to enable
+ *  swiping between a set; the single `uri`/`title` form stays supported for
+ *  one-off previews (it's treated as a one-image set). */
+export type ImagePreviewParams = {
+  uri?: string;
+  title?: string;
+  images?: ImagePreviewImage[];
+  index?: number;
 };
 
 export type AppDrawerParamList = {
@@ -63,7 +80,7 @@ export type RootStackParamList = {
   InspectionDetail: { inspectionId: string; assetCode?: string };
   AssetInspectionHistory: { assetId: string; assetCode?: string };
   DefectDetail: { defectId: string };
-  ImagePreview: { uri: string; title?: string };
+  ImagePreview: ImagePreviewParams;
 };
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =

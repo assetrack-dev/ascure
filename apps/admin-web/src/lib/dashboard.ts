@@ -1,17 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import type { ChartDatum, DashboardApiResponse, DashboardMetrics } from "@/types/dashboard";
 
-interface Substation {
-  id: string;
-}
-
-interface Asset {
-  assetType?: {
-    code?: string | null;
-    name?: string | null;
-  } | null;
-}
-
 const SEVERITY_LABELS = ["Critical", "High", "Medium", "Low"];
 const SLA_LABELS = ["Overdue", "On Track", "No Due Date", "Stopped"];
 
@@ -82,78 +71,34 @@ function normalizeSlaData(input: unknown) {
   }));
 }
 
-async function fetchAssetsByType(token: string): Promise<ChartDatum[]> {
-  const substations = await apiRequest<Substation[]>("/substations", { token });
-  const assetsBySubstation = await Promise.all(
-    substations.map((substation) =>
-      apiRequest<Asset[]>(`/assets?substation_id=${encodeURIComponent(substation.id)}`, {
-        token,
-      }),
-    ),
-  );
-  const counts = new Map<string, number>();
-
-  assetsBySubstation.flat().forEach((asset) => {
-    const label =
-      asset.assetType?.name?.trim() || asset.assetType?.code?.trim() || "Unassigned";
-
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  });
-
-  return Array.from(counts.entries())
-    .map(([label, value]) => ({
-      label,
-      value,
-    }))
-    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label));
-}
-
 export async function fetchDashboardMetrics(token: string): Promise<DashboardMetrics> {
   const dashboard = await apiRequest<DashboardApiResponse>("/dashboard", { token });
-  let assetsByType = normalizeChartData(dashboard.assetsByType);
-
-  if (assetsByType.length === 0) {
-    try {
-      assetsByType = await fetchAssetsByType(token);
-    } catch {
-      assetsByType = [];
-    }
-  }
 
   const defectsBySeverity = normalizeSeverityData(dashboard.defectsBySeverity);
   const defectsBySlaState = normalizeSlaData(dashboard.defectsBySlaState);
-  const criticalFromChart =
-    defectsBySeverity.find((item) => item.label === "Critical")?.value ?? 0;
 
   return {
     totalAssets: numberOrZero(dashboard.totalAssets),
     totalDefects: numberOrZero(dashboard.totalDefects),
     openDefects: numberOrZero(dashboard.openDefects),
-    criticalDefects: numberOrZero(dashboard.criticalDefects ?? criticalFromChart),
-    overdueDefects: numberOrZero(dashboard.overdueDefects),
-    criticalOverdueDefects: numberOrZero(dashboard.criticalOverdueDefects),
-    totalInspections: numberOrZero(dashboard.totalInspections),
     activeVisits: numberOrZero(dashboard.activeVisits),
     completedVisits: numberOrZero(dashboard.completedVisits),
     overdueVisits: numberOrZero(dashboard.overdueVisits),
     completionRate: numberOrZero(dashboard.completionRate),
-    activeFieldTeams: numberOrZero(dashboard.activeFieldTeams),
     operationalOverdueThresholdHours: numberOrZero(
       dashboard.operationalOverdueThresholdHours,
     ),
-    activeMappedVisits: numberOrZero(dashboard.activeMappedVisits),
     latestVisitActivityAt: dashboard.latestVisitActivityAt ?? null,
-    operationalLastRefreshedAt: dashboard.operationalLastRefreshedAt ?? null,
     defectsBySeverity,
     defectsByAssignee: normalizeChartData(dashboard.defectsByAssignee),
     defectsByTeam: normalizeChartData(dashboard.defectsByTeam),
     defectsBySlaState,
-    assetsByType,
     visitsByStatus: normalizeChartData(dashboard.visitsByStatus),
     visitsByValidationStatus: normalizeChartData(dashboard.visitsByValidationStatus),
     visitsByType: normalizeChartData(dashboard.visitsByType),
     activeVisitsByTeam: normalizeChartData(dashboard.activeVisitsByTeam),
     visitsByOperationalHealth: normalizeChartData(dashboard.visitsByOperationalHealth),
+    assetsByMainhead: normalizeChartData(dashboard.assetsByMainhead),
     recentDefects: Array.isArray(dashboard.recentDefects) ? dashboard.recentDefects : [],
     criticalOverdueAlerts: Array.isArray(dashboard.criticalOverdueAlerts)
       ? dashboard.criticalOverdueAlerts

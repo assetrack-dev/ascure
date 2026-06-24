@@ -11,11 +11,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
+import { EVIDENCE_MEDIA_UPLOAD_OPTIONS } from '../common/upload-options';
 import { IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { AssignMaintenanceLaneDto } from './dto/assign-maintenance-lane.dto';
 import { CompleteDefectMaintenanceDto } from './dto/complete-defect-maintenance.dto';
 import { CreateDefectCommentDto } from './dto/create-defect-comment.dto';
 import { DelegateDefectDto } from './dto/delegate-defect.dto';
@@ -56,13 +57,26 @@ export class DefectsController {
     return this.defectsService.listActiveEmergencies(user);
   }
 
+  @Get('maintenance-workspace')
+  getMaintenanceWorkspace(@CurrentUser() user: RequestUser) {
+    return this.defectsService.getMaintenanceWorkspace(user);
+  }
+
+  @Patch('maintenance-workspace/assign')
+  assignMaintenanceLane(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: AssignMaintenanceLaneDto,
+  ) {
+    return this.defectsService.assignMaintenanceLane(user, dto);
+  }
+
   @Get(':id')
   getDetail(@CurrentUser() user: RequestUser, @Param() params: DefectIdParamDto) {
     return this.defectsService.getDetail(user, params.id);
   }
 
   @Post(':id/evidence-images')
-  @UseInterceptors(FileInterceptor('file', IMAGE_UPLOAD_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', EVIDENCE_MEDIA_UPLOAD_OPTIONS))
   uploadEvidenceImage(
     @CurrentUser() user: RequestUser,
     @Param() params: DefectIdParamDto,

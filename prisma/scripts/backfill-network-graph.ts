@@ -63,6 +63,7 @@ type MembershipPlan = {
   feederCode: string;
   sequenceIndex: number;
   branchSuffix: string;
+  fedFromAssetId?: string;
 };
 
 type AssetUpdate = { fedFromAssetId?: string; noTiangLama?: string };
@@ -93,6 +94,36 @@ function parentKeyOf(p: ParsedPoleCode): string | undefined {
     return getExpectedParentKey(p);
   }
   return p.baseNumber > 1 ? buildNormalizedKey(p.feeder, p.baseNumber - 1) : undefined;
+}
+
+/**
+ * The parent pole ON THIS FEEDER for one membership. Tries the exact expected
+ * parent (branch parent / previous trunk pole); if that pole doesn't exist,
+ * falls back to the nearest existing LOWER-indexed trunk pole on the same feeder.
+ * That fallback is the Bug #1 fix: when the crew skipped a bare trunk pole (e.g.
+ * only `B 8/1`, `B 8/2` exist, no `B 8`), `B 9` and the `B 8/x` branches still
+ * attach to `B 7` instead of floating disconnected. Returns undefined only at the
+ * true feeder head (no lower pole exists).
+ */
+function resolvePerFeederParent(
+  m: ParsedPoleCode,
+  keyToAssetId: Map<string, string>,
+  selfAssetId: string,
+): string | undefined {
+  const exact = parentKeyOf(m);
+  if (exact) {
+    const id = keyToAssetId.get(exact);
+    if (id && id !== selfAssetId) return id;
+  }
+  // Walk down the trunk from this pole's base index to the nearest existing pole.
+  // Branches start at their own base (the branch hangs off that base position);
+  // trunk poles start one below (their parent is the previous pole).
+  const startBase = m.branchParts.length > 0 ? m.baseNumber : m.baseNumber - 1;
+  for (let base = startBase; base >= 1; base--) {
+    const id = keyToAssetId.get(buildNormalizedKey(m.feeder, base, []));
+    if (id && id !== selfAssetId) return id;
+  }
+  return undefined;
 }
 
 function readLamaFromMetadata(metadata: unknown): string | null {
@@ -174,6 +205,7 @@ async function processSubstation(
           feederCode: m.feeder,
           sequenceIndex: m.baseNumber,
           branchSuffix: formatBranchSuffix(m.branchParts),
+          fedFromAssetId: resolvePerFeederParent(m, keyToAssetId, assetId),
         });
       }
 
@@ -266,9 +298,24 @@ async function processSubstation(
             feederId: feederIdByCode.get(m.feederCode)!,
             sequenceIndex: m.sequenceIndex,
             branchSuffix: m.branchSuffix,
+            fedFromAssetId: m.fedFromAssetId ?? null,
           })),
           skipDuplicates: true,
         });
+
+        // Fill the per-feeder parent on memberships that predate this column
+        // (created by an earlier backfill run). Only when null — non-clobbering.
+        for (const m of membershipPlans) {
+          if (!m.fedFromAssetId) continue;
+          await tx.poleFeederMembership.updateMany({
+            where: {
+              assetId: m.assetId,
+              feederId: feederIdByCode.get(m.feederCode)!,
+              fedFromAssetId: null,
+            },
+            data: { fedFromAssetId: m.fedFromAssetId },
+          });
+        }
       }
 
       for (const [assetId, update] of assetUpdates) {

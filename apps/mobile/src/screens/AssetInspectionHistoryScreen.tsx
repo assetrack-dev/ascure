@@ -12,7 +12,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
-import type { RootStackScreenProps } from '../navigation/types';
+import type { ImagePreviewParams, RootStackScreenProps } from '../navigation/types';
 import { useTheme } from '../theme';
 import { AssetInspectionHistoryItem, InspectionImage } from '../types';
 import { formatDateTime } from '../utils';
@@ -189,7 +189,7 @@ function InspectionHistoryCard({
   onOpenInspectionDetail,
 }: {
   inspection: AssetInspectionHistoryItem;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
+  onOpenImagePreview: (params: ImagePreviewParams) => void;
   onOpenInspectionDetail: () => void;
 }) {
   const theme = useTheme();
@@ -278,10 +278,10 @@ function InspectionHistoryCard({
           activeOpacity={0.85}
           onPress={(event) => {
             event.stopPropagation();
-            onOpenImagePreview({
-              uri: thumbnailUri,
-              title: getImageTitle(firstImage),
-            });
+            const previewImages = (inspection.images ?? [])
+              .map((image) => ({ uri: getImageSourceUri(image) ?? '', title: getImageTitle(image) }))
+              .filter((previewImage) => previewImage.uri);
+            onOpenImagePreview({ images: previewImages, index: 0 });
           }}
         >
           <Image

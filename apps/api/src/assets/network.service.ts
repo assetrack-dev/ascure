@@ -14,6 +14,7 @@ import { CreateTieEdgeDto } from './dto/create-tie-edge.dto';
 const MEMBERSHIP_SELECT = {
   sequenceIndex: true,
   branchSuffix: true,
+  fedFromAssetId: true,
   feeder: { select: { code: true } },
 } as const;
 
@@ -21,7 +22,12 @@ type RenderablePole = {
   id: string;
   assetCode: string;
   noTiangLama: string | null;
-  feederMemberships: { sequenceIndex: number; branchSuffix: string; feeder: { code: string } }[];
+  feederMemberships: {
+    sequenceIndex: number;
+    branchSuffix: string;
+    fedFromAssetId: string | null;
+    feeder: { code: string };
+  }[];
 };
 
 const POLE_SELECT = {
@@ -86,9 +92,19 @@ export class NetworkService {
       }));
 
     const poleIds = new Set(poles.map((pole) => pole.id));
-    const radial = poles
-      .filter((pole) => pole.fedFromAssetId && poleIds.has(pole.fedFromAssetId))
-      .map((pole) => ({ from: pole.fedFromAssetId as string, to: pole.id }));
+    // Per-feeder radial edges: each pole's parent ON EACH FEEDER it sits on, so a
+    // multi-feeder pole yields one edge per feeder (the single Asset.fedFromAssetId
+    // could only express one — which collapsed every shared run onto the
+    // alphabetically-first feeder). Each edge carries its feeder code.
+    const radial = assets.flatMap((asset) =>
+      asset.feederMemberships
+        .filter((m) => m.fedFromAssetId && poleIds.has(m.fedFromAssetId as string))
+        .map((m) => ({
+          from: m.fedFromAssetId as string,
+          to: asset.id,
+          feeder: m.feeder.code,
+        })),
+    );
 
     return {
       substation,
@@ -229,45 +245,37 @@ export class NetworkService {
       throw new NotFoundException('Feeder not found.');
     }
 
-    // Opening the feeder breaker de-energizes from the feeder HEAD (its
-    // lowest-indexed pole) DOWN the fed-from tree — the physically-correct set,
-    // which also covers poles fed *through* this feeder on a non-radial run
-    // (a by-membership list would miss those).
-    const head = await this.prisma.poleFeederMembership.findFirst({
-      where: { feederId },
-      orderBy: [{ sequenceIndex: 'asc' }, { branchSuffix: 'asc' }],
-      select: { assetId: true },
+    // Opening this feeder's breaker de-energizes the poles fed ONLY by it. A pole
+    // that also sits on another (still-live) feeder keeps power from that feeder —
+    // e.g. a shared "B 2 & D 1/1" pole stays live via B when D is opened — so
+    // isolating one feeder must NOT drop a feeder it merely shares poles with.
+    // (Whole-feeder isolation; the per-feeder fedFromAssetId edges drive partial
+    // switch-level isolation, not this.)
+    const memberships = await this.prisma.poleFeederMembership.findMany({
+      where: { feeder: { substationId: feeder.substationId } },
+      select: { assetId: true, feederId: true },
     });
-
-    const assets = await this.prisma.asset.findMany({
-      where: { substationId: feeder.substationId },
-      select: { ...POLE_SELECT, fedFromAssetId: true },
-    });
-    const byId = new Map(assets.map((asset) => [asset.id, asset]));
-    const childrenByParent = new Map<string, string[]>();
-    for (const asset of assets) {
-      if (asset.fedFromAssetId) {
-        const siblings = childrenByParent.get(asset.fedFromAssetId) ?? [];
-        siblings.push(asset.id);
-        childrenByParent.set(asset.fedFromAssetId, siblings);
+    const feederCountByAsset = new Map<string, number>();
+    const onThisFeeder = new Set<string>();
+    for (const m of memberships) {
+      feederCountByAsset.set(m.assetId, (feederCountByAsset.get(m.assetId) ?? 0) + 1);
+      if (m.feederId === feederId) {
+        onThisFeeder.add(m.assetId);
       }
     }
-
     const deEnergizedIds = new Set<string>();
-    if (head) {
-      const queue = [head.assetId];
-      while (queue.length > 0) {
-        const id = queue.shift() as string;
-        if (deEnergizedIds.has(id)) {
-          continue;
-        }
-        deEnergizedIds.add(id);
-        queue.push(...(childrenByParent.get(id) ?? []));
+    for (const assetId of onThisFeeder) {
+      if ((feederCountByAsset.get(assetId) ?? 0) <= 1) {
+        deEnergizedIds.add(assetId);
       }
     }
-    const deEnergized = [...deEnergizedIds]
-      .map((id) => byId.get(id))
-      .filter((asset): asset is NonNullable<typeof asset> => asset !== undefined);
+
+    const deEnergized = deEnergizedIds.size
+      ? await this.prisma.asset.findMany({
+          where: { id: { in: [...deEnergizedIds] } },
+          select: POLE_SELECT,
+        })
+      : [];
 
     const tieEdges = deEnergizedIds.size
       ? await this.prisma.networkTieEdge.findMany({

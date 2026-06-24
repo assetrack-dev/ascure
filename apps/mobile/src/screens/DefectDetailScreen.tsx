@@ -18,7 +18,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
-import type { RootStackScreenProps } from '../navigation/types';
+import type { ImagePreviewParams, RootStackScreenProps } from '../navigation/types';
 import {
   DefectAssignmentOption,
   DefectAssignmentOptions,
@@ -800,8 +800,11 @@ export function DefectDetailScreen() {
                             activeOpacity={0.85}
                             onPress={() =>
                               navigation.navigate('ImagePreview', {
-                                uri: photo.uri,
-                                title: `Proof ${index + 1}`,
+                                images: proofPhotos.map((proofPhoto, proofIndex) => ({
+                                  uri: proofPhoto.uri,
+                                  title: `Proof ${proofIndex + 1}`,
+                                })),
+                                index,
                               })
                             }
                           >
@@ -1100,7 +1103,7 @@ function EvidenceGrid({
   images: Array<InspectionImage | DefectEvidenceImage>;
   emptyText: string;
   titlePrefix: string;
-  onOpenImagePreview: (params: { uri: string; title?: string }) => void;
+  onOpenImagePreview: (params: ImagePreviewParams) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -1127,8 +1130,11 @@ function EvidenceGrid({
                     activeOpacity={0.85}
                     onPress={() =>
                       onOpenImagePreview({
-                        uri: imageUri,
-                        title: `${titlePrefix} ${index + 1}`,
+                        images: images.map((gridImage, gridIndex) => ({
+                          uri: getImageSourceUri(gridImage) ?? '',
+                          title: `${titlePrefix} ${gridIndex + 1}`,
+                        })),
+                        index,
                       })
                     }
                   >

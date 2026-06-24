@@ -980,12 +980,68 @@ export class AssetsService {
         feederIdByCode.set(membership.feeder, feederId);
       }
       const branchSuffix = formatBranchSuffix(membership.branchParts);
+      const fedFromAssetId = await this.resolveFeederParentAssetId(
+        tx,
+        substationId,
+        membership,
+        assetId,
+      );
       await tx.poleFeederMembership.upsert({
         where: { assetId_feederId: { assetId, feederId } },
-        create: { assetId, feederId, sequenceIndex: membership.baseNumber, branchSuffix },
-        update: { sequenceIndex: membership.baseNumber, branchSuffix },
+        create: {
+          assetId,
+          feederId,
+          sequenceIndex: membership.baseNumber,
+          branchSuffix,
+          fedFromAssetId,
+        },
+        update: { sequenceIndex: membership.baseNumber, branchSuffix, fedFromAssetId },
       });
     }
+  }
+
+  /**
+   * The parent pole ON THIS FEEDER for one membership. Tries the exact expected
+   * parent (branch parent / previous trunk pole); if that pole doesn't exist yet,
+   * falls back to the nearest existing lower-indexed trunk pole on the same feeder
+   * — so a branch / next pole still attaches to the feeder line when an
+   * intermediate bare trunk pole was skipped (mirrors the backfill fallback).
+   */
+  private async resolveFeederParentAssetId(
+    tx: Prisma.TransactionClient,
+    substationId: string,
+    m: ReturnType<typeof parsePoleCode>[number],
+    selfAssetId: string,
+  ): Promise<string | null> {
+    const exactKey =
+      m.branchParts.length > 0
+        ? getExpectedParentKey(m)
+        : m.baseNumber > 1
+          ? buildNormalizedKey(m.feeder, m.baseNumber - 1)
+          : undefined;
+    if (exactKey) {
+      const id = await this.findAssetIdByMembershipKey(tx, substationId, exactKey);
+      if (id && id !== selfAssetId) {
+        return id;
+      }
+    }
+    const startBase = m.branchParts.length > 0 ? m.baseNumber : m.baseNumber - 1;
+    if (startBase >= 1) {
+      const parent = await tx.poleFeederMembership.findFirst({
+        where: {
+          feeder: { substationId, code: m.feeder },
+          branchSuffix: '',
+          sequenceIndex: { lte: startBase },
+          assetId: { not: selfAssetId },
+        },
+        orderBy: { sequenceIndex: 'desc' },
+        select: { assetId: true },
+      });
+      if (parent) {
+        return parent.assetId;
+      }
+    }
+    return null;
   }
 
   /** Best-effort pre-fill the fed-from edge from the primary (lowest) segment's

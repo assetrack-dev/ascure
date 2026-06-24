@@ -12,7 +12,7 @@ import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import { useCapabilities } from '../useCapabilities';
 import type { AppDrawerScreenProps } from '../navigation/types';
-import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen } from '../ui';
+import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen, SuccessBanner } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
@@ -158,7 +158,7 @@ export function MapScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const navigation = useNavigation<AppDrawerScreenProps<'AssetMap'>['navigation']>();
   const route = useRoute<AppDrawerScreenProps<'AssetMap'>['route']>();
-  const { visitId, substationId, focusAssetId, focusLatitude, focusLongitude } =
+  const { visitId, substationId, focusAssetId, focusLatitude, focusLongitude, successMessage } =
     route.params ?? {};
   // When opened from the Asset Detail mini-map, centre on that asset instead of
   // the user's current location.
@@ -211,6 +211,7 @@ export function MapScreen() {
   );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [submitNotice, setSubmitNotice] = useState<string | null>(null);
   const {
     mapMode,
     selectedAssetType,
@@ -428,6 +429,25 @@ export function MapScreen() {
     void requestCurrentLocation();
   }, [requestCurrentLocation]);
 
+  // Surface the post-submit confirmation once, then clear it from the route so
+  // it doesn't reappear when the map regains focus (e.g. after opening a pole).
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+    setSubmitNotice(successMessage);
+    navigation.setParams({ successMessage: undefined });
+  }, [successMessage, navigation]);
+
+  // Auto-dismiss the confirmation so the map view stays clean.
+  useEffect(() => {
+    if (!submitNotice) {
+      return;
+    }
+    const handle = setTimeout(() => setSubmitNotice(null), 4000);
+    return () => clearTimeout(handle);
+  }, [submitNotice]);
+
   useEffect(() => {
     // Don't yank the view to current location when we were asked to focus a
     // specific asset.
@@ -493,20 +513,21 @@ export function MapScreen() {
         return [];
       }
 
+      const focused = Boolean(focusAssetId && asset.id === focusAssetId);
+      const markerColor = assetMarkerColor(asset);
+
       return [
-        <Marker
-          key={`asset-${asset.id}`}
+        <AssetMarker
+          // Colour + focus are in the key so a recolour (after inspecting) or a
+          // focus change remounts the marker and re-snapshots its custom view.
+          key={`asset-${asset.id}-${markerColor}-${focused ? 'focused' : ''}`}
           coordinate={coordinate}
-          title={asset.assetCode}
-          description={asset.name ?? asset.assetType.name}
+          color={markerColor}
           // Highlight the asset we were opened to focus (from Asset Detail) so
           // it's distinguishable from its neighbours, and draw it on top.
-          pinColor={
-            focusAssetId && asset.id === focusAssetId
-              ? '#7c3aed'
-              : assetMarkerColor(asset)
-          }
-          zIndex={focusAssetId && asset.id === focusAssetId ? 10 : undefined}
+          focused={focused}
+          title={asset.assetCode}
+          description={asset.name ?? asset.assetType.name}
           onPress={() => handleOpenAssetDetail(asset)}
         />,
       ];
@@ -598,6 +619,7 @@ export function MapScreen() {
       scroll={false}
     >
       <ErrorBanner message={error} />
+      <SuccessBanner message={submitNotice} />
 
       <View style={styles.mapSummary}>
         <Text style={styles.mapSummaryText}>
@@ -1009,6 +1031,60 @@ function SequenceWarningCallout({ warning }: { warning: SequenceWarningMarker })
         </Text>
       ))}
     </View>
+  );
+}
+
+// Centre the dot exactly on the coordinate (unlike a teardrop pin whose tip
+// marks the spot), so a small dot still reads as "this pole is here".
+const ASSET_MARKER_ANCHOR = { x: 0.5, y: 0.5 };
+
+function AssetMarker({
+  coordinate,
+  color,
+  focused,
+  title,
+  description,
+  onPress,
+}: {
+  coordinate: Coordinate;
+  color: string;
+  focused: boolean;
+  title?: string;
+  description?: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  // Snapshot the dot once it has laid out, then stop tracking so a substation
+  // full of poles doesn't continuously re-rasterize every marker (the default
+  // custom-marker behaviour, which lags on field devices). The marker's key
+  // includes colour + focus, so a recolour remounts it and re-snapshots.
+  const [tracksViewChanges, setTracksViewChanges] = useState(true);
+  useEffect(() => {
+    const handle = setTimeout(() => setTracksViewChanges(false), 250);
+    return () => clearTimeout(handle);
+  }, []);
+
+  return (
+    <Marker
+      coordinate={coordinate}
+      anchor={ASSET_MARKER_ANCHOR}
+      title={title}
+      description={description}
+      tracksViewChanges={tracksViewChanges}
+      zIndex={focused ? 10 : undefined}
+      onPress={onPress}
+    >
+      <View style={styles.assetMarkerHitbox}>
+        <View
+          style={[
+            styles.assetMarkerDot,
+            { backgroundColor: color },
+            focused && styles.assetMarkerDotFocused,
+          ]}
+        />
+      </View>
+    </Marker>
   );
 }
 
@@ -2058,6 +2134,35 @@ const createStyles = (t: Theme) =>
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '700',
+    },
+    assetMarkerHitbox: {
+      // Transparent padding keeps the small dot easy to tap.
+      width: 30,
+      height: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    assetMarkerDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      borderWidth: 2,
+      borderColor: '#ffffff',
+      shadowColor: '#000000',
+      shadowOffset: {
+        width: 0,
+        height: 1,
+      },
+      shadowOpacity: 0.35,
+      shadowRadius: 2,
+      elevation: 4,
+    },
+    assetMarkerDotFocused: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 3,
+      borderColor: '#7c3aed',
     },
     defectMarkerContainer: {
       width: 44,

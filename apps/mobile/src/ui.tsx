@@ -22,7 +22,7 @@ import { Theme, uiTheme, useTheme } from './theme';
 export { uiTheme } from './theme';
 export type { Theme, ThemeMode } from './theme';
 
-type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
+type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
 type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
 
 type HeaderAction = {
@@ -331,7 +331,9 @@ export function AppButton({
           color={
             variant === 'secondary' || variant === 'ghost'
               ? theme.colors.primary
-              : theme.colors.textOnPrimary
+              : variant === 'success'
+                ? theme.colors.onStatus
+                : theme.colors.textOnPrimary
           }
         />
       ) : null}
@@ -611,6 +613,7 @@ const buttonVariantStyles = {
   primary: 'buttonPrimary',
   secondary: 'buttonSecondary',
   danger: 'buttonDanger',
+  success: 'buttonSuccess',
   ghost: 'buttonGhost',
 } as const;
 
@@ -618,6 +621,7 @@ const buttonLabelStyles = {
   primary: 'buttonTextPrimary',
   secondary: 'buttonTextSecondary',
   danger: 'buttonTextPrimary',
+  success: 'buttonTextOnStatus',
   ghost: 'buttonTextGhost',
 } as const;
 
@@ -849,6 +853,9 @@ function createStyles(t: Theme) {
     buttonDanger: {
       backgroundColor: c.danger,
     },
+    buttonSuccess: {
+      backgroundColor: c.success,
+    },
     buttonGhost: {
       backgroundColor: 'transparent',
       borderWidth: 1,
@@ -870,6 +877,9 @@ function createStyles(t: Theme) {
     },
     buttonTextPrimary: {
       color: c.textOnPrimary,
+    },
+    buttonTextOnStatus: {
+      color: c.onStatus,
     },
     buttonTextSecondary: {
       color: c.textPrimary,

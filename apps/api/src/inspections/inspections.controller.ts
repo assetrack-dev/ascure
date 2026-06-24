@@ -17,6 +17,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
+import { DeclareEmergencyDto } from './dto/declare-emergency.dto';
 import { SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
 import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
 import { InspectionsService } from './inspections.service';
@@ -76,6 +77,15 @@ export class InspectionsController {
   @Post(':id/amend')
   amend(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
     return this.inspectionsService.amendInspection(user, params.id);
+  }
+
+  @Post(':id/declare-emergency')
+  declareEmergency(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionIdParamDto,
+    @Body() dto: DeclareEmergencyDto,
+  ) {
+    return this.inspectionsService.declareEmergency(user, params.id, dto);
   }
 
   @Post(':inspectionId/images')

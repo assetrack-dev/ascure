@@ -21,6 +21,8 @@ export type ChecklistFieldType =
 
 export type DefectSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+export type MaintenanceCategory = "RENTIS" | "CAT_TIANG" | "SELENGGARAAN";
+
 export interface AssetType {
   id: string;
   code: string;
@@ -149,6 +151,8 @@ export interface ChecklistTemplateItem {
   isActive: boolean;
   isDefectTrigger: boolean;
   severity?: DefectSeverity | null;
+  /** Maintenance work-type. Null = SELENGGARAAN (default catch-all). */
+  maintenanceCategory?: MaintenanceCategory | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -202,6 +206,7 @@ export interface ChecklistTemplateItemPayload {
   isActive: boolean;
   isDefectTrigger: boolean;
   severity?: DefectSeverity;
+  maintenanceCategory?: MaintenanceCategory | null;
   options?: ChecklistTemplateOption[];
   optionsJson?: unknown;
   showIf?: ChecklistShowIfConfig | null;

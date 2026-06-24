@@ -13,7 +13,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { DefectSeverity, InspectionTemplateScopeLevel, OperationalDomain } from '@prisma/client';
+import { DefectSeverity, InspectionTemplateScopeLevel, MaintenanceCategory, OperationalDomain } from '@prisma/client';
 
 export const CHECKLIST_TEMPLATE_FIELD_TYPES = [
   'TEXT',
@@ -40,6 +40,12 @@ export const CHECKLIST_TEMPLATE_DEFECT_SEVERITIES = [
   DefectSeverity.MEDIUM,
   DefectSeverity.HIGH,
   DefectSeverity.CRITICAL,
+] as const;
+
+export const CHECKLIST_TEMPLATE_MAINTENANCE_CATEGORIES = [
+  MaintenanceCategory.RENTIS,
+  MaintenanceCategory.CAT_TIANG,
+  MaintenanceCategory.SELENGGARAAN,
 ] as const;
 
 export class ChecklistTemplateOptionInputDto {
@@ -203,6 +209,12 @@ export class ChecklistTemplateItemInputDto {
   @IsOptional()
   @IsIn(CHECKLIST_TEMPLATE_DEFECT_SEVERITIES)
   severity?: DefectSeverity;
+
+  /** Maintenance work-type for defects from this item. Omit/null = SELENGGARAAN
+   *  (default). Tag the RENTIS / CAT_TIANG item(s). */
+  @IsOptional()
+  @IsIn(CHECKLIST_TEMPLATE_MAINTENANCE_CATEGORIES)
+  maintenanceCategory?: MaintenanceCategory | null;
 
   @IsOptional()
   @IsArray()

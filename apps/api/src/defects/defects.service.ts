@@ -14,6 +14,7 @@ import {
   DefectStatus,
   DefectTimelineEventType,
   InspectionCompletionStatus,
+  MaintenanceCategory,
   OrganizationType,
   Prisma,
   ResolutionOutcome as DefectResolutionOutcome,
@@ -725,6 +726,357 @@ export class DefectsService {
         };
       }),
     };
+  }
+
+  /**
+   * Maintenance workspace — the routed pool packaged by Pencawang (substation)
+   * for dispatch. Each package splits into the three work-type lanes (RENTIS /
+   * CAT_TIANG / SELENGGARAAN) with an assignment summary. Emergencies are excluded
+   * from the lanes (they live in the separate active-emergencies priority lane)
+   * but counted per package for context. Scope is defectAccessScope, so a
+   * maintenance company sees its routed pool, the inspecting org sees its own open
+   * defects, and ADMIN sees the tenant — all grouped identically. Closed/resolved
+   * defects (work done) are excluded.
+   */
+  async getMaintenanceWorkspace(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
+
+    const defects = await this.prisma.defect.findMany({
+      where: {
+        status: { notIn: [DefectStatus.CLOSED, DefectStatus.RESOLVED] },
+        ...this.defectAccessScope(user, ctx),
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        isEmergency: true,
+        severity: true,
+        maintenanceCategory: true,
+        lifecycleStatus: true,
+        createdAt: true,
+        assignedTeam: { select: { id: true, name: true, code: true } },
+        assignedToTeam: { select: { id: true, name: true, code: true } },
+        inspectionItemResult: {
+          select: {
+            label: true,
+            inspection: {
+              select: {
+                asset: {
+                  select: {
+                    assetCode: true,
+                    substation: {
+                      select: { id: true, code: true, name: true, location: true },
+                    },
+                  },
+                },
+                siteVisit: {
+                  select: { mainheadRecord: { select: { id: true, name: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    type LaneAcc = {
+      count: number;
+      unassignedCount: number;
+      inProgressCount: number;
+      teams: Map<string, { id: string; name: string; count: number }>;
+    };
+    type PackageAcc = {
+      substation: {
+        id: string;
+        code: string;
+        name: string;
+        location: string | null;
+      };
+      mainhead: { id: string; name: string } | null;
+      emergencyCount: number;
+      lanes: Map<MaintenanceCategory, LaneAcc>;
+    };
+
+    const packages = new Map<string, PackageAcc>();
+    const emergencies: Array<{
+      id: string;
+      label: string;
+      assetCode: string;
+      severity: DefectSeverity;
+      substationName: string;
+      createdAt: string;
+    }> = [];
+    let totalRouted = 0;
+    let emergencyCount = 0;
+
+    for (const defect of defects) {
+      const inspection = defect.inspectionItemResult.inspection;
+      const substation = inspection.asset.substation;
+      const mainhead = inspection.siteVisit?.mainheadRecord ?? null;
+
+      let pkg = packages.get(substation.id);
+      if (!pkg) {
+        pkg = {
+          substation,
+          mainhead,
+          emergencyCount: 0,
+          lanes: new Map(),
+        };
+        packages.set(substation.id, pkg);
+      } else if (!pkg.mainhead && mainhead) {
+        pkg.mainhead = mainhead;
+      }
+
+      if (defect.isEmergency) {
+        pkg.emergencyCount += 1;
+        emergencyCount += 1;
+        emergencies.push({
+          id: defect.id,
+          label: defect.inspectionItemResult.label,
+          assetCode: inspection.asset.assetCode,
+          severity: defect.severity,
+          substationName: substation.name || substation.code,
+          createdAt: defect.createdAt.toISOString(),
+        });
+        continue;
+      }
+
+      totalRouted += 1;
+      const category =
+        defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
+      let lane = pkg.lanes.get(category);
+      if (!lane) {
+        lane = { count: 0, unassignedCount: 0, inProgressCount: 0, teams: new Map() };
+        pkg.lanes.set(category, lane);
+      }
+      lane.count += 1;
+
+      const team = defect.assignedToTeam ?? defect.assignedTeam;
+      if (team) {
+        const existing = lane.teams.get(team.id);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          lane.teams.set(team.id, {
+            id: team.id,
+            name: team.name || team.code || 'Team',
+            count: 1,
+          });
+        }
+      } else {
+        lane.unassignedCount += 1;
+      }
+
+      if (defect.lifecycleStatus === DefectLifecycleStatus.IN_PROGRESS) {
+        lane.inProgressCount += 1;
+      }
+    }
+
+    const categories: MaintenanceCategory[] = [
+      MaintenanceCategory.RENTIS,
+      MaintenanceCategory.CAT_TIANG,
+      MaintenanceCategory.SELENGGARAAN,
+    ];
+
+    const serializedPackages = Array.from(packages.values())
+      .map((pkg) => {
+        const lanes = categories.map((category) => {
+          const lane = pkg.lanes.get(category);
+          return {
+            category,
+            count: lane?.count ?? 0,
+            unassignedCount: lane?.unassignedCount ?? 0,
+            inProgressCount: lane?.inProgressCount ?? 0,
+            teams: lane
+              ? Array.from(lane.teams.values()).sort(
+                  (left, right) => right.count - left.count,
+                )
+              : [],
+          };
+        });
+        const totalCount = lanes.reduce((sum, lane) => sum + lane.count, 0);
+
+        return {
+          substation: pkg.substation,
+          mainhead: pkg.mainhead,
+          totalCount,
+          emergencyCount: pkg.emergencyCount,
+          lanes,
+        };
+      })
+      .filter((pkg) => pkg.totalCount > 0 || pkg.emergencyCount > 0)
+      .sort(
+        (left, right) =>
+          right.totalCount - left.totalCount ||
+          left.substation.name.localeCompare(right.substation.name),
+      );
+
+    // Dispatch roster for the assign picker — same org scope as assignment itself
+    // (ADMIN: tenant-wide; MANAGER: own company; others can't assign).
+    const canAssign =
+      user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+    const assignableTeams =
+      canAssign && (user.role === UserRole.ADMIN || user.organizationId)
+        ? await this.prisma.team.findMany({
+            where: {
+              tenantId: user.tenantId,
+              isActive: true,
+              ...(user.role === UserRole.ADMIN
+                ? {}
+                : { organizationId: user.organizationId ?? undefined }),
+            },
+            select: { id: true, name: true, code: true },
+            orderBy: { name: 'asc' },
+          })
+        : [];
+
+    return {
+      generatedAt: new Date().toISOString(),
+      governanceMode: resolveDefectGovernanceMode(),
+      totalRouted,
+      emergencyCount,
+      emergencies,
+      packages: serializedPackages,
+      canAssign,
+      assignableTeams: assignableTeams.map((team) => ({
+        id: team.id,
+        name: team.name || team.code || 'Team',
+      })),
+    };
+  }
+
+  /**
+   * Bulk-assign (or clear) a team across a maintenance workspace lane — all open,
+   * non-emergency defects at a Pencawang, optionally narrowed to one work-type.
+   * Mirrors updateAssignment's authority: ADMIN any team; a MANAGER only their own
+   * company's teams and only their own actionable defects (never a pole routed to
+   * another company). Assignment promotes a VERIFIED defect to ASSIGNED.
+   */
+  async assignMaintenanceLane(
+    user: RequestUser,
+    dto: {
+      substationId: string;
+      category?: MaintenanceCategory;
+      assignedToTeamId?: string | null;
+    },
+  ) {
+    this.assertCanMutate(user);
+    this.assertCanAssignDefect(user);
+
+    const orgRestriction =
+      user.role === UserRole.ADMIN ? undefined : user.organizationId ?? undefined;
+    if (user.role !== UserRole.ADMIN && !orgRestriction) {
+      throw new ForbiddenException(
+        'Your account has no operational company, so it cannot dispatch maintenance work.',
+      );
+    }
+
+    const teamId = dto.assignedToTeamId ?? null;
+    const team = teamId
+      ? await this.findAssignableTeam(user.tenantId, teamId, orgRestriction)
+      : null;
+
+    const ctx = await buildScopeContext(this.prisma, user);
+    await this.ensureDefectsForAccessibleItems(user, ctx);
+
+    const categoryWhere: Prisma.DefectWhereInput = !dto.category
+      ? {}
+      : dto.category === MaintenanceCategory.SELENGGARAAN
+        ? {
+            OR: [
+              { maintenanceCategory: MaintenanceCategory.SELENGGARAAN },
+              { maintenanceCategory: null },
+            ],
+          }
+        : { maintenanceCategory: dto.category };
+
+    // Non-admins may only act on their own pool (own-org routed or not-yet-routed),
+    // never on work routed to another company that they merely oversee.
+    const ownPoolWhere: Prisma.DefectWhereInput =
+      user.role === UserRole.ADMIN
+        ? {}
+        : {
+            OR: [
+              { maintenanceOrganizationId: null },
+              { maintenanceOrganizationId: user.organizationId },
+            ],
+          };
+
+    const targets = await this.prisma.defect.findMany({
+      where: {
+        AND: [
+          this.defectAccessScope(user, ctx),
+          {
+            isEmergency: false,
+            lifecycleStatus: {
+              in: [
+                DefectLifecycleStatus.VERIFIED,
+                DefectLifecycleStatus.ASSIGNED,
+                DefectLifecycleStatus.IN_PROGRESS,
+                DefectLifecycleStatus.COMPLETED,
+                DefectLifecycleStatus.VERIFICATION_PENDING,
+              ],
+            },
+            inspectionItemResult: {
+              inspection: { asset: { substationId: dto.substationId } },
+            },
+          },
+          categoryWhere,
+          ownPoolWhere,
+        ],
+      },
+      select: { id: true, lifecycleStatus: true },
+    });
+
+    if (targets.length === 0) {
+      return { assigned: 0 };
+    }
+
+    const ids = targets.map((target) => target.id);
+    const now = new Date();
+    const verb = teamId ? `assigned to ${team?.name ?? 'a team'}` : 'unassigned';
+
+    await this.prisma.$transaction([
+      this.prisma.defect.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          assignedToTeamId: teamId,
+          assignedTeamId: teamId,
+          assignedAt: teamId ? now : null,
+        },
+      }),
+      // Promote VERIFIED → ASSIGNED only when assigning (updateMany can't do this
+      // per-row, so it's a second scoped pass).
+      ...(teamId
+        ? [
+            this.prisma.defect.updateMany({
+              where: {
+                id: { in: ids },
+                lifecycleStatus: DefectLifecycleStatus.VERIFIED,
+              },
+              data: { lifecycleStatus: DefectLifecycleStatus.ASSIGNED },
+            }),
+          ]
+        : []),
+      this.prisma.defectTimelineEntry.createMany({
+        data: targets.map((target) => ({
+          id: randomUUID(),
+          defectId: target.id,
+          type: DefectTimelineEventType.DEFECT_ASSIGNED,
+          fromLifecycleStatus: target.lifecycleStatus,
+          toLifecycleStatus:
+            teamId && target.lifecycleStatus === DefectLifecycleStatus.VERIFIED
+              ? DefectLifecycleStatus.ASSIGNED
+              : target.lifecycleStatus,
+          comment: `Bulk ${verb} via the maintenance workspace.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        })),
+      }),
+    ]);
+
+    return { assigned: ids.length };
   }
 
   async uploadEvidenceImage(
@@ -1891,6 +2243,7 @@ export class DefectsService {
         id: true,
         severity: true,
         isEmergency: true,
+        maintenanceCategory: true,
       },
     });
 
@@ -1938,6 +2291,7 @@ export class DefectsService {
         id: true,
         severity: true,
         isEmergency: true,
+        maintenanceCategory: true,
       },
     });
 
@@ -3701,17 +4055,34 @@ export class DefectsService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.DefectWhereInput {
+    // A defect is "live" once its inspection is submitted — EXCEPT an emergency,
+    // which is declared + routed instantly (per-pole emergency, Option 1) and must
+    // surface before the inspection is submitted. So: inspection submitted OR the
+    // defect is an emergency. (Emergency defects only exist on a draft inspection
+    // via the explicit declare-emergency action, so this never leaks ordinary
+    // mid-draft defects.)
+    const liveDefectFilter: Prisma.DefectWhereInput = {
+      OR: [
+        {
+          inspectionItemResult: {
+            inspection: {
+              completionStatus: InspectionCompletionStatus.SUBMITTED,
+            },
+          },
+        },
+        { isEmergency: true },
+      ],
+    };
+
     const inspectionScope: Prisma.DefectWhereInput = {
       inspectionItemResult: {
         isDefect: true,
         inspection: {
           tenantId: user.tenantId,
-          // A draft / amended inspection has no live defects — never surface or
-          // act on one (keeps a re-opened inspection off the board until submit).
-          completionStatus: InspectionCompletionStatus.SUBMITTED,
           ...this.inspectionAccessScope(user, ctx),
         },
       },
+      ...liveDefectFilter,
     };
 
     // ADMIN already sees everything in-tenant through the inspection scope.
@@ -3736,11 +4107,9 @@ export class DefectsService {
           maintenanceOrganizationId: { in: maintenanceOrgIds },
           inspectionItemResult: {
             isDefect: true,
-            inspection: {
-              tenantId: user.tenantId,
-              completionStatus: InspectionCompletionStatus.SUBMITTED,
-            },
+            inspection: { tenantId: user.tenantId },
           },
+          ...liveDefectFilter,
         },
       ],
     };

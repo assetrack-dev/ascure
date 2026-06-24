@@ -138,6 +138,17 @@ enum DefectLifecycleStatus {
   CLOSED
 }
 
+// Maintenance work-type a defect is dispatched under. RENTIS (line clearing) and
+// CAT_TIANG (pole painting) are each defined by tagging specific checklist
+// item(s); everything else defaults to SELENGGARAAN (general maintenance). The
+// maintenance company filters/packages its routed pool by this. Fixed set for
+// now (TNB LV survey); productize to a tenant list later.
+enum MaintenanceCategory {
+  RENTIS
+  CAT_TIANG
+  SELENGGARAAN
+}
+
 enum ResolutionOutcome {
   REPAIRED
   EXTERNAL_CONSTRAINT
@@ -942,7 +953,8 @@ model Asset {
   createdBy                User?                     @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   fedFrom                  Asset?                    @relation("AssetFedFrom", fields: [fedFromAssetId], references: [id], onDelete: SetNull)
   fedAssets                Asset[]                   @relation("AssetFedFrom")
-  feederMemberships        PoleFeederMembership[]
+  feederMemberships        PoleFeederMembership[]    @relation("PoleMembership")
+  feederMembershipsFedFrom PoleFeederMembership[]    @relation("MembershipFedFrom")
   tieEdgesFrom             NetworkTieEdge[]          @relation("TieEdgeFrom")
   tieEdgesTo               NetworkTieEdge[]          @relation("TieEdgeTo")
   tieEdgeDevices           NetworkTieEdge[]          @relation("TieEdgeDevice")
@@ -1252,6 +1264,10 @@ model InspectionTemplateItem {
   isActive        Boolean                   @default(true)
   isDefectTrigger Boolean                   @default(true)
   severity        DefectSeverity            @default(MEDIUM)
+  // Maintenance work-type for defects from this item. Null = SELENGGARAAN
+  // (default). Admin tags the RENTIS / CAT_TIANG item(s); a template may have
+  // more than one item per category (e.g. KUANTAN has 2 RENTIS items).
+  maintenanceCategory MaintenanceCategory?
   sortOrder       Int                       @default(0)
   optionsJson     Json?
   createdAt       DateTime                  @default(now())
@@ -1337,6 +1353,9 @@ model InspectionItemResult {
   isDefect        Boolean                   @default(false)
   isEmergency     Boolean                   @default(false)
   severity        DefectSeverity?
+  // Denormalized from the template item at save (mirrors severity/isEmergency)
+  // so every defect-creation path can stamp the defect without a re-lookup.
+  maintenanceCategory MaintenanceCategory?
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
   inspection      Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
@@ -1364,6 +1383,9 @@ model Defect {
   maintenanceOrganizationId String?               @db.Uuid
   status                   DefectStatus           @default(OPEN)
   severity                 DefectSeverity         @default(MEDIUM)
+  // Work-type for maintenance packaging/filtering, stamped at materialization
+  // from the item result (null on legacy rows = treated as SELENGGARAAN).
+  maintenanceCategory      MaintenanceCategory?
   isEmergency              Boolean                @default(false)
   lifecycleStatus          DefectLifecycleStatus?
   resolutionOutcome        ResolutionOutcome?
@@ -1539,15 +1561,22 @@ model PoleFeederMembership {
   feederId      String   @db.Uuid
   sequenceIndex Int
   branchSuffix  String   @default("")
+  // The parent pole ON THIS FEEDER (per-feeder topology). A multi-feeder pole has
+  // one parent per feeder, so the single Asset.fedFromAssetId can't represent it;
+  // this is what the network graph + isolation traverse. Null at the feeder head
+  // or when no parent could be resolved.
+  fedFromAssetId String? @db.Uuid
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  asset         Asset    @relation("PoleMembership", fields: [assetId], references: [id], onDelete: Cascade)
   feeder        Feeder   @relation(fields: [feederId], references: [id], onDelete: Cascade)
+  fedFromAsset  Asset?   @relation("MembershipFedFrom", fields: [fedFromAssetId], references: [id], onDelete: SetNull)
 
   @@unique([feederId, sequenceIndex, branchSuffix])
   @@unique([assetId, feederId])
   @@index([assetId])
   @@index([feederId])
+  @@index([fedFromAssetId])
 }
 
 model NetworkTieEdge {

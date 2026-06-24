@@ -23,6 +23,7 @@ import {
   Upload,
   Users,
   Waypoints,
+  Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -56,6 +57,7 @@ interface AppShellProps {
 const MANAGER_NAV_HREFS = new Set<string>([
   "/dashboard",
   "/operations-board",
+  "/maintenance-workspace",
   "/assets",
   "/map",
   "/site-visits",
@@ -75,6 +77,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/operations-board",
       label: "Operations Board",
       icon: ClipboardList,
+    },
+    {
+      href: "/maintenance-workspace",
+      label: "Maintenance",
+      icon: Wrench,
+      roles: ["ADMIN", "MANAGER", "SUPERVISOR"],
     },
     {
       href: "/operational-sessions",

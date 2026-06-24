@@ -12,6 +12,8 @@ import {
   DefectSeverity,
   InspectionCompletionStatus,
   InspectionItemInputType,
+  InspectionItemResultValue,
+  MaintenanceCategory,
   Prisma,
   SiteVisitStatus,
   UserRole,
@@ -28,6 +30,7 @@ import {
   MAINTENANCE_LOCKED_DEFECT_STATUSES,
   releaseDefectsOnReport,
 } from '../common/authorization/defect-governance';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -543,6 +546,9 @@ export class InspectionsService {
         templateItem && templateItem.isDefectTrigger !== false
           ? templateItem.severity ?? DefectSeverity.MEDIUM
           : null;
+      // Work-type carried from the template item so the materialized defect can
+      // be packaged/filtered by the maintenance company (null = SELENGGARAAN).
+      const maintenanceCategory = templateItem?.maintenanceCategory ?? null;
 
       return {
         inspectionId: inspection.id,
@@ -553,6 +559,7 @@ export class InspectionsService {
         isDefect,
         isEmergency,
         severity,
+        maintenanceCategory,
       };
     });
 
@@ -560,6 +567,11 @@ export class InspectionsService {
       this.prisma.inspectionItemResult.deleteMany({
         where: {
           inspectionId: inspection.id,
+          // Preserve instantly-declared per-pole emergencies — standalone records
+          // (no checklistItemId), NOT checklist answers. Deleting one would
+          // cascade-delete its routed emergency defect, so a re-save of the
+          // checklist must leave them intact.
+          NOT: { isEmergency: true, checklistItemId: null },
         },
       }),
       this.prisma.inspectionItemResult.createMany({
@@ -692,6 +704,77 @@ export class InspectionsService {
     }
 
     return submittedInspection;
+  }
+
+  /**
+   * Per-pole emergency (Option 1 — instant). The field button declares a
+   * dangerous-to-public condition that must reach the response side immediately,
+   * independent of finishing/submitting the pole's checklist. Creates one
+   * emergency item-result (FAIL + isEmergency, the note as label/remark) and its
+   * CRITICAL defect right away, then routes it under RELEASE_ON_REPORT. The defect
+   * surfaces in the emergency lane before the inspection is submitted (see
+   * defectAccessScope's submitted-OR-emergency rule). Media is uploaded to the
+   * returned defect via POST /defects/:id/evidence-images.
+   */
+  async declareEmergency(
+    user: RequestUser,
+    inspectionId: string,
+    dto: { note?: string | null },
+  ) {
+    this.assertCanMutate(user);
+
+    const inspection = await this.getAccessibleInspection(inspectionId, user);
+    const note = this.normalizeOperationalString(dto.note);
+    const label = note
+      ? note.length > 200
+        ? `${note.slice(0, 197)}…`
+        : note
+      : 'Emergency reported';
+
+    const now = new Date();
+    const itemResult = await this.prisma.inspectionItemResult.create({
+      data: {
+        inspectionId: inspection.id,
+        label,
+        result: InspectionItemResultValue.FAIL,
+        remark: note,
+        isDefect: true,
+        isEmergency: true,
+        severity: DefectSeverity.CRITICAL,
+      },
+      select: {
+        id: true,
+        severity: true,
+        isEmergency: true,
+        maintenanceCategory: true,
+      },
+    });
+
+    const defect = await this.prisma.defect.create({
+      data: buildInitialDefectData(itemResult, now),
+      select: { id: true },
+    });
+
+    // Route instantly under RELEASE_ON_REPORT (stamp the MAINHEAD's maintenance
+    // company). No-op under INSPECTOR_OWNS, where the emergency is already
+    // VERIFIED and visible to the inspecting team. Best-effort.
+    if (releaseDefectsOnReport()) {
+      try {
+        await releaseVisitDefects(this.prisma, inspection.siteVisitId, {
+          scope: 'EMERGENCY',
+          actorUserId: user.id,
+          inspectionId: inspection.id,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Instant emergency release failed for inspection ${inspection.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    return { defectId: defect.id, inspectionItemResultId: itemResult.id };
   }
 
   async uploadImage(
@@ -961,23 +1044,15 @@ export class InspectionsService {
     };
   }
 
-  private inspectionAccessScope(user: RequestUser) {
-    if (user.role === 'ADMIN') {
-      return {};
-    }
-
-    return {
-      siteVisit: {
-        team: {
-          members: {
-            some: {
-              userId: user.id,
-              isActive: true,
-            },
-          },
-        },
-      },
-    };
+  // Which inspections a user may read/mutate. Delegates to the canonical
+  // role-aware SiteVisit filter so inspections match every other surface
+  // (dashboard/defects/site-visits/map): ADMIN = tenant, MANAGER = their whole
+  // company, SUPERVISOR = supervised teams, everyone else = own teams. Previously
+  // this used a narrow own-team-membership filter, which locked a MANAGER out of
+  // viewing/amending their own company's inspections (they oversee teams but
+  // aren't members of them).
+  private inspectionAccessScope(user: RequestUser): Prisma.InspectionWhereInput {
+    return { siteVisit: siteVisitAccessWhere(user) };
   }
 
   private async resolveOperationalSessionContext(
@@ -1183,6 +1258,7 @@ export class InspectionsService {
         isRequired: boolean;
         isDefectTrigger: boolean;
         severity: DefectSeverity;
+        maintenanceCategory: MaintenanceCategory | null;
         optionsJson: Prisma.JsonValue | null;
       }>;
     }>,
@@ -1758,6 +1834,7 @@ export class InspectionsService {
       isDefect: boolean;
       severity: DefectSeverity | null;
       isEmergency: boolean;
+      maintenanceCategory: MaintenanceCategory | null;
     }>,
   ) {
     const now = new Date();

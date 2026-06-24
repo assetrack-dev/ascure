@@ -86,6 +86,7 @@ export class DashboardService {
       siteVisitsForHealth,
       latestSiteVisitActivity,
       activeMappedVisitCount,
+      assetsForMainhead,
     ] = await Promise.all([
       this.prisma.asset.count({
         where: this.accessibleAssetWhere(user, ctx),
@@ -323,6 +324,31 @@ export class DashboardService {
           },
         },
       }),
+      // Assets carry no mainhead column, so attribute each to the mainhead of its
+      // latest SUBMITTED inspection's site visit, falling back to its creation
+      // visit (mirrors AssetsService.listMapAssets). Light select — id + the two
+      // candidate mainhead refs — tallied in JS below.
+      this.prisma.asset.findMany({
+        where: this.accessibleAssetWhere(user, ctx),
+        select: {
+          id: true,
+          createdDuringVisit: {
+            select: { mainheadRecord: { select: { id: true, name: true } } },
+          },
+          inspections: {
+            where: {
+              completionStatus: InspectionCompletionStatus.SUBMITTED,
+            },
+            take: 1,
+            orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+            select: {
+              siteVisit: {
+                select: { mainheadRecord: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      }),
     ]);
 
     const [assignedUsers, assignedTeams] = await Promise.all([
@@ -492,6 +518,30 @@ export class DashboardService {
         value: healthCounts.get(status) ?? 0,
       }),
     );
+    // Total assets by MAINHEAD. Keyed by mainhead id so same-named mainheads
+    // don't merge; assets with no resolvable mainhead bucket under "Unassigned".
+    const assetMainheadBuckets = new Map<
+      string,
+      { label: string; value: number }
+    >();
+    for (const asset of assetsForMainhead) {
+      const visit =
+        asset.inspections[0]?.siteVisit ?? asset.createdDuringVisit ?? null;
+      const mainhead = visit?.mainheadRecord ?? null;
+      const key = mainhead?.id ?? 'unassigned';
+      const label = mainhead?.name?.trim() || 'Unassigned';
+      const bucket = assetMainheadBuckets.get(key);
+
+      if (bucket) {
+        bucket.value += 1;
+      } else {
+        assetMainheadBuckets.set(key, { label, value: 1 });
+      }
+    }
+    const assetsByMainhead = Array.from(assetMainheadBuckets.values()).sort(
+      (left, right) =>
+        right.value - left.value || left.label.localeCompare(right.label),
+    );
 
     return {
       totalAssets,
@@ -520,6 +570,7 @@ export class DashboardService {
       visitsByType,
       activeVisitsByTeam,
       visitsByOperationalHealth,
+      assetsByMainhead,
       activeMappedVisits: activeMappedVisitCount,
       latestVisitActivityAt:
         latestSiteVisitActivity._max.updatedAt?.toISOString() ?? null,
@@ -742,6 +793,7 @@ export class DashboardService {
         id: true,
         severity: true,
         isEmergency: true,
+        maintenanceCategory: true,
       },
     });
 

@@ -13,6 +13,9 @@ export interface NetworkPole {
 export interface RadialEdge {
   from: string;
   to: string;
+  /** Feeder code this span belongs to — colours the edge; multi-feeder runs
+   *  between the same pair appear as parallel, per-feeder lines. */
+  feeder?: string;
 }
 
 export interface TieEdge {

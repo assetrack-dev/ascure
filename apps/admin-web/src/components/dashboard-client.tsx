@@ -390,28 +390,16 @@ function DashboardContent() {
 
                 <div className="grid gap-6 xl:grid-cols-2">
                   <SimpleBarChart
-                    title="Visits by Operational Health"
-                    data={metrics.visitsByOperationalHealth}
-                    emptyLabel="No operational health counts are available yet."
-                    tone="amber"
-                  />
-                  <SimpleBarChart
                     title="Visits by Status"
                     data={metrics.visitsByStatus}
                     emptyLabel="No site visit status counts are available yet."
                     tone="teal"
                   />
                   <SimpleBarChart
-                    title="Visits by Validation"
-                    data={metrics.visitsByValidationStatus}
-                    emptyLabel="No validation status counts are available yet."
-                    tone="rose"
-                  />
-                  <SimpleBarChart
                     title="Active Visits by Team"
                     data={metrics.activeVisitsByTeam}
                     emptyLabel="No active team counts are available yet."
-                    tone="teal"
+                    tone="amber"
                   />
                 </div>
 
@@ -441,9 +429,9 @@ function DashboardContent() {
 
                 <div className="grid gap-6 xl:grid-cols-2">
                   <SimpleBarChart
-                    title="Visits by Type"
-                    data={metrics.visitsByType}
-                    emptyLabel="No visit type counts are available yet."
+                    title="Total Assets by Mainhead"
+                    data={metrics.assetsByMainhead}
+                    emptyLabel="No assets are attributed to a mainhead yet."
                     tone="teal"
                   />
                   <SimpleBarChart
@@ -451,24 +439,6 @@ function DashboardContent() {
                     data={metrics.defectsBySeverity}
                     emptyLabel="Severity breakdown is pending backend data."
                     tone="rose"
-                  />
-                  <SimpleBarChart
-                    title="Defects by SLA State"
-                    data={metrics.defectsBySlaState}
-                    emptyLabel="SLA state counts are pending backend data."
-                    tone="amber"
-                  />
-                  <SimpleBarChart
-                    title="Defects by Assignee"
-                    data={metrics.defectsByAssignee}
-                    emptyLabel="No assignee counts are available yet."
-                    tone="teal"
-                  />
-                  <SimpleBarChart
-                    title="Defects by Team"
-                    data={metrics.defectsByTeam}
-                    emptyLabel="No assigned team counts are available yet."
-                    tone="teal"
                   />
                 </div>
 

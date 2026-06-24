@@ -9,6 +9,7 @@ import {
   InspectionItemInputType,
   InspectionTemplateScopeLevel,
   InspectionTemplateStatus,
+  MaintenanceCategory,
   OperationalDomain,
   Prisma,
   UserRole,
@@ -164,6 +165,7 @@ type DesiredChecklistItem = {
   isActive: boolean;
   isDefectTrigger: boolean;
   severity: DefectSeverity;
+  maintenanceCategory: MaintenanceCategory | null;
   sectionId?: string;
   /** The named group (section title) this item should live under, when grouped. */
   groupTitle?: string;
@@ -796,6 +798,7 @@ export class ChecklistTemplatesService {
               isActive: item.isActive,
               isDefectTrigger: item.isDefectTrigger,
               severity: item.severity,
+              maintenanceCategory: item.maintenanceCategory,
               sortOrder: item.sortOrder,
               optionsJson:
                 item.optionsJson === null
@@ -1008,6 +1011,7 @@ export class ChecklistTemplatesService {
             isActive: item.isActive,
             isDefectTrigger: item.isDefectTrigger,
             severity: item.severity,
+            maintenanceCategory: item.maintenanceCategory,
           },
         });
         continue;
@@ -1025,6 +1029,7 @@ export class ChecklistTemplatesService {
           isActive: item.isActive,
           isDefectTrigger: item.isDefectTrigger,
           severity: item.severity,
+          maintenanceCategory: item.maintenanceCategory,
           sortOrder: item.sortOrder,
           optionsJson:
             item.optionsJson === null
@@ -1188,6 +1193,10 @@ export class ChecklistTemplatesService {
         isActive: item.isActive ?? existingItem?.isActive ?? true,
         isDefectTrigger: item.isDefectTrigger ?? existingItem?.isDefectTrigger ?? true,
         severity: item.severity ?? existingItem?.severity ?? DefectSeverity.MEDIUM,
+        maintenanceCategory:
+          item.maintenanceCategory !== undefined
+            ? item.maintenanceCategory
+            : existingItem?.maintenanceCategory ?? null,
       };
     });
 
@@ -1230,6 +1239,7 @@ export class ChecklistTemplatesService {
       isActive: item.isActive,
       isDefectTrigger: item.isDefectTrigger,
       severity: item.severity,
+      maintenanceCategory: item.maintenanceCategory,
     };
   }
 
@@ -1251,6 +1261,7 @@ export class ChecklistTemplatesService {
       isActive: item.isActive,
       isDefectTrigger: item.isDefectTrigger,
       severity: item.severity,
+      maintenanceCategory: item.maintenanceCategory,
       sortOrder: item.sortOrder,
       optionsJson:
         item.optionsJson === null
@@ -2112,6 +2123,7 @@ export class ChecklistTemplatesService {
           isActive: item.isActive,
           isDefectTrigger: item.isDefectTrigger,
           severity: item.severity,
+          maintenanceCategory: item.maintenanceCategory,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
         };

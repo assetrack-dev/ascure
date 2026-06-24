@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import {
   DefectSeverity,
   DefectStatus,
+  MaintenanceCategory,
 } from '@prisma/client';
 import { initialDefectLifecycleStatus } from '../common/authorization/defect-governance';
 
@@ -9,6 +10,7 @@ export type MaterializableItemResult = {
   id: string;
   severity: DefectSeverity | null;
   isEmergency: boolean;
+  maintenanceCategory: MaintenanceCategory | null;
 };
 
 /**
@@ -34,6 +36,10 @@ export function buildInitialDefectData(
     severity: item.isEmergency
       ? DefectSeverity.CRITICAL
       : item.severity ?? DefectSeverity.MEDIUM,
+    // Work-type for maintenance packaging — null on the item result (legacy /
+    // untagged) resolves to SELENGGARAAN, the catch-all bucket.
+    maintenanceCategory:
+      item.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN,
     isEmergency: item.isEmergency,
     // Under RELEASE_ON_REPORT, emergencies open VERIFIED (instant release at
     // submit) while normal defects open DETECTED (dormant until LAPORAN SELESAI).
