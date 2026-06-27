@@ -174,6 +174,12 @@ export function AddAssetScreen() {
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [suggestedCode, setSuggestedCode] = useState<string | null>(null);
+  // SAVT route context, fetched from the visit. A SAVT survey numbers poles as a
+  // running integer carrying the route's KOD TIANG (e.g. "MI - KUK 1"), unlike
+  // SAVR's feeder grammar. Detected by the VISIT scope (authoritative), not the
+  // asset type.
+  const [visitScope, setVisitScope] = useState<string | null>(null);
+  const [visitRouteCode, setVisitRouteCode] = useState<string | null>(null);
 
   const selectedSubstation = useMemo(
     () => substations.find((substation) => substation.id === selectedSubstationId) ?? null,
@@ -190,8 +196,23 @@ export function AddAssetScreen() {
     [selectedAssetType],
   );
 
-  const assetCodeLabel = isSAVRWorkflow ? 'NO TIANG RONDAAN' : 'Asset Code';
-  const assetNameLabel = isSAVRWorkflow ? 'NO TIANG LAMA' : 'Asset Name (Optional)';
+  const isSAVTWorkflow = visitScope === 'SAVT';
+  // SAVR and SAVT share the pole-survey UI (NO TIANG LAMA + operational status).
+  const isPoleSurvey = isSAVRWorkflow || isSAVTWorkflow;
+  // The route line code ("KOD TIANG"), set once at check-in and normalized to
+  // match how pole codes are stored (uppercased). Every SAVT pole code = this
+  // prefix plus its No. Tiang, e.g. "MI - KUK 1".
+  const routePrefix = useMemo(
+    () => normalizeOperationalText(visitRouteCode ?? '').trim(),
+    [visitRouteCode],
+  );
+
+  const assetCodeLabel = isSAVTWorkflow
+    ? 'No. Tiang'
+    : isSAVRWorkflow
+      ? 'NO TIANG RONDAAN'
+      : 'Asset Code';
+  const assetNameLabel = isPoleSurvey ? 'NO TIANG LAMA' : 'Asset Name (Optional)';
   const selectedOperationalStatusOption = useMemo(
     () =>
       SAVR_OPERATIONAL_STATUS_OPTIONS.find((option) => option.value === operationalStatus) ??
@@ -205,7 +226,7 @@ export function AddAssetScreen() {
   useEffect(() => {
     const target = substationId ?? selectedSubstationId;
 
-    if (assetToEdit || !isSAVRWorkflow || !target) {
+    if (assetToEdit || !isSAVRWorkflow || isSAVTWorkflow || !target) {
       setSuggestedCode(null);
       return;
     }
@@ -227,7 +248,38 @@ export function AddAssetScreen() {
     return () => {
       cancelled = true;
     };
-  }, [assetToEdit, isSAVRWorkflow, substationId, selectedSubstationId]);
+  }, [assetToEdit, isSAVRWorkflow, isSAVTWorkflow, substationId, selectedSubstationId]);
+
+  // SAVT "Next:" = the route's highest existing No. Tiang + 1 (poles can be added
+  // out of order, so MAX not last). Branches ("/m") are typed manually. New SAVT
+  // poles only; the field holds just the integer — the KOD TIANG is prefixed on
+  // save. An empty route suggests "1".
+  useEffect(() => {
+    const target = substationId ?? selectedSubstationId;
+
+    if (assetToEdit || !isSAVTWorkflow || !routePrefix || !target) {
+      return;
+    }
+
+    let cancelled = false;
+
+    api
+      .getAssets(token, target)
+      .then((assets) => {
+        if (!cancelled) {
+          setSuggestedCode(suggestNextSavtNoTiang(assets, routePrefix));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuggestedCode(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assetToEdit, isSAVTWorkflow, routePrefix, substationId, selectedSubstationId, token]);
 
   useEffect(() => {
     setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
@@ -271,6 +323,23 @@ export function AddAssetScreen() {
     substationId,
   ]);
 
+  // SAVT edit: the stored code is the full "{KOD TIANG} {No. Tiang}" (e.g.
+  // "MI - KUK 1"), but the field captures only the No. Tiang. Once the route
+  // prefix resolves (the visit fetch lands after the rehydrate above), strip it
+  // so the field shows just the number; save re-prefixes it. Touches only the code.
+  useEffect(() => {
+    if (!assetToEdit || !isSAVTWorkflow || !routePrefix) {
+      return;
+    }
+
+    const code = normalizeOperationalText(assetToEdit.assetCode ?? '');
+    const prefix = `${routePrefix} `.toUpperCase();
+
+    if (code.toUpperCase().startsWith(prefix)) {
+      setAssetCode(code.slice(prefix.length).trim());
+    }
+  }, [assetToEdit, isSAVTWorkflow, routePrefix]);
+
   const prefillCurrentLocation = useCallback(async () => {
     try {
       const permission = await Location.getForegroundPermissionsAsync();
@@ -310,6 +379,21 @@ export function AddAssetScreen() {
       setAssetTypes(assetTypeList);
       setSubstations(substationList);
 
+      // Fetch the visit's scope + KOD TIANG so a SAVT route numbers its poles as a
+      // running integer carrying the route code. Non-fatal and cached, so the form
+      // still loads (and works offline) when the visit can't be fetched.
+      if (siteVisitId) {
+        try {
+          const { value: visit } = await cachedFetch('site-visit', siteVisitId, () =>
+            api.getSiteVisit(token, siteVisitId),
+          );
+          setVisitScope(visit?.operationalScope ?? null);
+          setVisitRouteCode(visit?.routeCode ?? null);
+        } catch {
+          // Leave SAVT numbering dormant; SAVR/generic asset entry is unaffected.
+        }
+      }
+
       if (assetTypeList.length > 0) {
         setSelectedAssetTypeId((currentValue) =>
           assetTypeList.some((assetType) => assetType.id === currentValue)
@@ -345,6 +429,7 @@ export function AddAssetScreen() {
     handleUnauthorized,
     prefillCurrentLocation,
     substationId,
+    siteVisitId,
     token,
   ]);
 
@@ -513,6 +598,17 @@ export function AddAssetScreen() {
       return;
     }
 
+    // SAVT poles store the full identity = route KOD TIANG + No. Tiang
+    // (e.g. "MI - KUK 1") so they stay unique per Pencawang across routes. The
+    // field holds only the No. Tiang; prefix it here, guarding against a value
+    // that already carries the prefix.
+    const composedAssetCode =
+      isSAVTWorkflow && routePrefix
+        ? normalizedAssetCode.toUpperCase().startsWith(`${routePrefix} `.toUpperCase())
+          ? normalizedAssetCode
+          : `${routePrefix} ${normalizedAssetCode}`
+        : normalizedAssetCode;
+
     const parsedLatitude = parseCoordinate(latitude, -90, 90);
 
     if (parsedLatitude === 'invalid') {
@@ -544,9 +640,9 @@ export function AddAssetScreen() {
       coordinateSource,
       coordinateCapturedAt,
       gpsAccuracyMeters,
-      operationalStatus: isSAVRWorkflow ? operationalStatus : null,
+      operationalStatus: isPoleSurvey ? operationalStatus : null,
     });
-    const targetAssetStatus = isSAVRWorkflow
+    const targetAssetStatus = isPoleSurvey
       ? getAssetStatusForOperationalStatus(operationalStatus)
       : undefined;
 
@@ -564,7 +660,7 @@ export function AddAssetScreen() {
           assetTypeId: selectedAssetTypeId,
           // Allow moving the pole to a different Pencawang (tweak A).
           substationId: selectedSubstationId || undefined,
-          assetCode: normalizedAssetCode,
+          assetCode: composedAssetCode,
           name: normalizedAssetName ?? '',
           latitude: latitudeValue,
           longitude: longitudeValue,
@@ -584,7 +680,7 @@ export function AddAssetScreen() {
       const createInput = {
         substationId: targetSubstationId,
         assetTypeId: selectedAssetTypeId,
-        assetCode: normalizedAssetCode,
+        assetCode: composedAssetCode,
         name: normalizedAssetName,
         latitude: parsedLatitude,
         longitude: parsedLongitude,
@@ -595,7 +691,7 @@ export function AddAssetScreen() {
 
       try {
         const savedAsset = await api.createAsset(token, createInput);
-        await storeLastPoleCode(targetSubstationId, normalizedAssetCode);
+        await storeLastPoleCode(targetSubstationId, composedAssetCode);
         proceedAfterSave(savedAsset, intent);
       } catch (createError) {
         // Offline (server unreachable) → queue the create and optimistically open
@@ -608,7 +704,7 @@ export function AddAssetScreen() {
             type: 'CREATE_ASSET',
             payload: createInput as Record<string, unknown>,
             tempId,
-            label: normalizedAssetCode,
+            label: composedAssetCode,
             sublabel: selectedSubstation
               ? `${selectedSubstation.code} - ${selectedSubstation.name}`
               : undefined,
@@ -618,7 +714,7 @@ export function AddAssetScreen() {
             id: tempId,
             substationId: targetSubstationId,
             assetTypeId: selectedAssetTypeId,
-            assetCode: normalizedAssetCode,
+            assetCode: composedAssetCode,
             name: normalizedAssetName ?? null,
             latitude: parsedLatitude ?? null,
             longitude: parsedLongitude ?? null,
@@ -644,7 +740,7 @@ export function AddAssetScreen() {
             prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
           ]);
 
-          await storeLastPoleCode(targetSubstationId, normalizedAssetCode);
+          await storeLastPoleCode(targetSubstationId, composedAssetCode);
           proceedAfterSave(optimisticAsset, intent);
           return;
         }
@@ -850,12 +946,24 @@ export function AddAssetScreen() {
 
           <Card>
             <SectionTitle>Asset Details</SectionTitle>
+            {isSAVTWorkflow && routePrefix ? (
+              <View style={styles.routeContext}>
+                <Text style={styles.routeContextLabel}>KOD TIANG</Text>
+                <Text style={styles.routeContextValue} numberOfLines={1}>
+                  {routePrefix}
+                </Text>
+              </View>
+            ) : null}
             <TextField
               label={assetCodeLabel}
               value={assetCode}
               onChangeText={(nextValue) => setAssetCode(normalizeOperationalText(nextValue))}
               placeholder={
-                isSAVRWorkflow ? 'Masukkan No Tiang Rondaan' : 'Enter the field asset code'
+                isSAVTWorkflow
+                  ? 'Masukkan No Tiang (cth. 1 atau 33/1)'
+                  : isSAVRWorkflow
+                    ? 'Masukkan No Tiang Rondaan'
+                    : 'Enter the field asset code'
               }
               autoCapitalize="characters"
             />
@@ -863,7 +971,7 @@ export function AddAssetScreen() {
               <Pressable
                 onPress={() => setAssetCode(suggestedCode)}
                 accessibilityRole="button"
-                accessibilityLabel={`Use suggested NO TIANG RONDAAN ${suggestedCode}`}
+                accessibilityLabel={`Use suggested ${assetCodeLabel} ${suggestedCode}`}
                 style={({ pressed }) => [
                   styles.suggestionChip,
                   pressed && styles.suggestionChipPressed,
@@ -879,12 +987,12 @@ export function AddAssetScreen() {
               label={assetNameLabel}
               value={assetName}
               onChangeText={(nextValue) => setAssetName(normalizeOperationalText(nextValue))}
-              placeholder={isSAVRWorkflow ? 'Masukkan No Tiang Lama jika ada' : 'Enter a readable asset name'}
+              placeholder={isPoleSurvey ? 'Masukkan No Tiang Lama jika ada' : 'Enter a readable asset name'}
               autoCapitalize="characters"
             />
           </Card>
 
-          {isSAVRWorkflow ? (
+          {isPoleSurvey ? (
             <Card>
               <SectionTitle>Operational Status</SectionTitle>
               <Pressable
@@ -1164,6 +1272,36 @@ function isSavrAssetType(assetType: AssetType | null) {
   );
 }
 
+// SAVT "Next:" suggestion = the route's highest existing No. Tiang + 1. The
+// route's poles are this Pencawang's assets whose code starts with the route
+// KOD TIANG prefix (e.g. "MI - KUK "); the trunk number is the leading integer
+// of the remainder, so a branch like "33/1" still counts under trunk 33. An
+// empty route suggests "1".
+function suggestNextSavtNoTiang(assets: Asset[], routePrefix: string): string {
+  const prefix = `${routePrefix} `.toUpperCase();
+  let max = 0;
+
+  for (const asset of assets) {
+    const code = (asset.assetCode ?? '').toUpperCase();
+
+    if (!code.startsWith(prefix)) {
+      continue;
+    }
+
+    const match = code.slice(prefix.length).trim().match(/^(\d+)/);
+
+    if (match) {
+      const value = Number.parseInt(match[1], 10);
+
+      if (Number.isFinite(value) && value > max) {
+        max = value;
+      }
+    }
+  }
+
+  return String(max + 1);
+}
+
 function getInitialOperationalStatus(asset?: Asset): SavrOperationalStatus {
   const metadataStatus = normalizeOperationalStatus(
     getMetadataString(asset?.metadata, 'operationalStatus'),
@@ -1323,6 +1461,26 @@ const createStyles = (t: Theme) =>
       fontWeight: '600',
       color: t.colors.infoText,
       opacity: 0.8,
+    },
+    routeContext: {
+      marginBottom: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: t.colors.infoBorder,
+      backgroundColor: t.colors.infoSoft,
+    },
+    routeContextLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: t.colors.infoText,
+      opacity: 0.8,
+    },
+    routeContextValue: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: t.colors.infoText,
     },
     dropdownField: {
       minHeight: 52,

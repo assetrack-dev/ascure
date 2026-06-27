@@ -499,6 +499,7 @@ export class SiteVisitsService {
           toPencawangId: operationalSession.toPencawangId,
           requiresQAQC: operationalSession.requiresQAQC,
           reportingGroup: operationalSession.reportingGroup,
+          routeCode: operationalSession.routeCode,
           mainhead:
             this.normalizeOperationalString(dto.mainhead) ??
             operationalLinks.mainheadLabel,
@@ -1750,6 +1751,9 @@ export class SiteVisitsService {
       toPencawangId,
       requiresQAQC: dto.requiresQAQC ?? scopeRequiresQAQC(operationalScope),
       reportingGroup: this.normalizeOperationalString(dto.reportingGroup),
+      // Plain trim (not normalizeOperationalString) so the route code is stored
+      // exactly as entered — e.g. "MI - KUK" keeps its spacing.
+      routeCode: this.normalizeOptionalString(dto.routeCode),
     };
   }
 

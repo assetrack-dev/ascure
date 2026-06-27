@@ -89,6 +89,14 @@ export class CreateSiteVisitDto {
   @IsUUID()
   toPencawangId?: string;
 
+  // SAVT route line code ("KOD TIANG", e.g. "MI - KUK") — set once at check-in
+  // for a SAVT/ROUTE visit and inherited by every pole on the route.
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  routeCode?: string;
+
   @IsOptional()
   @IsBoolean()
   requiresQAQC?: boolean;

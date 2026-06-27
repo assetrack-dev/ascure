@@ -411,6 +411,7 @@ export const api = {
       sessionKind?: SessionKind;
       fromPencawangId?: string;
       toPencawangId?: string;
+      routeCode?: string;
       requiresQAQC?: boolean;
       reportingGroup?: string;
       mainheadId?: string;

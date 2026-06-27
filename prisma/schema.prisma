@@ -1017,6 +1017,7 @@ model SiteVisit {
   sessionKind           SessionKind?
   fromPencawangId       String?                     @db.Uuid
   toPencawangId         String?                     @db.Uuid
+  routeCode             String?
   requiresQAQC          Boolean?
   reportingGroup        String?
   mainhead              String?

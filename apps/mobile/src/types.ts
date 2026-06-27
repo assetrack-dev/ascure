@@ -274,6 +274,7 @@ export interface SiteVisit {
   toPencawangId?: string | null;
   fromPencawang?: Pick<Substation, 'id' | 'code' | 'name' | 'location'> | null;
   toPencawang?: Pick<Substation, 'id' | 'code' | 'name' | 'location'> | null;
+  routeCode?: string | null;
   requiresQAQC?: boolean | null;
   reportingGroup?: string | null;
   mainhead?: string | null;

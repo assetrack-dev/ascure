@@ -117,6 +117,12 @@ export function CheckInScreen() {
   const [mainheads, setMainheads] = useState<Mainhead[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
   const [pencawangMode, setPencawangMode] = useState<PencawangMode>('NEW');
+  // SAVT = a high-voltage line surveyed as a ROUTE from one Pencawang to another.
+  // SAVR (the default) is the pole-centric single-Pencawang survey.
+  const [operationalScope, setOperationalScope] = useState<'SAVR' | 'SAVT'>('SAVR');
+  const isSavt = operationalScope === 'SAVT';
+  const [toPencawangId, setToPencawangId] = useState<string>('');
+  const [routeCode, setRouteCode] = useState('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedSubstationId, setSelectedSubstationId] = useState<string>('');
   const [visitType, setVisitType] = useState<SiteVisitType>('DISCOVERY');
@@ -563,6 +569,18 @@ export function CheckInScreen() {
       return null;
     }
 
+    if (isSavt) {
+      if (!toPencawangId) {
+        setError("Please select the route's To Pencawang for a SAVT survey.");
+        return null;
+      }
+
+      if (!routeCode.trim()) {
+        setError('KOD TIANG (route line code) is required for a SAVT survey.');
+        return null;
+      }
+    }
+
     if (pencawangMode === 'NEW') {
       if (!normalizedPencawangName) {
         setError('Nama Pencawang is required for a new Pencawang.');
@@ -603,6 +621,18 @@ export function CheckInScreen() {
       checkInAccuracyMeters: gpsAccuracyMeters ?? undefined,
       checkInCapturedAt: checkInCapturedAt ?? undefined,
       notes: normalizedNotes,
+      // SAVT route: scope, the From (= this visit's Pencawang when chosen from
+      // master data), the To Pencawang, and the KOD TIANG route line code that
+      // every pole on the route inherits.
+      ...(isSavt
+        ? {
+            operationalScope: 'SAVT' as const,
+            fromPencawangId:
+              pencawangMode === 'EXISTING' ? selectedSubstationId : undefined,
+            toPencawangId: toPencawangId || undefined,
+            routeCode: routeCode.trim() || undefined,
+          }
+        : {}),
     };
   }
 
@@ -748,9 +778,26 @@ export function CheckInScreen() {
           </Card>
 
           <Card>
-            <SectionTitle>Pencawang Details</SectionTitle>
+            <SectionTitle>{isSavt ? 'Route Details (SAVT)' : 'Pencawang Details'}</SectionTitle>
             <Dropdown
-              label="Pencawang Source"
+              label="Survey Type"
+              value={operationalScope}
+              options={[
+                {
+                  label: 'SAVR — Pencawang (pole survey)',
+                  value: 'SAVR',
+                  description: 'Inspect poles at one Pencawang',
+                },
+                {
+                  label: 'SAVT — Route A → B (HV line)',
+                  value: 'SAVT',
+                  description: 'High-voltage line between two Pencawang',
+                },
+              ]}
+              onSelect={(nextValue) => setOperationalScope(nextValue as 'SAVR' | 'SAVT')}
+            />
+            <Dropdown
+              label={isSavt ? 'From Pencawang Source' : 'Pencawang Source'}
               value={pencawangMode}
               options={[
                 {
@@ -837,6 +884,29 @@ export function CheckInScreen() {
                 onSelect={setSelectedMainheadId}
               />
             )}
+
+            {isSavt ? (
+              <>
+                <Dropdown
+                  label="To Pencawang *"
+                  value={toPencawangId}
+                  placeholder="Choose the route's end Pencawang"
+                  options={substations.map((substation) => ({
+                    label: `${substation.code} - ${substation.name}`,
+                    value: substation.id,
+                    description: substation.location || null,
+                  }))}
+                  onSelect={setToPencawangId}
+                />
+                <TextField
+                  label="KOD TIANG *"
+                  value={routeCode}
+                  onChangeText={(nextValue) => setRouteCode(normalizeOperationalText(nextValue))}
+                  placeholder="Route line code, e.g. MI - KUK"
+                  autoCapitalize="characters"
+                />
+              </>
+            ) : null}
           </Card>
 
           <Card>
