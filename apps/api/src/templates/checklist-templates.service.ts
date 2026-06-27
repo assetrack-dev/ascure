@@ -831,7 +831,12 @@ export class ChecklistTemplatesService {
     const desiredItems =
       dto.items === undefined
         ? existingItems.map((item) => this.fromExistingItem(item, sectionTitleById))
-        : this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById);
+        : // carryRemovedAsInactive=false → honour deletions: items dropped from the
+          // payload are NOT re-added to the new version. The previous version is
+          // archived intact (its items + inspection responses survive), and each
+          // result keeps its own templateItem FK, so history still resolves — the
+          // new active version simply omits the removed item.
+          this.normalizeIncomingItems(existingItems, dto.items, sectionTitleById, false);
     const mapping = await this.resolveTemplateMapping(this.prisma, user.tenantId, dto, template);
     const nextIsActive =
       dto.isActive ??

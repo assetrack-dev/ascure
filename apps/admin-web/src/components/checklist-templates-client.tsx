@@ -1277,6 +1277,7 @@ function TemplateFormModal({
   onClose,
   onError,
   onSubmit,
+  onSaveAsDraft,
 }: {
   mode: ModalMode;
   values: TemplateFormState;
@@ -1293,6 +1294,7 @@ function TemplateFormModal({
   onClose: () => void;
   onError: Dispatch<SetStateAction<string>>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveAsDraft: () => void;
 }) {
   const isCreateMode = mode === "create";
   const selectedStatus = selectedTemplate ? resolveTemplateStatus(selectedTemplate) : "DRAFT";
@@ -1449,16 +1451,14 @@ function TemplateFormModal({
         return;
       }
 
+      // Remove the item outright (one click). Previously an already-saved item was
+      // only deactivated (isActive:false) and kept in the list, so it could never
+      // actually be deleted through the builder. History stays safe: editing an
+      // active template publishes a NEW version and archives the old one (which
+      // keeps the item + its inspection responses), so a dropped item is simply
+      // not carried into the new version. Use the per-item "Active" toggle when you
+      // want to deactivate-but-keep an item instead.
       updateFormValues((currentValues) => {
-        if (item.id && isFormItemActive(item)) {
-          return {
-            ...currentValues,
-            items: currentValues.items.map((entry) =>
-              entry.localId === itemLocalId ? { ...entry, isActive: false } : entry,
-            ),
-          };
-        }
-
         const nextItems = currentValues.items.filter((entry) => entry.localId !== itemLocalId);
 
         return {
@@ -1546,7 +1546,7 @@ function TemplateFormModal({
 
               {!isCreateMode && selectedStatus !== "DRAFT" ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                  Saving structure changes to a used active or archived template creates a new draft version.
+                  Saving publishes a new version and archives the current one — its inspection history is kept. Use &ldquo;Save as Draft&rdquo; to keep editing without publishing yet.
                 </div>
               ) : null}
 
@@ -1872,9 +1872,25 @@ function TemplateFormModal({
               <button type="button" onClick={onClose} className={secondaryButtonClassName}>
                 Cancel
               </button>
+              {!isCreateMode && selectedStatus === "ACTIVE" ? (
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={onSaveAsDraft}
+                  className={secondaryButtonClassName}
+                >
+                  {isSaving ? "Saving" : "Save as Draft"}
+                </button>
+              ) : null}
               <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
                 <CheckCircle2 size={16} />
-                {isSaving ? "Saving" : isCreateMode ? "Create Draft" : "Save Changes"}
+                {isSaving
+                  ? "Saving"
+                  : isCreateMode
+                    ? "Create Draft"
+                    : selectedStatus === "ACTIVE"
+                      ? "Save & Publish"
+                      : "Save Changes"}
               </button>
             </div>
           </div>
@@ -2186,8 +2202,11 @@ function ChecklistTemplatesContent() {
     setDuplicateError("");
   }
 
-  async function handleTemplateSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleTemplateSubmit(
+    event?: FormEvent<HTMLFormElement>,
+    options?: { asDraft?: boolean },
+  ) {
+    event?.preventDefault();
 
     if (!session?.token || !modalMode) {
       return;
@@ -2283,6 +2302,13 @@ function ChecklistTemplatesContent() {
               capabilityId: formValues.capabilityId || null,
               ...scopePayload,
               name: trimmedName,
+              // "Save & Publish" on an ACTIVE template applies immediately: the new
+              // version is published + activated and the previous one archived.
+              // "Save as Draft" (options.asDraft) instead saves a DRAFT to review and
+              // activate later. Editing a DRAFT stays a draft, edited in place.
+              isActive: options?.asDraft
+                ? false
+                : resolveTemplateStatus(selectedTemplate) === "ACTIVE",
               groups,
               items,
             })
@@ -2726,6 +2752,7 @@ function ChecklistTemplatesContent() {
           onClose={closeModal}
           onError={setModalError}
           onSubmit={handleTemplateSubmit}
+          onSaveAsDraft={() => handleTemplateSubmit(undefined, { asDraft: true })}
         />
       ) : null}
 
