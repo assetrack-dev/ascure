@@ -2895,6 +2895,7 @@ const createStyles = (t: Theme) =>
     backgroundColor: t.colors.danger,
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 12,
     alignItems: 'center',
     marginBottom: 14,
   },
@@ -2905,6 +2906,11 @@ const createStyles = (t: Theme) =>
     fontSize: 15,
     fontWeight: '800',
     color: t.colors.textOnPrimary,
+    // Stretch the label to the full button width and center it, so Android can't
+    // clip the trailing word ("Emergency") when measuring a string that starts
+    // with an emoji (the 🚨 advance width is mis-measured, shrinking the text box).
+    alignSelf: 'stretch',
+    textAlign: 'center',
   },
   imageCaptureField: {
     gap: 8,

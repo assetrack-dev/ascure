@@ -382,12 +382,14 @@ export function AddAssetScreen() {
       // Fetch the visit's scope + KOD TIANG so a SAVT route numbers its poles as a
       // running integer carrying the route code. Non-fatal and cached, so the form
       // still loads (and works offline) when the visit can't be fetched.
+      let visitOperationalScope: string | null = null;
       if (siteVisitId) {
         try {
           const { value: visit } = await cachedFetch('site-visit', siteVisitId, () =>
             api.getSiteVisit(token, siteVisitId),
           );
-          setVisitScope(visit?.operationalScope ?? null);
+          visitOperationalScope = visit?.operationalScope ?? null;
+          setVisitScope(visitOperationalScope);
           setVisitRouteCode(visit?.routeCode ?? null);
         } catch {
           // Leave SAVT numbering dormant; SAVR/generic asset entry is unaffected.
@@ -395,10 +397,17 @@ export function AddAssetScreen() {
       }
 
       if (assetTypeList.length > 0) {
+        // On a scoped visit (e.g. SAVT) default the asset type to one matching that
+        // scope, so the crew doesn't re-pick it on every pole — and the pole then
+        // resolves that scope's checklist. New poles only; an edit keeps its own type.
+        const preferredAssetTypeId =
+          !isEditMode && visitOperationalScope
+            ? pickDefaultAssetTypeId(assetTypeList, visitOperationalScope)
+            : assetTypeList[0].id;
         setSelectedAssetTypeId((currentValue) =>
           assetTypeList.some((assetType) => assetType.id === currentValue)
             ? currentValue
-            : assetTypeList[0].id,
+            : preferredAssetTypeId,
         );
       }
 
@@ -1270,6 +1279,46 @@ function isSavrAssetType(assetType: AssetType | null) {
   return [assetType.code, assetType.name].some((value) =>
     typeof value === 'string' && value.trim().toUpperCase().includes('SAVR'),
   );
+}
+
+// Pick the asset type to default to for a scoped visit (e.g. SAVT). Prefer one
+// whose operationalScope matches; fall back to a code/name keyword when the asset
+// type hasn't been tagged with a scope; else the first type. Caller guards
+// assetTypes.length > 0.
+function pickDefaultAssetTypeId(
+  assetTypes: AssetType[],
+  visitScope: string,
+): string {
+  const byScope = assetTypes.find(
+    (assetType) => assetType.operationalScope === visitScope,
+  );
+
+  if (byScope) {
+    return byScope.id;
+  }
+
+  const byKeyword = assetTypes.find((assetType) =>
+    assetTypeMatchesScopeKeyword(assetType, visitScope),
+  );
+
+  return (byKeyword ?? assetTypes[0]).id;
+}
+
+function assetTypeMatchesScopeKeyword(
+  assetType: AssetType,
+  visitScope: string,
+): boolean {
+  const haystack = `${assetType.code ?? ''} ${assetType.name ?? ''}`.toUpperCase();
+
+  if (visitScope === 'SAVT') {
+    return haystack.includes('SAVT') || haystack.includes('TINGGI');
+  }
+
+  if (visitScope === 'SAVR') {
+    return haystack.includes('SAVR') || haystack.includes('RENDAH');
+  }
+
+  return haystack.includes(visitScope.toUpperCase());
 }
 
 // SAVT "Next:" suggestion = the route's highest existing No. Tiang + 1. The
