@@ -531,12 +531,24 @@ export class ReportsService {
       normalizeChecklistLabel(resolveExportMainheadName(chosen)) ===
       KUANTAN_MAINHEAD_NAME;
 
-    if (!isKuantanMainhead) {
+    // Both KUANTAN and every other SAVR mainhead use a FIXED column arrangement
+    // ("SUSUNAN UNTUK ML DOWNLOAD"); only the item-label list differs — KUANTAN
+    // follows the owner's PE_DC_TESTING sample (KUANTAN_FIXED_ITEM_LABELS), the
+    // rest use SAVR_FIXED_ITEM_LABELS. Item columns map to live template items by
+    // normalized label, so a renamed item comes through blank. (The dynamic,
+    // template-driven block further below is retained as a fallback but is no
+    // longer reached for SAVR exports.)
+    const fixedItemLabels = isKuantanMainhead
+      ? KUANTAN_FIXED_ITEM_LABELS
+      : SAVR_FIXED_ITEM_LABELS;
+    // A fixed arrangement is always defined for SAVR; the dynamic, template-driven
+    // block further below is the fallback for any mainhead without a fixed list.
+    if (fixedItemLabels.length > 0) {
       const fixedWorkbook = new Workbook();
       fixedWorkbook.creator = 'ASCURE';
       fixedWorkbook.created = new Date();
       const fixedSheet = fixedWorkbook.addWorksheet('CHECKLIST');
-      fixedSheet.addRow([...SAVR_FIXED_META_HEADERS, ...SAVR_FIXED_ITEM_LABELS]);
+      fixedSheet.addRow([...SAVR_FIXED_META_HEADERS, ...fixedItemLabels]);
       fixedSheet.getRow(1).font = { bold: true };
 
       for (const insp of chosen) {
@@ -565,7 +577,7 @@ export class ReportsService {
           sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
         ];
 
-        const itemCells = SAVR_FIXED_ITEM_LABELS.map((label) => {
+        const itemCells = fixedItemLabels.map((label) => {
           const col = itemsByLabel.get(normalizeChecklistLabel(label));
           if (!col) {
             return '';
@@ -1186,8 +1198,8 @@ function resolveTemplateCell(
 /**
  * Owner's fixed SAVR checklist arrangement ("SUSUNAN UNTUK ML DOWNLOAD",
  * 2026-06-22): the exact column order for the "Download Checklist" export,
- * applied to every SAVR mainhead EXCEPT "KUANTAN" (which keeps the dynamic,
- * template-driven layout). Item columns are matched to the live template items
+ * applied to every SAVR mainhead except KUANTAN (which uses its own fixed list,
+ * KUANTAN_FIXED_ITEM_LABELS). Item columns are matched to the live template items
  * by normalized label, so these item headers must match the checklist item
  * labels verbatim (whitespace-insensitive). Photo (IMAGE) values are not
  * embedded — the GAMBAR KELEGAAN columns surface the OCR reading.
@@ -1253,7 +1265,87 @@ const SAVR_FIXED_ITEM_LABELS = [
   'KAWASAN - LAIN - LAIN (SILA NYATAKAN)',
 ];
 
-/** The one mainhead that keeps the legacy dynamic checklist layout. */
+/**
+ * KUANTAN's fixed checklist arrangement — the exact column order for KUANTAN's
+ * "Download Checklist" export, taken verbatim from the owner's PE_DC_TESTING
+ * sample (2026-06-27). Like SAVR_FIXED_ITEM_LABELS, item columns map to the live
+ * template items by normalized label, so these headers must match the KUANTAN
+ * checklist item labels verbatim (whitespace-insensitive); the meta columns
+ * reuse SAVR_FIXED_META_HEADERS.
+ */
+const KUANTAN_FIXED_ITEM_LABELS = [
+  'TIANG - NO. TIANG PUDAR / TIADA',
+  'TIANG - REPUT / RETAK',
+  'TIANG - CONDONG',
+  'TIANG - KEPERLUAN UMBANG',
+  'JENIS TIANG',
+  'SAIZ TIANG',
+  'ABC (SPAN) - 3 X 185',
+  'ABC (SPAN) - 3 X 95',
+  'BILANGAN SERVIS MELIBATKAN 1 PENGGUNA SAHAJA',
+  'BARE (SPAN) - 7 /173 (3 PHASE)',
+  'BARE (SPAN) - 7 /122 (SINGLE PHASE)',
+  'BARE (SPAN) - 3 /132',
+  'ABC (SPAN) - 3 X 16',
+  'ABC (SPAN) - 1 X 16',
+  'PVC (SPAN) - 9 /064 (3 PHASE)',
+  'PVC (SPAN) - 7 /083 (SINGLE PHASE)',
+  'PVC (SPAN) - 7 /044',
+  'CATITAN',
+  'BLACK BOX - KESAN BAKAR',
+  'BLACK BOX - USANG / LAMA',
+  'BLACK BOX - BOLEH DICAPAI (<3.5 METER)',
+  'BIL BLACK BOX',
+  'AKSESORI - SADDLE LINE TAP PADA TALIAN ABC',
+  'AKSESORI - SUSPENSION CLAMP (A) PATAH / TERBALIK (C) / TIADA (C)',
+  'AKSESORI - DEAD END CLAMP PATAH / TERBALIK',
+  'AKSESORI - CABLE TIE',
+  'UMBANG - TERBANG / SUPPORT POLE',
+  'UMBANG - KENDUR / PUTUS',
+  'UMBANG - TIADA STAY INSULATOR / ROSAK',
+  'UMBANG - STAY PLATE / PANGKAL STAY TERBONGKAH',
+  'PENANGKAP KILAT - ROSAK',
+  'PEMBUMIAN - EARTHING CONNECTED PADA DEVICE & AKSESORI',
+  'PEMBUMIAN - TIADA SAMBUNGAN KE NEUTRAL',
+  'PEMBUMIAN - TIDAK MENGGUNAKAN IPC ABC - BARE',
+  'SAMBUNGAN UG-OH / JUMPER - TIADA TRANSITION JOINT (MENGGUNAKAN IPC)',
+  'SAMBUNGAN UG-OH / JUMPER - TIADA UV SLEEVE',
+  'SAMBUNGAN UG-OH / JUMPER - KESAN BAKAR',
+  'SAMBUNGAN UG-OH / JUMPER - PAIP KABEL ROSAK / TIDAK STANDARD / TIADA PAIP',
+  'PAPAN TANDA  -  OFF POINT / BEKALAN DUA HALA - PAPAN TANDA PUDAR / ROSAK / TIADA',
+  'BIL LVPT CAP BANK',
+  'IPC - BILANGAN IPC NEUTRAL KURANG 2 NOS',
+  'IPC - TIUP PEMATI (END CAP) TIADA / TIDAK DIPASANG',
+  'IPC - IPC KESAN BAKAR TERBALIK / TIDAK MENCUKUPI (NEUTRAL)',
+  'LAMPU JALAN - SAMBUNGAN IPC DI SERVIS (TINDAKAN TEAM SL)',
+  'LAIN-LAIN - HAZARD BIO (TEBUAN, ETC.)',
+  'SERVIS - METER BOX ROSAK DI TIANG',
+  'TALIAN (UTAMA / SERVIS) - PENGGUNAAN IPC / MARUKU  JOINT BAGI SAMBUNGAN TENGAH',
+  'TALIAN (UTAMA / SERVIS) - TIDAK PATUH GROUND CLEARANCE',
+  'TALIAN (UTAMA / SERVIS) - PERLU RESLEEVE',
+  'TALIAN (UTAMA / SERVIS) - CROSSING JLN YG BERISIKO TIDAK MENGGUNAKAN WIRE MASSENGER',
+  'TALIAN (UTAMA / SERVIS) - UZUR / USANG',
+  'TALIAN (UTAMA / SERVIS) - TALIAN ATAS DIRENTANG MELINTASI / BERSENTUHAN BUMBUNG',
+  'RENTIS - PERLU RENTIS.   (A) MELINTASI JALAN UTAMA, (B) BAHU JALAN, (C) JALAN TIDAK DIMASUKI KENDERAAN',
+  'RENTIS - ULAN (CREEPERS)',
+  'SERVIS - TALIAN SERVIS BERSENTUHAN PADA BUMBUNG',
+  'SERVIS - SERVIS KENA ZINK',
+  'SERVIS - WON PIECE TANGGAL',
+  'SESALUR KAKI LIMA - WAYAR TANGGAL',
+  'SESALUR KAKI LIMA - JUNCTION BOX TANGGAL / KESAN BAKAR',
+  'SESALUR KAKI LIMA - USIKAN PENGGUNA',
+  'SERVIS - SERVIS TERBIAR / TIDAK DIGUNAKAN',
+  'SERVIS - USANG / LAMA',
+  'GAMBAR KELEGAAN 1',
+  'KEADAAN DI TAPAK 1',
+  'GAMBAR KELEGAAN 2',
+  'KEADAAN DI TAPAK 2',
+  'GAMBAR KELEGAAN 3',
+  'KEADAAN DI TAPAK 3',
+  'KAWASAN - LAIN - LAIN (SILA NYATAKAN)',
+];
+
+/** The mainhead with its own fixed checklist arrangement (KUANTAN_FIXED_ITEM_LABELS). */
 const KUANTAN_MAINHEAD_NAME = 'KUANTAN';
 
 /** Whitespace-insensitive, case-insensitive label key for matching. */
