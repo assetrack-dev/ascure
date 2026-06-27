@@ -83,6 +83,18 @@ const QUEUE_GROUPS: Array<{
   { group: 'NEEDS_ATTENTION', label: 'Rejected', tone: 'danger' },
 ];
 
+type MainheadQueueGroup = {
+  key: string;
+  label: string;
+  total: number;
+  statusGroups: Array<
+    (typeof QUEUE_GROUPS)[number] & { items: InspectionQueueItem[] }
+  >;
+};
+
+const UNSPECIFIED_MAINHEAD_KEY = '__UNSPECIFIED__';
+const UNSPECIFIED_MAINHEAD_LABEL = 'Other / Unspecified';
+
 export function HomeScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'Home'>['navigation']>();
   const { token, user, setUser, handleUnauthorized } = useSession();
@@ -228,13 +240,17 @@ export function HomeScreen() {
           return;
         }
 
-        // Join is a best-effort membership refresh — the crew is already a member
-        // of a visit shown in their queue. If the endpoint is missing OR the
-        // server is unreachable (offline, status 0), just open the visit we
-        // already have so field work isn't blocked.
+        // Join is a best-effort membership refresh — the visit is already in the
+        // user's queue, so they can SEE it. Open it (read-only) rather than
+        // blocking when join is unavailable (endpoint missing / offline, status 0)
+        // OR not permitted for this viewer — e.g. a Main Contractor manager
+        // overseeing a subcontractor's visit they aren't a member of (403/404).
         if (
           isEndpointUnavailableError(joinError) ||
-          (joinError instanceof ApiError && joinError.status === 0)
+          (joinError instanceof ApiError &&
+            (joinError.status === 0 ||
+              joinError.status === 403 ||
+              joinError.status === 404))
         ) {
           navigation.navigate('VisitDetail', {
             visitId: visit.id,
@@ -429,6 +445,36 @@ function InspectionWorkspaceView({
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
+  // Group the queue by Mainhead (outer) then status (inner). A Main Contractor
+  // running teams + subcontractors across several MAINHEADs gets one labelled
+  // section per Mainhead; a crew working a single Mainhead keeps the flat
+  // status-only layout (no redundant header).
+  const mainheadGroups = useMemo(
+    () => buildMainheadQueueGroups(queueItems),
+    [queueItems],
+  );
+  const showMainheadHeaders = mainheadGroups.length > 1;
+
+  const renderStatusCard = (
+    entry: MainheadQueueGroup['statusGroups'][number],
+  ) => (
+    <Card key={entry.group}>
+      <View style={styles.listHeader}>
+        <StatusChip label={entry.label} tone={entry.tone} />
+        <Text style={styles.countText}>{entry.items.length}</Text>
+      </View>
+      <View style={styles.queueGrid}>
+        {entry.items.map((item) => (
+          <InspectionQueueCard
+            key={item.id}
+            item={item}
+            onOpenItem={onOpenQueueItem}
+          />
+        ))}
+      </View>
+    </Card>
+  );
+
   return (
     <>
       {/* Scope selector — a compact pill row at the top instead of a full card. */}
@@ -444,7 +490,9 @@ function InspectionWorkspaceView({
       </View>
 
       {/* One card per status group (no "Inspection Queue" wrapper, no per-item
-          status pill — the card header carries the single status chip). */}
+          status pill — the card header carries the single status chip). When the
+          queue spans more than one Mainhead, those status cards are nested under a
+          per-Mainhead section header. */}
       {queueItems.length === 0 ? (
         <Card>
           <EmptyState
@@ -453,32 +501,23 @@ function InspectionWorkspaceView({
             description="Create or join a site visit to begin SAVR inspection work."
           />
         </Card>
+      ) : !showMainheadHeaders ? (
+        // Single Mainhead (or none): keep the original flat per-status layout.
+        (mainheadGroups[0]?.statusGroups ?? []).map(renderStatusCard)
       ) : (
-        QUEUE_GROUPS.map((entry) => {
-          const items = queueItems.filter((item) => item.group === entry.group);
-
-          if (items.length === 0) {
-            return null;
-          }
-
-          return (
-            <Card key={entry.group}>
-              <View style={styles.listHeader}>
-                <StatusChip label={entry.label} tone={entry.tone} />
-                <Text style={styles.countText}>{items.length}</Text>
-              </View>
-              <View style={styles.queueGrid}>
-                {items.map((item) => (
-                  <InspectionQueueCard
-                    key={item.id}
-                    item={item}
-                    onOpenItem={onOpenQueueItem}
-                  />
-                ))}
-              </View>
-            </Card>
-          );
-        })
+        // Multiple Mainheads: a labelled section per Mainhead, status cards within.
+        mainheadGroups.map((group) => (
+          <View key={group.key} style={styles.mainheadSection}>
+            <View style={styles.mainheadHeader}>
+              <Feather name="map-pin" size={13} color={theme.colors.primary} />
+              <Text style={styles.mainheadTitle} numberOfLines={1}>
+                {group.label}
+              </Text>
+              <Text style={styles.mainheadCount}>{group.total}</Text>
+            </View>
+            {group.statusGroups.map(renderStatusCard)}
+          </View>
+        ))
       )}
     </>
   );
@@ -1019,6 +1058,52 @@ function getAvailableInspectionScopes(
   return SCOPE_ORDER.filter((scope) => scopes.has(scope));
 }
 
+function buildMainheadQueueGroups(
+  queueItems: InspectionQueueItem[],
+): MainheadQueueGroup[] {
+  const byKey = new Map<
+    string,
+    { label: string; items: InspectionQueueItem[] }
+  >();
+
+  for (const item of queueItems) {
+    const trimmed = item.visit.mainhead?.trim();
+    const key = trimmed ? trimmed.toUpperCase() : UNSPECIFIED_MAINHEAD_KEY;
+    const label = trimmed ? trimmed : UNSPECIFIED_MAINHEAD_LABEL;
+    const existing = byKey.get(key);
+
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      byKey.set(key, { label, items: [item] });
+    }
+  }
+
+  const groups: MainheadQueueGroup[] = [];
+
+  for (const [key, { label, items }] of byKey) {
+    const statusGroups = QUEUE_GROUPS.map((entry) => ({
+      ...entry,
+      items: items.filter((item) => item.group === entry.group),
+    })).filter((entry) => entry.items.length > 0);
+
+    groups.push({ key, label, total: items.length, statusGroups });
+  }
+
+  // Real MAINHEADs alphabetically; the catch-all "Unspecified" bucket always last.
+  groups.sort((a, b) => {
+    if (a.key === UNSPECIFIED_MAINHEAD_KEY) {
+      return 1;
+    }
+    if (b.key === UNSPECIFIED_MAINHEAD_KEY) {
+      return -1;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  return groups;
+}
+
 function buildInspectionQueueItems(
   activeVisits: SiteVisit[],
   completedVisits: SiteVisit[],
@@ -1300,6 +1385,32 @@ const createStyles = (t: Theme) =>
     },
     queueGrid: {
       gap: 10,
+    },
+    mainheadSection: {
+      gap: 10,
+    },
+    mainheadHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 4,
+      paddingTop: 2,
+    },
+    mainheadTitle: {
+      flex: 1,
+      color: t.colors.textSecondary,
+      fontSize: 12.5,
+      lineHeight: 16,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      fontFamily: t.fonts.display,
+    },
+    mainheadCount: {
+      color: t.colors.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodySemibold,
     },
     queueGroup: {
       gap: 8,
