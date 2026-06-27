@@ -24,7 +24,10 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import {
+  siteVisitAccessWhere,
+  siteVisitOversightWhere,
+} from '../common/authorization/site-visit-scope';
 import {
   calculateOperationalHealthStatus,
   isSiteVisitOverdue,
@@ -574,7 +577,7 @@ export class SiteVisitsService {
       where: {
         id,
         tenantId: user.tenantId,
-        ...this.accessScope(user, ctx),
+        ...this.oversightScope(user, ctx),
       },
       include: SITE_VISIT_READ_DETAIL_INCLUDE,
     });
@@ -605,7 +608,7 @@ export class SiteVisitsService {
       where: {
         id,
         tenantId: user.tenantId,
-        ...this.accessScope(user, ctx),
+        ...this.oversightScope(user, ctx),
       },
       include: SITE_VISIT_DETAIL_INCLUDE,
     });
@@ -932,7 +935,7 @@ export class SiteVisitsService {
    * which is the basis for contractor billing when work is split across teams.
    */
   async getContributions(user: RequestUser, id: string) {
-    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+    const siteVisit = await this.findVisibleSiteVisit(user, id);
 
     const [contributions, reassignments] = await Promise.all([
       this.prisma.siteVisitTeamContribution.findMany({
@@ -1034,7 +1037,7 @@ export class SiteVisitsService {
   }
 
   async getAssets(user: RequestUser, id: string) {
-    const siteVisit = await this.findAccessibleSiteVisit(user, id);
+    const siteVisit = await this.findVisibleSiteVisit(user, id);
 
     const links = await this.prisma.siteVisitAsset.findMany({
       where: {
@@ -1341,7 +1344,7 @@ export class SiteVisitsService {
    * per-cycle edge snapshots and is deferred to a later slice.
    */
   async getCycleDelta(user: RequestUser, id: string) {
-    const visit = await this.findAccessibleSiteVisit(user, id);
+    const visit = await this.findVisibleSiteVisit(user, id);
 
     const prior = await this.prisma.siteVisit.findFirst({
       where: {
@@ -1818,6 +1821,41 @@ export class SiteVisitsService {
         id,
         tenantId: user.tenantId,
         ...this.accessScope(user),
+      },
+      include: {
+        substation: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            location: true,
+          },
+        },
+      },
+    });
+
+    if (!siteVisit) {
+      throw new NotFoundException('Site visit not found.');
+    }
+
+    return siteVisit;
+  }
+
+  /**
+   * READ-ONLY counterpart of {@link findAccessibleSiteVisit}: resolves a visit a
+   * user may SEE (oversight scope — a MANAGER also sees the company's active
+   * subcontractor subtree), for read endpoints only (asset register, billing
+   * contributions, cycle delta). Never gate a mutation with this — those MUST
+   * stay on findAccessibleSiteVisit (strict, own-org) so a main contractor can
+   * monitor but never mutate a subcontractor's visit.
+   */
+  private async findVisibleSiteVisit(user: RequestUser, id: string) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const siteVisit = await this.prisma.siteVisit.findFirst({
+      where: {
+        id,
+        tenantId: user.tenantId,
+        ...this.oversightScope(user, ctx),
       },
       include: {
         substation: {
@@ -2607,7 +2645,7 @@ export class SiteVisitsService {
       {
         tenantId: user.tenantId,
       },
-      this.accessScope(user, ctx),
+      this.oversightScope(user, ctx),
       this.statusFilter(query.status),
       this.validationStatusFilter(query.validationStatus),
       this.visitTypeFilter(query.visitType),
@@ -2943,6 +2981,21 @@ export class SiteVisitsService {
     // Canonical matrix lives in common/authorization/site-visit-scope so the
     // site-visit, defect, and asset-map scopes cannot drift apart.
     return siteVisitAccessWhere(user, ctx);
+  }
+
+  /**
+   * READ-ONLY oversight scope. Like {@link accessScope} but a MANAGER also sees
+   * the site visits of the company's active subcontractor subtree (work it
+   * delegated). Use ONLY on read paths (list / getReadById / getById); every
+   * mutation gate (findAccessibleSiteVisit) must stay on accessScope so a main
+   * contractor can monitor — but never mutate — a subcontractor's visit. See
+   * siteVisitOversightWhere for the read-vs-mutate boundary rationale.
+   */
+  private oversightScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.SiteVisitWhereInput {
+    return siteVisitOversightWhere(user, ctx);
   }
 
   private normalizeOptionalString(value?: string | null) {

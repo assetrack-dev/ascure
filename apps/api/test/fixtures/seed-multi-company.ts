@@ -79,6 +79,20 @@ export const IDS = {
     // A defect on company A's inspection, routed to the maintenance company.
     routed: 'a0000000-0000-4000-8000-00000000000c',
   },
+  // Subcontractor oversight fixture — Company S is an active SUBCONTRACTOR child
+  // of Company A (a MAIN_CONTRACTOR), with its own team + a full work chain.
+  // Proves a main contractor's READ-ONLY oversight of work it delegated.
+  sub: {
+    org: '0d000000-0000-4000-8000-000000000001',
+    mgr: '10000000-0000-4000-8000-0000000000e1',
+    tech: '10000000-0000-4000-8000-0000000000e3',
+    team: '20000000-0000-4000-8000-00000000000e',
+    visit: '60000000-0000-4000-8000-00000000000e',
+    asset: '70000000-0000-4000-8000-00000000000e',
+    inspection: '80000000-0000-4000-8000-00000000000e',
+    itemResult: '90000000-0000-4000-8000-00000000000e',
+    defect: 'a0000000-0000-4000-8000-00000000000e',
+  },
   // OperationalSession uses a DIFFERENT scope (company-assignment + QA-assignment,
   // not team membership): session A is assigned to company A; session B is
   // assigned to company B but names a company-A user (supA) as its QA reviewer,
@@ -99,6 +113,8 @@ export const EMAILS = {
   techB: 'tech.b@authz.test',
   adminT2: 'admin.t2@authz.test',
   maintUser: 'maint.user@authz.test',
+  subMgr: 'manager.s@authz.test',
+  subTech: 'tech.s@authz.test',
 } as const;
 
 /** Truncate every table in the public schema (fast, deterministic reset). */
@@ -275,5 +291,39 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
   });
   await prisma.defect.create({
     data: { id: IDS.defect.routed, inspectionItemResultId: IDS.itemResult.routed, maintenanceOrganizationId: IDS.org.maint, status: 'OPEN', severity: 'HIGH', lifecycleStatus: 'VERIFIED' },
+  });
+
+  // Subcontractor oversight fixture (see IDS.sub): Company S is an active
+  // SUBCONTRACTOR whose parent is Company A. Its own team owns a full work chain
+  // (visit → asset → SUBMITTED inspection → failing result → VERIFIED defect).
+  // A MAIN_CONTRACTOR manager (mgrA) must READ — but never mutate — this work via
+  // siteVisitOversightWhere; mgrB (an unrelated main contractor) sees none of it.
+  await prisma.organization.create({
+    data: { id: IDS.sub.org, name: 'Subcontractor S', code: 'COS', type: 'SUBCONTRACTOR', tenantId: IDS.tenant.t1, parentOrganizationId: IDS.org.a },
+  });
+  await prisma.user.createMany({
+    data: [
+      { id: IDS.sub.mgr, tenantId: IDS.tenant.t1, email: EMAILS.subMgr, name: 'Manager S', passwordHash, role: 'MANAGER', organizationId: IDS.sub.org },
+      { id: IDS.sub.tech, tenantId: IDS.tenant.t1, email: EMAILS.subTech, name: 'Tech S', passwordHash, role: 'TECHNICIAN', organizationId: IDS.sub.org },
+    ],
+  });
+  await prisma.team.create({
+    data: { id: IDS.sub.team, tenantId: IDS.tenant.t1, name: 'Team S', code: 'TS', organizationId: IDS.sub.org },
+  });
+  await prisma.teamMember.create({ data: { teamId: IDS.sub.team, userId: IDS.sub.tech } });
+  await prisma.siteVisit.create({
+    data: { id: IDS.sub.visit, tenantId: IDS.tenant.t1, teamId: IDS.sub.team, substationId: IDS.substation.s1, createdByUserId: IDS.sub.tech, organizationId: IDS.sub.org, status: 'ACTIVE', lifecycleStatus: 'DALAM_RONDAAN', mainhead: 'KUANTAN' },
+  });
+  await prisma.asset.create({
+    data: { id: IDS.sub.asset, tenantId: IDS.tenant.t1, substationId: IDS.substation.s1, assetTypeId: IDS.assetType.savr, assetCode: 'S-1', name: 'Pole S-1', latitude: 3.3, longitude: 101.3, createdDuringVisitId: IDS.sub.visit, createdByUserId: IDS.sub.tech },
+  });
+  await prisma.inspection.create({
+    data: { id: IDS.sub.inspection, tenantId: IDS.tenant.t1, siteVisitId: IDS.sub.visit, assetId: IDS.sub.asset, templateId: IDS.template.tmpl, createdByUserId: IDS.sub.tech, completionStatus: 'SUBMITTED', submittedAt },
+  });
+  await prisma.inspectionItemResult.create({
+    data: { id: IDS.sub.itemResult, inspectionId: IDS.sub.inspection, label: 'Pole condition', result: 'FAIL', isDefect: true, severity: 'MEDIUM' },
+  });
+  await prisma.defect.create({
+    data: { id: IDS.sub.defect, inspectionItemResultId: IDS.sub.itemResult, status: 'OPEN', severity: 'MEDIUM', lifecycleStatus: 'VERIFIED' },
   });
 }

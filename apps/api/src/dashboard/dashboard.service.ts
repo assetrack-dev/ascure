@@ -17,7 +17,7 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { siteVisitOversightWhere } from '../common/authorization/site-visit-scope';
 import {
   calculateOperationalHealthStatus,
   parseOperationalOverdueThresholdHours,
@@ -719,7 +719,7 @@ export class DashboardService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
-    return siteVisitAccessWhere(user, ctx);
+    return siteVisitOversightWhere(user, ctx);
   }
 
   /**
@@ -864,7 +864,7 @@ export class DashboardService {
       return { tenantId: user.tenantId };
     }
 
-    const scopeWhere = siteVisitAccessWhere(user, ctx);
+    const scopeWhere = siteVisitOversightWhere(user, ctx);
 
     return {
       tenantId: user.tenantId,
@@ -925,7 +925,7 @@ export class DashboardService {
     }
 
     return {
-      siteVisit: siteVisitAccessWhere(user, ctx),
+      siteVisit: siteVisitOversightWhere(user, ctx),
     };
   }
 
@@ -937,7 +937,7 @@ export class DashboardService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.SiteVisitWhereInput {
-    return siteVisitAccessWhere(user, ctx);
+    return siteVisitOversightWhere(user, ctx);
   }
 
   /**

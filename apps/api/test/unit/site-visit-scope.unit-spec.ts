@@ -1,5 +1,8 @@
 import { UserRole } from '@prisma/client';
-import { siteVisitAccessWhere } from '../../src/common/authorization/site-visit-scope';
+import {
+  siteVisitAccessWhere,
+  siteVisitOversightWhere,
+} from '../../src/common/authorization/site-visit-scope';
 import { ScopeContext } from '../../src/common/authorization/scope-context';
 import { RequestUser } from '../../src/common/interfaces/request-user.interface';
 
@@ -89,4 +92,69 @@ describe('siteVisitAccessWhere — canonical visibility matrix (unit)', () => {
       expect(siteVisitAccessWhere(user({ role }))).toEqual({ team: ownTeam });
     },
   );
+});
+
+describe('siteVisitOversightWhere — read-only main-contractor oversight (unit)', () => {
+  it('MANAGER → widens to the company subcontractor subtree (ctx.maintenanceOrgIds)', () => {
+    expect(
+      siteVisitOversightWhere(
+        user({ role: UserRole.MANAGER, organizationId: 'org-main' }),
+        ctx({ maintenanceOrgIds: ['org-main', 'org-sub-1', 'org-sub-2'] }),
+      ),
+    ).toEqual({
+      team: {
+        OR: [
+          { organizationId: { in: ['org-main', 'org-sub-1', 'org-sub-2'] } },
+          ownTeam,
+        ],
+      },
+    });
+  });
+
+  it('MANAGER with no subcontractors (maintenanceOrgIds = [own]) → own org only', () => {
+    expect(
+      siteVisitOversightWhere(
+        user({ role: UserRole.MANAGER, organizationId: 'org-main' }),
+        ctx({ maintenanceOrgIds: ['org-main'] }),
+      ),
+    ).toEqual({
+      team: { OR: [{ organizationId: { in: ['org-main'] } }, ownTeam] },
+    });
+  });
+
+  it('MANAGER without a ctx → falls back to the strict own-org scalar filter', () => {
+    expect(
+      siteVisitOversightWhere(
+        user({ role: UserRole.MANAGER, organizationId: 'org-main' }),
+      ),
+    ).toEqual({ team: { OR: [{ organizationId: 'org-main' }, ownTeam] } });
+  });
+
+  it('MANAGER with an empty maintenanceOrgIds → strict own-org scalar (no widening)', () => {
+    expect(
+      siteVisitOversightWhere(
+        user({ role: UserRole.MANAGER, organizationId: 'org-main' }),
+        ctx({ maintenanceOrgIds: [] }),
+      ),
+    ).toEqual({ team: { OR: [{ organizationId: 'org-main' }, ownTeam] } });
+  });
+
+  it.each([UserRole.SUPERVISOR, UserRole.TECHNICIAN, UserRole.VIEWER])(
+    '%s → oversight is a no-op (identical to the strict scope even with child orgs in ctx)',
+    (role) => {
+      const u = user({ role, organizationId: 'org-main' });
+      const c = ctx({ maintenanceOrgIds: ['org-main', 'org-sub-1'] });
+      expect(siteVisitOversightWhere(u, c)).toEqual(siteVisitAccessWhere(u, c));
+    },
+  );
+
+  it('ADMIN / QA short-circuits are unchanged in the oversight variant', () => {
+    expect(siteVisitOversightWhere(user({ role: UserRole.ADMIN }))).toEqual({});
+    expect(
+      siteVisitOversightWhere(
+        user({ role: UserRole.VIEWER }),
+        ctx({ isQa: true, qaMainheadIds: ['mh-1'] }),
+      ),
+    ).toEqual({ mainheadId: { in: ['mh-1'] } });
+  });
 });

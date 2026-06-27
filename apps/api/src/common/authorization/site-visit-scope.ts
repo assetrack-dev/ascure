@@ -27,6 +27,40 @@ export function siteVisitAccessWhere(
   user: RequestUser,
   ctx?: ScopeContext,
 ): Prisma.SiteVisitWhereInput {
+  return buildSiteVisitScope(user, ctx, false);
+}
+
+/**
+ * READ-ONLY oversight variant of {@link siteVisitAccessWhere}.
+ *
+ * Identical to the strict scope for every role EXCEPT a MANAGER, whose company
+ * filter widens from "own Organization" to "own Organization + the company's
+ * active SUBCONTRACTOR subtree" (`ctx.maintenanceOrgIds` — own org plus every
+ * active contractor descendant, already resolved once per request by
+ * buildScopeContext / resolveMaintenanceOrgIds). This lets a MAIN_CONTRACTOR
+ * manager MONITOR the site visits / inspections / dashboards / map of work it
+ * delegated to its subcontractors, without gaining any write access.
+ *
+ * ⚠ READ PATHS ONLY. Every mutation / approval / lifecycle gate MUST keep using
+ * {@link siteVisitAccessWhere} (strict, own-org): those gates rely on the scope
+ * filter as their company boundary, so widening them here would let a main
+ * contractor edit / approve / complete / claim a subcontractor's work. The
+ * widening is self-limiting — for any role other than MANAGER, or a MANAGER
+ * with no subcontractors (maintenanceOrgIds = [own org]), this returns exactly
+ * the same filter as siteVisitAccessWhere.
+ */
+export function siteVisitOversightWhere(
+  user: RequestUser,
+  ctx?: ScopeContext,
+): Prisma.SiteVisitWhereInput {
+  return buildSiteVisitScope(user, ctx, true);
+}
+
+function buildSiteVisitScope(
+  user: RequestUser,
+  ctx: ScopeContext | undefined,
+  includeManagedOrgs: boolean,
+): Prisma.SiteVisitWhereInput {
   if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
     return {};
   }
@@ -48,11 +82,20 @@ export function siteVisitAccessWhere(
   };
 
   // MANAGER: all teams in their own company (Organization), plus any team they
-  // personally belong to. (north-star §5 / ADR 0002 §3)
+  // personally belong to. (north-star §5 / ADR 0002 §3). The oversight variant
+  // additionally spans the company's active subcontractor subtree — read-only,
+  // so a main contractor can monitor (not mutate) the work it delegated.
   if (user.role === UserRole.MANAGER && user.organizationId) {
+    const managedOrgIds =
+      includeManagedOrgs && ctx?.maintenanceOrgIds?.length
+        ? ctx.maintenanceOrgIds
+        : null;
+    const orgFilter: Prisma.TeamWhereInput = managedOrgIds
+      ? { organizationId: { in: managedOrgIds } }
+      : { organizationId: user.organizationId };
     return {
       team: {
-        OR: [{ organizationId: user.organizationId }, ownTeamMembership],
+        OR: [orgFilter, ownTeamMembership],
       },
     };
   }

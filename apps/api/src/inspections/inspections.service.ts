@@ -30,7 +30,14 @@ import {
   MAINTENANCE_LOCKED_DEFECT_STATUSES,
   releaseDefectsOnReport,
 } from '../common/authorization/defect-governance';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import {
+  siteVisitAccessWhere,
+  siteVisitOversightWhere,
+} from '../common/authorization/site-visit-scope';
+import {
+  buildScopeContext,
+  ScopeContext,
+} from '../common/authorization/scope-context';
 import {
   buildInspectionImagePath,
   buildInspectionImageUrl,
@@ -312,11 +319,12 @@ export class InspectionsService {
   }
 
   async getDetail(user: RequestUser, inspectionId: string) {
+    const ctx = await buildScopeContext(this.prisma, user);
     const inspection = await this.prisma.inspection.findFirst({
       where: {
         id: inspectionId,
         tenantId: user.tenantId,
-        ...this.inspectionAccessScope(user),
+        ...this.inspectionOversightScope(user, ctx),
       },
       include: {
         inspectionImages: {
@@ -1128,6 +1136,20 @@ export class InspectionsService {
   // aren't members of them).
   private inspectionAccessScope(user: RequestUser): Prisma.InspectionWhereInput {
     return { siteVisit: siteVisitAccessWhere(user) };
+  }
+
+  // READ-ONLY oversight variant of inspectionAccessScope: a MANAGER additionally
+  // sees inspections of the company's active subcontractor subtree (work it
+  // delegated). Use ONLY on read paths (getDetail); the mutation gate
+  // getAccessibleInspection must stay on inspectionAccessScope so a main
+  // contractor can monitor — but never amend/submit — a subcontractor's
+  // inspection. Needs the ScopeContext for the resolved maintenanceOrgIds (own
+  // org + active contractor descendants).
+  private inspectionOversightScope(
+    user: RequestUser,
+    ctx: ScopeContext,
+  ): Prisma.InspectionWhereInput {
+    return { siteVisit: siteVisitOversightWhere(user, ctx) };
   }
 
   private async resolveOperationalSessionContext(
