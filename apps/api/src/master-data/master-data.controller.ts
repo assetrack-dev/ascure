@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -13,6 +23,11 @@ import {
   UpdateAssetTypeDto,
   UpdateAssetTypeStatusDto,
 } from './dto/manage-asset-type.dto';
+import {
+  ListSubstationsQueryDto,
+  SubstationIdParamDto,
+  UpdateSubstationStatusDto,
+} from './dto/manage-substation.dto';
 import { MasterDataService } from './master-data.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -21,8 +36,36 @@ export class MasterDataController {
   constructor(private readonly masterDataService: MasterDataService) {}
 
   @Get('substations')
-  listSubstations(@CurrentUser() user: RequestUser) {
-    return this.masterDataService.listSubstations(user);
+  listSubstations(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ListSubstationsQueryDto,
+  ) {
+    return this.masterDataService.listSubstations(user, {
+      includeInactive: query.includeInactive === 'true',
+    });
+  }
+
+  @Patch('substations/:id/status')
+  @Roles(UserRole.ADMIN)
+  updateSubstationStatus(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+    @Body() dto: UpdateSubstationStatusDto,
+  ) {
+    return this.masterDataService.updateSubstationStatus(
+      user,
+      params.id,
+      dto.isActive,
+    );
+  }
+
+  @Delete('substations/:id')
+  @Roles(UserRole.ADMIN)
+  deleteSubstation(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+  ) {
+    return this.masterDataService.deleteSubstation(user, params.id);
   }
 
   @Get('asset-types')

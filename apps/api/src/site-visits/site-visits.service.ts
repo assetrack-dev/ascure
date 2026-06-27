@@ -1736,11 +1736,7 @@ export class SiteVisitsService {
         dto.fromPencawangId,
         'From Pencawang',
       ),
-      this.resolveOptionalPencawangId(
-        user,
-        dto.toPencawangId,
-        'To Pencawang',
-      ),
+      this.resolveToPencawangId(user, dto),
     ]);
 
     return {
@@ -1782,6 +1778,62 @@ export class SiteVisitsService {
     }
 
     return pencawang.id;
+  }
+
+  // Resolve the route's To Pencawang: an existing id, OR — when the destination
+  // isn't in the system yet (SAVT "New To") — create/reuse a Substation from the
+  // name + code the crew typed. Reuses an existing case-insensitive match (and
+  // reactivates it if it was deactivated) so a destination never spawns a
+  // duplicate or trips the unique [tenantId, code] constraint.
+  private async resolveToPencawangId(user: RequestUser, dto: CreateSiteVisitDto) {
+    if (dto.toPencawangId) {
+      return this.resolveOptionalPencawangId(
+        user,
+        dto.toPencawangId,
+        'To Pencawang',
+      );
+    }
+
+    const name = this.normalizeOperationalString(dto.toPencawangName);
+    const code = this.normalizePencawangCode(dto.toPencawangCode);
+
+    if (!name || !code) {
+      return null;
+    }
+
+    const existing = await this.prisma.substation.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        OR: [
+          { code: { equals: code, mode: 'insensitive' } },
+          { name: { equals: name, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, isActive: true },
+    });
+
+    if (existing) {
+      if (!existing.isActive) {
+        await this.prisma.substation.update({
+          where: { id: existing.id },
+          data: { isActive: true },
+        });
+      }
+
+      return existing.id;
+    }
+
+    const created = await this.prisma.substation.create({
+      data: {
+        tenantId: user.tenantId,
+        code,
+        name,
+        location: name,
+      },
+      select: { id: true },
+    });
+
+    return created.id;
   }
 
   private validateManualPencawangCreate(dto: CreateSiteVisitDto) {

@@ -122,6 +122,11 @@ export function CheckInScreen() {
   const [operationalScope, setOperationalScope] = useState<'SAVR' | 'SAVT'>('SAVR');
   const isSavt = operationalScope === 'SAVT';
   const [toPencawangId, setToPencawangId] = useState<string>('');
+  // The route's destination Pencawang can be picked from master data (EXISTING)
+  // or entered fresh (NEW) when it isn't in the system yet — mirrors the From.
+  const [toPencawangMode, setToPencawangMode] = useState<PencawangMode>('EXISTING');
+  const [toPencawangName, setToPencawangName] = useState('');
+  const [toPencawangCode, setToPencawangCode] = useState('');
   const [routeCode, setRouteCode] = useState('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [selectedSubstationId, setSelectedSubstationId] = useState<string>('');
@@ -570,8 +575,16 @@ export function CheckInScreen() {
     }
 
     if (isSavt) {
-      if (!toPencawangId) {
+      if (toPencawangMode === 'EXISTING' && !toPencawangId) {
         setError("Please select the route's To Pencawang for a SAVT survey.");
+        return null;
+      }
+
+      if (
+        toPencawangMode === 'NEW' &&
+        (!toPencawangName.trim() || !toPencawangCode.trim())
+      ) {
+        setError("Enter the new To Pencawang's name and code for a SAVT survey.");
         return null;
       }
 
@@ -629,7 +642,14 @@ export function CheckInScreen() {
             operationalScope: 'SAVT' as const,
             fromPencawangId:
               pencawangMode === 'EXISTING' ? selectedSubstationId : undefined,
-            toPencawangId: toPencawangId || undefined,
+            // Existing To → its id; New To → name + code so the server creates
+            // (or reuses) the destination Pencawang.
+            ...(toPencawangMode === 'EXISTING'
+              ? { toPencawangId: toPencawangId || undefined }
+              : {
+                  toPencawangName: toPencawangName.trim() || undefined,
+                  toPencawangCode: toPencawangCode.trim() || undefined,
+                }),
             routeCode: routeCode.trim() || undefined,
           }
         : {}),
@@ -888,16 +908,68 @@ export function CheckInScreen() {
             {isSavt ? (
               <>
                 <Dropdown
-                  label="To Pencawang *"
-                  value={toPencawangId}
-                  placeholder="Choose the route's end Pencawang"
-                  options={substations.map((substation) => ({
-                    label: `${substation.code} - ${substation.name}`,
-                    value: substation.id,
-                    description: substation.location || null,
-                  }))}
-                  onSelect={setToPencawangId}
+                  label="To Pencawang Source"
+                  value={toPencawangMode}
+                  options={[
+                    {
+                      label: 'Existing Pencawang',
+                      value: 'EXISTING',
+                      description: 'Select from master data',
+                    },
+                    {
+                      label: 'New Pencawang',
+                      value: 'NEW',
+                      description: 'Enter the destination name + code',
+                    },
+                  ]}
+                  onSelect={(nextValue) =>
+                    setToPencawangMode(nextValue as PencawangMode)
+                  }
                 />
+
+                {toPencawangMode === 'EXISTING' ? (
+                  substations.length > 0 ? (
+                    <Dropdown
+                      label="To Pencawang *"
+                      value={toPencawangId}
+                      placeholder="Choose the route's end Pencawang"
+                      options={substations.map((substation) => ({
+                        label: `${substation.code} - ${substation.name}`,
+                        value: substation.id,
+                        description: substation.location || null,
+                      }))}
+                      onSelect={setToPencawangId}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon="database"
+                      title="No substations"
+                      description="No active Pencawang to choose from. Switch to New Pencawang to enter the destination."
+                    />
+                  )
+                ) : (
+                  <>
+                    <TextField
+                      label="To Pencawang Name *"
+                      value={toPencawangName}
+                      onChangeText={(nextValue) =>
+                        setToPencawangName(normalizeOperationalText(nextValue))
+                      }
+                      placeholder="Nama pencawang hujung laluan"
+                      autoCapitalize="characters"
+                    />
+                    <TextField
+                      label="To Pencawang Code *"
+                      value={toPencawangCode}
+                      onChangeText={(nextValue) =>
+                        setToPencawangCode(normalizeOperationalText(nextValue))
+                      }
+                      placeholder="Kod pencawang hujung"
+                      autoCapitalize="characters"
+                    />
+                  </>
+                )}
+
                 <TextField
                   label="KOD TIANG *"
                   value={routeCode}

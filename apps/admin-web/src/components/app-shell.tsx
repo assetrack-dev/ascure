@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarClock,
   ClipboardList,
+  Factory,
   FileSpreadsheet,
   FileText,
   FolderKanban,
@@ -110,6 +111,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/asset-types",
       label: "Asset Types",
       icon: Layers2,
+      adminOnly: true,
+    },
+    {
+      href: "/pencawang",
+      label: "Pencawang",
+      icon: Factory,
       adminOnly: true,
     },
     {

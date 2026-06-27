@@ -36,20 +36,111 @@ type AssetTypeRecord = Prisma.AssetTypeGetPayload<{
   include: typeof assetTypeInclude;
 }>;
 
+const substationCountInclude = {
+  _count: {
+    select: {
+      assets: true,
+      siteVisits: true,
+      feeders: true,
+      fromRouteSiteVisits: true,
+      toRouteSiteVisits: true,
+    },
+  },
+} satisfies Prisma.SubstationInclude;
+
+type SubstationRecord = Prisma.SubstationGetPayload<{
+  include: typeof substationCountInclude;
+}>;
+
 @Injectable()
 export class MasterDataService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listSubstations(user: RequestUser) {
-    return this.prisma.substation.findMany({
+  async listSubstations(
+    user: RequestUser,
+    options: { includeInactive?: boolean } = {},
+  ) {
+    const substations = await this.prisma.substation.findMany({
       where: {
         tenantId: user.tenantId,
-        isActive: true,
+        // Mobile/check-in pickers pass nothing → active only (unchanged). The
+        // admin Pencawang page passes includeInactive to also list deactivated
+        // ones so they can be reactivated.
+        ...(options.includeInactive ? {} : { isActive: true }),
       },
+      include: substationCountInclude,
       orderBy: {
         name: 'asc',
       },
     });
+
+    return substations.map((substation) => this.serializeSubstation(substation));
+  }
+
+  async updateSubstationStatus(user: RequestUser, id: string, isActive: boolean) {
+    await this.findSubstationOrThrow(user.tenantId, id);
+
+    const substation = await this.prisma.substation.update({
+      where: { id },
+      data: { isActive },
+      include: substationCountInclude,
+    });
+
+    return this.serializeSubstation(substation);
+  }
+
+  async deleteSubstation(user: RequestUser, id: string) {
+    const substation = await this.findSubstationOrThrow(user.tenantId, id);
+    // Hard delete is only safe for an empty Pencawang — anything still pointing
+    // at it (poles, site visits, feeders, or a route's From/To link) must be
+    // cleared first. Otherwise the user deactivates it instead.
+    const references =
+      substation._count.assets +
+      substation._count.siteVisits +
+      substation._count.feeders +
+      substation._count.fromRouteSiteVisits +
+      substation._count.toRouteSiteVisits;
+
+    if (references > 0) {
+      throw new ConflictException(
+        'This Pencawang still has poles, site visits, or feeders linked to it. Deactivate it instead, or remove those first.',
+      );
+    }
+
+    await this.prisma.substation.delete({ where: { id } });
+
+    return { id, deleted: true };
+  }
+
+  private async findSubstationOrThrow(tenantId: string, id: string) {
+    const substation = await this.prisma.substation.findFirst({
+      where: { id, tenantId },
+      include: substationCountInclude,
+    });
+
+    if (!substation) {
+      throw new NotFoundException('Pencawang not found.');
+    }
+
+    return substation;
+  }
+
+  private serializeSubstation(substation: SubstationRecord) {
+    return {
+      id: substation.id,
+      tenantId: substation.tenantId,
+      code: substation.code,
+      name: substation.name,
+      location: substation.location,
+      isActive: substation.isActive,
+      createdAt: substation.createdAt,
+      updatedAt: substation.updatedAt,
+      assetCount: substation._count.assets,
+      visitCount:
+        substation._count.siteVisits +
+        substation._count.fromRouteSiteVisits +
+        substation._count.toRouteSiteVisits,
+    };
   }
 
   async listAssetTypes(user: RequestUser, query: ListAssetTypesQueryDto = {}) {

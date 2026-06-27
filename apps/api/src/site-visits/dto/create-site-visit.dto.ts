@@ -89,6 +89,21 @@ export class CreateSiteVisitDto {
   @IsUUID()
   toPencawangId?: string;
 
+  // SAVT "New To" — when the route's destination Pencawang isn't in the system
+  // yet, the mobile sends a name + code instead of toPencawangId; the server
+  // creates (or reuses) the destination Substation and links it.
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  toPencawangName?: string;
+
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  toPencawangCode?: string;
+
   // SAVT route line code ("KOD TIANG", e.g. "MI - KUK") — set once at check-in
   // for a SAVT/ROUTE visit and inherited by every pole on the route.
   @Transform(trimString)
