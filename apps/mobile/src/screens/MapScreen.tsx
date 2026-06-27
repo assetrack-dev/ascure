@@ -115,6 +115,13 @@ const DEFAULT_REGION: Region = {
 };
 
 const CURRENT_LOCATION_REGION_DELTA = 0.005;
+// A tighter zoom used when the map opens focused on ONE pole (post-submit "zoom
+// to the just-inspected pole", or Asset Detail → view on map). The
+// current-location delta (0.005 ≈ a ~550 m-tall view) keeps the focused pole
+// legible when poles are sparse, but in a dense cluster it shows so many
+// neighbours that the crew has to pinch in to pick out the one they just did.
+// ~3× closer (≈ a ~165 m-tall view) makes the focused pole fill the screen.
+const FOCUS_REGION_DELTA = 0.0015;
 const DEFECT_HEATMAP_RADIUS = 42;
 const DEFECT_HEATMAP_OPACITY = 0.78;
 const DEFECT_HEATMAP_GRADIENT = {
@@ -308,12 +315,15 @@ export function MapScreen() {
     mapRef.current = nextMapRef as MapView | null;
   }, []);
 
-  const centerMapOnCoordinate = useCallback((coordinate: Coordinate) => {
-    const nextRegion = createCurrentLocationRegion(coordinate);
+  const centerMapOnCoordinate = useCallback(
+    (coordinate: Coordinate, latitudeDelta?: number) => {
+      const nextRegion = createCurrentLocationRegion(coordinate, latitudeDelta);
 
-    mapRef.current?.animateToRegion(nextRegion, 600);
-    setRegion(nextRegion);
-  }, []);
+      mapRef.current?.animateToRegion(nextRegion, 600);
+      setRegion(nextRegion);
+    },
+    [],
+  );
 
   const requestCurrentLocation = useCallback(
     async (centerMap = false) => {
@@ -391,7 +401,7 @@ export function MapScreen() {
               );
 
           if (focusCoordinate) {
-            setRegion(createCurrentLocationRegion(focusCoordinate));
+            setRegion(createCurrentLocationRegion(focusCoordinate, FOCUS_REGION_DELTA));
           } else {
             const nextRegion = createRegion([
               ...assetList.map(getAssetCoordinate).filter(isCoordinate),
@@ -502,7 +512,7 @@ export function MapScreen() {
       return;
     }
     hasFocusedOnAssetRef.current = true;
-    centerMapOnCoordinate(resolvedFocusCoordinate);
+    centerMapOnCoordinate(resolvedFocusCoordinate, FOCUS_REGION_DELTA);
   }, [centerMapOnCoordinate, resolvedFocusCoordinate]);
 
   function handleLongPress(event: LongPressEvent) {
@@ -1603,12 +1613,15 @@ function createCoordinate(
   return null;
 }
 
-function createCurrentLocationRegion(coordinate: Coordinate): Region {
+function createCurrentLocationRegion(
+  coordinate: Coordinate,
+  latitudeDelta: number = CURRENT_LOCATION_REGION_DELTA,
+): Region {
   return {
     latitude: coordinate.latitude,
     longitude: coordinate.longitude,
-    latitudeDelta: CURRENT_LOCATION_REGION_DELTA,
-    longitudeDelta: CURRENT_LOCATION_REGION_DELTA,
+    latitudeDelta,
+    longitudeDelta: latitudeDelta,
   };
 }
 
