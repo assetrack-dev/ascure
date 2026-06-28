@@ -7,7 +7,7 @@ import {
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
-import { SurveyLifecycleStatus } from '@prisma/client';
+import { OperationalScope, SurveyLifecycleStatus } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -27,6 +27,14 @@ function parseLifecycleStatus(
   return (Object.values(SurveyLifecycleStatus) as string[]).includes(normalized)
     ? (normalized as SurveyLifecycleStatus)
     : undefined;
+}
+
+/** Map a `scope` query value to an operational scope; default SAVR. The report
+ *  UI only offers the two network survey scopes (SAVR / SAVT). */
+function parseScope(value: string | undefined): OperationalScope {
+  return value?.toUpperCase() === OperationalScope.SAVT
+    ? OperationalScope.SAVT
+    : OperationalScope.SAVR;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -71,6 +79,7 @@ export class ReportsController {
     @CurrentUser() user: RequestUser,
     @Param() params: PencawangReportParamsDto,
     @Query('status') status: string | undefined,
+    @Query('scope') scope: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const { buffer, filename } =
@@ -78,6 +87,7 @@ export class ReportsController {
         user,
         params.substationId,
         parseLifecycleStatus(status),
+        parseScope(scope),
       );
 
     res.setHeader(

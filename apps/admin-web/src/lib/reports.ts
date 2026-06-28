@@ -57,9 +57,12 @@ export async function downloadPencawangTemplateMasterlist(
   token: string,
   substation: Pick<ReportSubstation, "id" | "code" | "name">,
   status?: string,
+  scope?: string,
 ): Promise<void> {
-  const query =
-    status && status !== "ALL" ? `?status=${encodeURIComponent(status)}` : "";
+  const params = new URLSearchParams();
+  if (status && status !== "ALL") params.set("status", status);
+  if (scope && scope !== "SAVR") params.set("scope", scope);
+  const query = params.toString() ? `?${params.toString()}` : "";
   const { blob, filename } = await apiRequestBlob(
     `/reports/pencawang/${encodeURIComponent(substation.id)}/template-masterlist.xlsx${query}`,
     { token },
@@ -68,7 +71,8 @@ export async function downloadPencawangTemplateMasterlist(
   const fallbackBase = (substation.name || substation.code || "PENCAWANG")
     .replace(/[^A-Za-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-  triggerBrowserDownload(blob, filename ?? `${fallbackBase}_CHECKLIST.xlsx`);
+  const scopeTag = scope && scope !== "SAVR" ? `_${scope}` : "";
+  triggerBrowserDownload(blob, filename ?? `${fallbackBase}${scopeTag}_CHECKLIST.xlsx`);
 }
 
 /**

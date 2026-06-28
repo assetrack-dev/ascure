@@ -14,7 +14,10 @@ import {
 import { Workbook, Worksheet } from 'exceljs';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { RequestUser } from '../common/interfaces/request-user.interface';
-import { inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
+import {
+  DEFAULT_OPERATIONAL_SCOPE,
+  inferOperationalScopeFromAssetTypeCode,
+} from '../common/operational-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import {
@@ -366,19 +369,21 @@ export class ReportsService {
   }
 
   /**
-   * Per-Pencawang masterlist whose columns come from the ACTUAL checklist
-   * template items the inspections used (one column per item, 1 pole = 1 row,
-   * in the template's own order). Unlike buildPencawangMasterlist — which emits
-   * the fixed SAVR-KLB AppSheet schema so the file round-trips the F2 importer —
-   * this export always reflects the live template, so editing the checklist
-   * template changes the report. Not asset-type filtered: every asset in the
-   * Pencawang is included, with Asset Type + Template meta columns so rows from
-   * different templates stay legible.
+   * Per-Pencawang "Download Checklist" export (1 pole = 1 row). Scoped by survey
+   * type (`scope`, default SAVR):
+   *  - SAVR uses the owner's fixed column arrangement ("SUSUNAN UNTUK ML
+   *    DOWNLOAD"; the KUANTAN mainhead has its own list) — the fixed block below.
+   *  - SAVT (and any other scope) follows the LIVE checklist template: one column
+   *    per template item, in the template's own order, so editing the checklist
+   *    template changes the report.
+   * Read-only, tenant scoped, optionally filtered by the survey lifecycle status
+   * of the asset's visit.
    */
   async buildPencawangTemplateMasterlist(
     user: RequestUser,
     substationId: string,
     lifecycleStatus?: SurveyLifecycleStatus,
+    scope: OperationalScope = OperationalScope.SAVR,
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
@@ -401,6 +406,7 @@ export class ReportsService {
         id: true,
         assetId: true,
         templateId: true,
+        operationalScope: true,
         submittedAt: true,
         createdAt: true,
         createdBy: { select: { email: true } },
@@ -421,7 +427,7 @@ export class ReportsService {
             noTiangLama: true,
             latitude: true,
             longitude: true,
-            assetType: { select: { code: true, name: true } },
+            assetType: { select: { code: true, name: true, operationalScope: true } },
           },
         },
         itemResults: {
@@ -444,9 +450,22 @@ export class ReportsService {
       },
     });
 
+    // Filter to the requested survey type (SAVR default). Resolve each
+    // inspection's scope the way the rest of the system does, defaulting an
+    // unresolved asset to SAVR — so a normal Pencawang's SAVR checklist is
+    // unchanged and only assets that clearly resolve to another scope (e.g.
+    // SAVT) are split out.
+    const scoped = inspections.filter(
+      (insp) =>
+        (insp.operationalScope ??
+          insp.asset.assetType?.operationalScope ??
+          inferOperationalScopeFromAssetTypeCode(insp.asset.assetType?.code) ??
+          DEFAULT_OPERATIONAL_SCOPE) === scope,
+    );
+
     // One row per asset = its latest inspection (the list is newest-first).
-    const latestByAsset = new Map<string, (typeof inspections)[number]>();
-    for (const insp of inspections) {
+    const latestByAsset = new Map<string, (typeof scoped)[number]>();
+    for (const insp of scoped) {
       if (!latestByAsset.has(insp.assetId)) {
         latestByAsset.set(insp.assetId, insp);
       }
@@ -541,9 +560,10 @@ export class ReportsService {
     const fixedItemLabels = isKuantanMainhead
       ? KUANTAN_FIXED_ITEM_LABELS
       : SAVR_FIXED_ITEM_LABELS;
-    // A fixed arrangement is always defined for SAVR; the dynamic, template-driven
-    // block further below is the fallback for any mainhead without a fixed list.
-    if (fixedItemLabels.length > 0) {
+    // A fixed arrangement is defined only for SAVR (the owner's "SUSUNAN UNTUK ML
+    // DOWNLOAD"). SAVT — and any other scope — falls through to the dynamic,
+    // template-driven block below, which follows the live checklist template.
+    if (scope === OperationalScope.SAVR && fixedItemLabels.length > 0) {
       const fixedWorkbook = new Workbook();
       fixedWorkbook.creator = 'ASCURE';
       fixedWorkbook.created = new Date();
@@ -690,7 +710,10 @@ export class ReportsService {
       (substation.name || substation.code || 'PENCAWANG')
         .replace(/[^A-Za-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '') || 'PENCAWANG';
-    return { buffer, filename: `${safe}_CHECKLIST.xlsx` };
+    // SAVR returns from the fixed block above; the dynamic block is reached for
+    // SAVT (and any non-SAVR scope), so tag the filename with the scope.
+    const scopeTag = scope === OperationalScope.SAVR ? '' : `_${scope}`;
+    return { buffer, filename: `${safe}${scopeTag}_CHECKLIST.xlsx` };
   }
 
   /**

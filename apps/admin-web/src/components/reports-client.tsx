@@ -45,6 +45,7 @@ function ReportsContent() {
   const [substations, setSubstations] = useState<ReportSubstation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [mainhead, setMainhead] = useState("ALL");
+  const [scope, setScope] = useState("SAVR");
   const [status, setStatus] = useState("ALL");
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -142,7 +143,8 @@ function ReportsContent() {
   }, [visibleSubstations, selectedId]);
 
   async function handleDownload() {
-    if (!session?.token || !selectedSubstation || isDownloading) {
+    // Masterlist (AppSheet) is the fixed SAVR-KLB layout — SAVR only.
+    if (!session?.token || !selectedSubstation || isDownloading || scope === "SAVT") {
       return;
     }
 
@@ -192,7 +194,7 @@ function ReportsContent() {
     setNotice("");
 
     try {
-      await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status);
+      await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status, scope);
       setNotice(
         `Checklist report generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
       );
@@ -230,9 +232,10 @@ function ReportsContent() {
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Reports</h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
                 Download a per-Pencawang report (.xlsx) — one pole per row, checklist items
-                as columns. <strong>Checklist</strong> follows your live checklist template
-                (columns update when you edit it); <strong>Masterlist (AppSheet)</strong> uses
-                the fixed SAVR-KLB import layout. Filter by survey status as needed.
+                as columns. Pick the <strong>Survey type</strong> (SAVR or SAVT).{" "}
+                <strong>Checklist</strong> follows the live checklist template;{" "}
+                <strong>Masterlist (AppSheet)</strong> uses the fixed SAVR-KLB import layout
+                (SAVR only). Filter by survey status as needed.
               </p>
             </div>
 
@@ -259,7 +262,22 @@ function ReportsContent() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,190px)_minmax(0,1fr)_minmax(0,180px)_auto] sm:items-end">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,120px)_minmax(0,150px)_minmax(0,1fr)_minmax(0,150px)_auto] sm:items-end">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Survey type</span>
+                <select
+                  value={scope}
+                  onChange={(event) => {
+                    setScope(event.target.value);
+                    setNotice("");
+                  }}
+                  className={`${inputClassName} mt-1.5`}
+                >
+                  <option value="SAVR">SAVR</option>
+                  <option value="SAVT">SAVT</option>
+                </select>
+              </label>
+
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Mainhead</span>
                 <select
@@ -339,9 +357,18 @@ function ReportsContent() {
                 <button
                   type="button"
                   onClick={handleDownload}
-                  disabled={!selectedSubstation || isDownloading || isDownloadingTemplate}
+                  disabled={
+                    !selectedSubstation ||
+                    isDownloading ||
+                    isDownloadingTemplate ||
+                    scope === "SAVT"
+                  }
                   className={secondaryButtonClassName}
-                  title="Fixed SAVR-KLB AppSheet layout — re-importable through the F2 importer."
+                  title={
+                    scope === "SAVT"
+                      ? "Masterlist (AppSheet) is available for SAVR only."
+                      : "Fixed SAVR-KLB AppSheet layout — re-importable through the F2 importer."
+                  }
                 >
                   <Download size={16} />
                   {isDownloading ? "Generating…" : "Masterlist (AppSheet)"}
