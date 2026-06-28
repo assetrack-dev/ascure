@@ -59,14 +59,19 @@ export const IDS = {
   visit: {
     a: '60000000-0000-4000-8000-00000000000a',
     b: '60000000-0000-4000-8000-00000000000b',
+    // A dedicated visit for the DC-first lifecycle-flow spec to drive end to end
+    // — no other spec references it, so its mutations don't leak.
+    lifecycle: '60000000-0000-4000-8000-00000000000f',
   },
   asset: {
     a: '70000000-0000-4000-8000-00000000000a',
     b: '70000000-0000-4000-8000-00000000000b',
+    lifecycle: '70000000-0000-4000-8000-00000000000f',
   },
   inspection: {
     a: '80000000-0000-4000-8000-00000000000a',
     b: '80000000-0000-4000-8000-00000000000b',
+    lifecycle: '80000000-0000-4000-8000-00000000000f',
   },
   itemResult: {
     a: '90000000-0000-4000-8000-00000000000a',
@@ -237,6 +242,7 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
     data: [
       { id: IDS.visit.a, tenantId: IDS.tenant.t1, teamId: IDS.team.a, substationId: IDS.substation.s1, createdByUserId: IDS.user.techA, organizationId: IDS.org.a, status: 'ACTIVE', lifecycleStatus: 'DALAM_RONDAAN' },
       { id: IDS.visit.b, tenantId: IDS.tenant.t1, teamId: IDS.team.b, substationId: IDS.substation.s1, createdByUserId: IDS.user.techB, organizationId: IDS.org.b, status: 'ACTIVE', lifecycleStatus: 'DALAM_RONDAAN' },
+      { id: IDS.visit.lifecycle, tenantId: IDS.tenant.t1, teamId: IDS.team.a, substationId: IDS.substation.s1, createdByUserId: IDS.user.techA, organizationId: IDS.org.a, status: 'ACTIVE', lifecycleStatus: 'DALAM_RONDAAN' },
     ],
   });
 
@@ -244,6 +250,7 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
     data: [
       { id: IDS.asset.a, tenantId: IDS.tenant.t1, substationId: IDS.substation.s1, assetTypeId: IDS.assetType.savr, assetCode: 'A-1', name: 'Pole A-1', latitude: 3.1, longitude: 101.1, createdDuringVisitId: IDS.visit.a, createdByUserId: IDS.user.techA },
       { id: IDS.asset.b, tenantId: IDS.tenant.t1, substationId: IDS.substation.s1, assetTypeId: IDS.assetType.savr, assetCode: 'B-1', name: 'Pole B-1', latitude: 3.2, longitude: 101.2, createdDuringVisitId: IDS.visit.b, createdByUserId: IDS.user.techB },
+      { id: IDS.asset.lifecycle, tenantId: IDS.tenant.t1, substationId: IDS.substation.s1, assetTypeId: IDS.assetType.savr, assetCode: 'LC-1', name: 'Pole LC-1', latitude: 3.4, longitude: 101.4, createdDuringVisitId: IDS.visit.lifecycle, createdByUserId: IDS.user.techA },
     ],
   });
 
@@ -251,6 +258,7 @@ export async function seedMultiCompany(prisma: PrismaClient): Promise<void> {
     data: [
       { id: IDS.inspection.a, tenantId: IDS.tenant.t1, siteVisitId: IDS.visit.a, assetId: IDS.asset.a, templateId: IDS.template.tmpl, createdByUserId: IDS.user.techA, completionStatus: 'SUBMITTED', submittedAt },
       { id: IDS.inspection.b, tenantId: IDS.tenant.t1, siteVisitId: IDS.visit.b, assetId: IDS.asset.b, templateId: IDS.template.tmpl, createdByUserId: IDS.user.techB, completionStatus: 'SUBMITTED', submittedAt },
+      { id: IDS.inspection.lifecycle, tenantId: IDS.tenant.t1, siteVisitId: IDS.visit.lifecycle, assetId: IDS.asset.lifecycle, templateId: IDS.template.tmpl, createdByUserId: IDS.user.techA, completionStatus: 'SUBMITTED', submittedAt },
     ],
   });
 

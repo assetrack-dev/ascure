@@ -1127,16 +1127,20 @@ export class SiteVisitsService {
       'COMPLETED',
     );
 
-    // Completing the visit is the field crew's "submit for review": advance the
-    // survey to RONDAAN SELESAI so it enters the technician/supervisor → MANAGER
-    // → DC review chain. Conservative — only advances from a pre-review state
-    // (never regresses a survey the manager/DC has already moved on), so a
-    // re-completion after an amendment bounce-back (PERLU PINDAAN → IN_PROGRESS)
-    // correctly re-submits it for manager review.
+    // Completing the visit is the field crew's "submit for review". DC-first:
+    // a FIRST completion goes straight to the DC (RONDAAN SELESAI); a
+    // re-completion after an amendment bounce (from PERLU PINDAAN) routes to the
+    // team's MANAGER first (PINDAAN SELESAI) to verify the rework. Conservative —
+    // only advances from a pre-review state (never regresses a survey the DC /
+    // manager has already moved on).
     const submitsForReview =
       siteVisit.lifecycleStatus === null ||
       siteVisit.lifecycleStatus === SurveyLifecycleStatus.DALAM_RONDAAN ||
       siteVisit.lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN;
+    const reviewTarget =
+      siteVisit.lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN
+        ? SurveyLifecycleStatus.PINDAAN_SELESAI
+        : SurveyLifecycleStatus.RONDAAN_SELESAI;
 
     const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.siteVisit.update({
@@ -1155,8 +1159,10 @@ export class SiteVisitsService {
           ...this.buildSnapshotBackfill(siteVisit),
           ...(submitsForReview
             ? {
-                lifecycleStatus: SurveyLifecycleStatus.RONDAAN_SELESAI,
-                rondaanSelesaiAt: completedAt,
+                lifecycleStatus: reviewTarget,
+                ...(reviewTarget === SurveyLifecycleStatus.RONDAAN_SELESAI
+                  ? { rondaanSelesaiAt: completedAt }
+                  : {}),
               }
             : {}),
         },
@@ -1170,8 +1176,11 @@ export class SiteVisitsService {
           data: {
             siteVisitId: siteVisit.id,
             fromStatus: siteVisit.lifecycleStatus,
-            toStatus: SurveyLifecycleStatus.RONDAAN_SELESAI,
-            remark: 'Submitted for manager review on visit completion.',
+            toStatus: reviewTarget,
+            remark:
+              reviewTarget === SurveyLifecycleStatus.PINDAAN_SELESAI
+                ? 'Amendment completed; submitted for manager recheck.'
+                : 'Submitted for DC review on visit completion.',
             createdByUserId: user.id,
           },
         }),

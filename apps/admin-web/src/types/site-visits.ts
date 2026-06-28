@@ -156,6 +156,7 @@ export type SurveyLifecycleStatus =
   | "RONDAAN_SELESAI"
   | "DISAHKAN_PENGURUS"
   | "PERLU_PINDAAN"
+  | "PINDAAN_SELESAI"
   | "LAPORAN_SELESAI"
   | "ARKIB";
 

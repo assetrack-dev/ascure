@@ -70,8 +70,7 @@ const LIFECYCLE_MAIN_STEPS: {
   caption: string;
 }[] = [
   { key: "DALAM_RONDAAN", label: "Dalam Rondaan", caption: "Inspecting" },
-  { key: "RONDAAN_SELESAI", label: "Rondaan Selesai", caption: "Pending manager" },
-  { key: "DISAHKAN_PENGURUS", label: "Disahkan Pengurus", caption: "Pending DC" },
+  { key: "RONDAAN_SELESAI", label: "Rondaan Selesai", caption: "Pending DC" },
   { key: "LAPORAN_SELESAI", label: "Laporan Selesai", caption: "Report generated" },
   { key: "ARKIB", label: "Arkib", caption: "Archived" },
 ];
@@ -79,11 +78,14 @@ const LIFECYCLE_MAIN_STEPS: {
 const LIFECYCLE_STEP_INDEX: Record<SurveyLifecycleStatus, number> = {
   DALAM_RONDAAN: 0,
   RONDAAN_SELESAI: 1,
-  // Sent back to the crew — show it back at the early (pre-manager) step.
+  // The amendment detour all sits at the review step (1): the DC bounced it
+  // (PERLU PINDAAN), the crew re-completed it (PINDAAN SELESAI, pending the
+  // manager's recheck), or the now-deprecated manager-approved DISAHKAN PENGURUS.
   PERLU_PINDAAN: 1,
-  DISAHKAN_PENGURUS: 2,
-  LAPORAN_SELESAI: 3,
-  ARKIB: 4,
+  PINDAAN_SELESAI: 1,
+  DISAHKAN_PENGURUS: 1,
+  LAPORAN_SELESAI: 2,
+  ARKIB: 3,
 };
 
 function lifecycleLabel(status: SurveyLifecycleStatus) {
@@ -451,15 +453,20 @@ function SurveyLifecyclePanel({
   const status: SurveyLifecycleStatus = visit.lifecycle?.status ?? "DALAM_RONDAAN";
   const currentIndex = LIFECYCLE_STEP_INDEX[status];
   const isPerluPindaan = status === "PERLU_PINDAAN";
+  const isPindaanSelesai = status === "PINDAAN_SELESAI";
   const isCancelled = visit.status === "CANCELLED";
   const isBusy = pendingAction !== null;
+  // A survey that has been bounced at least once carries an amendment remark —
+  // used to flag a re-issued "Rondaan Selesai" apart from a fresh submission.
+  const wasAmended = Boolean(visit.lifecycle?.amendmentRemark);
 
-  // Who may send the survey back for amendments from the CURRENT state: the
-  // MANAGER while it's pending their review (RONDAAN SELESAI), or the DC after
-  // the manager has approved it (DISAHKAN PENGURUS). The dialog routes to the
-  // matching handler.
-  const canManagerAmend = status === "RONDAAN_SELESAI" && canReviewSurvey;
-  const canDcAmend = status === "DISAHKAN_PENGURUS" && canGovern;
+  // Who may send the survey back for amendments from the CURRENT state: the DC
+  // from its review queue (RONDAAN SELESAI, or the deprecated DISAHKAN PENGURUS),
+  // or the MANAGER while rechecking a completed amendment (PINDAAN SELESAI). The
+  // dialog routes to the matching handler.
+  const canManagerAmend = isPindaanSelesai && canReviewSurvey;
+  const canDcAmend =
+    (status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") && canGovern;
   const amendmentVisible = canManagerAmend || canDcAmend;
 
   const primaryBtn =
@@ -522,6 +529,32 @@ function SurveyLifecyclePanel({
           {visit.lifecycle?.amendmentRemark ? (
             <p className="mt-1 text-sm text-amber-900">
               &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isPindaanSelesai ? (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-amber-900">
+            <AlertTriangle size={15} /> Amendment completed — pending manager recheck
+          </p>
+          {visit.lifecycle?.amendmentRemark ? (
+            <p className="mt-1 text-sm text-amber-900">
+              DC asked: &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {status === "RONDAAN_SELESAI" && wasAmended ? (
+        <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-sky-900">
+            <RefreshCw size={15} /> Re-issued after amendment
+          </p>
+          {visit.lifecycle?.amendmentRemark ? (
+            <p className="mt-1 text-sm text-sky-900">
+              Last amendment note: &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
             </p>
           ) : null}
         </div>
@@ -592,12 +625,12 @@ function SurveyLifecyclePanel({
                 <CheckCircle2 size={15} />
               )}
               {status === "PERLU_PINDAAN"
-                ? "Re-submit for manager review"
-                : "Submit for manager review"}
+                ? "Re-submit (manager recheck)"
+                : "Submit for DC review"}
             </button>
           ) : null}
 
-          {status === "RONDAAN_SELESAI" && canReviewSurvey ? (
+          {isPindaanSelesai && canReviewSurvey ? (
             <button
               type="button"
               onClick={onManagerApprove}
@@ -609,7 +642,7 @@ function SurveyLifecyclePanel({
               ) : (
                 <CheckCircle2 size={15} />
               )}
-              Approve (Disahkan Pengurus)
+              Confirm fixes — re-issue to DC
             </button>
           ) : null}
 
@@ -625,7 +658,8 @@ function SurveyLifecyclePanel({
             </button>
           ) : null}
 
-          {status === "DISAHKAN_PENGURUS" && canReport ? (
+          {(status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") &&
+          canReport ? (
             <button
               type="button"
               onClick={onGenerateReport}
@@ -679,7 +713,7 @@ function SurveyLifecyclePanel({
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <label className="block text-xs font-semibold uppercase text-amber-800">
             {canManagerAmend
-              ? "Manager review — what must the crew fix? (required)"
+              ? "Manager recheck — what's still not fixed? (required)"
               : "Amendment remark (required)"}
           </label>
           <textarea

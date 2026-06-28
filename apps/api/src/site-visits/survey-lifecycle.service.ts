@@ -19,6 +19,7 @@ const LIFECYCLE_LABEL: Record<SurveyLifecycleStatus, string> = {
   RONDAAN_SELESAI: 'RONDAAN SELESAI',
   DISAHKAN_PENGURUS: 'DISAHKAN PENGURUS',
   PERLU_PINDAAN: 'PERLU PINDAAN',
+  PINDAAN_SELESAI: 'PINDAAN SELESAI',
   LAPORAN_SELESAI: 'LAPORAN SELESAI',
   ARKIB: 'ARKIB',
 };
@@ -45,35 +46,36 @@ interface TransitionOptions {
 
 /**
  * The one PE-survey lifecycle (north-star §4), driven on the per-PE-per-cycle
- * SiteVisit. The review chain is technician/supervisor → MANAGER → DC:
+ * SiteVisit. DC-FIRST review chain — the crew submits straight to the DC; the
+ * team's MANAGER is pulled in only on the amendment path to verify the rework:
  *
  *   DALAM RONDAAN
- *     → RONDAAN SELESAI         (field crew submitted; pending manager review)
- *       → DISAHKAN PENGURUS     (the team's MANAGER approved; pending DC checking)
- *       ⟲ PERLU PINDAAN         (manager sent it back to the crew to amend)
- *     DISAHKAN PENGURUS
- *       → LAPORAN SELESAI        (DC checked + generated the report)
- *       ⟲ PERLU PINDAAN          (DC sent it back to the crew to amend)
- *     LAPORAN SELESAI → ARKIB
- *   PERLU PINDAAN → RONDAAN SELESAI (crew re-submits; re-enters manager review)
+ *     → RONDAAN SELESAI          (crew completed; pending DC review)
+ *       → LAPORAN SELESAI         (DC checked, no errors → report) → ARKIB
+ *       ⟲ PERLU PINDAAN           (DC found errors → sent back to the crew)
+ *   PERLU PINDAAN
+ *     → PINDAAN SELESAI           (crew amended + re-completed; pending MANAGER recheck)
+ *       → RONDAAN SELESAI         (manager verified the fixes → re-issued to the DC)
+ *       ⟲ PERLU PINDAAN           (manager: fixes not done → back to the crew)
  *
  * Roles:
- *  - Inspector/supervisor owns "RONDAAN SELESAI" — competence-based, authoritative
- *    on submit. In practice the field crew reaches it by completing the visit
- *    (site-visits.service.complete), which submits the survey for manager review.
- *  - MANAGER owns the review gate: "DISAHKAN PENGURUS" (approve, push to DC) or a
- *    bounce-back to "PERLU PINDAAN". Scope is enforced by getLifecycleState
- *    (a MANAGER only sees their own company's visits), so a manager can only
- *    review their own company's surveys.
- *  - DC (governance authority) owns the survey-level amendment "PERLU PINDAAN"
- *    (now from DISAHKAN PENGURUS) and the final "ARKIB". The DC only ever sees a
- *    survey the manager already approved — the manager step is a hard gate.
- *  - Report generation (REPORTING authority) is the gate into "LAPORAN SELESAI",
- *    reachable only from DISAHKAN PENGURUS (so every report has manager sign-off).
+ *  - Inspector/supervisor reaches RONDAAN SELESAI / PINDAAN SELESAI by completing
+ *    the visit (site-visits.service.complete) — a FIRST completion submits to the
+ *    DC; a re-completion after an amendment routes to the MANAGER.
+ *  - DC (governance authority) reviews RONDAAN SELESAI directly: generate the
+ *    report (no errors) or request an amendment (PERLU PINDAAN). The manager no
+ *    longer gates a clean first submission.
+ *  - MANAGER owns the amendment recheck: PINDAAN SELESAI → re-issue (RONDAAN
+ *    SELESAI, back to the DC) or bounce back (PERLU PINDAAN). Scope is enforced by
+ *    getLifecycleState (a manager only sees their own company's visits).
+ *  - Report generation (REPORTING authority) is the gate into LAPORAN SELESAI,
+ *    reachable from RONDAAN SELESAI (and, for in-flight surveys, the now-deprecated
+ *    DISAHKAN PENGURUS).
+ *
+ * `DISAHKAN_PENGURUS` is retained in the enum only so any in-flight prod survey
+ * already there stays DC-reviewable; new surveys never reach it.
  *
  * Every transition appends a SiteVisitLifecycleEvent so governance is provable.
- * This service is additive: it does not yet retire the OperationalSession /
- * defect-QA machines — it establishes the replacement spine they migrate onto.
  */
 @Injectable()
 export class SurveyLifecycleService {
@@ -84,37 +86,46 @@ export class SurveyLifecycleService {
     private readonly reportGeneration: ReportGenerationService,
   ) {}
 
-  /** Inspector / supervisor marks the walk-through done — submits the survey
-   *  for the team manager's review. (The field crew normally reaches this by
-   *  completing the visit; this is also the explicit admin-console fallback.) */
+  /** Inspector / supervisor marks the walk-through done — submits the survey for
+   *  review. (The field crew normally reaches this by completing the visit; this
+   *  is also the explicit admin-console fallback.) DC-first routing below. */
   async markRondaanSelesai(user: RequestUser, id: string) {
     this.assertCanMutate(user);
+    // A FIRST submission goes straight to the DC (RONDAAN SELESAI); a re-submission
+    // after an amendment (from PERLU PINDAAN) routes to the team's MANAGER first
+    // (PINDAAN SELESAI), who verifies the rework before it returns to the DC.
+    const state = await this.siteVisits.getLifecycleState(user, id);
+    const reSubmit =
+      state.lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN;
+    return this.transition(user, id, {
+      to: reSubmit
+        ? SurveyLifecycleStatus.PINDAAN_SELESAI
+        : SurveyLifecycleStatus.RONDAAN_SELESAI,
+      allowedFrom: reSubmit
+        ? [SurveyLifecycleStatus.PERLU_PINDAAN]
+        : [null, SurveyLifecycleStatus.DALAM_RONDAAN],
+      data: reSubmit ? {} : { rondaanSelesaiAt: new Date() },
+    });
+  }
+
+  /** The team's MANAGER verifies a completed amendment and re-issues the survey
+   *  to the DC. In the DC-first flow the manager only acts on the amendment path:
+   *  PINDAAN SELESAI → RONDAAN SELESAI (back in the DC's review queue). Scope (a
+   *  manager only sees their own company's visits) is enforced by
+   *  getLifecycleState inside transition(). */
+  async managerApprove(user: RequestUser, id: string) {
+    this.assertManagerReview(user, 'Re-issuing an amended survey to the DC');
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.RONDAAN_SELESAI,
-      allowedFrom: [
-        null,
-        SurveyLifecycleStatus.DALAM_RONDAAN,
-        SurveyLifecycleStatus.PERLU_PINDAAN,
-      ],
-      data: { rondaanSelesaiAt: new Date() },
+      allowedFrom: [SurveyLifecycleStatus.PINDAAN_SELESAI],
+      data: { managerApprovedAt: new Date(), rondaanSelesaiAt: new Date() },
+      remark: 'Manager verified the amendment; re-issued for DC review.',
     });
   }
 
-  /** The team's MANAGER approves the submitted survey — the gate that pushes it
-   *  on to DC checking. Scope (a manager only sees their own company's visits) is
-   *  enforced by getLifecycleState inside transition(). */
-  async managerApprove(user: RequestUser, id: string) {
-    this.assertManagerReview(user, 'Approving a survey for the DC');
-    return this.transition(user, id, {
-      to: SurveyLifecycleStatus.DISAHKAN_PENGURUS,
-      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
-      data: { managerApprovedAt: new Date() },
-    });
-  }
-
-  /** The team's MANAGER bounces the submitted survey back to the field crew for
-   *  amendments (before it ever reaches the DC). Mirrors the DC bounce-back: it
-   *  re-opens the visit so the crew can actually edit + re-submit. */
+  /** The team's MANAGER decides an amendment isn't done properly and bounces it
+   *  back to the field crew (PINDAAN SELESAI → PERLU PINDAAN). Mirrors the DC
+   *  bounce-back: it re-opens the visit so the crew can edit + re-submit. */
   async managerRequestAmendment(
     user: RequestUser,
     id: string,
@@ -127,7 +138,7 @@ export class SurveyLifecycleService {
     }
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.PERLU_PINDAAN,
-      allowedFrom: [SurveyLifecycleStatus.RONDAAN_SELESAI],
+      allowedFrom: [SurveyLifecycleStatus.PINDAAN_SELESAI],
       data: {
         amendmentRequestedAt: new Date(),
         amendmentRemark: remark,
@@ -140,8 +151,9 @@ export class SurveyLifecycleService {
     });
   }
 
-  /** DC sends the survey back for data-quality amendments. Only reachable after
-   *  the manager has approved (DISAHKAN PENGURUS). */
+  /** DC sends the survey back for data-quality amendments — directly from the
+   *  DC's review queue (RONDAAN SELESAI); also accepts the deprecated DISAHKAN
+   *  PENGURUS so an in-flight survey already there isn't stranded. */
   async requestAmendment(user: RequestUser, id: string, remarkInput: string) {
     await this.assertGovernance(user, 'Requesting survey amendments');
     const remark = remarkInput.trim();
@@ -150,7 +162,10 @@ export class SurveyLifecycleService {
     }
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.PERLU_PINDAAN,
-      allowedFrom: [SurveyLifecycleStatus.DISAHKAN_PENGURUS],
+      allowedFrom: [
+        SurveyLifecycleStatus.RONDAAN_SELESAI,
+        SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+      ],
       data: {
         amendmentRequestedAt: new Date(),
         amendmentRemark: remark,
@@ -168,16 +183,20 @@ export class SurveyLifecycleService {
     });
   }
 
-  /** DC generates the report — the gate into LAPORAN SELESAI. Only reachable
-   *  after the manager has approved (DISAHKAN PENGURUS), so every compiled report
-   *  carries manager sign-off. The frozen compiled PDF is produced as part of
-   *  this transition; if compilation fails the survey stays in DISAHKAN PENGURUS
-   *  so it can be retried. */
+  /** DC generates the report — the gate into LAPORAN SELESAI, from the DC's
+   *  review queue (RONDAAN SELESAI; also the deprecated DISAHKAN PENGURUS for
+   *  in-flight surveys). In the DC-first flow a clean first-pass report is DC-only
+   *  — only amended reports carry manager sign-off. The frozen compiled PDF is
+   *  produced as part of this transition; if compilation fails the survey stays
+   *  put so it can be retried. */
   async generateReport(user: RequestUser, id: string) {
     await this.assertReporting(user);
     return this.transition(user, id, {
       to: SurveyLifecycleStatus.LAPORAN_SELESAI,
-      allowedFrom: [SurveyLifecycleStatus.DISAHKAN_PENGURUS],
+      allowedFrom: [
+        SurveyLifecycleStatus.RONDAAN_SELESAI,
+        SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+      ],
       data: { laporanSelesaiAt: new Date() },
       // Compile the frozen report, then persist its row INSIDE the status-commit
       // transaction, so the report and the LAPORAN SELESAI status are atomic
