@@ -986,6 +986,22 @@ function UsersContent() {
   const canManageUsers = isAdmin || session?.user?.canManageUsers === true;
   const isManagerOnly = canManageUsers && !isAdmin;
   const managerOrgId = session?.user?.organizationId ?? null;
+
+  // Which rows a manager may act on: only TECHNICIAN/SUPERVISOR/MANAGER users in
+  // their own company (mirrors the API's assertCanManageTarget). Admins: anyone.
+  function canManageTarget(target: ManagedUser) {
+    if (isAdmin) {
+      return true;
+    }
+    if (!isManagerOnly) {
+      return false;
+    }
+    return (
+      MANAGER_ASSIGNABLE_ROLES.includes(target.role) &&
+      (!managerOrgId || target.organizationId === managerOrgId)
+    );
+  }
+
   const activeUserCount = users.filter((user) => user.isActive).length;
   const activeAdminCount = users.filter(
     (user) => user.isActive && user.role === "ADMIN",
@@ -1367,6 +1383,7 @@ function UsersContent() {
                       {filteredUsers.map((user) => {
                         const isCurrentUser = user.id === session?.user?.id;
                         const disableDeactivate = isCurrentUser && user.isActive;
+                        const manageable = canManageTarget(user);
                         const scopeLabel =
                           [
                             user.organization?.code || user.organization?.name,
@@ -1424,7 +1441,7 @@ function UsersContent() {
                             </td>
                             <td className="px-5 py-4">
                               <div className="flex flex-wrap justify-end gap-2">
-                                {isAdmin ? (
+                                {manageable ? (
                                   <button
                                     type="button"
                                     onClick={() => openEditModal(user)}
@@ -1434,15 +1451,17 @@ function UsersContent() {
                                     Edit
                                   </button>
                                 ) : null}
-                                <button
-                                  type="button"
-                                  onClick={() => openPasswordModal(user)}
-                                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-                                >
-                                  <KeyRound size={14} />
-                                  Password
-                                </button>
-                                {isAdmin ? (
+                                {manageable ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openPasswordModal(user)}
+                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                                  >
+                                    <KeyRound size={14} />
+                                    Password
+                                  </button>
+                                ) : null}
+                                {manageable ? (
                                   <button
                                     type="button"
                                     onClick={() => requestStatusToggle(user)}

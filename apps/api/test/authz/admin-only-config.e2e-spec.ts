@@ -21,8 +21,10 @@ const ADMIN_ONLY: Array<{ name: string; method: Method; path: string }> = [
   { name: 'create a checklist template', method: 'post', path: '/api/v1/checklist-templates' },
   { name: 'activate a checklist template', method: 'post', path: `/api/v1/checklist-templates/${IDS.template.tmpl}/activate` },
   { name: 'archive a checklist template', method: 'del', path: `/api/v1/checklist-templates/${IDS.template.tmpl}` },
-  { name: 'update another user', method: 'patch', path: `/api/v1/users/${IDS.user.techA}` },
-  { name: 'change another user\'s status', method: 'patch', path: `/api/v1/users/${IDS.user.techA}/status` },
+  // NOTE: user update + status are NOT admin-only — a MANAGER owns those for their
+  // own company's non-admin users (covered in roles.e2e-spec.ts). They can't live
+  // in this empty-body loop anyway: a manager now passes RolesGuard, so an empty
+  // `/status` body would 400 (validation) rather than 403.
 ];
 
 describe('Authz · tenant configuration is ADMIN-only', () => {

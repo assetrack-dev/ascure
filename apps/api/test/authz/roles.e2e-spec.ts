@@ -52,6 +52,66 @@ describe('Authz · roles & privilege gates', () => {
       .send({ name: 'New Tech A', email: 'new-tech-a@authz.test', role: 'TECHNICIAN' })
       .expect(201));
 
+  describe('manager user management — own company only', () => {
+    it('manager CAN change a team & deactivate a user in their own company (200)', async () => {
+      // A throwaway technician in the manager's own company keeps the shared
+      // fixtures intact (no mutation of seeded users).
+      const created = await http(app, token.mgrA)
+        .post('/api/v1/users')
+        .send({ name: 'Managed Tech', email: 'managed-tech-a@authz.test', role: 'TECHNICIAN' })
+        .expect(201);
+      const id = created.body.id as string;
+
+      const moved = await http(app, token.mgrA)
+        .patch(`/api/v1/users/${id}`)
+        .send({ teamId: IDS.team.a })
+        .expect(200);
+      expect(moved.body.teamId).toBe(IDS.team.a);
+
+      const deactivated = await http(app, token.mgrA)
+        .patch(`/api/v1/users/${id}/status`)
+        .send({ isActive: false })
+        .expect(200);
+      expect(deactivated.body.isActive).toBe(false);
+    });
+
+    it('manager cannot update a user in another company (403)', () =>
+      http(app, token.mgrA)
+        .patch(`/api/v1/users/${IDS.user.techB}`)
+        .send({ teamId: IDS.team.a })
+        .expect(403));
+
+    it('manager cannot deactivate a user in another company (403)', () =>
+      http(app, token.mgrA)
+        .patch(`/api/v1/users/${IDS.user.techB}/status`)
+        .send({ isActive: false })
+        .expect(403));
+
+    it('manager cannot promote a user to ADMIN (403)', () =>
+      http(app, token.mgrA)
+        .patch(`/api/v1/users/${IDS.user.techA}`)
+        .send({ role: 'ADMIN' })
+        .expect(403));
+
+    it('manager cannot move a user into another company\'s team (400)', () =>
+      http(app, token.mgrA)
+        .patch(`/api/v1/users/${IDS.user.techA}`)
+        .send({ teamId: IDS.team.b })
+        .expect(400));
+
+    it('technician cannot update a user (403)', () =>
+      http(app, token.techA)
+        .patch(`/api/v1/users/${IDS.user.techA}`)
+        .send({ name: 'Nope' })
+        .expect(403));
+
+    it('technician cannot change a user status (403)', () =>
+      http(app, token.techA)
+        .patch(`/api/v1/users/${IDS.user.techA}/status`)
+        .send({ isActive: false })
+        .expect(403));
+  });
+
   describe('Deploy-44 regression lock — team org-scope', () => {
     it('manager cannot edit another company\'s team (403)', () =>
       http(app, token.mgrA)

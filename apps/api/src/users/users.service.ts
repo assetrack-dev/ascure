@@ -291,7 +291,44 @@ export class UsersService {
     }
   }
 
-  async update(user: RequestUser, id: string, dto: UpdateUserDto) {
+  /**
+   * Manager-scope guard + sanitizer for editing an existing user. ADMIN is
+   * unrestricted. A MANAGER may only edit TECHNICIAN/SUPERVISOR/MANAGER targets
+   * inside their own company, may never grant ADMIN, and may never reach the
+   * advanced operational/capability grants — those stay ADMIN-only. The returned
+   * DTO pins the user to the manager's own company so a team change is validated
+   * against it (resolveOperationalLinks rejects a team from another org).
+   */
+  private applyManagerUpdateScope(
+    actor: RequestUser,
+    target: { role: UserRole; organizationId: string | null },
+    dto: UpdateUserDto,
+  ): UpdateUserDto {
+    if (actor.role === UserRole.ADMIN) {
+      return dto;
+    }
+
+    this.assertCanManageTarget(actor, target);
+
+    if (dto.role !== undefined && !MANAGER_ASSIGNABLE_ROLES.includes(dto.role)) {
+      throw new ForbiddenException(
+        'Managers can only assign Technician, Supervisor, or Manager roles.',
+      );
+    }
+
+    return {
+      ...dto,
+      organizationId: actor.organizationId,
+      branchId: undefined,
+      mainheadId: undefined,
+      capabilityIds: undefined,
+      mainheadAccessIds: undefined,
+      operationalRegionAccessIds: undefined,
+      accessRole: undefined,
+    };
+  }
+
+  async update(user: RequestUser, id: string, inputDto: UpdateUserDto) {
     try {
       return await this.runSerializableUserTransaction(async (tx) => {
         const existingUser = await tx.user.findFirst({
@@ -313,6 +350,11 @@ export class UsersService {
         if (!existingUser) {
           throw new NotFoundException('User not found.');
         }
+
+        // ADMIN: unrestricted. MANAGER: assert own-company + non-admin target,
+        // then sanitize — pin org to the manager's company and strip every
+        // advanced grant so a manager can only change name/email/role/team here.
+        const dto = this.applyManagerUpdateScope(user, existingUser, inputDto);
 
         await this.assertDepartmentBelongsToTenant(
           tx,
@@ -518,12 +560,16 @@ export class UsersService {
           id: true,
           role: true,
           isActive: true,
+          organizationId: true,
         },
       });
 
       if (!existingUser) {
         throw new NotFoundException('User not found.');
       }
+
+      // ADMIN: unrestricted. MANAGER: only non-admin users in their own company.
+      this.assertCanManageTarget(user, existingUser);
 
       if (
         existingUser.role === UserRole.ADMIN &&

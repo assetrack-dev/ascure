@@ -54,7 +54,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   update(
     @CurrentUser() user: RequestUser,
     @Param() params: UserIdParamDto,
@@ -74,7 +74,7 @@ export class UsersController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   updateStatus(
     @CurrentUser() user: RequestUser,
     @Param() params: UserIdParamDto,
