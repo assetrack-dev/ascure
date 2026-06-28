@@ -1,8 +1,38 @@
 import { apiRequest, apiRequestBlob } from "@/lib/api";
-import type { ReportSubstation } from "@/types/reports";
+import type { ReportSavtRoute, ReportSubstation } from "@/types/reports";
 
 export function fetchReportSubstations(token: string) {
   return apiRequest<ReportSubstation[]>("/reports/substations", { token });
+}
+
+/** SAVT routes (one KOD TIANG, From → To) for the SAVT report selector. */
+export function fetchSavtRoutes(token: string) {
+  return apiRequest<ReportSavtRoute[]>("/reports/savt-routes", { token });
+}
+
+/**
+ * Downloads the per-route SAVT checklist (.xlsx, 1 pole per row, route-flavoured
+ * meta columns + one column per live SAVT checklist item). `status` filters by
+ * survey lifecycle; "ALL"/omitted = no filter. Server names it
+ * `[KOD TIANG]_SAVT_CHECKLIST.xlsx`.
+ */
+export async function downloadSavtRouteChecklist(
+  token: string,
+  route: Pick<ReportSavtRoute, "routeCode">,
+  status?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  params.set("routeCode", route.routeCode);
+  if (status && status !== "ALL") params.set("status", status);
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/savt-route/checklist.xlsx?${params.toString()}`,
+    { token },
+  );
+
+  const fallbackBase =
+    route.routeCode.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") ||
+    "SAVT_ROUTE";
+  triggerBrowserDownload(blob, filename ?? `${fallbackBase}_SAVT_CHECKLIST.xlsx`);
 }
 
 /**

@@ -8,3 +8,15 @@ export interface ReportSubstation {
   /** Poles/assets registered under this Pencawang (0 = empty; used to hide empties). */
   assetCount: number;
 }
+
+/** A SAVT route (one KOD TIANG, From → To) — the SAVT report's grouping unit. */
+export interface ReportSavtRoute {
+  routeCode: string;
+  fromName: string;
+  fromCode: string;
+  fromFunctionalLocation: string;
+  toName: string;
+  toCode: string;
+  /** Distinct inspected poles on this route. */
+  poleCount: number;
+}

@@ -100,6 +100,35 @@ export class ReportsController {
     return new StreamableFile(buffer);
   }
 
+  @Get('savt-routes')
+  listSavtRoutes(@CurrentUser() user: RequestUser) {
+    return this.reportsService.listSavtRoutes(user);
+  }
+
+  @Get('savt-route/checklist.xlsx')
+  async exportSavtRouteChecklist(
+    @CurrentUser() user: RequestUser,
+    @Query('routeCode') routeCode: string | undefined,
+    @Query('status') status: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } =
+      await this.reportsService.buildSavtRouteChecklist(
+        user,
+        routeCode ?? '',
+        parseLifecycleStatus(status),
+      );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   @Get('pencawang/:substationId/inspections.xlsx')
   async exportPencawangInspections(
     @CurrentUser() user: RequestUser,

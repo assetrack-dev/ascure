@@ -14,10 +14,12 @@ import {
 import {
   downloadPencawangMasterlist,
   downloadPencawangTemplateMasterlist,
+  downloadSavtRouteChecklist,
   fetchReportSubstations,
+  fetchSavtRoutes,
 } from "@/lib/reports";
 import type { AuthSession } from "@/types/auth";
-import type { ReportSubstation } from "@/types/reports";
+import type { ReportSavtRoute, ReportSubstation } from "@/types/reports";
 
 const inputClassName =
   "h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
@@ -43,7 +45,9 @@ function ReportsContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [substations, setSubstations] = useState<ReportSubstation[]>([]);
+  const [routes, setRoutes] = useState<ReportSavtRoute[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [selectedRouteCode, setSelectedRouteCode] = useState("");
   const [mainhead, setMainhead] = useState("ALL");
   const [scope, setScope] = useState("SAVR");
   const [status, setStatus] = useState("ALL");
@@ -64,9 +68,10 @@ function ReportsContent() {
       setError("");
 
       try {
-        const [refreshedUser, nextSubstations] = await Promise.all([
+        const [refreshedUser, nextSubstations, nextRoutes] = await Promise.all([
           refreshStoredSessionUser(token).catch(() => null),
           fetchReportSubstations(token),
+          fetchSavtRoutes(token).catch(() => []),
         ]);
 
         if (refreshedUser) {
@@ -74,6 +79,7 @@ function ReportsContent() {
         }
 
         setSubstations(nextSubstations);
+        setRoutes(nextRoutes);
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           handleLogout();
@@ -132,6 +138,18 @@ function ReportsContent() {
     [substations, selectedId],
   );
 
+  const selectedRoute = useMemo(
+    () => routes.find((route) => route.routeCode === selectedRouteCode) ?? null,
+    [routes, selectedRouteCode],
+  );
+
+  const isSavt = scope === "SAVT";
+  // The "Download Checklist" target is chosen for the active scope's axis:
+  // SAVR = a Pencawang, SAVT = a route.
+  const hasSelection = isSavt
+    ? Boolean(selectedRoute)
+    : Boolean(selectedSubstation);
+
   // If the chosen MAINHEAD no longer contains the selected Pencawang, clear it.
   useEffect(() => {
     if (
@@ -182,9 +200,9 @@ function ReportsContent() {
   async function handleDownloadTemplate() {
     if (
       !session?.token ||
-      !selectedSubstation ||
       isDownloading ||
-      isDownloadingTemplate
+      isDownloadingTemplate ||
+      (isSavt ? !selectedRoute : !selectedSubstation)
     ) {
       return;
     }
@@ -194,10 +212,15 @@ function ReportsContent() {
     setNotice("");
 
     try {
-      await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status, scope);
-      setNotice(
-        `Checklist report generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
-      );
+      if (isSavt && selectedRoute) {
+        await downloadSavtRouteChecklist(session.token, selectedRoute, status);
+        setNotice(`Checklist generated for route ${selectedRoute.routeCode}.`);
+      } else if (selectedSubstation) {
+        await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status, scope);
+        setNotice(
+          `Checklist report generated for ${selectedSubstation.code} - ${selectedSubstation.name}.`,
+        );
+      }
     } catch (downloadError) {
       if (downloadError instanceof ApiError && downloadError.status === 401) {
         handleLogout();
@@ -231,9 +254,11 @@ function ReportsContent() {
               </p>
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Reports</h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-                Download a per-Pencawang report (.xlsx) — one pole per row, checklist items
-                as columns. Pick the <strong>Survey type</strong> (SAVR or SAVT).{" "}
-                <strong>Checklist</strong> follows the live checklist template;{" "}
+                Download surveyed data for the DC (.xlsx) — one pole per row, every checklist
+                item as a column, plus a few collected fields. Pick the{" "}
+                <strong>Survey type</strong>: <strong>SAVR</strong> is grouped by{" "}
+                <strong>Pencawang</strong>, <strong>SAVT</strong> by{" "}
+                <strong>route (From → To)</strong>.{" "}
                 <strong>Masterlist (AppSheet)</strong> uses the fixed SAVR-KLB import layout
                 (SAVR only). Filter by survey status as needed.
               </p>
@@ -262,7 +287,7 @@ function ReportsContent() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,120px)_minmax(0,150px)_minmax(0,1fr)_minmax(0,150px)_auto] sm:items-end">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,140px)_minmax(0,1fr)_minmax(0,150px)_auto] sm:items-end">
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Survey type</span>
                 <select
@@ -278,53 +303,89 @@ function ReportsContent() {
                 </select>
               </label>
 
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Mainhead</span>
-                <select
-                  value={mainhead}
-                  onChange={(event) => {
-                    setMainhead(event.target.value);
-                    setNotice("");
-                  }}
-                  disabled={isLoading || mainheadOptions.length === 0}
-                  className={`${inputClassName} mt-1.5`}
-                >
-                  <option value="ALL">All mainheads</option>
-                  {mainheadOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
+              {isSavt ? (
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">
+                    Route (From → To)
+                  </span>
+                  <select
+                    value={selectedRouteCode}
+                    onChange={(event) => {
+                      setSelectedRouteCode(event.target.value);
+                      setNotice("");
+                    }}
+                    disabled={isLoading || routes.length === 0}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">
+                      {isLoading
+                        ? "Loading routes…"
+                        : routes.length === 0
+                          ? "No SAVT routes yet"
+                          : "Select a route"}
                     </option>
-                  ))}
-                </select>
-              </label>
+                    {routes.map((route) => (
+                      <option key={route.routeCode} value={route.routeCode}>
+                        {route.routeCode}
+                        {route.fromName || route.toName
+                          ? ` — ${route.fromName || "?"} → ${route.toName || "?"}`
+                          : ""}
+                        {` · ${route.poleCount} pole${route.poleCount === 1 ? "" : "s"}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Mainhead</span>
+                    <select
+                      value={mainhead}
+                      onChange={(event) => {
+                        setMainhead(event.target.value);
+                        setNotice("");
+                      }}
+                      disabled={isLoading || mainheadOptions.length === 0}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="ALL">All mainheads</option>
+                      {mainheadOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Pencawang</span>
-                <select
-                  value={selectedId}
-                  onChange={(event) => {
-                    setSelectedId(event.target.value);
-                    setNotice("");
-                  }}
-                  disabled={isLoading || visibleSubstations.length === 0}
-                  className={`${inputClassName} mt-1.5`}
-                >
-                  <option value="">
-                    {isLoading
-                      ? "Loading Pencawang list…"
-                      : substations.length === 0
-                        ? "No Pencawang available"
-                        : visibleSubstations.length === 0
-                          ? "No Pencawang for this mainhead"
-                          : "Select a Pencawang"}
-                  </option>
-                  {visibleSubstations.map((substation) => (
-                    <option key={substation.id} value={substation.id}>
-                      {substation.code} - {substation.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">Pencawang</span>
+                    <select
+                      value={selectedId}
+                      onChange={(event) => {
+                        setSelectedId(event.target.value);
+                        setNotice("");
+                      }}
+                      disabled={isLoading || visibleSubstations.length === 0}
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">
+                        {isLoading
+                          ? "Loading Pencawang list…"
+                          : substations.length === 0
+                            ? "No Pencawang available"
+                            : visibleSubstations.length === 0
+                              ? "No Pencawang for this mainhead"
+                              : "Select a Pencawang"}
+                      </option>
+                      {visibleSubstations.map((substation) => (
+                        <option key={substation.id} value={substation.id}>
+                          {substation.code} - {substation.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
 
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Status</span>
@@ -348,7 +409,7 @@ function ReportsContent() {
                 <button
                   type="button"
                   onClick={handleDownloadTemplate}
-                  disabled={!selectedSubstation || isDownloading || isDownloadingTemplate}
+                  disabled={!hasSelection || isDownloading || isDownloadingTemplate}
                   className={primaryButtonClassName}
                 >
                   <Download size={16} />
@@ -361,11 +422,11 @@ function ReportsContent() {
                     !selectedSubstation ||
                     isDownloading ||
                     isDownloadingTemplate ||
-                    scope === "SAVT"
+                    isSavt
                   }
                   className={secondaryButtonClassName}
                   title={
-                    scope === "SAVT"
+                    isSavt
                       ? "Masterlist (AppSheet) is available for SAVR only."
                       : "Fixed SAVR-KLB AppSheet layout — re-importable through the F2 importer."
                   }
@@ -376,7 +437,16 @@ function ReportsContent() {
               </div>
             </div>
 
-            {selectedSubstation ? (
+            {isSavt ? (
+              selectedRoute ? (
+                <div className="mt-4 flex items-center gap-2 text-sm text-[var(--muted)]">
+                  <MapPin size={15} className="text-slate-400" />
+                  Route {selectedRoute.routeCode}: {selectedRoute.fromName || "?"} →{" "}
+                  {selectedRoute.toName || "?"} · {selectedRoute.poleCount} inspected pole
+                  {selectedRoute.poleCount === 1 ? "" : "s"}
+                </div>
+              ) : null
+            ) : selectedSubstation ? (
               <div className="mt-4 flex items-center gap-2 text-sm text-[var(--muted)]">
                 <MapPin size={15} className="text-slate-400" />
                 {selectedSubstation.location?.trim()

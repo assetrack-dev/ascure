@@ -585,6 +585,9 @@ export class ReportsService {
 
         const meta: (string | number)[] = [
           sanitizeText(
+            insp.siteVisit?.mainheadRecord?.name ?? insp.siteVisit?.mainhead ?? '',
+          ),
+          sanitizeText(
             insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           ),
           formatDate(insp.submittedAt ?? insp.createdAt),
@@ -714,6 +717,276 @@ export class ReportsService {
     // SAVT (and any non-SAVR scope), so tag the filename with the scope.
     const scopeTag = scope === OperationalScope.SAVR ? '' : `_${scope}`;
     return { buffer, filename: `${safe}${scopeTag}_CHECKLIST.xlsx` };
+  }
+
+  /**
+   * SAVT routes for the report selector — the distinct routes (KOD TIANG) across
+   * the tenant's SAVT site visits, each with its From/To Pencawang and a count of
+   * inspected poles. SAVT data is grouped by ROUTE (From → To), not by Pencawang.
+   */
+  async listSavtRoutes(user: RequestUser) {
+    await this.assertCanReport(user);
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: {
+        tenantId: user.tenantId,
+        operationalScope: OperationalScope.SAVT,
+        routeCode: { not: null },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        routeCode: true,
+        functionalLocation: true,
+        pencawangName: true,
+        pencawangCode: true,
+        fromPencawang: { select: { name: true, code: true } },
+        toPencawang: { select: { name: true, code: true } },
+      },
+    });
+
+    // Inspected-pole counts per route (distinct assets whose inspection's visit
+    // carries the route code) — a route can be re-surveyed across cycles.
+    const poleRows = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        siteVisit: { operationalScope: OperationalScope.SAVT, routeCode: { not: null } },
+      },
+      select: { assetId: true, siteVisit: { select: { routeCode: true } } },
+    });
+    const polesByRoute = new Map<string, Set<string>>();
+    for (const row of poleRows) {
+      const code = (row.siteVisit?.routeCode ?? '').trim();
+      if (!code) {
+        continue;
+      }
+      let set = polesByRoute.get(code);
+      if (!set) {
+        set = new Set<string>();
+        polesByRoute.set(code, set);
+      }
+      set.add(row.assetId);
+    }
+
+    // First visit seen per route = the most recent (ordered desc) → its From/To.
+    const byRoute = new Map<
+      string,
+      {
+        routeCode: string;
+        fromName: string;
+        fromCode: string;
+        fromFunctionalLocation: string;
+        toName: string;
+        toCode: string;
+        poleCount: number;
+      }
+    >();
+    for (const visit of visits) {
+      const code = (visit.routeCode ?? '').trim();
+      if (!code || byRoute.has(code)) {
+        continue;
+      }
+      byRoute.set(code, {
+        routeCode: code,
+        fromName: visit.fromPencawang?.name ?? visit.pencawangName ?? '',
+        fromCode: visit.fromPencawang?.code ?? visit.pencawangCode ?? '',
+        fromFunctionalLocation: visit.functionalLocation ?? '',
+        toName: visit.toPencawang?.name ?? '',
+        toCode: visit.toPencawang?.code ?? '',
+        poleCount: polesByRoute.get(code)?.size ?? 0,
+      });
+    }
+
+    return [...byRoute.values()].sort((a, b) =>
+      a.routeCode.localeCompare(b.routeCode),
+    );
+  }
+
+  /**
+   * Per-ROUTE "Download Checklist" export for SAVT (1 pole = 1 row): every pole on
+   * one KOD TIANG route, with the route-flavoured meta columns (TEAM, DATE, From/To
+   * Pencawang + functional location, KOD TIANG, LOCATION, No. Tiang, NO TIANG LAMA)
+   * then one column per live SAVT checklist template item. The SAVT analogue of
+   * buildPencawangTemplateMasterlist (per-Pencawang / SAVR). Read-only, tenant
+   * scoped, optionally filtered by survey lifecycle status.
+   */
+  async buildSavtRouteChecklist(
+    user: RequestUser,
+    routeCode: string,
+    lifecycleStatus?: SurveyLifecycleStatus,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const code = routeCode.trim();
+    if (!code) {
+      throw new NotFoundException('SAVT route not found.');
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        siteVisit: {
+          operationalScope: OperationalScope.SAVT,
+          routeCode: code,
+          ...(lifecycleStatus ? { lifecycleStatus } : {}),
+        },
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        templateId: true,
+        submittedAt: true,
+        createdAt: true,
+        siteVisit: {
+          select: {
+            mainhead: true,
+            mainheadRecord: { select: { name: true } },
+            functionalLocation: true,
+            pencawangName: true,
+            team: { select: { name: true, code: true } },
+            fromPencawang: { select: { name: true } },
+            toPencawang: { select: { name: true } },
+          },
+        },
+        asset: {
+          select: {
+            assetCode: true,
+            name: true,
+            noTiangLama: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
+        itemResults: { select: { checklistItemId: true, result: true } },
+        results: {
+          select: {
+            templateItemId: true,
+            valueText: true,
+            valueNumber: true,
+            valueBoolean: true,
+            valueJson: true,
+          },
+        },
+      },
+    });
+
+    // One row per asset = its latest inspection (newest-first), ordered by No.
+    // Tiang along the route (numeric, branches after their trunk).
+    const latestByAsset = new Map<string, (typeof inspections)[number]>();
+    for (const insp of inspections) {
+      if (!latestByAsset.has(insp.assetId)) {
+        latestByAsset.set(insp.assetId, insp);
+      }
+    }
+    const chosen = [...latestByAsset.values()].sort((a, b) => {
+      const ka = noTiangSortKey(stripRoutePrefix(a.asset.assetCode, code));
+      const kb = noTiangSortKey(stripRoutePrefix(b.asset.assetCode, code));
+      return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
+    });
+
+    const columns = await this.deriveTemplateColumns([
+      ...new Set(chosen.map((i) => i.templateId)),
+    ]);
+
+    const workbook = new Workbook();
+    workbook.creator = 'ASCURE';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('CHECKLIST');
+    sheet.addRow([...SAVT_META_HEADERS, ...columns.map((c) => c.label)]);
+    sheet.getRow(1).font = { bold: true };
+
+    for (const insp of chosen) {
+      const sv = insp.siteVisit;
+      const resultByItemId = new Map<string, (typeof insp.results)[number]>();
+      for (const r of insp.results) {
+        resultByItemId.set(r.templateItemId, r);
+      }
+      const verdictByItemId = new Map<string, InspectionItemResultValue>();
+      for (const ir of insp.itemResults) {
+        if (ir.checklistItemId) {
+          verdictByItemId.set(ir.checklistItemId, ir.result);
+        }
+      }
+
+      const meta: (string | number)[] = [
+        sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
+        sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
+        formatDate(insp.submittedAt ?? insp.createdAt),
+        sanitizeText(sv?.functionalLocation ?? ''),
+        sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
+        '', // Functional Location (TO) — not captured at check-in (sample: "can be N/A")
+        sanitizeText(sv?.toPencawang?.name ?? ''),
+        sanitizeText(code),
+        insp.asset.latitude != null && insp.asset.longitude != null
+          ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+          : '',
+        sanitizeText(stripRoutePrefix(insp.asset.assetCode, code)),
+        sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+      ];
+
+      const itemCells = columns.map((col) => {
+        let result: (typeof insp.results)[number] | undefined;
+        let verdict: InspectionItemResultValue | undefined;
+        for (const id of col.itemIds) {
+          if (!result) result = resultByItemId.get(id);
+          if (!verdict) verdict = verdictByItemId.get(id);
+        }
+        return resolveTemplateCell(col.inputType, result, verdict);
+      });
+
+      sheet.addRow([...meta, ...itemCells]);
+    }
+
+    sheet.columns.forEach((column, index) => {
+      column.width = index < SAVT_META_HEADERS.length ? 18 : 16;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    const safe =
+      code.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'SAVT_ROUTE';
+    return { buffer, filename: `${safe}_SAVT_CHECKLIST.xlsx` };
+  }
+
+  /**
+   * Derive the dynamic checklist columns (one per template item, deduped by key
+   * across template versions, IMAGE excluded) for the live-template exports.
+   */
+  private async deriveTemplateColumns(templateIds: string[]) {
+    const templateItems = templateIds.length
+      ? await this.prisma.inspectionTemplateItem.findMany({
+          where: { templateId: { in: templateIds } },
+          select: { id: true, key: true, label: true, sortOrder: true, inputType: true },
+          orderBy: { sortOrder: 'asc' },
+        })
+      : [];
+    const columnsByKey = new Map<
+      string,
+      {
+        label: string;
+        sortOrder: number;
+        inputType: InspectionItemInputType;
+        itemIds: Set<string>;
+      }
+    >();
+    for (const item of templateItems) {
+      if (item.inputType === InspectionItemInputType.IMAGE) {
+        continue; // photos are evidence, not tabular data
+      }
+      const existing = columnsByKey.get(item.key);
+      if (existing) {
+        existing.itemIds.add(item.id);
+      } else {
+        columnsByKey.set(item.key, {
+          label: item.label,
+          sortOrder: item.sortOrder,
+          inputType: item.inputType,
+          itemIds: new Set([item.id]),
+        });
+      }
+    }
+    return [...columnsByKey.values()].sort(
+      (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
+    );
   }
 
   /**
@@ -1228,6 +1501,7 @@ function resolveTemplateCell(
  * embedded — the GAMBAR KELEGAAN columns surface the OCR reading.
  */
 const SAVR_FIXED_META_HEADERS = [
+  'MAINHEAD',
   'TEAM',
   'DATE',
   'LOCATION',
@@ -1370,6 +1644,48 @@ const KUANTAN_FIXED_ITEM_LABELS = [
 
 /** The mainhead with its own fixed checklist arrangement (KUANTAN_FIXED_ITEM_LABELS). */
 const KUANTAN_MAINHEAD_NAME = 'KUANTAN';
+
+/**
+ * SAVT route-checklist meta columns (the "few extra columns" before the live SAVT
+ * checklist items), taken from the owner's SAMPLE SAVT.xlsx. Functional Location
+ * (TO) has no captured source today, so it comes through blank (sample: "can be
+ * N/A"). The From details come from the route's check-in (always at the From).
+ */
+const SAVT_META_HEADERS = [
+  'MAINHEAD',
+  'TEAM',
+  'DATE',
+  'FUNCTIONAL LOCATION (FROM)',
+  'FROM (NAMA PENCAWANG)',
+  'FUNCTIONAL LOCATION (TO)',
+  'TO (NAMA PENCAWANG)',
+  'KOD TIANG',
+  'LOCATION',
+  'No. Tiang',
+  'NO TIANG LAMA',
+];
+
+/**
+ * Strip a SAVT route's "{KOD TIANG} " prefix from a pole's assetCode to recover
+ * its No. Tiang (e.g. "MI - KUK 33/1" -> "33/1"). The assetCode prefix is stored
+ * uppercased (normalizeOperationalText), so match case-insensitively.
+ */
+function stripRoutePrefix(assetCode: string, routeCode: string): string {
+  const prefix = `${routeCode.trim()} `;
+  if (assetCode.toUpperCase().startsWith(prefix.toUpperCase())) {
+    return assetCode.slice(prefix.length).trim();
+  }
+  return assetCode;
+}
+
+/**
+ * Sort key for a No. Tiang: the leading integer first (so 2 sorts before 10),
+ * then the whole string (so "33" precedes its branch "33/1").
+ */
+function noTiangSortKey(noTiang: string): [number, string] {
+  const match = noTiang.match(/^(\d+)/);
+  return [match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER, noTiang];
+}
 
 /** Whitespace-insensitive, case-insensitive label key for matching. */
 function normalizeChecklistLabel(value: string | null | undefined): string {
