@@ -12,6 +12,7 @@ import {
   refreshStoredSessionUser,
 } from "@/lib/auth";
 import {
+  downloadBulkChecklist,
   downloadPencawangMasterlist,
   downloadPencawangTemplateMasterlist,
   downloadSavtRouteChecklist,
@@ -36,6 +37,10 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "LAPORAN_SELESAI", label: "Laporan Selesai" },
   { value: "ARKIB", label: "Arkib" },
 ];
+
+// Sentinel value for the "Select All" option in the Pencawang / route dropdowns
+// (bulk merged download across the current filter).
+const ALL_OPTION = "__ALL__";
 
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -144,16 +149,23 @@ function ReportsContent() {
   );
 
   const isSavt = scope === "SAVT";
-  // The "Download Checklist" target is chosen for the active scope's axis:
-  // SAVR = a Pencawang, SAVT = a route.
+  const isAllPencawang = !isSavt && selectedId === ALL_OPTION;
+  const isAllRoutes = isSavt && selectedRouteCode === ALL_OPTION;
+  // The "Download Checklist" target is chosen for the active scope's axis: SAVR =
+  // a Pencawang (or all in the mainhead), SAVT = a route (or all routes).
   const hasSelection = isSavt
-    ? Boolean(selectedRoute)
-    : Boolean(selectedSubstation);
+    ? isAllRoutes
+      ? routes.length > 0
+      : Boolean(selectedRoute)
+    : isAllPencawang
+      ? visibleSubstations.length > 0
+      : Boolean(selectedSubstation);
 
   // If the chosen MAINHEAD no longer contains the selected Pencawang, clear it.
   useEffect(() => {
     if (
       selectedId &&
+      selectedId !== ALL_OPTION &&
       !visibleSubstations.some((substation) => substation.id === selectedId)
     ) {
       setSelectedId("");
@@ -202,7 +214,7 @@ function ReportsContent() {
       !session?.token ||
       isDownloading ||
       isDownloadingTemplate ||
-      (isSavt ? !selectedRoute : !selectedSubstation)
+      !hasSelection
     ) {
       return;
     }
@@ -212,9 +224,21 @@ function ReportsContent() {
     setNotice("");
 
     try {
-      if (isSavt && selectedRoute) {
-        await downloadSavtRouteChecklist(session.token, selectedRoute, status);
-        setNotice(`Checklist generated for route ${selectedRoute.routeCode}.`);
+      if (isSavt) {
+        if (isAllRoutes) {
+          await downloadBulkChecklist(session.token, { scope: "SAVT", status });
+          setNotice(`Checklist generated for all ${routes.length} SAVT routes.`);
+        } else if (selectedRoute) {
+          await downloadSavtRouteChecklist(session.token, selectedRoute, status);
+          setNotice(`Checklist generated for route ${selectedRoute.routeCode}.`);
+        }
+      } else if (isAllPencawang) {
+        await downloadBulkChecklist(session.token, { scope, mainhead, status });
+        setNotice(
+          mainhead === "ALL"
+            ? `Checklist generated for all ${visibleSubstations.length} Pencawang.`
+            : `Checklist generated for all ${visibleSubstations.length} Pencawang in ${mainhead}.`,
+        );
       } else if (selectedSubstation) {
         await downloadPencawangTemplateMasterlist(session.token, selectedSubstation, status, scope);
         setNotice(
@@ -260,7 +284,9 @@ function ReportsContent() {
                 <strong>Pencawang</strong>, <strong>SAVT</strong> by{" "}
                 <strong>route (From → To)</strong>.{" "}
                 <strong>Masterlist (AppSheet)</strong> uses the fixed SAVR-KLB import layout
-                (SAVR only). Filter by survey status as needed.
+                (SAVR only). Filter by survey status as needed, or choose{" "}
+                <strong>All Pencawang</strong> / <strong>All routes</strong> to download
+                everything in the current filter as one merged sheet.
               </p>
             </div>
 
@@ -324,6 +350,11 @@ function ReportsContent() {
                           ? "No SAVT routes yet"
                           : "Select a route"}
                     </option>
+                    {routes.length > 0 ? (
+                      <option value={ALL_OPTION}>
+                        All routes ({routes.length})
+                      </option>
+                    ) : null}
                     {routes.map((route) => (
                       <option key={route.routeCode} value={route.routeCode}>
                         {route.routeCode}
@@ -377,6 +408,13 @@ function ReportsContent() {
                               ? "No Pencawang for this mainhead"
                               : "Select a Pencawang"}
                       </option>
+                      {visibleSubstations.length > 0 ? (
+                        <option value={ALL_OPTION}>
+                          {mainhead === "ALL"
+                            ? `All Pencawang (${visibleSubstations.length})`
+                            : `All Pencawang in ${mainhead} (${visibleSubstations.length})`}
+                        </option>
+                      ) : null}
                       {visibleSubstations.map((substation) => (
                         <option key={substation.id} value={substation.id}>
                           {substation.code} - {substation.name}

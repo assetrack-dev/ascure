@@ -14,11 +14,12 @@ export function fetchSavtRoutes(token: string) {
  * Downloads the per-route SAVT checklist (.xlsx, 1 pole per row, route-flavoured
  * meta columns + one column per live SAVT checklist item). `status` filters by
  * survey lifecycle; "ALL"/omitted = no filter. Server names it
- * `[KOD TIANG]_SAVT_CHECKLIST.xlsx`.
+ * `[FROM] - [TO] PENCAWANG_SAVT_CHECKLIST.xlsx` (falls back to the KOD TIANG
+ * route code when a Pencawang name is missing).
  */
 export async function downloadSavtRouteChecklist(
   token: string,
-  route: Pick<ReportSavtRoute, "routeCode">,
+  route: Pick<ReportSavtRoute, "routeCode" | "fromName" | "toName">,
   status?: string,
 ): Promise<void> {
   const params = new URLSearchParams();
@@ -29,10 +30,43 @@ export async function downloadSavtRouteChecklist(
     { token },
   );
 
-  const fallbackBase =
-    route.routeCode.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") ||
-    "SAVT_ROUTE";
+  // Mirror the server's "From - To Pencawang" filename (the server sets it via
+  // Content-Disposition); this fallback only applies if that header is absent.
+  const fromTo =
+    route.fromName?.trim() && route.toName?.trim()
+      ? `${route.fromName.trim()} - ${route.toName.trim()}`
+          .replace(/[<>:"/\\|?*]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      : route.routeCode.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const fallbackBase = fromTo || "SAVT_ROUTE";
   triggerBrowserDownload(blob, filename ?? `${fallbackBase}_SAVT_CHECKLIST.xlsx`);
+}
+
+/**
+ * Bulk "Download Checklist" — every pole across the current filter merged into a
+ * single sheet. `scope: "SAVT"` exports all routes; otherwise all SAVR Pencawang
+ * in `mainhead` ("ALL"/omitted = every mainhead). `status` filters by lifecycle
+ * ("ALL"/omitted = no filter). The server names the file.
+ */
+export async function downloadBulkChecklist(
+  token: string,
+  opts: { scope: string; mainhead?: string; status?: string },
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (opts.scope === "SAVT") params.set("scope", "SAVT");
+  if (opts.mainhead && opts.mainhead !== "ALL")
+    params.set("mainhead", opts.mainhead);
+  if (opts.status && opts.status !== "ALL") params.set("status", opts.status);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/bulk-checklist.xlsx${query}`,
+    { token },
+  );
+
+  const fallback =
+    opts.scope === "SAVT" ? "ALL_SAVT_ROUTES" : "ALL_PENCAWANG";
+  triggerBrowserDownload(blob, filename ?? `${fallback}_CHECKLIST.xlsx`);
 }
 
 /**

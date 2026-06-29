@@ -129,6 +129,40 @@ export class ReportsController {
     return new StreamableFile(buffer);
   }
 
+  /**
+   * Bulk "Download Checklist" — every pole across the current filter merged into
+   * one sheet. `scope=SAVT` exports all routes; otherwise all SAVR Pencawang in
+   * the given `mainhead` (omitted/ALL = every mainhead). `status` filters by
+   * lifecycle.
+   */
+  @Get('bulk-checklist.xlsx')
+  async exportBulkChecklist(
+    @CurrentUser() user: RequestUser,
+    @Query('scope') scope: string | undefined,
+    @Query('mainhead') mainhead: string | undefined,
+    @Query('status') status: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const lifecycleStatus = parseLifecycleStatus(status);
+    const { buffer, filename } =
+      parseScope(scope) === OperationalScope.SAVT
+        ? await this.reportsService.buildBulkSavtChecklist(user, lifecycleStatus)
+        : await this.reportsService.buildBulkPencawangChecklist(
+            user,
+            mainhead,
+            lifecycleStatus,
+          );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   @Get('pencawang/:substationId/inspections.xlsx')
   async exportPencawangInspections(
     @CurrentUser() user: RequestUser,

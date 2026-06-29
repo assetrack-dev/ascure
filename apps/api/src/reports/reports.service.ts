@@ -720,6 +720,211 @@ export class ReportsService {
   }
 
   /**
+   * Bulk "Download Checklist" for SAVR — every pole across ALL Pencawang in the
+   * current filter (a single MAINHEAD, or all of them) merged into ONE sheet,
+   * using the same fixed column arrangement as the per-Pencawang export. Rows
+   * self-identify via the MAINHEAD / Pencawang Code / Pencawang Name meta columns.
+   * Read-only, tenant scoped, optionally filtered by survey lifecycle status.
+   */
+  async buildBulkPencawangChecklist(
+    user: RequestUser,
+    mainhead: string | undefined,
+    lifecycleStatus?: SurveyLifecycleStatus,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const mainheadFilter = (mainhead ?? '').trim();
+    const allMainheads =
+      !mainheadFilter || mainheadFilter.toUpperCase() === 'ALL';
+
+    // Tenant-wide pull, narrowed by status at the DB and by scope/mainhead below.
+    // A DC bulk export runs occasionally and the status filter bounds the volume;
+    // this mirrors the per-Pencawang export's query shape.
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        templateId: true,
+        operationalScope: true,
+        submittedAt: true,
+        createdAt: true,
+        siteVisit: {
+          select: {
+            pencawangName: true,
+            pencawangCode: true,
+            mainhead: true,
+            mainheadRecord: { select: { name: true } },
+            team: { select: { name: true, code: true } },
+          },
+        },
+        asset: {
+          select: {
+            assetCode: true,
+            name: true,
+            noTiangLama: true,
+            latitude: true,
+            longitude: true,
+            assetType: { select: { code: true, operationalScope: true } },
+          },
+        },
+        itemResults: { select: { checklistItemId: true, result: true } },
+        results: {
+          select: {
+            templateItemId: true,
+            valueText: true,
+            valueNumber: true,
+            valueBoolean: true,
+            valueJson: true,
+          },
+        },
+      },
+    });
+
+    // SAVR only, narrowed to the chosen MAINHEAD (resolved exactly as the report
+    // UI does: the linked mainhead record name, else the free-text mainhead).
+    const scoped = inspections.filter((insp) => {
+      const resolvedScope =
+        insp.operationalScope ??
+        insp.asset.assetType?.operationalScope ??
+        inferOperationalScopeFromAssetTypeCode(insp.asset.assetType?.code) ??
+        DEFAULT_OPERATIONAL_SCOPE;
+      if (resolvedScope !== OperationalScope.SAVR) {
+        return false;
+      }
+      if (allMainheads) {
+        return true;
+      }
+      const name = (
+        insp.siteVisit?.mainheadRecord?.name ??
+        insp.siteVisit?.mainhead ??
+        ''
+      ).trim();
+      return name === mainheadFilter;
+    });
+
+    // One row per asset = its latest inspection (list is newest-first); grouped by
+    // Pencawang then pole code so each Pencawang's poles stay together.
+    const latestByAsset = new Map<string, (typeof scoped)[number]>();
+    for (const insp of scoped) {
+      if (!latestByAsset.has(insp.assetId)) {
+        latestByAsset.set(insp.assetId, insp);
+      }
+    }
+    const chosen = [...latestByAsset.values()].sort((a, b) => {
+      const pa = a.siteVisit?.pencawangName ?? a.siteVisit?.pencawangCode ?? '';
+      const pb = b.siteVisit?.pencawangName ?? b.siteVisit?.pencawangCode ?? '';
+      return (
+        pa.localeCompare(pb) || a.asset.assetCode.localeCompare(b.asset.assetCode)
+      );
+    });
+
+    // Map live template items by normalized label (as the per-Pencawang fixed
+    // export does) so the fixed columns line up across every Pencawang's template.
+    const templateIds = [...new Set(chosen.map((i) => i.templateId))];
+    const templateItems = templateIds.length
+      ? await this.prisma.inspectionTemplateItem.findMany({
+          where: { templateId: { in: templateIds } },
+          select: { id: true, label: true, inputType: true },
+        })
+      : [];
+    const itemsByLabel = new Map<
+      string,
+      { inputType: InspectionItemInputType; itemIds: Set<string> }
+    >();
+    for (const item of templateItems) {
+      const norm = normalizeChecklistLabel(item.label);
+      const existing = itemsByLabel.get(norm);
+      if (existing) {
+        existing.itemIds.add(item.id);
+      } else {
+        itemsByLabel.set(norm, {
+          inputType: item.inputType,
+          itemIds: new Set([item.id]),
+        });
+      }
+    }
+
+    // A single MAINHEAD picks its fixed item list (KUANTAN has its own); "all
+    // mainheads" falls back to the standard SAVR-KLB layout — KUANTAN-only items
+    // simply map blank there.
+    const fixedItemLabels =
+      !allMainheads &&
+      normalizeChecklistLabel(mainheadFilter) === KUANTAN_MAINHEAD_NAME
+        ? KUANTAN_FIXED_ITEM_LABELS
+        : SAVR_FIXED_ITEM_LABELS;
+
+    const workbook = new Workbook();
+    workbook.creator = 'ASCURE';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('CHECKLIST');
+    sheet.addRow([...SAVR_FIXED_META_HEADERS, ...fixedItemLabels]);
+    sheet.getRow(1).font = { bold: true };
+
+    for (const insp of chosen) {
+      const resultByItemId = new Map<string, (typeof insp.results)[number]>();
+      for (const r of insp.results) {
+        resultByItemId.set(r.templateItemId, r);
+      }
+      const verdictByItemId = new Map<string, InspectionItemResultValue>();
+      for (const ir of insp.itemResults) {
+        if (ir.checklistItemId) {
+          verdictByItemId.set(ir.checklistItemId, ir.result);
+        }
+      }
+
+      const meta: (string | number)[] = [
+        sanitizeText(
+          insp.siteVisit?.mainheadRecord?.name ?? insp.siteVisit?.mainhead ?? '',
+        ),
+        sanitizeText(
+          insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
+        ),
+        formatDate(insp.submittedAt ?? insp.createdAt),
+        insp.asset.latitude != null && insp.asset.longitude != null
+          ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+          : '',
+        sanitizeText(insp.siteVisit?.pencawangCode ?? ''),
+        sanitizeText(insp.siteVisit?.pencawangName ?? ''),
+        sanitizeText(insp.asset.assetCode),
+        sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+      ];
+
+      const itemCells = fixedItemLabels.map((label) => {
+        const col = itemsByLabel.get(normalizeChecklistLabel(label));
+        if (!col) {
+          return '';
+        }
+        let result: (typeof insp.results)[number] | undefined;
+        let verdict: InspectionItemResultValue | undefined;
+        for (const id of col.itemIds) {
+          if (!result) result = resultByItemId.get(id);
+          if (!verdict) verdict = verdictByItemId.get(id);
+        }
+        return resolveTemplateCell(col.inputType, result, verdict);
+      });
+
+      sheet.addRow([...meta, ...itemCells]);
+    }
+
+    sheet.columns.forEach((column, index) => {
+      column.width = index < SAVR_FIXED_META_HEADERS.length ? 18 : 16;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    const base = allMainheads ? 'ALL_PENCAWANG' : mainheadFilter;
+    const safe =
+      base.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') ||
+      'ALL_PENCAWANG';
+    const statusTag = lifecycleStatus ? `_${lifecycleStatus}` : '';
+    return { buffer, filename: `${safe}${statusTag}_CHECKLIST.xlsx` };
+  }
+
+  /**
    * SAVT routes for the report selector — the distinct routes (KOD TIANG) across
    * the tenant's SAVT site visits, each with its From/To Pencawang and a count of
    * inspected poles. SAVT data is grouped by ROUTE (From → To), not by Pencawang.
@@ -942,9 +1147,168 @@ export class ReportsService {
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    // Filename uses the From → To Pencawang names (DC's preferred, human-readable
+    // form), e.g. "MIUK - KUKUP_SAVT_CHECKLIST.xlsx". Fall back to the KOD TIANG
+    // route code if either Pencawang name is missing on the route's visits.
+    const routeVisit = chosen.find(
+      (i) => i.siteVisit?.fromPencawang?.name && i.siteVisit?.toPencawang?.name,
+    );
+    const fromName = routeVisit?.siteVisit?.fromPencawang?.name?.trim() ?? '';
+    const toName = routeVisit?.siteVisit?.toPencawang?.name?.trim() ?? '';
     const safe =
-      code.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'SAVT_ROUTE';
+      fromName && toName
+        ? `${fromName} - ${toName}`
+            .replace(/[<>:"/\\|?*]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        : code.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') ||
+          'SAVT_ROUTE';
     return { buffer, filename: `${safe}_SAVT_CHECKLIST.xlsx` };
+  }
+
+  /**
+   * Bulk "Download Checklist" for SAVT — every pole across ALL routes merged into
+   * ONE sheet (same meta + live-template columns as the per-route export). Rows
+   * self-identify via the KOD TIANG / From / To meta columns; columns are the
+   * union of every route's checklist template items. Read-only, tenant scoped,
+   * optionally filtered by survey lifecycle status.
+   */
+  async buildBulkSavtChecklist(
+    user: RequestUser,
+    lifecycleStatus?: SurveyLifecycleStatus,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        siteVisit: {
+          operationalScope: OperationalScope.SAVT,
+          routeCode: { not: null },
+          ...(lifecycleStatus ? { lifecycleStatus } : {}),
+        },
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        templateId: true,
+        submittedAt: true,
+        createdAt: true,
+        siteVisit: {
+          select: {
+            mainhead: true,
+            mainheadRecord: { select: { name: true } },
+            functionalLocation: true,
+            pencawangName: true,
+            routeCode: true,
+            team: { select: { name: true, code: true } },
+            fromPencawang: { select: { name: true } },
+            toPencawang: { select: { name: true } },
+          },
+        },
+        asset: {
+          select: {
+            assetCode: true,
+            name: true,
+            noTiangLama: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
+        itemResults: { select: { checklistItemId: true, result: true } },
+        results: {
+          select: {
+            templateItemId: true,
+            valueText: true,
+            valueNumber: true,
+            valueBoolean: true,
+            valueJson: true,
+          },
+        },
+      },
+    });
+
+    // One row per asset = its latest inspection (newest-first), ordered by route
+    // then No. Tiang so each route's poles stay together and in sequence.
+    const latestByAsset = new Map<string, (typeof inspections)[number]>();
+    for (const insp of inspections) {
+      if (!latestByAsset.has(insp.assetId)) {
+        latestByAsset.set(insp.assetId, insp);
+      }
+    }
+    const chosen = [...latestByAsset.values()].sort((a, b) => {
+      const ra = (a.siteVisit?.routeCode ?? '').trim();
+      const rb = (b.siteVisit?.routeCode ?? '').trim();
+      if (ra !== rb) {
+        return ra.localeCompare(rb);
+      }
+      const ka = noTiangSortKey(stripRoutePrefix(a.asset.assetCode, ra));
+      const kb = noTiangSortKey(stripRoutePrefix(b.asset.assetCode, rb));
+      return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
+    });
+
+    const columns = await this.deriveTemplateColumns([
+      ...new Set(chosen.map((i) => i.templateId)),
+    ]);
+
+    const workbook = new Workbook();
+    workbook.creator = 'ASCURE';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('CHECKLIST');
+    sheet.addRow([...SAVT_META_HEADERS, ...columns.map((c) => c.label)]);
+    sheet.getRow(1).font = { bold: true };
+
+    for (const insp of chosen) {
+      const sv = insp.siteVisit;
+      const code = (sv?.routeCode ?? '').trim();
+      const resultByItemId = new Map<string, (typeof insp.results)[number]>();
+      for (const r of insp.results) {
+        resultByItemId.set(r.templateItemId, r);
+      }
+      const verdictByItemId = new Map<string, InspectionItemResultValue>();
+      for (const ir of insp.itemResults) {
+        if (ir.checklistItemId) {
+          verdictByItemId.set(ir.checklistItemId, ir.result);
+        }
+      }
+
+      const meta: (string | number)[] = [
+        sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
+        sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
+        formatDate(insp.submittedAt ?? insp.createdAt),
+        sanitizeText(sv?.functionalLocation ?? ''),
+        sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
+        '', // Functional Location (TO) — not captured at check-in
+        sanitizeText(sv?.toPencawang?.name ?? ''),
+        sanitizeText(code),
+        insp.asset.latitude != null && insp.asset.longitude != null
+          ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+          : '',
+        sanitizeText(stripRoutePrefix(insp.asset.assetCode, code)),
+        sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+      ];
+
+      const itemCells = columns.map((col) => {
+        let result: (typeof insp.results)[number] | undefined;
+        let verdict: InspectionItemResultValue | undefined;
+        for (const id of col.itemIds) {
+          if (!result) result = resultByItemId.get(id);
+          if (!verdict) verdict = verdictByItemId.get(id);
+        }
+        return resolveTemplateCell(col.inputType, result, verdict);
+      });
+
+      sheet.addRow([...meta, ...itemCells]);
+    }
+
+    sheet.columns.forEach((column, index) => {
+      column.width = index < SAVT_META_HEADERS.length ? 18 : 16;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    const statusTag = lifecycleStatus ? `_${lifecycleStatus}` : '';
+    return { buffer, filename: `ALL_SAVT_ROUTES${statusTag}_CHECKLIST.xlsx` };
   }
 
   /**
