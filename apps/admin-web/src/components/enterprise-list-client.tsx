@@ -41,6 +41,7 @@ import {
   groupCapabilities,
   isAssignableCapability,
   MAINHEAD_PICKER_GROUP_KEYS,
+  MANAGER_ASSIGNABLE_GROUP_KEYS,
   type CapabilityGroupKey,
 } from "@/lib/capability-groups";
 import type { AuthSession } from "@/types/auth";
@@ -574,6 +575,7 @@ function EnterpriseFormModal({
   isSaving,
   lockTeamOrganization = false,
   ownCompanyName,
+  ownOrganizationId,
   onChange,
   onClose,
   onSubmit,
@@ -588,6 +590,7 @@ function EnterpriseFormModal({
    *  team is bound to the manager's own company server-side. */
   lockTeamOrganization?: boolean;
   ownCompanyName?: string | null;
+  ownOrganizationId?: string | null;
   onChange: <K extends keyof EnterpriseFormState>(
     field: K,
     value: EnterpriseFormState[K],
@@ -597,6 +600,20 @@ function EnterpriseFormModal({
 }) {
   const config = PAGE_CONFIG[kind];
   const isCreateMode = mode === "create";
+  // Company-scoped MAINHEADs for a manager's team form (Item A): MAINHEADs whose
+  // branch belongs to the manager's own company. mainhead options carry branchId;
+  // branch options carry organizationId — join them client-side.
+  const managerBranchIds = new Set(
+    (options?.branches ?? [])
+      .filter(
+        (branch) =>
+          !!ownOrganizationId && branch.organizationId === ownOrganizationId,
+      )
+      .map((branch) => branch.id),
+  );
+  const companyMainheads = (options?.mainheads ?? []).filter(
+    (mainhead) => !!mainhead.branchId && managerBranchIds.has(mainhead.branchId),
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
@@ -870,16 +887,40 @@ function EnterpriseFormModal({
           {kind === "teams" ? (
             <>
               {lockTeamOrganization ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                  This team is added to your company
-                  {ownCompanyName ? (
-                    <span className="font-semibold text-slate-800">
-                      {" "}
-                      ({ownCompanyName})
+                <>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                    This team is added to your company
+                    {ownCompanyName ? (
+                      <span className="font-semibold text-slate-800">
+                        {" "}
+                        ({ownCompanyName})
+                      </span>
+                    ) : null}{" "}
+                    automatically.
+                  </div>
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">
+                      MAINHEAD
                     </span>
-                  ) : null}{" "}
-                  automatically.
-                </div>
+                    <select
+                      value={values.mainheadId}
+                      onChange={(event) =>
+                        onChange("mainheadId", event.target.value)
+                      }
+                      className={`${inputClassName} mt-1.5`}
+                    >
+                      <option value="">No MAINHEAD</option>
+                      {companyMainheads.map((mainhead) => (
+                        <option key={mainhead.id} value={mainhead.id}>
+                          {optionLabel(mainhead)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Optional — a MAINHEAD in your own company.
+                    </span>
+                  </label>
+                </>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-3">
                   <label className="block">
@@ -942,6 +983,9 @@ function EnterpriseFormModal({
                 values={values.capabilityIds}
                 options={options}
                 onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+                groupKeys={
+                  lockTeamOrganization ? MANAGER_ASSIGNABLE_GROUP_KEYS : undefined
+                }
               />
             </>
           ) : null}
@@ -1438,6 +1482,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
   // their own company automatically (mirrors the manager user-provisioning form).
   const lockTeamOrganization = canMutate && !isAdmin && kind === "teams";
   const ownCompanyName = session?.user?.organizationName ?? null;
+  const ownOrganizationId = session?.user?.organizationId ?? null;
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -1723,6 +1768,7 @@ function EnterpriseListContent({ kind }: { kind: EnterpriseEntityKind }) {
           isSaving={isSaving}
           lockTeamOrganization={lockTeamOrganization}
           ownCompanyName={ownCompanyName}
+          ownOrganizationId={ownOrganizationId}
           onChange={updateForm}
           onClose={closeModal}
           onSubmit={handleSubmit}

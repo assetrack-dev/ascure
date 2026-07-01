@@ -145,6 +145,17 @@ export const MAINHEAD_PICKER_GROUP_KEYS: ReadonlyArray<CapabilityGroupKey> = [
 ];
 
 /**
+ * Capability groups a MANAGER may assign (to their own company's teams/users):
+ * operational only — Workspace + Asset Domains. GOVERNANCE (QA_VALIDATION /
+ * REPORTING) is ADMIN-only (privilege escalation); the API strips it server-side
+ * too (manager-grant-scope.ts).
+ */
+export const MANAGER_ASSIGNABLE_GROUP_KEYS: ReadonlyArray<CapabilityGroupKey> = [
+  "WORKSPACE",
+  "ASSET_DOMAIN",
+];
+
+/**
  * Bucket the provided capabilities into the three pilot groups, in the
  * canonical order defined by CAPABILITY_GROUPS. Empty groups are dropped so
  * the picker only renders sections that have at least one capability.

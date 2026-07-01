@@ -24,7 +24,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
-import { groupCapabilities, isAssignableCapability } from "@/lib/capability-groups";
+import {
+  groupCapabilities,
+  isAssignableCapability,
+  MANAGER_ASSIGNABLE_GROUP_KEYS,
+  type CapabilityGroupKey,
+} from "@/lib/capability-groups";
 import {
   formatMainheadLabel,
   formatRegionLabel,
@@ -246,10 +251,12 @@ function UserCapabilityPicker({
   values,
   options,
   onChange,
+  groupKeys,
 }: {
   values: string[];
   options: EnterpriseOptions | null;
   onChange: (nextValues: string[]) => void;
+  groupKeys?: ReadonlyArray<CapabilityGroupKey>;
 }) {
   if (!options?.capabilities.length) {
     return null;
@@ -261,7 +268,16 @@ function UserCapabilityPicker({
     return null;
   }
 
-  const groups = groupCapabilities(assignable);
+  // A manager sees only operational groups (Workspace + Asset Domains);
+  // Governance stays ADMIN-only (the API strips it server-side too).
+  const allowedGroups = groupKeys ? new Set(groupKeys) : null;
+  const groups = groupCapabilities(assignable).filter(
+    (group) => !allowedGroups || allowedGroups.has(group.key),
+  );
+
+  if (groups.length === 0) {
+    return null;
+  }
 
   function toggleCapability(capabilityId: string, checked: boolean) {
     onChange(
@@ -457,6 +473,18 @@ function UserFormModal({
   const isCreateMode = mode === "create";
   const activeMainheads = enterpriseOptions?.mainheads ?? [];
   const activeOperationalRegions = enterpriseOptions?.operationalRegions ?? [];
+  // Item B: a manager may grant MAINHEAD access only within their own company —
+  // MAINHEADs whose branch belongs to the manager's org (join via branch options).
+  const companyBranchIds = new Set(
+    (enterpriseOptions?.branches ?? [])
+      .filter((branch) => !!managerOrgId && branch.organizationId === managerOrgId)
+      .map((branch) => branch.id),
+  );
+  const companyMainheads = isManagerOnly
+    ? activeMainheads.filter(
+        (mainhead) => !!mainhead.branchId && companyBranchIds.has(mainhead.branchId),
+      )
+    : activeMainheads;
   // Managers get a simplified, company-locked form: a restricted role list, no
   // advanced grants, and teams scoped to their own company.
   const roleOptions = isManagerOnly ? MANAGER_ASSIGNABLE_ROLES : USER_ROLES;
@@ -616,39 +644,40 @@ function UserFormModal({
             </div>
           )}
 
+          <UserAccessPicker
+            title="MAINHEAD Access"
+            values={values.mainheadAccessIds}
+            options={isManagerOnly ? companyMainheads : activeMainheads}
+            onChange={(nextValues) => {
+              onChange("mainheadAccessIds", nextValues);
+              onChange("mainheadId", nextValues[0] ?? "");
+            }}
+          />
+
           {!isManagerOnly ? (
-            <>
-              <UserAccessPicker
-                title="MAINHEAD Access"
-                values={values.mainheadAccessIds}
-                options={activeMainheads}
-                onChange={(nextValues) => {
-                  onChange("mainheadAccessIds", nextValues);
-                  onChange("mainheadId", nextValues[0] ?? "");
-                }}
-              />
-
-              <UserAccessPicker
-                title="Region Access"
-                values={values.operationalRegionAccessIds}
-                options={activeOperationalRegions}
-                onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
-              />
-
-              <EffectiveMainheadPreview
-                directIds={values.mainheadAccessIds}
-                regionIds={values.operationalRegionAccessIds}
-                enterpriseOptions={enterpriseOptions}
-                role={values.role}
-              />
-
-              <UserCapabilityPicker
-                values={values.capabilityIds}
-                options={enterpriseOptions}
-                onChange={(nextValues) => onChange("capabilityIds", nextValues)}
-              />
-            </>
+            <UserAccessPicker
+              title="Region Access"
+              values={values.operationalRegionAccessIds}
+              options={activeOperationalRegions}
+              onChange={(nextValues) => onChange("operationalRegionAccessIds", nextValues)}
+            />
           ) : null}
+
+          {!isManagerOnly ? (
+            <EffectiveMainheadPreview
+              directIds={values.mainheadAccessIds}
+              regionIds={values.operationalRegionAccessIds}
+              enterpriseOptions={enterpriseOptions}
+              role={values.role}
+            />
+          ) : null}
+
+          <UserCapabilityPicker
+            values={values.capabilityIds}
+            options={enterpriseOptions}
+            onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+            groupKeys={isManagerOnly ? MANAGER_ASSIGNABLE_GROUP_KEYS : undefined}
+          />
 
           {isCreateMode && !isManagerOnly ? (
             <label className="block">
