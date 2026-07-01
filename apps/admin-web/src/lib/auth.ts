@@ -38,6 +38,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
       "canManageMaintenance" in user ? user.canManageMaintenance : undefined,
     canReviewSurvey:
       "canReviewSurvey" in user ? user.canReviewSurvey : undefined,
+    canDeleteSurvey:
+      "canDeleteSurvey" in user ? user.canDeleteSurvey : undefined,
   };
 }
 

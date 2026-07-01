@@ -17,6 +17,7 @@ export interface ApiUser {
   canManageUsers?: boolean;
   canManageMaintenance?: boolean;
   canReviewSurvey?: boolean;
+  canDeleteSurvey?: boolean;
 }
 
 export interface AuthUser {
@@ -91,6 +92,8 @@ export interface AuthUser {
    * endpoints still enforce the role + company scope server-side.
    */
   canReviewSurvey?: boolean;
+  /** ADMIN or MANAGER — can hard-delete a survey / Pencawang (API scopes a MANAGER to own company). */
+  canDeleteSurvey?: boolean;
 }
 
 export interface AuthSession {

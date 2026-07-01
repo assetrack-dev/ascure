@@ -1496,6 +1496,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   // those roles client-side (MANAGER/SUPERVISOR collapse to VIEWER on login), so we mirror
   // the API's authority. The endpoint still enforces the per-team / cross-org rules.
   const canReassign = isAdmin || (session?.user?.canReassign ?? false);
+  // Hard-delete the survey (+ its created poles). ADMIN, or a MANAGER (server
+  // flag — MANAGER collapses to VIEWER client-side); the API scopes a MANAGER to
+  // their own company.
+  const canDeleteSurvey = isAdmin || (session?.user?.canDeleteSurvey ?? false);
 
   const runLifecycle = useCallback(
     async (action: LifecycleAction, run: () => Promise<SiteVisitDetail>) => {
@@ -2049,7 +2053,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   <GisPanel visit={visit} />
                 </div>
 
-                {isAdmin ? (
+                {canDeleteSurvey ? (
                   <DeleteSurveyPanel
                     visit={visit}
                     token={session?.token ?? null}

@@ -7,9 +7,12 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import {
+  deletePencawangCascade,
   deleteSubstation,
   fetchSubstationsForAdmin,
+  previewDeletePencawang,
   updateSubstationStatus,
+  type PencawangDeletePreview,
 } from "@/lib/substations";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import type { AuthSession } from "@/types/auth";
@@ -71,6 +74,8 @@ function PencawangContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [cascadePreview, setCascadePreview] =
+    useState<PencawangDeletePreview | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -183,6 +188,51 @@ function PencawangContent() {
     [handleLogout, session?.token],
   );
 
+  // First click: empty Pencawang → straight to confirm; non-empty → preview the
+  // cascade (and surface any block reason) before arming the confirm.
+  const handleRequestDelete = useCallback(
+    async (substation: ManagedSubstation) => {
+      const token = session?.token;
+      if (!token) {
+        return;
+      }
+      setError("");
+      setNotice("");
+
+      const isEmpty =
+        (substation.assetCount ?? 0) === 0 && (substation.visitCount ?? 0) === 0;
+      if (isEmpty) {
+        setCascadePreview(null);
+        setConfirmDeleteId(substation.id);
+        return;
+      }
+
+      setActionId(substation.id);
+      try {
+        const preview = await previewDeletePencawang(token, substation.id);
+        if (preview.blocked) {
+          setError(preview.blocked);
+          setConfirmDeleteId(null);
+          setCascadePreview(null);
+          return;
+        }
+        setCascadePreview(preview);
+        setConfirmDeleteId(substation.id);
+      } catch (previewError) {
+        if (previewError instanceof ApiError && previewError.status === 401) {
+          handleLogout();
+          return;
+        }
+        setError(
+          requestErrorMessage(previewError, "Unable to preview the delete."),
+        );
+      } finally {
+        setActionId(null);
+      }
+    },
+    [handleLogout, session?.token],
+  );
+
   const handleDelete = useCallback(
     async (substation: ManagedSubstation) => {
       const token = session?.token;
@@ -194,13 +244,19 @@ function PencawangContent() {
       setError("");
       setNotice("");
 
+      const isCascade = cascadePreview?.pencawangId === substation.id;
       try {
-        await deleteSubstation(token, substation.id);
+        if (isCascade) {
+          await deletePencawangCascade(token, substation.id);
+        } else {
+          await deleteSubstation(token, substation.id);
+        }
         setSubstations((current) =>
           current.filter((item) => item.id !== substation.id),
         );
         setNotice(`${substation.name} was deleted.`);
         setConfirmDeleteId(null);
+        setCascadePreview(null);
       } catch (deleteError) {
         if (deleteError instanceof ApiError && deleteError.status === 401) {
           handleLogout();
@@ -217,8 +273,13 @@ function PencawangContent() {
         setActionId(null);
       }
     },
-    [handleLogout, session?.token],
+    [handleLogout, session?.token, cascadePreview],
   );
+
+  // Force-cascade (non-empty Pencawang) is ADMIN or a MANAGER (server flag —
+  // MANAGER collapses to VIEWER client-side; the API still scopes to own company).
+  const canForceDelete =
+    session?.user?.role === "ADMIN" || (session?.user?.canDeleteSurvey ?? false);
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -231,8 +292,9 @@ function PencawangContent() {
           <p className="text-sm text-slate-600">
             Manage the Pencawang (substations) that appear in check-in and route
             pickers. Deactivate one to hide it everywhere without losing its
-            history; delete is only available for an empty Pencawang (no poles,
-            visits, or feeders).
+            history. An empty Pencawang can be deleted outright; a non-empty one
+            can be cascade-deleted (all its visits, poles and feeders) by a
+            manager or admin.
           </p>
           <p className="text-xs font-semibold text-slate-500">
             {activeCount} active &middot; {substations.length} total
@@ -304,6 +366,8 @@ function PencawangContent() {
                   const isEmpty = poleCount === 0 && visitCount === 0;
                   const isBusy = actionId === substation.id;
                   const isConfirmingDelete = confirmDeleteId === substation.id;
+                  const isCascadeConfirm =
+                    cascadePreview?.pencawangId === substation.id;
 
                   return (
                     <tr key={substation.id} className="align-middle">
@@ -327,7 +391,9 @@ function PencawangContent() {
                         {isConfirmingDelete ? (
                           <div className="flex items-center justify-end gap-2">
                             <span className="text-xs font-semibold text-rose-700">
-                              Delete?
+                              {isCascadeConfirm
+                                ? `Delete ${cascadePreview?.siteVisits ?? 0} visit(s) + ${cascadePreview?.assets ?? 0} pole(s)?`
+                                : "Delete?"}
                             </span>
                             <button
                               type="button"
@@ -335,13 +401,20 @@ function PencawangContent() {
                               disabled={isBusy}
                               onClick={() => void handleDelete(substation)}
                             >
-                              {isBusy ? "Deleting..." : "Yes, delete"}
+                              {isBusy
+                                ? "Deleting..."
+                                : isCascadeConfirm
+                                  ? "Yes, delete all"
+                                  : "Yes, delete"}
                             </button>
                             <button
                               type="button"
                               className={rowActionButtonClassName}
                               disabled={isBusy}
-                              onClick={() => setConfirmDeleteId(null)}
+                              onClick={() => {
+                                setConfirmDeleteId(null);
+                                setCascadePreview(null);
+                              }}
                             >
                               Cancel
                             </button>
@@ -369,13 +442,15 @@ function PencawangContent() {
                             <button
                               type="button"
                               className={dangerActionButtonClassName}
-                              disabled={isBusy || !isEmpty}
+                              disabled={isBusy || (!isEmpty && !canForceDelete)}
                               title={
                                 isEmpty
                                   ? "Delete this empty Pencawang"
-                                  : "Has poles or visits — deactivate instead"
+                                  : canForceDelete
+                                    ? "Delete this Pencawang and everything under it"
+                                    : "Has poles or visits — deactivate instead"
                               }
-                              onClick={() => setConfirmDeleteId(substation.id)}
+                              onClick={() => void handleRequestDelete(substation)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                               Delete

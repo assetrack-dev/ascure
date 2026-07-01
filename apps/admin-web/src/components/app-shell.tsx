@@ -62,6 +62,7 @@ const MANAGER_NAV_HREFS = new Set<string>([
   "/assets",
   "/map",
   "/site-visits",
+  "/crew-performance",
   "/users",
   "/teams",
 ]);
@@ -123,6 +124,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/site-visits",
       label: "Site Visits",
       icon: MapPinned,
+    },
+    {
+      href: "/crew-performance",
+      label: "Crew Performance",
+      icon: BarChart3,
+      roles: ["ADMIN", "MANAGER"],
     },
     {
       href: "/organizations",

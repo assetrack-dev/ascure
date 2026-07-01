@@ -31,3 +31,34 @@ export function deleteSubstation(token: string, substationId: string) {
     },
   );
 }
+
+export interface PencawangDeletePreview {
+  pencawangId: string;
+  pencawang: string | null;
+  siteVisits: number;
+  routeReferences: number;
+  assets: number;
+  feeders: number;
+  /** Human reason the cascade can't proceed, or null when it can. */
+  blocked: string | null;
+}
+
+export function previewDeletePencawang(token: string, substationId: string) {
+  return apiRequest<PencawangDeletePreview>(
+    `/substations/${encodeURIComponent(substationId)}/delete-preview`,
+    { token },
+  );
+}
+
+export function deletePencawangCascade(token: string, substationId: string) {
+  return apiRequest<{
+    deleted: boolean;
+    pencawangId: string;
+    deletedSiteVisits: number;
+    deletedAssets: number;
+    deletedFeeders: number;
+  }>(`/substations/${encodeURIComponent(substationId)}/cascade`, {
+    method: "DELETE",
+    token,
+  });
+}

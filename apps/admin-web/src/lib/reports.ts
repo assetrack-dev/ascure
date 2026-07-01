@@ -10,6 +10,56 @@ export function fetchSavtRoutes(token: string) {
   return apiRequest<ReportSavtRoute[]>("/reports/savt-routes", { token });
 }
 
+export interface CrewPerformanceRow {
+  userId: string;
+  name: string;
+  email: string | null;
+  role: string | null;
+  teamName: string | null;
+  assetsInspected: number;
+  submittedInspections: number;
+  visits: number;
+  activeDays: number;
+}
+
+export interface CrewPerformance {
+  period: string;
+  from: string;
+  to: string;
+  totalAssetsInspected: number;
+  users: CrewPerformanceRow[];
+  generatedAt: string;
+}
+
+function crewPerformanceQuery(from?: string, to?: string): string {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** Per-user output for a period (default: this month) — the manager's pay-monitor table. */
+export function fetchCrewPerformance(token: string, from?: string, to?: string) {
+  return apiRequest<CrewPerformance>(
+    `/reports/crew-performance${crewPerformanceQuery(from, to)}`,
+    { token },
+  );
+}
+
+/** Downloads the crew-performance XLSX (pay sheet) for the period. */
+export async function downloadCrewPerformance(
+  token: string,
+  from?: string,
+  to?: string,
+): Promise<void> {
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/crew-performance.xlsx${crewPerformanceQuery(from, to)}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "crew-performance.xlsx");
+}
+
 /**
  * Downloads the per-route SAVT checklist (.xlsx, 1 pole per row, route-flavoured
  * meta columns + one column per live SAVT checklist item). `status` filters by
