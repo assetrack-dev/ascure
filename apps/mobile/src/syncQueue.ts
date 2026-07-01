@@ -1171,7 +1171,16 @@ function updateStoredQueue(updater: (queue: StoredQueue) => StoredQueue | SyncQu
       tempIdMap: updatedSnapshot.tempIdMap,
     };
 
-    await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
+    // The offline write-queue is durable field work — a transient SQLITE_FULL /
+    // write-contention must not drop it, but a genuine persistent failure MUST
+    // still surface (so the enqueue caller can tell the crew). Retry once after a
+    // short delay; a second failure propagates.
+    try {
+      await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(updatedQueue));
+    }
     notifySyncQueueListeners(updatedQueue);
 
     return {

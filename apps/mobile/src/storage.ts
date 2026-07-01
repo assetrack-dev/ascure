@@ -4,12 +4,36 @@ import type { SessionUser } from './types';
 const TOKEN_KEY = '@ascure/mobile/access-token';
 const USER_KEY = '@ascure/mobile/session-user';
 
+/**
+ * AsyncStorage on Android is SQLite-backed; a momentarily full/contended DB
+ * (SQLITE_FULL[13]) must NEVER crash a screen or block sign-in. Try once, retry
+ * once after a short delay, then give up silently — the in-memory session still
+ * works this run; persistence is best-effort (a failed persist just means the
+ * user re-signs-in after a cold boot). The DB size cap is raised in
+ * gradle.properties so this is a rare edge, not the norm.
+ */
+async function safeSetItem(key: string, value: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await AsyncStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        continue;
+      }
+      console.warn('[storage] setItem failed (best-effort):', key, error);
+    }
+  }
+  return false;
+}
+
 export async function loadStoredToken() {
   return AsyncStorage.getItem(TOKEN_KEY);
 }
 
 export async function storeToken(token: string) {
-  await AsyncStorage.setItem(TOKEN_KEY, token);
+  await safeSetItem(TOKEN_KEY, token);
 }
 
 export async function removeStoredToken() {
@@ -36,7 +60,7 @@ export async function loadStoredUser(): Promise<SessionUser | null> {
 }
 
 export async function storeUser(user: SessionUser) {
-  await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
+  await safeSetItem(USER_KEY, JSON.stringify(user));
 }
 
 export async function removeStoredUser() {
@@ -83,5 +107,5 @@ export async function storeLastPoleCode(substationId: string, code: string): Pro
 
   const map = await loadLastPoleCodeMap();
   map[substationId] = code;
-  await AsyncStorage.setItem(LAST_POLE_CODE_KEY, JSON.stringify(map));
+  await safeSetItem(LAST_POLE_CODE_KEY, JSON.stringify(map));
 }

@@ -1,9 +1,18 @@
-# Mobile storage hardening — `SQLITE_FULL[13]` in the field (DEFERRED)
+# Mobile storage hardening — `SQLITE_FULL[13]` in the field (✅ FIXED)
 
-**Status:** analysis done, fix NOT yet built. Surfaced 2026-06-28 during the owner's
-on-device SAVT test (Add Asset → "database or disk is full (code 13 SQLITE_FULL[13])").
-Owner confirmed the **device disk had plenty of free space**, and it cleared by going
-back to the Workspace page → Refresh → re-entering the visit → continuing.
+**Status:** ✅ **FIXED 2026-07-01** (APK-only — no server, no migration) after it resurfaced
+at **sign-in** in the field (owner, on the new APK — the DB had finally filled). Shipped:
+(1) AsyncStorage DB cap **6 → 50 MB** (`apps/mobile/android/gradle.properties`
+`AsyncStorage_db_size_in_MB=50`; installing over a full DB raises the cap in place → no data
+loss); (2) session (token/user) + last-pole-code writes made **fail-soft + retry-once**
+(`storage.ts`) so a storage hiccup never blocks sign-in / throws a banner; (3) sync-queue
+write **retry-once then surface** (`syncQueue.ts` — durable field work isn't silently
+dropped); (4) offline-cache **eviction** (`offlineCache.ts`, 300-entry cap, drop oldest).
+Verified: mobile tsc clean; release re-bundle; `BuildConfig AsyncStorage_db_size = 50L` baked.
+
+Original analysis (2026-06-28 — first surfaced during the owner's on-device SAVT test, Add
+Asset → "database or disk is full (code 13 SQLITE_FULL[13])"; device disk had free space, and
+it cleared via Workspace → Refresh → re-enter visit):
 
 ## What actually happened (it was NOT a full disk)
 

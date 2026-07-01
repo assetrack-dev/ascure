@@ -10,6 +10,15 @@ import { ApiError } from './api';
 
 const CACHE_PREFIX = '@ascure/mobile/cache/';
 
+// Bound the offline read-cache so it can't grow unbounded over weeks of field
+// use (a key driver of the SQLITE_FULL[13] the DB size cap now backstops). When
+// the entry count exceeds MAX, evict the oldest by cachedAt. Checked only every
+// Nth write (getAllKeys/multiGet aren't free) and run fire-and-forget so it never
+// slows the write that triggered it.
+const MAX_CACHE_ENTRIES = 300;
+const PRUNE_EVERY_N_WRITES = 25;
+let writesSincePrune = 0;
+
 type CacheEnvelope<T> = {
   value: T;
   cachedAt: string;
@@ -53,8 +62,51 @@ export async function writeCache<T>(namespace: string, id: string | undefined, v
     };
 
     await AsyncStorage.setItem(cacheKey(namespace, id), JSON.stringify(envelope));
+
+    writesSincePrune += 1;
+    if (writesSincePrune >= PRUNE_EVERY_N_WRITES) {
+      writesSincePrune = 0;
+      void pruneCacheIfNeeded();
+    }
   } catch {
     // Best-effort: a full disk / serialization failure must not break the screen.
+  }
+}
+
+/**
+ * Evict the oldest read-cache entries (by cachedAt) when the cache exceeds
+ * MAX_CACHE_ENTRIES, down to ~80% of the cap. Best-effort + fire-and-forget from
+ * writeCache; only touches the CACHE_PREFIX keys, never the offline write-queue.
+ */
+async function pruneCacheIfNeeded(): Promise<void> {
+  try {
+    const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
+      key.startsWith(CACHE_PREFIX),
+    );
+    if (keys.length <= MAX_CACHE_ENTRIES) {
+      return;
+    }
+
+    const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
+    const entries = await AsyncStorage.multiGet(keys);
+    const dated = entries.map(([key, raw]) => {
+      let cachedAt = 0;
+      try {
+        const parsed = raw ? (JSON.parse(raw) as CacheEnvelope<unknown>) : null;
+        cachedAt = parsed?.cachedAt ? Date.parse(parsed.cachedAt) || 0 : 0;
+      } catch {
+        cachedAt = 0;
+      }
+      return { key, cachedAt };
+    });
+    dated.sort((a, b) => a.cachedAt - b.cachedAt); // oldest first
+
+    const toRemove = dated.slice(0, keys.length - target).map((entry) => entry.key);
+    if (toRemove.length > 0) {
+      await AsyncStorage.multiRemove(toRemove);
+    }
+  } catch {
+    // best-effort — eviction failing must never surface
   }
 }
 
