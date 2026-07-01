@@ -29,6 +29,7 @@ const ctx = (overrides: Partial<ScopeContext> = {}): ScopeContext => ({
   isQa: false,
   qaMainheadIds: [],
   maintenanceOrgIds: [],
+  crossTeamMainheadIds: [],
   ...overrides,
 });
 

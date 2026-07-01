@@ -16,7 +16,10 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildScopeContext } from '../common/authorization/scope-context';
-import { siteVisitMapWhere } from '../common/authorization/site-visit-scope';
+import {
+  siteVisitAccessWhere,
+  siteVisitMapWhere,
+} from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -530,10 +533,12 @@ export class AssetsService {
   ) {
     this.assertCanMutate(user);
 
+    const scope = await this.mutableAssetScope(user);
     const asset = await this.prisma.asset.findFirst({
       where: {
         id,
         tenantId: user.tenantId,
+        ...scope,
       },
       select: {
         id: true,
@@ -560,10 +565,12 @@ export class AssetsService {
   async update(user: RequestUser, id: string, dto: UpdateAssetDto) {
     this.assertCanMutate(user);
 
+    const scope = await this.mutableAssetScope(user);
     const asset = await this.prisma.asset.findFirst({
       where: {
         id,
         tenantId: user.tenantId,
+        ...scope,
       },
       select: {
         id: true,
@@ -719,8 +726,12 @@ export class AssetsService {
   async delete(user: RequestUser, id: string) {
     this.assertCanMutate(user);
 
+    // Only assets within the caller's mutation scope (own team / own org; ADMIN
+    // tenant-wide). Out-of-scope assets 404 exactly like a non-existent one, so a
+    // field crew can delete their own poles but not another team's.
+    const scope = await this.mutableAssetScope(user);
     const asset = await this.prisma.asset.findFirst({
-      where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId, ...scope },
       select: { id: true },
     });
 
@@ -744,8 +755,11 @@ export class AssetsService {
       throw new BadRequestException('At least one asset id is required.');
     }
 
+    // Restrict to assets the caller may mutate (own team / own org; ADMIN
+    // tenant-wide). Out-of-scope ids fall through to `notFound`, never deleted.
+    const scope = await this.mutableAssetScope(user);
     const assets = await this.prisma.asset.findMany({
-      where: { id: { in: uniqueIds }, tenantId: user.tenantId },
+      where: { id: { in: uniqueIds }, tenantId: user.tenantId, ...scope },
       select: { id: true },
     });
     const foundIds = assets.map((asset) => asset.id);
@@ -1165,6 +1179,40 @@ export class AssetsService {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only an administrator can perform this action.');
     }
+  }
+
+  /**
+   * Prisma filter restricting an Asset query to assets the caller may MUTATE
+   * (edit / delete). ADMIN: unrestricted within the tenant. Everyone else: only
+   * assets reachable through a site visit they may mutate — the asset's creation
+   * visit (`createdDuringVisit`) or one of its inspections.
+   *
+   * Uses the STRICT {@link siteVisitAccessWhere} (own team / own org / QA
+   * mainheads), NOT the widened map/oversight scope: a technician may SEE another
+   * team's poles on the map (siteVisitMapWhere) but must never edit or delete
+   * them. Callers still apply `tenantId` themselves; spread this alongside it.
+   *
+   * The `createdByUserId` branch keeps a pole deletable by the person who added
+   * it even if its creation visit was later removed (createdDuringVisit is
+   * onDelete:SetNull), so a field crew can always undo their own mistaken pole.
+   * It only ever matches the caller's OWN creations, so it doesn't reopen the
+   * cross-team hole this scope closes.
+   */
+  private async mutableAssetScope(
+    user: RequestUser,
+  ): Promise<Prisma.AssetWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    if (ctx.isAdmin) {
+      return {};
+    }
+    const scopeWhere = siteVisitAccessWhere(user, ctx);
+    return {
+      OR: [
+        { createdByUserId: user.id },
+        { inspections: { some: { siteVisit: scopeWhere } } },
+        { createdDuringVisit: scopeWhere },
+      ],
+    };
   }
 
   private activeSiteVisitStatuses() {
