@@ -116,31 +116,52 @@ function ReportsContent() {
     void loadData(storedSession.token);
   }, [loadData]);
 
-  // Distinct MAINHEAD options across the Pencawang list (for the mainhead filter).
+  // The Pencawang list is first narrowed by the selected survey status (ALL = no
+  // status filter) — the status drives what's offered, not just what's downloaded.
+  const statusFilteredSubstations = useMemo(
+    () =>
+      status === "ALL"
+        ? substations
+        : substations.filter((substation) => substation.statuses.includes(status)),
+    [substations, status],
+  );
+
+  // Distinct MAINHEAD options across the (status-filtered) Pencawang list.
   const mainheadOptions = useMemo(
     () =>
       Array.from(
         new Set(
-          substations
+          statusFilteredSubstations
             .map((substation) => substation.mainhead?.trim())
             .filter((value): value is string => Boolean(value)),
         ),
       ).sort((a, b) => a.localeCompare(b)),
-    [substations],
+    [statusFilteredSubstations],
   );
 
-  // The Pencawang dropdown is narrowed to the selected MAINHEAD.
+  // The Pencawang dropdown is further narrowed to the selected MAINHEAD.
   const visibleSubstations = useMemo(
     () =>
       mainhead === "ALL"
-        ? substations
-        : substations.filter((substation) => substation.mainhead === mainhead),
-    [substations, mainhead],
+        ? statusFilteredSubstations
+        : statusFilteredSubstations.filter(
+            (substation) => substation.mainhead === mainhead,
+          ),
+    [statusFilteredSubstations, mainhead],
   );
 
   const selectedSubstation = useMemo(
     () => substations.find((substation) => substation.id === selectedId) ?? null,
     [substations, selectedId],
+  );
+
+  // SAVT routes narrowed by the selected survey status (ALL = no status filter).
+  const visibleRoutes = useMemo(
+    () =>
+      status === "ALL"
+        ? routes
+        : routes.filter((route) => route.statuses.includes(status)),
+    [routes, status],
   );
 
   const selectedRoute = useMemo(
@@ -155,7 +176,7 @@ function ReportsContent() {
   // a Pencawang (or all in the mainhead), SAVT = a route (or all routes).
   const hasSelection = isSavt
     ? isAllRoutes
-      ? routes.length > 0
+      ? visibleRoutes.length > 0
       : Boolean(selectedRoute)
     : isAllPencawang
       ? visibleSubstations.length > 0
@@ -171,6 +192,24 @@ function ReportsContent() {
       setSelectedId("");
     }
   }, [visibleSubstations, selectedId]);
+
+  // If the status filter drops the chosen MAINHEAD, fall back to all mainheads.
+  useEffect(() => {
+    if (mainhead !== "ALL" && !mainheadOptions.includes(mainhead)) {
+      setMainhead("ALL");
+    }
+  }, [mainheadOptions, mainhead]);
+
+  // If the status filter drops the selected SAVT route, clear it.
+  useEffect(() => {
+    if (
+      selectedRouteCode &&
+      selectedRouteCode !== ALL_OPTION &&
+      !visibleRoutes.some((route) => route.routeCode === selectedRouteCode)
+    ) {
+      setSelectedRouteCode("");
+    }
+  }, [visibleRoutes, selectedRouteCode]);
 
   async function handleDownload() {
     // Masterlist (AppSheet) is the fixed SAVR-KLB layout — SAVR only.
@@ -227,7 +266,9 @@ function ReportsContent() {
       if (isSavt) {
         if (isAllRoutes) {
           await downloadBulkChecklist(session.token, { scope: "SAVT", status });
-          setNotice(`Checklist generated for all ${routes.length} SAVT routes.`);
+          setNotice(
+            `Checklist generated for all ${visibleRoutes.length} SAVT routes.`,
+          );
         } else if (selectedRoute) {
           await downloadSavtRouteChecklist(session.token, selectedRoute, status);
           setNotice(`Checklist generated for route ${selectedRoute.routeCode}.`);
@@ -340,7 +381,7 @@ function ReportsContent() {
                       setSelectedRouteCode(event.target.value);
                       setNotice("");
                     }}
-                    disabled={isLoading || routes.length === 0}
+                    disabled={isLoading || visibleRoutes.length === 0}
                     className={`${inputClassName} mt-1.5`}
                   >
                     <option value="">
@@ -348,14 +389,16 @@ function ReportsContent() {
                         ? "Loading routes…"
                         : routes.length === 0
                           ? "No SAVT routes yet"
-                          : "Select a route"}
+                          : visibleRoutes.length === 0
+                            ? "No routes for this status"
+                            : "Select a route"}
                     </option>
-                    {routes.length > 0 ? (
+                    {visibleRoutes.length > 0 ? (
                       <option value={ALL_OPTION}>
-                        All routes ({routes.length})
+                        All routes ({visibleRoutes.length})
                       </option>
                     ) : null}
-                    {routes.map((route) => (
+                    {visibleRoutes.map((route) => (
                       <option key={route.routeCode} value={route.routeCode}>
                         {route.routeCode}
                         {route.fromName || route.toName
@@ -404,9 +447,11 @@ function ReportsContent() {
                           ? "Loading Pencawang list…"
                           : substations.length === 0
                             ? "No Pencawang available"
-                            : visibleSubstations.length === 0
-                              ? "No Pencawang for this mainhead"
-                              : "Select a Pencawang"}
+                            : statusFilteredSubstations.length === 0
+                              ? "No Pencawang for this status"
+                              : visibleSubstations.length === 0
+                                ? "No Pencawang for this mainhead"
+                                : "Select a Pencawang"}
                       </option>
                       {visibleSubstations.length > 0 ? (
                         <option value={ALL_OPTION}>

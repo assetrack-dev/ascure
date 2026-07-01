@@ -5,6 +5,8 @@ export interface ReportSubstation {
   location: string | null;
   /** Derived from the Pencawang's most recent site visit; null if none/unknown. */
   mainhead: string | null;
+  /** Distinct survey lifecycle statuses across this Pencawang's visits (for the status filter). */
+  statuses: string[];
   /** Poles/assets registered under this Pencawang (0 = empty; used to hide empties). */
   assetCount: number;
 }
@@ -19,4 +21,6 @@ export interface ReportSavtRoute {
   toCode: string;
   /** Distinct inspected poles on this route. */
   poleCount: number;
+  /** Distinct survey lifecycle statuses across this route's visits (for the status filter). */
+  statuses: string[];
 }

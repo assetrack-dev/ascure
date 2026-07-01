@@ -413,11 +413,24 @@ export class ReportsService {
         substationId: true,
         mainhead: true,
         mainheadRecord: { select: { name: true } },
+        lifecycleStatus: true,
       },
     });
 
     const mainheadBySubstation = new Map<string, string>();
+    // Every lifecycle status seen for a Pencawang (across cycles) so the report
+    // UI can narrow the Pencawang list by survey status.
+    const statusesBySubstation = new Map<string, Set<SurveyLifecycleStatus>>();
     for (const visit of visits) {
+      if (visit.lifecycleStatus) {
+        let statuses = statusesBySubstation.get(visit.substationId);
+        if (!statuses) {
+          statuses = new Set<SurveyLifecycleStatus>();
+          statusesBySubstation.set(visit.substationId, statuses);
+        }
+        statuses.add(visit.lifecycleStatus);
+      }
+
       if (mainheadBySubstation.has(visit.substationId)) {
         continue; // first seen = most recent (ordered desc)
       }
@@ -430,6 +443,7 @@ export class ReportsService {
     return substations.map(({ _count, ...substation }) => ({
       ...substation,
       mainhead: mainheadBySubstation.get(substation.id) ?? null,
+      statuses: [...(statusesBySubstation.get(substation.id) ?? [])],
       assetCount: _count.assets,
     }));
   }
@@ -1172,6 +1186,7 @@ export class ReportsService {
         pencawangCode: true,
         fromPencawang: { select: { name: true, code: true } },
         toPencawang: { select: { name: true, code: true } },
+        lifecycleStatus: true,
       },
     });
 
@@ -1211,9 +1226,24 @@ export class ReportsService {
         poleCount: number;
       }
     >();
+    // Every lifecycle status seen on a route (across cycles) for the status filter.
+    const statusesByRoute = new Map<string, Set<SurveyLifecycleStatus>>();
     for (const visit of visits) {
       const code = (visit.routeCode ?? '').trim();
-      if (!code || byRoute.has(code)) {
+      if (!code) {
+        continue;
+      }
+
+      if (visit.lifecycleStatus) {
+        let statuses = statusesByRoute.get(code);
+        if (!statuses) {
+          statuses = new Set<SurveyLifecycleStatus>();
+          statusesByRoute.set(code, statuses);
+        }
+        statuses.add(visit.lifecycleStatus);
+      }
+
+      if (byRoute.has(code)) {
         continue;
       }
       byRoute.set(code, {
@@ -1227,9 +1257,12 @@ export class ReportsService {
       });
     }
 
-    return [...byRoute.values()].sort((a, b) =>
-      a.routeCode.localeCompare(b.routeCode),
-    );
+    return [...byRoute.values()]
+      .map((route) => ({
+        ...route,
+        statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
+      }))
+      .sort((a, b) => a.routeCode.localeCompare(b.routeCode));
   }
 
   /**
