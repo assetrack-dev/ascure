@@ -102,6 +102,7 @@ export class AuthService {
     const canManageUsers = this.resolveCanManageUsers(requestUser);
     const canManageMaintenance = this.resolveCanManageMaintenance(requestUser);
     const canReviewSurvey = this.resolveCanReviewSurvey(requestUser);
+    const canDeleteSurvey = this.resolveCanDeleteSurvey(requestUser);
 
     return {
       access_token: accessToken,
@@ -122,6 +123,7 @@ export class AuthService {
         canManageUsers,
         canManageMaintenance,
         canReviewSurvey,
+        canDeleteSurvey,
       },
     };
   }
@@ -206,6 +208,12 @@ export class AuthService {
     return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
   }
 
+  private resolveCanDeleteSurvey(user: RequestUser): boolean {
+    // Hard-deleting a survey / Pencawang is a manager+admin capability; the API
+    // further scopes a MANAGER to their own company.
+    return user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+  }
+
   async me(user: RequestUser) {
     const currentUser = await this.prisma.user.findFirst({
       where: {
@@ -242,6 +250,7 @@ export class AuthService {
     const canManageUsers = this.resolveCanManageUsers(user);
     const canManageMaintenance = this.resolveCanManageMaintenance(user);
     const canReviewSurvey = this.resolveCanReviewSurvey(user);
+    const canDeleteSurvey = this.resolveCanDeleteSurvey(user);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -255,6 +264,7 @@ export class AuthService {
       canManageUsers,
       canManageMaintenance,
       canReviewSurvey,
+      canDeleteSurvey,
     };
   }
 

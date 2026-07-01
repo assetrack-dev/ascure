@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InspectionCompletionStatus, Prisma } from '@prisma/client';
+import { InspectionCompletionStatus, Prisma, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateAssetTypeDto,
@@ -110,6 +112,200 @@ export class MasterDataService {
     await this.prisma.substation.delete({ where: { id } });
 
     return { id, deleted: true };
+  }
+
+  /**
+   * Preview a full Pencawang cascade-delete: how many site visits, poles, and
+   * feeders go. `blocked` is a human reason the delete can't proceed (another
+   * company's surveys, a route endpoint, or shared SAVT poles) — null when clear.
+   */
+  async previewDeletePencawang(user: RequestUser, id: string) {
+    const substation = await this.findSubstationOrThrow(user.tenantId, id);
+    const blocked = await this.resolvePencawangDeleteBlock(user, id);
+    return {
+      pencawangId: substation.id,
+      pencawang: substation.name?.trim() || substation.code,
+      siteVisits: substation._count.siteVisits,
+      routeReferences:
+        substation._count.fromRouteSiteVisits + substation._count.toRouteSiteVisits,
+      assets: substation._count.assets,
+      feeders: substation._count.feeders,
+      blocked,
+    };
+  }
+
+  /**
+   * Hard-delete a whole Pencawang and everything under it — its direct site
+   * visits (+ inspections/results/defects/images/lifecycle/reports), its poles
+   * (+ feeder memberships / NOP tie edges), and its feeders. One transaction =
+   * all-or-nothing. ADMIN unrestricted; a MANAGER only for a Pencawang wholly
+   * owned by their own company (see resolvePencawangDeleteBlock). Empty Pencawang
+   * is fine (it just deletes the record + logs).
+   */
+  async deletePencawangCascade(user: RequestUser, id: string) {
+    this.assertCanDeletePencawang(user);
+    const substation = await this.findSubstationOrThrow(user.tenantId, id);
+
+    const blocked = await this.resolvePencawangDeleteBlock(user, id);
+    if (blocked) {
+      throw new ConflictException(blocked);
+    }
+
+    const tenantId = user.tenantId;
+    const [visits, assets, feeders] = await Promise.all([
+      this.prisma.siteVisit.findMany({
+        where: { tenantId, substationId: id },
+        select: { id: true },
+      }),
+      this.prisma.asset.findMany({
+        where: { tenantId, substationId: id },
+        select: { id: true },
+      }),
+      this.prisma.feeder.findMany({
+        where: { tenantId, substationId: id },
+        select: { id: true },
+      }),
+    ]);
+    const visitIds = visits.map((visit) => visit.id);
+    const assetIds = assets.map((asset) => asset.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Inspections of these visits AND of these poles (Restrict on both).
+      const inspectionOr: Prisma.InspectionWhereInput[] = [];
+      if (visitIds.length) inspectionOr.push({ siteVisitId: { in: visitIds } });
+      if (assetIds.length) inspectionOr.push({ assetId: { in: assetIds } });
+      if (inspectionOr.length) {
+        await tx.inspection.deleteMany({ where: { tenantId, OR: inspectionOr } });
+      }
+
+      // 2. Asset<->visit / asset<->session links (Restrict on asset).
+      const linkOr: Prisma.SiteVisitAssetWhereInput[] = [];
+      if (visitIds.length) linkOr.push({ siteVisitId: { in: visitIds } });
+      if (assetIds.length) linkOr.push({ assetId: { in: assetIds } });
+      if (linkOr.length) {
+        await tx.siteVisitAsset.deleteMany({ where: { OR: linkOr } });
+      }
+      if (assetIds.length) {
+        await tx.operationalSessionAsset.deleteMany({
+          where: { assetId: { in: assetIds } },
+        });
+      }
+
+      // 3. Poles (cascade: feeder memberships, NOP tie edges; images SetNull).
+      if (assetIds.length) {
+        await tx.asset.deleteMany({ where: { tenantId, id: { in: assetIds } } });
+      }
+
+      // 4. Feeders (cascade any remaining memberships).
+      await tx.feeder.deleteMany({ where: { tenantId, substationId: id } });
+
+      // 5. The visits themselves (cascade their remaining children).
+      if (visitIds.length) {
+        await tx.siteVisit.deleteMany({ where: { tenantId, id: { in: visitIds } } });
+      }
+
+      // 6. Finally the (now-empty) Pencawang.
+      await tx.substation.delete({ where: { id } });
+
+      // 7. Audit the irreversible delete (atomic with it).
+      await tx.deletionLog.create({
+        data: {
+          tenantId,
+          actorUserId: user.id,
+          actorEmail: user.email,
+          actorName: user.name,
+          entityType: 'PENCAWANG',
+          entityId: id,
+          label: substation.name?.trim() || substation.code,
+          summary: {
+            deletedSiteVisits: visitIds.length,
+            deletedAssets: assetIds.length,
+            deletedFeeders: feeders.length,
+          },
+        },
+      });
+    });
+
+    return {
+      deleted: true,
+      pencawangId: id,
+      deletedSiteVisits: visitIds.length,
+      deletedAssets: assetIds.length,
+      deletedFeeders: feeders.length,
+    };
+  }
+
+  private assertCanDeletePencawang(user: RequestUser) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Only a manager or administrator can delete a Pencawang.',
+    );
+  }
+
+  /**
+   * Returns a human reason a Pencawang cascade-delete must be refused, or null.
+   * Data-integrity guards (route endpoint, shared SAVT poles) apply to everyone;
+   * the own-company guard applies only to a non-ADMIN.
+   */
+  private async resolvePencawangDeleteBlock(
+    user: RequestUser,
+    substationId: string,
+  ): Promise<string | null> {
+    // Used as a route (SAVT) From/To endpoint by a survey → deleting it would
+    // silently null their endpoint. Deferred (SAVT redundancy is its own pass).
+    const routeRefs = await this.prisma.siteVisit.count({
+      where: {
+        tenantId: user.tenantId,
+        OR: [{ fromPencawangId: substationId }, { toPencawangId: substationId }],
+      },
+    });
+    if (routeRefs > 0) {
+      return `This Pencawang is a route (From/To) endpoint of ${routeRefs} survey(s). Delete those route surveys first.`;
+    }
+
+    // Shares poles with surveys of OTHER Pencawang/routes (SAVT redundancy) →
+    // cascading could corrupt them. Deferred.
+    const [crossInspect, crossLink] = await Promise.all([
+      this.prisma.inspection.count({
+        where: {
+          tenantId: user.tenantId,
+          asset: { substationId },
+          siteVisit: { substationId: { not: substationId } },
+        },
+      }),
+      this.prisma.siteVisitAsset.count({
+        where: {
+          asset: { substationId },
+          siteVisit: { substationId: { not: substationId } },
+        },
+      }),
+    ]);
+    if (crossInspect + crossLink > 0) {
+      return 'This Pencawang shares poles with surveys of other Pencawang/routes. Deleting it could corrupt them — not yet supported.';
+    }
+
+    // MANAGER: every direct survey here must belong to their own company.
+    if (user.role !== UserRole.ADMIN) {
+      const [total, visible] = await Promise.all([
+        this.prisma.siteVisit.count({
+          where: { tenantId: user.tenantId, substationId },
+        }),
+        this.prisma.siteVisit.count({
+          where: {
+            tenantId: user.tenantId,
+            substationId,
+            ...siteVisitAccessWhere(user),
+          },
+        }),
+      ]);
+      if (total !== visible) {
+        return 'This Pencawang holds surveys from another team or company. Only an administrator can delete it.';
+      }
+    }
+
+    return null;
   }
 
   private async findSubstationOrThrow(tenantId: string, id: string) {

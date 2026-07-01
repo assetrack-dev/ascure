@@ -37,6 +37,14 @@ export interface ScopeContext {
    * matched on Defect.maintenanceOrganizationId IN these ids.
    */
   maintenanceOrgIds: string[];
+  /**
+   * MAINHEAD IDs a TECHNICIAN may additionally SEE ON THE MAP (read-only) — the
+   * Mainheads "where their own team works", so same-company crews in the same
+   * Mainhead can see each other's poles and avoid double-inspecting. Empty for
+   * non-technicians. Widens the MAP read scope ONLY (siteVisitMapWhere); the
+   * work queue + every mutation stay strict own-team.
+   */
+  crossTeamMainheadIds: string[];
 }
 
 export async function buildScopeContext(
@@ -46,16 +54,29 @@ export async function buildScopeContext(
   const isAdmin = user.role === UserRole.ADMIN;
 
   if (isAdmin) {
-    return { isAdmin: true, isQa: false, qaMainheadIds: [], maintenanceOrgIds: [] };
+    return {
+      isAdmin: true,
+      isQa: false,
+      qaMainheadIds: [],
+      maintenanceOrgIds: [],
+      crossTeamMainheadIds: [],
+    };
   }
 
-  const [maintenanceOrgIds, isQa] = await Promise.all([
+  const [maintenanceOrgIds, crossTeamMainheadIds, isQa] = await Promise.all([
     resolveMaintenanceOrgIds(prisma, user),
+    resolveCrossTeamMainheadIds(prisma, user),
     isQaActor(prisma, user),
   ]);
 
   if (!isQa) {
-    return { isAdmin: false, isQa: false, qaMainheadIds: [], maintenanceOrgIds };
+    return {
+      isAdmin: false,
+      isQa: false,
+      qaMainheadIds: [],
+      maintenanceOrgIds,
+      crossTeamMainheadIds,
+    };
   }
 
   const [directAccess, regionAccess] = await Promise.all([
@@ -105,7 +126,59 @@ export async function buildScopeContext(
     isQa: true,
     qaMainheadIds: Array.from(mainheadIds),
     maintenanceOrgIds,
+    crossTeamMainheadIds,
   };
+}
+
+/**
+ * MAINHEAD IDs a TECHNICIAN may additionally SEE ON THE MAP (read-only) — the
+ * Mainheads "where their own team works", so same-company crews in the same
+ * Mainhead can see each other's poles and avoid double-inspecting. Derived from
+ * the technician's active teams: each team's assigned MAINHEAD plus the
+ * MAINHEADs of that team's site visits. Empty for any non-technician, or a
+ * technician with no company/teams — they keep own-team-only visibility. This
+ * widens the MAP read scope ONLY; the work queue + every mutation stay own-team.
+ */
+async function resolveCrossTeamMainheadIds(
+  prisma: PrismaService,
+  user: RequestUser,
+): Promise<string[]> {
+  if (user.role !== UserRole.TECHNICIAN || !user.organizationId) {
+    return [];
+  }
+
+  const memberships = await prisma.teamMember.findMany({
+    where: { userId: user.id, isActive: true },
+    select: { teamId: true, team: { select: { mainheadId: true } } },
+  });
+  const teamIds = memberships.map((row) => row.teamId);
+  if (teamIds.length === 0) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+  for (const row of memberships) {
+    if (row.team?.mainheadId) {
+      ids.add(row.team.mainheadId);
+    }
+  }
+
+  const visits = await prisma.siteVisit.findMany({
+    where: {
+      tenantId: user.tenantId,
+      teamId: { in: teamIds },
+      mainheadId: { not: null },
+    },
+    select: { mainheadId: true },
+    distinct: ['mainheadId'],
+  });
+  for (const visit of visits) {
+    if (visit.mainheadId) {
+      ids.add(visit.mainheadId);
+    }
+  }
+
+  return Array.from(ids);
 }
 
 /**

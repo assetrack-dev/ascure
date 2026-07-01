@@ -1,18 +1,22 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
   DefectStatus,
+  InspectionCompletionStatus,
   InspectionItemInputType,
   InspectionItemResultValue,
   OperationalScope,
   Prisma,
   SurveyLifecycleStatus,
+  UserRole,
 } from '@prisma/client';
 import { Workbook, Worksheet } from 'exceljs';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   DEFAULT_OPERATIONAL_SCOPE,
@@ -151,6 +155,228 @@ export class ReportsService {
         'REPORTING capability is required to access reports.',
       );
     }
+  }
+
+  // Crew performance is a manager function (monitor + pay own crew), gated by
+  // role rather than the REPORTING capability.
+  private assertCanViewCrewPerformance(user: RequestUser) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Only a manager or administrator can view crew performance.',
+    );
+  }
+
+  // Reporting day boundaries use UTC+8 (Malaysia), matching the daily dashboard.
+  private static readonly CREW_PERF_OFFSET_MIN = 480;
+
+  private crewPerfDateKey(date: Date): string {
+    const shifted = new Date(
+      date.getTime() + ReportsService.CREW_PERF_OFFSET_MIN * 60_000,
+    );
+    return shifted.toISOString().slice(0, 10);
+  }
+
+  private resolvePerformancePeriod(fromInput?: string, toInput?: string) {
+    const offsetMs = ReportsService.CREW_PERF_OFFSET_MIN * 60_000;
+    const parseDay = (value: string): number | null => {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+      if (!match) {
+        return null;
+      }
+      return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    };
+
+    if (fromInput && toInput) {
+      const from = parseDay(fromInput);
+      const to = parseDay(toInput);
+      if (from == null || to == null || to < from) {
+        throw new BadRequestException(
+          'Provide a valid from/to date range (YYYY-MM-DD).',
+        );
+      }
+      return {
+        start: new Date(from - offsetMs),
+        end: new Date(to + 24 * 60 * 60 * 1000 - offsetMs),
+        label: `${fromInput} to ${toInput}`,
+      };
+    }
+
+    // Default: the current calendar month (UTC+8).
+    const nowShifted = new Date(Date.now() + offsetMs);
+    const year = nowShifted.getUTCFullYear();
+    const month = nowShifted.getUTCMonth();
+    return {
+      start: new Date(Date.UTC(year, month, 1) - offsetMs),
+      end: new Date(Date.UTC(year, month + 1, 1) - offsetMs),
+      label: `${year}-${String(month + 1).padStart(2, '0')}`,
+    };
+  }
+
+  /**
+   * Per-user output over a period (default: this month, UTC+8), scoped to the
+   * caller's own company (a MANAGER never sees another company's crew). The
+   * headline pay metric is distinct assets inspected; supporting columns are
+   * submitted inspections, distinct visits, and active days.
+   */
+  async aggregateCrewPerformance(
+    user: RequestUser,
+    fromInput?: string,
+    toInput?: string,
+  ) {
+    this.assertCanViewCrewPerformance(user);
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+        submittedAt: { gte: start, lt: end },
+        siteVisit: siteVisitAccessWhere(user),
+      },
+      select: {
+        assetId: true,
+        siteVisitId: true,
+        createdByUserId: true,
+        submittedAt: true,
+      },
+    });
+
+    type Aggregate = {
+      assets: Set<string>;
+      visits: Set<string>;
+      days: Set<string>;
+      inspections: number;
+    };
+    const byUser = new Map<string, Aggregate>();
+    for (const row of inspections) {
+      let aggregate = byUser.get(row.createdByUserId);
+      if (!aggregate) {
+        aggregate = {
+          assets: new Set(),
+          visits: new Set(),
+          days: new Set(),
+          inspections: 0,
+        };
+        byUser.set(row.createdByUserId, aggregate);
+      }
+      aggregate.assets.add(row.assetId);
+      aggregate.visits.add(row.siteVisitId);
+      aggregate.inspections += 1;
+      if (row.submittedAt) {
+        aggregate.days.add(this.crewPerfDateKey(row.submittedAt));
+      }
+    }
+
+    const userIds = Array.from(byUser.keys());
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            team: { select: { name: true, code: true } },
+          },
+        })
+      : [];
+    const userById = new Map(users.map((row) => [row.id, row]));
+
+    const rows = userIds
+      .map((id) => {
+        const record = userById.get(id);
+        const aggregate = byUser.get(id)!;
+        return {
+          userId: id,
+          name: record?.name?.trim() || record?.email || 'Unknown user',
+          email: record?.email ?? null,
+          role: record?.role ?? null,
+          teamName:
+            record?.team?.name?.trim() || record?.team?.code?.trim() || null,
+          assetsInspected: aggregate.assets.size,
+          submittedInspections: aggregate.inspections,
+          visits: aggregate.visits.size,
+          activeDays: aggregate.days.size,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.assetsInspected - left.assetsInspected ||
+          left.name.localeCompare(right.name),
+      );
+
+    return {
+      period: label,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      totalAssetsInspected: rows.reduce(
+        (total, row) => total + row.assetsInspected,
+        0,
+      ),
+      users: rows,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** XLSX export of {@link aggregateCrewPerformance} (the manager's pay sheet). */
+  async buildCrewPerformance(
+    user: RequestUser,
+    fromInput?: string,
+    toInput?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const data = await this.aggregateCrewPerformance(user, fromInput, toInput);
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('CREW PERFORMANCE');
+    sheet.addRow([`Crew performance — ${data.period}`]);
+    sheet.addRow([]);
+    const header = sheet.addRow([
+      'No',
+      'Name',
+      'Email',
+      'Role',
+      'Team',
+      'Assets Inspected',
+      'Submitted Inspections',
+      'Visits',
+      'Active Days',
+    ]);
+    header.font = { bold: true };
+
+    data.users.forEach((row, index) => {
+      sheet.addRow([
+        index + 1,
+        row.name,
+        row.email ?? '',
+        row.role ?? '',
+        row.teamName ?? '',
+        row.assetsInspected,
+        row.submittedInspections,
+        row.visits,
+        row.activeDays,
+      ]);
+    });
+
+    sheet.addRow([]);
+    const totalRow = sheet.addRow([
+      '',
+      'TOTAL',
+      '',
+      '',
+      '',
+      data.totalAssetsInspected,
+    ]);
+    totalRow.font = { bold: true };
+
+    for (let column = 1; column <= 9; column += 1) {
+      sheet.getColumn(column).width = column === 2 || column === 3 ? 26 : 16;
+    }
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const filename = `crew-performance-${data.period.replace(/[^\dA-Za-z-]+/g, '_')}.xlsx`;
+    return { buffer: Buffer.from(arrayBuffer), filename };
   }
 
   /** Pencawang (substation) options for the report selector — tenant scoped.

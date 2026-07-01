@@ -56,10 +56,27 @@ export function siteVisitOversightWhere(
   return buildSiteVisitScope(user, ctx, true);
 }
 
+/**
+ * MAP read scope. Like {@link siteVisitOversightWhere}, but a TECHNICIAN also
+ * sees (read-only) their own company's OTHER teams working a MAINHEAD where
+ * their own team works (`ctx.crossTeamMainheadIds`) — so same-area crews see
+ * each other's poles on the map and don't double-inspect one. MAP READS ONLY:
+ * the work queue stays on oversight scope, and every mutation stays on the
+ * strict {@link siteVisitAccessWhere}, so a technician can look but not touch
+ * another team's work.
+ */
+export function siteVisitMapWhere(
+  user: RequestUser,
+  ctx?: ScopeContext,
+): Prisma.SiteVisitWhereInput {
+  return buildSiteVisitScope(user, ctx, true, true);
+}
+
 function buildSiteVisitScope(
   user: RequestUser,
   ctx: ScopeContext | undefined,
   includeManagedOrgs: boolean,
+  includeCrossTeamMainhead = false,
 ): Prisma.SiteVisitWhereInput {
   if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
     return {};
@@ -114,6 +131,27 @@ function buildSiteVisitScope(
           ownTeamMembership,
         ],
       },
+    };
+  }
+
+  // TECHNICIAN (MAP read only): own teams' visits PLUS their own company's other
+  // teams working a MAINHEAD where their team also works — read-only coordination
+  // so crews don't double-inspect a pole. Gated to the MAP scope
+  // (includeCrossTeamMainhead); the work queue + every mutation stay own-team.
+  if (
+    includeCrossTeamMainhead &&
+    user.role === UserRole.TECHNICIAN &&
+    user.organizationId &&
+    ctx?.crossTeamMainheadIds?.length
+  ) {
+    return {
+      OR: [
+        { team: ownTeamMembership },
+        {
+          team: { organizationId: user.organizationId },
+          mainheadId: { in: ctx.crossTeamMainheadIds },
+        },
+      ],
     };
   }
 

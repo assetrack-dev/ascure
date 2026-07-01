@@ -710,6 +710,99 @@ export class DashboardService {
   }
 
   /**
+   * Per-USER counterpart of {@link getDailyTeamActivity}: distinct assets each
+   * person submitted today, for a manager to see individual output (the per-team
+   * card rolls these up). Same reporting-day window + role-aware scope; grouped
+   * by the inspecting user (Inspection.createdByUserId).
+   */
+  async getDailyUserActivity(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const { start, end, dateLabel } = this.reportingDayBounds(new Date());
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+        submittedAt: { gte: start, lt: end },
+        siteVisit: this.teamActivityVisitScope(user, ctx),
+      },
+      select: {
+        assetId: true,
+        createdByUserId: true,
+        siteVisit: { select: { teamId: true } },
+      },
+    });
+
+    // Distinct assets per inspecting user — a pole re-submitted (e.g. after an
+    // amend) counts once.
+    const assetsByUser = new Map<string, Set<string>>();
+    const teamByUser = new Map<string, string>();
+    for (const row of inspections) {
+      const userId = row.createdByUserId;
+      let assets = assetsByUser.get(userId);
+      if (!assets) {
+        assets = new Set<string>();
+        assetsByUser.set(userId, assets);
+      }
+      assets.add(row.assetId);
+      if (!teamByUser.has(userId)) {
+        teamByUser.set(userId, row.siteVisit.teamId);
+      }
+    }
+
+    const userIds = Array.from(assetsByUser.keys());
+    const teamIds = Array.from(new Set(teamByUser.values()));
+    const [users, teams] = await Promise.all([
+      userIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, name: true, email: true, role: true },
+          })
+        : Promise.resolve([]),
+      teamIds.length
+        ? this.prisma.team.findMany({
+            where: { id: { in: teamIds } },
+            select: { id: true, name: true, code: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const userById = new Map(users.map((row) => [row.id, row]));
+    const teamById = new Map(teams.map((row) => [row.id, row]));
+
+    const userRows = userIds
+      .map((userId) => {
+        const record = userById.get(userId);
+        const team = teamById.get(teamByUser.get(userId) ?? '');
+        return {
+          userId,
+          name: record?.name?.trim() || record?.email || 'Unknown user',
+          email: record?.email ?? null,
+          role: record?.role ?? null,
+          teamName: team?.name?.trim() || team?.code?.trim() || null,
+          assetsInspectedToday: assetsByUser.get(userId)?.size ?? 0,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.assetsInspectedToday - left.assetsInspectedToday ||
+          left.name.localeCompare(right.name),
+      );
+
+    const totalAssetsInspectedToday = userRows.reduce(
+      (total, row) => total + row.assetsInspectedToday,
+      0,
+    );
+
+    return {
+      date: dateLabel,
+      totalAssetsInspectedToday,
+      activeUserCount: userRows.length,
+      users: userRows,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Role-aware site-visit scope for the daily team activity monitoring view.
    * Mirrors site-visits.service.ts accessScope (ADR 0002 §3) rather than the
    * team-membership scope the main dashboard uses, so managers/supervisors see

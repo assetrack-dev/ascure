@@ -50,6 +50,40 @@ export class ReportsController {
     return this.reportsService.listSubstations(user);
   }
 
+  // Per-user output for a period (default: this month) — the manager's monitor
+  // + pay view. JSON for the table; .xlsx for the downloadable pay sheet.
+  @Get('crew-performance')
+  getCrewPerformance(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateCrewPerformance(user, from, to);
+  }
+
+  @Get('crew-performance.xlsx')
+  async exportCrewPerformance(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.reportsService.buildCrewPerformance(
+      user,
+      from,
+      to,
+    );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   @Get('pencawang/:substationId/masterlist.xlsx')
   async exportPencawangMasterlist(
     @CurrentUser() user: RequestUser,

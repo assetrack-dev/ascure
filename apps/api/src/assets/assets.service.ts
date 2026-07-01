@@ -16,7 +16,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildScopeContext } from '../common/authorization/scope-context';
-import { siteVisitOversightWhere } from '../common/authorization/site-visit-scope';
+import { siteVisitMapWhere } from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -51,7 +51,10 @@ export class AssetsService {
    */
   async listMapAssets(user: RequestUser) {
     const ctx = await buildScopeContext(this.prisma, user);
-    const scopeWhere = siteVisitOversightWhere(user, ctx);
+    // Map scope: a TECHNICIAN additionally sees (read-only) their company's other
+    // teams working a MAINHEAD where their own team works, so same-area crews can
+    // spot already-inspected poles. No-op for every other role (== oversight).
+    const scopeWhere = siteVisitMapWhere(user, ctx);
 
     const where: Prisma.AssetWhereInput = {
       tenantId: user.tenantId,

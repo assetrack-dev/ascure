@@ -68,6 +68,26 @@ export class MasterDataController {
     return this.masterDataService.deleteSubstation(user, params.id);
   }
 
+  // --- ADMIN / own-company MANAGER: cascade-delete a whole Pencawang ---
+
+  @Get('substations/:id/delete-preview')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  previewDeletePencawang(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+  ) {
+    return this.masterDataService.previewDeletePencawang(user, params.id);
+  }
+
+  @Delete('substations/:id/cascade')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  deletePencawangCascade(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+  ) {
+    return this.masterDataService.deletePencawangCascade(user, params.id);
+  }
+
   @Get('asset-types')
   listAssetTypes(
     @CurrentUser() user: RequestUser,

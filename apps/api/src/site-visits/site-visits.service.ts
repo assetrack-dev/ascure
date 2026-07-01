@@ -53,6 +53,7 @@ import { CreateSiteVisitDto } from './dto/create-site-visit.dto';
 import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
 import { ReassignSiteVisitDto } from './dto/reassign-site-visit.dto';
+import { UpdateSiteVisitDto } from './dto/update-site-visit.dto';
 
 const ACTIVE_SITE_VISIT_STATUSES = [
   SiteVisitStatus.ACTIVE,
@@ -1217,18 +1218,87 @@ export class SiteVisitsService {
     return this.getById(user, siteVisit.id);
   }
 
-  /** ADMIN preview of a survey deletion — what gets removed vs kept. */
+  /**
+   * Correct a started visit's identity / location (wrong Pencawang, mainhead, or
+   * GPS) instead of recreating it. The crew may fix its own details before the
+   * survey is submitted (or while bounced back); after RONDAAN SELESAI only a
+   * manager may; a finalised (LAPORAN SELESAI / ARKIB) survey is locked. Scope is
+   * the caller's own (findAccessibleSiteVisit) — a manager is confined to their
+   * company, a technician to their team.
+   */
+  async updateDetails(user: RequestUser, id: string, dto: UpdateSiteVisitDto) {
+    const visit = await this.findAccessibleSiteVisit(user, id);
+    this.assertCanEditDetails(user, visit.lifecycleStatus);
+
+    const data: Prisma.SiteVisitUpdateInput = {};
+
+    // Pencawang re-point — validate it's in the tenant; refresh the denormalised
+    // label/location from it unless the caller set them explicitly this request.
+    if (dto.substationId && dto.substationId !== visit.substationId) {
+      const substation = await this.prisma.substation.findFirst({
+        where: { id: dto.substationId, tenantId: user.tenantId },
+        select: { id: true, code: true, name: true, location: true },
+      });
+      if (!substation) {
+        throw new NotFoundException('The selected Pencawang was not found.');
+      }
+      data.substation = { connect: { id: substation.id } };
+      if (dto.pencawangCode === undefined) data.pencawangCode = substation.code;
+      if (dto.pencawangName === undefined) data.pencawangName = substation.name;
+      if (dto.functionalLocation === undefined && substation.location) {
+        data.functionalLocation = substation.location;
+      }
+    }
+
+    if (dto.mainhead !== undefined) {
+      data.mainhead = this.normalizeOptionalString(dto.mainhead);
+    }
+    if (dto.pencawangCode !== undefined) {
+      data.pencawangCode = this.normalizeOptionalString(dto.pencawangCode);
+    }
+    if (dto.pencawangName !== undefined) {
+      data.pencawangName = this.normalizeOptionalString(dto.pencawangName);
+    }
+    if (dto.functionalLocation !== undefined) {
+      data.functionalLocation = this.normalizeOptionalString(dto.functionalLocation);
+    }
+    if (dto.notes !== undefined) {
+      data.notes = this.normalizeOptionalString(dto.notes);
+    }
+
+    // GPS correction — a re-captured fix or a manual pin. lat/lng move as a pair;
+    // accuracy/time are optional companions (time defaults to "now").
+    if (dto.checkInLatitude !== undefined || dto.checkInLongitude !== undefined) {
+      if (dto.checkInLatitude === undefined || dto.checkInLongitude === undefined) {
+        throw new BadRequestException(
+          'A location fix needs both latitude and longitude.',
+        );
+      }
+      data.checkInLatitude = dto.checkInLatitude;
+      data.checkInLongitude = dto.checkInLongitude;
+      data.checkInAccuracyMeters = dto.checkInAccuracyMeters ?? null;
+      data.checkInCapturedAt = dto.checkInCapturedAt
+        ? this.parseDate(dto.checkInCapturedAt, 'Check-in captured at')
+        : new Date();
+    } else if (dto.checkInAccuracyMeters !== undefined) {
+      data.checkInAccuracyMeters = dto.checkInAccuracyMeters;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return this.getById(user, id);
+    }
+
+    await this.prisma.siteVisit.update({ where: { id }, data });
+    return this.getById(user, id);
+  }
+
+  /** Preview a survey deletion — what gets removed vs kept (ADMIN, or a MANAGER for own-company surveys). */
   async previewDeleteWithAssets(user: RequestUser, id: string) {
-    this.assertAdmin(user);
+    this.assertCanDeleteSurvey(user);
     const plan = await this.resolveSurveyDeletionPlan(user, id);
     return {
       siteVisitId: plan.visit.id,
-      pencawang:
-        plan.visit.pencawangName?.trim() ||
-        plan.visit.pencawangCode?.trim() ||
-        plan.visit.substation?.name?.trim() ||
-        plan.visit.substation?.code?.trim() ||
-        null,
+      pencawang: this.pencawangLabelFromPlanVisit(plan.visit),
       inspections: plan.inspectionCount,
       createdAssets: plan.createdAssetIds.length,
       assetsToDelete: plan.deletableAssetIds.length,
@@ -1237,7 +1307,7 @@ export class SiteVisitsService {
   }
 
   /**
-   * ADMIN: hard-delete a site survey AND the poles created during it (skipping
+   * ADMIN (or own-company MANAGER): hard-delete a site survey AND the poles created during it (skipping
    * poles shared with another survey). Order matters — the visit's inspections
    * are onDelete:Restrict, so they're cleared first (cascading their results /
    * defects / inspection images); the created-and-unshared poles are then hard-
@@ -1249,9 +1319,10 @@ export class SiteVisitsService {
    * transaction = all-or-nothing.
    */
   async deleteWithAssets(user: RequestUser, id: string) {
-    this.assertAdmin(user);
+    this.assertCanDeleteSurvey(user);
     const plan = await this.resolveSurveyDeletionPlan(user, id);
     const deletable = plan.deletableAssetIds;
+    const pencawangLabel = this.pencawangLabelFromPlanVisit(plan.visit);
 
     await this.prisma.$transaction(async (tx) => {
       // 1. Clear this survey's inspections (Inspection.siteVisit is Restrict).
@@ -1275,6 +1346,24 @@ export class SiteVisitsService {
 
       // 3. Delete the survey itself (cascades its remaining children).
       await tx.siteVisit.delete({ where: { id } });
+
+      // 4. Audit the irreversible delete (atomic with it).
+      await tx.deletionLog.create({
+        data: {
+          tenantId: user.tenantId,
+          actorUserId: user.id,
+          actorEmail: user.email,
+          actorName: user.name,
+          entityType: 'SITE_VISIT',
+          entityId: id,
+          label: pencawangLabel,
+          summary: {
+            deletedInspections: plan.inspectionCount,
+            deletedAssets: deletable.length,
+            skippedSharedAssets: plan.sharedAssetIds.length,
+          },
+        },
+      });
     });
 
     return {
@@ -2617,10 +2706,63 @@ export class SiteVisitsService {
     }
   }
 
-  private assertAdmin(user: RequestUser) {
-    if (user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only an administrator can delete a site survey.');
+  private assertCanDeleteSurvey(user: RequestUser) {
+    // Deleting a survey (+ its cascade) is irreversible — restrict to ADMIN and
+    // MANAGER. A MANAGER is further confined to their own company by the access
+    // scope applied in resolveSurveyDeletionPlan (the lookup 404s otherwise).
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
     }
+    throw new ForbiddenException('Only a manager or administrator can delete a site survey.');
+  }
+
+  private assertCanEditDetails(
+    user: RequestUser,
+    lifecycleStatus: SurveyLifecycleStatus | null,
+  ) {
+    if (
+      lifecycleStatus === SurveyLifecycleStatus.LAPORAN_SELESAI ||
+      lifecycleStatus === SurveyLifecycleStatus.ARKIB
+    ) {
+      throw new BadRequestException(
+        'This survey is finalised — its report is compiled, so its details can no longer be edited.',
+      );
+    }
+
+    const preSubmission =
+      lifecycleStatus == null ||
+      lifecycleStatus === SurveyLifecycleStatus.DALAM_RONDAAN ||
+      lifecycleStatus === SurveyLifecycleStatus.PERLU_PINDAAN;
+
+    if (preSubmission) {
+      // Before submission (or while bounced back) the crew may fix its own
+      // details; assertCanMutate blocks only VIEWER/CLIENT.
+      this.assertCanMutate(user);
+      return;
+    }
+
+    // Submitted and under review (RONDAAN_SELESAI / DISAHKAN_PENGURUS /
+    // PINDAAN_SELESAI) — only a manager (or admin) may correct details now.
+    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Once submitted for review, only a manager can edit this survey’s details.',
+    );
+  }
+
+  private pencawangLabelFromPlanVisit(visit: {
+    pencawangName: string | null;
+    pencawangCode: string | null;
+    substation: { name: string; code: string } | null;
+  }): string | null {
+    return (
+      visit.pencawangName?.trim() ||
+      visit.pencawangCode?.trim() ||
+      visit.substation?.name?.trim() ||
+      visit.substation?.code?.trim() ||
+      null
+    );
   }
 
   /**
@@ -2632,7 +2774,9 @@ export class SiteVisitsService {
    */
   private async resolveSurveyDeletionPlan(user: RequestUser, id: string) {
     const visit = await this.prisma.siteVisit.findFirst({
-      where: { id, tenantId: user.tenantId },
+      // Own-company confinement for a MANAGER (accessScope = {} for ADMIN, so
+      // unrestricted there). An out-of-scope id reads as "not found".
+      where: { id, tenantId: user.tenantId, ...this.accessScope(user) },
       select: {
         id: true,
         pencawangCode: true,

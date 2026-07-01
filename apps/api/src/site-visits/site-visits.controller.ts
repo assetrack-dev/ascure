@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -26,6 +27,7 @@ import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
 import { ReassignSiteVisitDto } from './dto/reassign-site-visit.dto';
 import { RequestSurveyAmendmentDto } from './dto/request-amendment.dto';
+import { UpdateSiteVisitDto } from './dto/update-site-visit.dto';
 import { SiteVisitsService } from './site-visits.service';
 import { SurveyLifecycleService } from './survey-lifecycle.service';
 
@@ -198,10 +200,21 @@ export class SiteVisitsController {
     return this.siteVisitsService.getContributions(user, params.id);
   }
 
-  // --- ADMIN: delete a survey together with the poles created during it ---
+  // Correct a started visit's details (crew before RONDAAN SELESAI; manager
+  // after; finalised surveys locked — all enforced in the service).
+  @Patch(':id')
+  updateDetails(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @Body() dto: UpdateSiteVisitDto,
+  ) {
+    return this.siteVisitsService.updateDetails(user, params.id, dto);
+  }
+
+  // --- ADMIN / own-company MANAGER: delete a survey together with the poles created during it ---
 
   @Get(':id/delete-preview')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   previewDelete(
     @CurrentUser() user: RequestUser,
     @Param() params: SiteVisitIdParamDto,
@@ -210,7 +223,7 @@ export class SiteVisitsController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   delete(@CurrentUser() user: RequestUser, @Param() params: SiteVisitIdParamDto) {
     return this.siteVisitsService.deleteWithAssets(user, params.id);
   }
