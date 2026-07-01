@@ -8,6 +8,10 @@ import {
 import { randomUUID } from 'crypto';
 import { Prisma, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import {
+  assertMainheadsInOwnCompany,
+  filterNonGovernanceCapabilityIds,
+} from '../common/authorization/manager-grant-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTeamDto, UpdateTeamDto, UpdateTeamStatusDto } from './dto/manage-team.dto';
 import { SetTeamSupervisorsDto } from './dto/team-supervisors.dto';
@@ -119,10 +123,18 @@ export class TeamsService {
       user,
       dto.organizationId,
     );
+    const managerScoped = user.role !== UserRole.ADMIN;
 
     try {
       return await this.prisma.$transaction(async (tx) => {
         await this.assertTeamCodeAvailable(tx, user.tenantId, dto.code);
+        // A MANAGER may only attach a MAINHEAD in their own company (closes the
+        // region-only-MAINHEAD gap resolveOperationalLinks' branch check misses).
+        if (managerScoped && dto.mainheadId) {
+          await assertMainheadsInOwnCompany(tx, user.organizationId, [
+            dto.mainheadId,
+          ]);
+        }
         const operationalLinks = await this.resolveOperationalLinks(tx, {
           organizationId,
           branchId: dto.branchId,
@@ -142,8 +154,15 @@ export class TeamsService {
           include: TEAM_INCLUDE,
         });
 
-        if (dto.capabilityIds !== undefined) {
-          await this.syncTeamCapabilities(tx, team.id, dto.capabilityIds);
+        // A MANAGER may grant only operational capabilities — strip governance
+        // (QA_VALIDATION / REPORTING) so they can't hand their crew authority.
+        const capabilityIds =
+          managerScoped && dto.capabilityIds !== undefined
+            ? await filterNonGovernanceCapabilityIds(tx, dto.capabilityIds)
+            : dto.capabilityIds;
+
+        if (capabilityIds !== undefined) {
+          await this.syncTeamCapabilities(tx, team.id, capabilityIds);
 
           return tx.team.findUniqueOrThrow({
             where: {
@@ -162,6 +181,7 @@ export class TeamsService {
   }
 
   async update(user: RequestUser, id: string, dto: UpdateTeamDto) {
+    const managerScoped = user.role !== UserRole.ADMIN;
     try {
       return await this.prisma.$transaction(async (tx) => {
         const existingTeam = await tx.team.findFirst({
@@ -223,6 +243,13 @@ export class TeamsService {
           this.assertManagerOrgScope(user, operationalLinks.organizationId);
         }
 
+        // A MANAGER may only attach a MAINHEAD in their own company.
+        if (managerScoped && dto.mainheadId) {
+          await assertMainheadsInOwnCompany(tx, user.organizationId, [
+            dto.mainheadId,
+          ]);
+        }
+
         const data: Prisma.TeamUncheckedUpdateInput = {};
 
         if (dto.name !== undefined) {
@@ -243,10 +270,13 @@ export class TeamsService {
           data.isActive = dto.isActive;
         }
 
-        if (
-          Object.keys(data).length === 0 &&
-          dto.capabilityIds === undefined
-        ) {
+        // A MANAGER may grant only operational capabilities — strip governance.
+        const capabilityIds =
+          managerScoped && dto.capabilityIds !== undefined
+            ? await filterNonGovernanceCapabilityIds(tx, dto.capabilityIds)
+            : dto.capabilityIds;
+
+        if (Object.keys(data).length === 0 && capabilityIds === undefined) {
           throw new BadRequestException(
             'At least one editable team field must be provided.',
           );
@@ -261,8 +291,8 @@ export class TeamsService {
           });
         }
 
-        if (dto.capabilityIds !== undefined) {
-          await this.syncTeamCapabilities(tx, id, dto.capabilityIds);
+        if (capabilityIds !== undefined) {
+          await this.syncTeamCapabilities(tx, id, capabilityIds);
         }
 
         return tx.team.findUniqueOrThrow({

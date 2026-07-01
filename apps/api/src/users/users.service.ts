@@ -9,6 +9,10 @@ import { randomBytes, randomUUID } from 'crypto';
 import { MainheadAccessRole, OrganizationType, Prisma, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import {
+  assertMainheadsInOwnCompany,
+  filterNonGovernanceCapabilityIds,
+} from '../common/authorization/manager-grant-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
@@ -116,6 +120,20 @@ export class UsersService {
         const requestedOperationalRegionAccessIds = this.normalizeIdList(
           dto.operationalRegionAccessIds,
         );
+        // A MANAGER may grant only company-scoped MAINHEAD access + operational
+        // (non-governance) capabilities; validate/strip here (needs a DB lookup).
+        const managerScoped = user.role !== UserRole.ADMIN;
+        if (managerScoped) {
+          await assertMainheadsInOwnCompany(
+            tx,
+            user.organizationId,
+            requestedMainheadAccessIds,
+          );
+        }
+        const effectiveCapabilityIds =
+          managerScoped && dto.capabilityIds !== undefined
+            ? await filterNonGovernanceCapabilityIds(tx, dto.capabilityIds)
+            : dto.capabilityIds;
         const legacyMainheadId =
           dto.mainheadId ?? requestedMainheadAccessIds[0] ?? null;
         const operationalLinks = await this.resolveOperationalLinks(tx, user.tenantId, {
@@ -177,8 +195,12 @@ export class UsersService {
           );
         }
 
-        if (dto.capabilityIds !== undefined) {
-          await this.syncUserCapabilities(tx, createdUser.id, dto.capabilityIds);
+        if (effectiveCapabilityIds !== undefined) {
+          await this.syncUserCapabilities(
+            tx,
+            createdUser.id,
+            effectiveCapabilityIds,
+          );
 
           return tx.user.findUniqueOrThrow({
             where: {
@@ -249,13 +271,14 @@ export class UsersService {
 
     return {
       ...dto,
-      // Force the new user into the manager's own company; strip every advanced
-      // grant a simplified manager form never sends anyway.
+      // Pin the new user to the manager's own company. A manager MAY grant
+      // company-scoped MAINHEAD access + operational capabilities — those are
+      // validated / stripped-of-governance inside the create transaction (both
+      // need a DB lookup). Region access + the QA access-role stay ADMIN-only;
+      // branch + legacy mainheadId are derived, not manager-set.
       organizationId: actor.organizationId,
       branchId: null,
       mainheadId: null,
-      capabilityIds: undefined,
-      mainheadAccessIds: undefined,
       operationalRegionAccessIds: undefined,
       accessRole: undefined,
     };
@@ -318,11 +341,12 @@ export class UsersService {
 
     return {
       ...dto,
+      // A manager MAY grant company-scoped MAINHEAD access + operational
+      // capabilities (validated / governance-stripped in the update
+      // transaction). Region access + the QA access-role stay ADMIN-only.
       organizationId: actor.organizationId,
       branchId: undefined,
       mainheadId: undefined,
-      capabilityIds: undefined,
-      mainheadAccessIds: undefined,
       operationalRegionAccessIds: undefined,
       accessRole: undefined,
     };
@@ -369,6 +393,20 @@ export class UsersService {
           dto.operationalRegionAccessIds === undefined
             ? undefined
             : this.normalizeIdList(dto.operationalRegionAccessIds);
+        // A MANAGER may grant only company-scoped MAINHEAD access + operational
+        // (non-governance) capabilities; validate/strip here (needs a DB lookup).
+        const managerScoped = user.role !== UserRole.ADMIN;
+        if (managerScoped && requestedMainheadAccessIds !== undefined) {
+          await assertMainheadsInOwnCompany(
+            tx,
+            user.organizationId,
+            requestedMainheadAccessIds,
+          );
+        }
+        const effectiveCapabilityIds =
+          managerScoped && dto.capabilityIds !== undefined
+            ? await filterNonGovernanceCapabilityIds(tx, dto.capabilityIds)
+            : dto.capabilityIds;
         const shouldResolveOperationalLinks =
           dto.organizationId !== undefined ||
           dto.branchId !== undefined ||
@@ -429,7 +467,7 @@ export class UsersService {
 
         if (
           Object.keys(data).length === 0 &&
-          dto.capabilityIds === undefined &&
+          effectiveCapabilityIds === undefined &&
           requestedMainheadAccessIds === undefined &&
           requestedOperationalRegionAccessIds === undefined
         ) {
@@ -456,8 +494,8 @@ export class UsersService {
           );
         }
 
-        if (dto.capabilityIds !== undefined) {
-          await this.syncUserCapabilities(tx, id, dto.capabilityIds);
+        if (effectiveCapabilityIds !== undefined) {
+          await this.syncUserCapabilities(tx, id, effectiveCapabilityIds);
         }
 
         if (requestedMainheadAccessIds !== undefined) {
