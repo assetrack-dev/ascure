@@ -338,6 +338,7 @@ model Tenant {
   feeders             Feeder[]
   networkTieEdges     NetworkTieEdge[]
   organizations       Organization[]
+  deletionLogs        DeletionLog[]
 }
 
 model Department {
@@ -904,6 +905,28 @@ model Substation {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+}
+
+/// Append-only audit trail for irreversible hard-deletes (a MANAGER or ADMIN
+/// removing a Site Visit or a whole Pencawang + its cascade). Actor identity is
+/// denormalised (email/name) so the log survives even if the user is later
+/// deleted; there is intentionally NO user FK. tenantId cascades so a tenant
+/// teardown still cleans up.
+model DeletionLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  actorUserId String?  @db.Uuid
+  actorEmail  String?
+  actorName   String?
+  entityType  String
+  entityId    String   @db.Uuid
+  label       String?
+  summary     Json?
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([entityType, entityId])
 }
 
 model AssetType {
