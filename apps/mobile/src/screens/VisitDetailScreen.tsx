@@ -34,6 +34,8 @@ import { Asset, SiteVisit, SiteVisitSummary, UserRole } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
+import * as Location from 'expo-location';
+import { getPositionWithTimeout } from '../location';
 import type { RootStackScreenProps } from '../navigation/types';
 
 type Coordinate = {
@@ -472,6 +474,21 @@ export function VisitDetailScreen() {
               disabled={isVisitTerminal(visit.status) || isCompletionQueued || isCompleting}
             />
           </Card>
+
+          <EditVisitDetailsCard
+            visit={visit}
+            token={token}
+            userRole={user?.role}
+            onUpdated={loadVisitData}
+          />
+
+          <DeleteVisitCard
+            visit={visit}
+            substationId={substationId}
+            token={token}
+            userRole={user?.role}
+            onDeleted={() => navigation.goBack()}
+          />
         </>
       ) : null}
     </Screen>
@@ -627,6 +644,370 @@ function ReassignTeamCard({
           />
         </View>
       )}
+    </Card>
+  );
+}
+
+/**
+ * Inline "Edit Details" for a started visit — fix a wrong Pencawang label,
+ * mainhead, functional location, notes, or GPS instead of recreating it. The
+ * crew may edit while the visit is still open; a manager/admin may edit even
+ * after it's submitted (the API enforces the precise lifecycle rule). GPS can be
+ * re-captured live or corrected manually.
+ */
+function EditVisitDetailsCard({
+  visit,
+  token,
+  userRole,
+  onUpdated,
+}: {
+  visit: SiteVisit;
+  token: string;
+  userRole?: UserRole;
+  onUpdated: () => void | Promise<void>;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [mainhead, setMainhead] = useState(visit.mainhead ?? '');
+  const [pencawangName, setPencawangName] = useState(visit.pencawangName ?? '');
+  const [functionalLocation, setFunctionalLocation] = useState(
+    visit.functionalLocation ?? '',
+  );
+  const [notes, setNotes] = useState(visit.notes ?? '');
+  const [latitude, setLatitude] = useState(
+    visit.checkInLatitude != null ? String(visit.checkInLatitude) : '',
+  );
+  const [longitude, setLongitude] = useState(
+    visit.checkInLongitude != null ? String(visit.checkInLongitude) : '',
+  );
+  const [accuracy, setAccuracy] = useState<number | null>(
+    visit.checkInAccuracyMeters ?? null,
+  );
+  const [locationChanged, setLocationChanged] = useState(false);
+
+  const isManagerial = userRole === 'ADMIN' || userRole === 'MANAGER';
+  const isCrew = userRole === 'TECHNICIAN' || userRole === 'SUPERVISOR';
+  const canEdit = isManagerial || (isCrew && !isVisitTerminal(visit.status));
+  if (!canEdit) {
+    return null;
+  }
+
+  const recaptureLocation = async () => {
+    setError(null);
+    setLocating(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        setError('Location permission is needed to capture GPS.');
+        return;
+      }
+      const position = await getPositionWithTimeout({
+        accuracy: Location.Accuracy.High,
+      });
+      if (!position) {
+        setError('Could not get a GPS fix — try again or enter coordinates manually.');
+        return;
+      }
+      setLatitude(String(position.coords.latitude));
+      setLongitude(String(position.coords.longitude));
+      setAccuracy(
+        typeof position.coords.accuracy === 'number' &&
+          Number.isFinite(position.coords.accuracy)
+          ? position.coords.accuracy
+          : null,
+      );
+      setLocationChanged(true);
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  const save = async () => {
+    setError(null);
+
+    const input: Parameters<typeof api.updateSiteVisit>[2] = {
+      mainhead: mainhead.trim(),
+      pencawangName: pencawangName.trim(),
+      functionalLocation: functionalLocation.trim(),
+      notes: notes.trim(),
+    };
+
+    if (locationChanged) {
+      const lat = Number(latitude);
+      const lng = Number(longitude);
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng) ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180
+      ) {
+        setError('Enter a valid latitude (-90..90) and longitude (-180..180).');
+        return;
+      }
+      input.checkInLatitude = lat;
+      input.checkInLongitude = lng;
+      input.checkInAccuracyMeters = accuracy;
+      input.checkInCapturedAt = new Date().toISOString();
+    }
+
+    setSaving(true);
+    try {
+      await api.updateSiteVisit(token, visit.id, input);
+      setOpen(false);
+      setLocationChanged(false);
+      await onUpdated();
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.status === 401) {
+        setError('Your session expired — sign in again.');
+      } else {
+        setError(
+          saveError instanceof Error ? saveError.message : 'Unable to save changes.',
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle>Edit Details</SectionTitle>
+      {!open ? (
+        <>
+          <Text style={styles.reassignHint}>
+            Fix a wrong Pencawang name, mainhead, location, or notes without recreating
+            the visit.
+          </Text>
+          <AppButton
+            label="Edit Visit Details"
+            variant="secondary"
+            onPress={() => setOpen(true)}
+          />
+        </>
+      ) : (
+        <View style={styles.reassignForm}>
+          {error ? <ErrorBanner message={error} /> : null}
+          <TextField
+            label="Mainhead"
+            value={mainhead}
+            onChangeText={setMainhead}
+            autoCapitalize="characters"
+          />
+          <TextField
+            label="Pencawang Name"
+            value={pencawangName}
+            onChangeText={setPencawangName}
+            autoCapitalize="characters"
+          />
+          <TextField
+            label="Functional Location"
+            value={functionalLocation}
+            onChangeText={setFunctionalLocation}
+            autoCapitalize="characters"
+          />
+          <TextField label="Notes" value={notes} onChangeText={setNotes} multiline />
+          <Text style={styles.reassignHint}>
+            Location{accuracy != null ? ` (±${Math.round(accuracy)}m)` : ''} — re-capture
+            live or correct manually.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <TextField
+                label="Latitude"
+                value={latitude}
+                onChangeText={(value) => {
+                  setLatitude(value);
+                  setLocationChanged(true);
+                }}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <TextField
+                label="Longitude"
+                value={longitude}
+                onChangeText={(value) => {
+                  setLongitude(value);
+                  setLocationChanged(true);
+                }}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+          </View>
+          <AppButton
+            label={locating ? 'Locating…' : 'Use My Current Location'}
+            variant="secondary"
+            onPress={() => void recaptureLocation()}
+            loading={locating}
+            disabled={locating || saving}
+          />
+          <AppButton
+            label={saving ? 'Saving…' : 'Save Changes'}
+            onPress={() => void save()}
+            loading={saving}
+            disabled={saving}
+          />
+          <AppButton
+            label="Cancel"
+            variant="secondary"
+            onPress={() => {
+              setOpen(false);
+              setError(null);
+            }}
+          />
+        </View>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Manager/Admin "Danger Zone": irreversibly hard-delete demo / mistaken data —
+ * this Site Visit (cascading its inspections + the poles it created), or the
+ * whole Pencawang (every visit + pole + feeder under it). Both preview first and
+ * require an explicit destructive confirm; the server scopes a MANAGER to their
+ * own company and logs every delete.
+ */
+function DeleteVisitCard({
+  visit,
+  substationId,
+  token,
+  userRole,
+  onDeleted,
+}: {
+  visit: SiteVisit;
+  substationId?: string;
+  token: string;
+  userRole?: UserRole;
+  onDeleted: () => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canDelete = userRole === 'ADMIN' || userRole === 'MANAGER';
+  if (!canDelete) {
+    return null;
+  }
+
+  const pencawangId = substationId ?? visit.substation?.id ?? null;
+
+  const runDeleteVisit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteSiteVisit(token, visit.id);
+      onDeleted();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'Unable to delete this visit.');
+    }
+  };
+
+  const confirmDeleteVisit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const preview = await api.previewDeleteSiteVisit(token, visit.id);
+      setBusy(false);
+      Alert.alert(
+        'Delete this visit?',
+        'This permanently removes the survey and everything captured in it:\n\n' +
+          `• ${preview.inspections} inspection(s)\n` +
+          `• ${preview.assetsToDelete} pole(s) created here` +
+          (preview.sharedAssetsKept > 0
+            ? `\n\n${preview.sharedAssetsKept} pole(s) shared with another survey are kept.`
+            : '') +
+          '\n\nThis cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => void runDeleteVisit() },
+        ],
+      );
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'Unable to preview the delete.');
+    }
+  };
+
+  const runDeletePencawang = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deletePencawangCascade(token, id);
+      onDeleted();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'Unable to delete this Pencawang.');
+    }
+  };
+
+  const confirmDeletePencawang = async () => {
+    if (!pencawangId) {
+      setError('This visit has no linked Pencawang to delete.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const preview = await api.previewDeletePencawang(token, pencawangId);
+      setBusy(false);
+      if (preview.blocked) {
+        Alert.alert('Cannot delete this Pencawang', preview.blocked);
+        return;
+      }
+      Alert.alert(
+        `Delete the whole Pencawang "${preview.pencawang ?? ''}"?`,
+        'This permanently removes EVERYTHING under this Pencawang:\n\n' +
+          `• ${preview.siteVisits} site visit(s)\n` +
+          `• ${preview.assets} pole(s)\n` +
+          `• ${preview.feeders} feeder(s)\n\n` +
+          'This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete Everything',
+            style: 'destructive',
+            onPress: () => void runDeletePencawang(pencawangId),
+          },
+        ],
+      );
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'Unable to preview the delete.');
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle>Danger Zone</SectionTitle>
+      <Text style={styles.reassignHint}>
+        Permanently remove demo or mistaken data. Irreversible, and every delete is logged.
+      </Text>
+      {error ? <ErrorBanner message={error} /> : null}
+      <AppButton
+        label={busy ? 'Working…' : 'Delete This Visit'}
+        variant="danger"
+        onPress={() => void confirmDeleteVisit()}
+        loading={busy}
+        disabled={busy}
+      />
+      {pencawangId ? (
+        <AppButton
+          label="Delete Entire Pencawang…"
+          variant="danger"
+          onPress={() => void confirmDeletePencawang()}
+          disabled={busy}
+        />
+      ) : null}
     </Card>
   );
 }

@@ -42,6 +42,12 @@ import {
   UpdateChecklistTemplateInput,
   UpdateAssetInput,
   AssetDeleteResult,
+  SiteVisitDeletePreview,
+  SiteVisitDeleteResult,
+  PencawangDeletePreview,
+  PencawangDeleteResult,
+  DailyUserActivity,
+  CrewPerformance,
 } from './types';
 
 // Default to PROD so a build that somehow misses EXPO_PUBLIC_API_BASE_URL still
@@ -543,6 +549,20 @@ export const api = {
     return request<DailyTeamActivity>('/dashboard/daily-team-activity', { token });
   },
 
+  // Per-user output today — a manager's view of individual crew performance.
+  getDailyUserActivity(token: string) {
+    return request<DailyUserActivity>('/dashboard/daily-user-activity', { token });
+  },
+
+  // Per-user output for a period (default: this month) — the pay-monitoring view.
+  getCrewPerformance(token: string, from?: string, to?: string) {
+    const params: string[] = [];
+    if (from) params.push(`from=${encodeURIComponent(from)}`);
+    if (to) params.push(`to=${encodeURIComponent(to)}`);
+    const qs = params.length ? `?${params.join('&')}` : '';
+    return request<CrewPerformance>(`/reports/crew-performance${qs}`, { token });
+  },
+
   getChecklistTemplateByAssetType(token: string, assetType: string) {
     return request<ChecklistTemplate>(
       `/checklist-templates/asset-type/${encodeURIComponent(assetType)}`,
@@ -775,6 +795,63 @@ export const api = {
       method: 'POST',
       token,
       body: { ids },
+    });
+  },
+
+  // Manager/Admin hard-delete a whole Site Visit (cascades its inspections +
+  // the poles it created, keeping any shared with another survey).
+  previewDeleteSiteVisit(token: string, siteVisitId: string) {
+    return request<SiteVisitDeletePreview>(
+      `/site-visits/${siteVisitId}/delete-preview`,
+      { token },
+    );
+  },
+
+  deleteSiteVisit(token: string, siteVisitId: string) {
+    return request<SiteVisitDeleteResult>(`/site-visits/${siteVisitId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  // Manager/Admin cascade-delete a whole Pencawang (all its visits + poles +
+  // feeders). The preview's `blocked` field explains when it can't proceed.
+  previewDeletePencawang(token: string, substationId: string) {
+    return request<PencawangDeletePreview>(
+      `/substations/${substationId}/delete-preview`,
+      { token },
+    );
+  },
+
+  deletePencawangCascade(token: string, substationId: string) {
+    return request<PencawangDeleteResult>(`/substations/${substationId}/cascade`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  // Correct a started visit's details (wrong Pencawang label / mainhead / GPS).
+  // Server gates by lifecycle + role; only the sent fields change.
+  updateSiteVisit(
+    token: string,
+    siteVisitId: string,
+    input: {
+      mainhead?: string;
+      pencawangCode?: string;
+      pencawangName?: string;
+      functionalLocation?: string;
+      notes?: string;
+      substationId?: string;
+      checkInLatitude?: number;
+      checkInLongitude?: number;
+      checkInAccuracyMeters?: number | null;
+      checkInCapturedAt?: string;
+    },
+  ) {
+    return request<SiteVisit>(`/site-visits/${siteVisitId}`, {
+      method: 'PATCH',
+      token,
+      body: input,
     });
   },
 

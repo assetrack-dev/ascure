@@ -964,6 +964,80 @@ export interface AssetDeleteResult {
   notFound: string[];
 }
 
+export interface SiteVisitDeletePreview {
+  siteVisitId: string;
+  pencawang: string | null;
+  inspections: number;
+  createdAssets: number;
+  assetsToDelete: number;
+  sharedAssetsKept: number;
+}
+
+export interface SiteVisitDeleteResult {
+  deleted: boolean;
+  siteVisitId: string;
+  deletedInspections: number;
+  deletedAssets: number;
+  skippedSharedAssets: number;
+}
+
+export interface PencawangDeletePreview {
+  pencawangId: string;
+  pencawang: string | null;
+  siteVisits: number;
+  routeReferences: number;
+  assets: number;
+  feeders: number;
+  /** Human reason the cascade can't proceed, or null when it can. */
+  blocked: string | null;
+}
+
+export interface PencawangDeleteResult {
+  deleted: boolean;
+  pencawangId: string;
+  deletedSiteVisits: number;
+  deletedAssets: number;
+  deletedFeeders: number;
+}
+
+export interface DailyUserActivityRow {
+  userId: string;
+  name: string;
+  email: string | null;
+  role: UserRole | null;
+  teamName: string | null;
+  assetsInspectedToday: number;
+}
+
+export interface DailyUserActivity {
+  date: string;
+  totalAssetsInspectedToday: number;
+  activeUserCount: number;
+  users: DailyUserActivityRow[];
+  generatedAt: string;
+}
+
+export interface CrewPerformanceRow {
+  userId: string;
+  name: string;
+  email: string | null;
+  role: UserRole | null;
+  teamName: string | null;
+  assetsInspected: number;
+  submittedInspections: number;
+  visits: number;
+  activeDays: number;
+}
+
+export interface CrewPerformance {
+  period: string;
+  from: string;
+  to: string;
+  totalAssetsInspected: number;
+  users: CrewPerformanceRow[];
+  generatedAt: string;
+}
+
 export type DraftValue = string | string[] | boolean | null;
 export type DraftValues = Record<string, DraftValue>;
 export type ChecklistItemDraftValue = {

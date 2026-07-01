@@ -5,8 +5,10 @@ import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import {
+  CrewPerformance,
   DailyTeamActivity,
   DailyTeamActivityTeam,
+  DailyUserActivity,
   DashboardData,
   DashboardRecentDefect,
   DefectStatus,
@@ -37,6 +39,7 @@ export function DashboardScreen() {
   const { canInspect, canMaintain, loading: capsLoading } = useCapabilities();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [teamActivity, setTeamActivity] = useState<DailyTeamActivity | null>(null);
+  const [userActivity, setUserActivity] = useState<DailyUserActivity | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +47,8 @@ export function DashboardScreen() {
   // don't see the card (and the API would only ever return their own team).
   const canSeeTeamActivity =
     user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'SUPERVISOR';
+  // Per-USER performance (monitor + pay) is a manager/admin view.
+  const canSeePerUser = user.role === 'ADMIN' || user.role === 'MANAGER';
 
   // Defect stats belong to maintenance work + oversight roles. An inspection-only
   // technician shouldn't see defect numbers; a manager/supervisor oversees both.
@@ -67,13 +72,25 @@ export function DashboardScreen() {
           })
         : Promise.resolve(null);
 
-      const [response, activity] = await Promise.all([
+      const userActivityRequest = canSeePerUser
+        ? api.getDailyUserActivity(token).catch((activityError) => {
+            if (activityError instanceof ApiError && activityError.status === 401) {
+              throw activityError;
+            }
+            console.warn('[DASHBOARD] user activity unavailable', activityError);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      const [response, activity, userActivityData] = await Promise.all([
         api.getDashboard(token),
         activityRequest,
+        userActivityRequest,
       ]);
 
       setDashboard(response);
       setTeamActivity(activity);
+      setUserActivity(userActivityData);
     } catch (loadError) {
       console.error('[DASHBOARD LOAD ERROR]', loadError);
 
@@ -84,11 +101,12 @@ export function DashboardScreen() {
 
       setDashboard(null);
       setTeamActivity(null);
+      setUserActivity(null);
       setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard.');
     } finally {
       setIsLoading(false);
     }
-  }, [canSeeTeamActivity, handleUnauthorized, token]);
+  }, [canSeePerUser, canSeeTeamActivity, handleUnauthorized, token]);
 
   useEffect(() => {
     loadDashboard();
@@ -152,6 +170,10 @@ export function DashboardScreen() {
 
           {canSeeTeamActivity && teamActivity ? (
             <TeamActivityCard activity={teamActivity} />
+          ) : null}
+
+          {canSeePerUser && userActivity ? (
+            <UserActivityCard activity={userActivity} token={token} />
           ) : null}
 
           {showDefectStats ? (
@@ -321,6 +343,147 @@ function TeamActivityRow({
         />
       </View>
     </View>
+  );
+}
+
+function UserActivityRow({
+  name,
+  subtitle,
+  value,
+  maxValue,
+}: {
+  name: string;
+  subtitle: string | null;
+  value: number;
+  maxValue: number;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const fraction =
+    maxValue > 0 && value > 0 ? Math.max(value / maxValue, 0.06) : 0;
+
+  return (
+    <View style={styles.teamActivityRow}>
+      <View style={styles.teamActivityRowTop}>
+        <Text style={styles.teamActivityTeamName} numberOfLines={1}>
+          {name}
+          {subtitle ? ` · ${subtitle}` : ''}
+        </Text>
+        <Text style={styles.teamActivityCount}>{formatNumber(value)}</Text>
+      </View>
+      <View style={styles.teamActivityTrack}>
+        <View
+          style={[styles.teamActivityFill, { width: `${Math.round(fraction * 100)}%` }]}
+        />
+      </View>
+    </View>
+  );
+}
+
+function UserActivityCard({
+  activity,
+  token,
+}: {
+  activity: DailyUserActivity;
+  token: string;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const [monthOpen, setMonthOpen] = useState(false);
+  const [month, setMonth] = useState<CrewPerformance | null>(null);
+  const [monthLoading, setMonthLoading] = useState(false);
+  const [monthError, setMonthError] = useState<string | null>(null);
+
+  const maxValue = activity.users.reduce(
+    (max, row) => Math.max(max, row.assetsInspectedToday),
+    0,
+  );
+
+  const toggleMonth = async () => {
+    const next = !monthOpen;
+    setMonthOpen(next);
+    if (next && !month && !monthLoading) {
+      setMonthLoading(true);
+      setMonthError(null);
+      try {
+        setMonth(await api.getCrewPerformance(token));
+      } catch (error) {
+        setMonthError(
+          error instanceof Error ? error.message : 'Unable to load this month.',
+        );
+      } finally {
+        setMonthLoading(false);
+      }
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle>Today's Crew Activity</SectionTitle>
+      <Text style={styles.teamActivityDate}>{formatActivityDate(activity.date)}</Text>
+
+      <View style={styles.teamActivitySummary}>
+        <Text style={styles.teamActivityTotalValue}>
+          {formatNumber(activity.totalAssetsInspectedToday)}
+        </Text>
+        <Text style={styles.teamActivityTotalLabel}>
+          {activity.totalAssetsInspectedToday === 1 ? 'pole inspected' : 'poles inspected'}
+          {activity.activeUserCount > 0
+            ? ` · ${activity.activeUserCount} ${
+                activity.activeUserCount === 1 ? 'person' : 'people'
+              } active`
+            : ''}
+        </Text>
+      </View>
+
+      {activity.users.length === 0 ? (
+        <BodyText muted>No inspections submitted today yet.</BodyText>
+      ) : (
+        <View style={styles.teamActivityList}>
+          {activity.users.map((row) => (
+            <UserActivityRow
+              key={row.userId}
+              name={row.name}
+              subtitle={row.teamName}
+              value={row.assetsInspectedToday}
+              maxValue={maxValue}
+            />
+          ))}
+        </View>
+      )}
+
+      <AppButton
+        label={monthOpen ? 'Hide This Month' : 'This Month (pay view)'}
+        variant="secondary"
+        onPress={() => void toggleMonth()}
+      />
+      {monthOpen ? (
+        monthLoading ? (
+          <BodyText muted>Loading this month…</BodyText>
+        ) : monthError ? (
+          <ErrorBanner message={monthError} />
+        ) : month ? (
+          <View style={styles.teamActivityList}>
+            <Text style={styles.teamActivityDate}>
+              {month.period} · {formatNumber(month.totalAssetsInspected)} poles total
+            </Text>
+            {month.users.length === 0 ? (
+              <BodyText muted>No inspections this month yet.</BodyText>
+            ) : (
+              month.users.map((row) => (
+                <UserActivityRow
+                  key={row.userId}
+                  name={row.name}
+                  subtitle={row.teamName}
+                  value={row.assetsInspected}
+                  maxValue={month.users[0]?.assetsInspected ?? 0}
+                />
+              ))
+            )}
+          </View>
+        ) : null
+      ) : null}
+    </Card>
   );
 }
 
