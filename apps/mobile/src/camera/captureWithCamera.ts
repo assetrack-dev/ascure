@@ -26,8 +26,8 @@ export type CaptureResult = {
   width: number;
   height: number;
   kind: CaptureMode;
-  /** Pole tilt from vertical (deg) when Tilt mode was on at capture; else absent/null. */
-  tiltDegrees?: number | null;
+  /** Measurement-line tilt from vertical (signed deg) when Tilt mode was used; else absent/null. */
+  tiltLineAngle?: number | null;
 };
 
 export type CaptureRequest = {

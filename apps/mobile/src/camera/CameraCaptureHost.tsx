@@ -26,8 +26,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { registerCameraCaptureHost, type CaptureRequest } from './captureWithCamera';
 import { TimestampStamp } from './TimestampStamp';
+import { TiltOverlay } from './TiltOverlay';
 
-type ReviewPhoto = { uri: string; width: number; height: number; tilt: number | null };
+type ReviewPhoto = {
+  uri: string;
+  width: number;
+  height: number;
+  tiltLineAngle: number | null;
+};
 type Fix = { latitude: number; longitude: number; accuracy: number | null };
 
 const ZOOM_PRESETS = [
@@ -35,20 +41,20 @@ const ZOOM_PRESETS = [
   { label: '2×', value: 0.33 },
   { label: '4×', value: 0.66 },
 ];
+const LEVEL_TOLERANCE_DEG = 1.5;
 
 function clamp01(v: number) {
   return Math.min(1, Math.max(0, v));
 }
 
 /**
- * Root-mounted, invisible until a capture is requested via `captureWithCamera`.
- * In-app camera (<CameraView>) so capture never leaves the app — the fix for the
- * "unregistered ActivityResultLauncher" crash. Mounted once in App.tsx.
+ * Root-mounted in-app camera. Fixes the "unregistered ActivityResultLauncher"
+ * crash by capturing in-app (no system-camera Intent). Mounted once in App.tsx.
  *
- * The preview is fitted to the real 4:3 capture ratio (bordered "frame") so what
- * you see is what gets saved. Field UI: live timestamp+GPS stamp (bottom-right,
- * same <TimestampStamp> burned into the photo), grid, pinch + preset zoom, silent
- * shutter, and a post-capture Use/Retake review.
+ * Tilt tool: the phone stays LEVEL (so the photo is vertically straight); a static
+ * vertical axis is shown and the user swings a measurement line (drag) onto the
+ * pole. The angle between them is measured and burned into the photo via
+ * <TiltOverlay>. A small gravity "hold level" assist keeps shots true-vertical.
  */
 export function CameraCaptureHost() {
   const [request, setRequest] = useState<CaptureRequest | null>(null);
@@ -69,24 +75,40 @@ export function CameraCaptureHost() {
   const [showGrid, setShowGrid] = useState(true);
   const [zoom, setZoom] = useState(0);
   const [reviewPhoto, setReviewPhoto] = useState<ReviewPhoto | null>(null);
-  const [tiltMode, setTiltMode] = useState(false);
-  const [tiltDegrees, setTiltDegrees] = useState<number | null>(null);
 
   const [now, setNow] = useState(() => new Date());
   const [fix, setFix] = useState<Fix | null>(null);
+
+  // Tilt tool
+  const [tiltMode, setTiltMode] = useState(false);
+  const [lineAngleDeg, setLineAngleDeg] = useState(0);
+  const [deviceRoll, setDeviceRoll] = useState<number | null>(null);
+  const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
 
   const requestRef = useRef<CaptureRequest | null>(null);
   requestRef.current = request;
   const zoomRef = useRef(0);
   zoomRef.current = zoom;
   const zoomBase = useRef(0);
-  const tiltDegreesRef = useRef<number | null>(null);
-  tiltDegreesRef.current = tiltDegrees;
+  const lineAngleRef = useRef(0);
+  lineAngleRef.current = lineAngleDeg;
+  const frameSizeRef = useRef(frameSize);
+  frameSizeRef.current = frameSize;
 
   useEffect(() => registerCameraCaptureHost(setRequest), []);
 
   const visible = request != null;
   const mode = request?.mode ?? 'photo';
+
+  // Swing the measurement line about the frame centre to follow the drag.
+  function swingLine(x: number, y: number) {
+    const { w, h } = frameSizeRef.current;
+    if (!w || !h) return;
+    let deg = (Math.atan2(x - w / 2, -(y - h / 2)) * 180) / Math.PI;
+    if (deg > 90) deg -= 180;
+    else if (deg < -90) deg += 180;
+    setLineAngleDeg(deg);
+  }
 
   const pinchGesture = Gesture.Pinch()
     .runOnJS(true)
@@ -96,6 +118,13 @@ export function CameraCaptureHost() {
     .onUpdate((event) => {
       setZoom(clamp01(zoomBase.current + (event.scale - 1) * 0.4));
     });
+
+  const linePanGesture = Gesture.Pan()
+    .runOnJS(true)
+    .onBegin((event) => swingLine(event.x, event.y))
+    .onUpdate((event) => swingLine(event.x, event.y));
+
+  const activeGesture = tiltMode ? linePanGesture : pinchGesture;
 
   useEffect(() => {
     if (!visible) return;
@@ -107,7 +136,8 @@ export function CameraCaptureHost() {
     setZoom(0);
     setReviewPhoto(null);
     setTiltMode(false);
-    setTiltDegrees(null);
+    setLineAngleDeg(0);
+    setDeviceRoll(null);
   }, [visible]);
 
   // Live clock + GPS for the on-screen stamp.
@@ -145,19 +175,17 @@ export function CameraCaptureHost() {
     };
   }, [visible]);
 
-  // Pole-tilt inclinometer: read the gravity vector while Tilt mode is on.
+  // "Hold level" assist — device roll from gravity, only while Tilt mode is on.
   useEffect(() => {
     if (!visible || !tiltMode) {
-      setTiltDegrees(null);
+      setDeviceRoll(null);
       return;
     }
-    DeviceMotion.setUpdateInterval(120);
+    DeviceMotion.setUpdateInterval(150);
     const sub = DeviceMotion.addListener((data) => {
       const g = data.accelerationIncludingGravity;
       if (!g) return;
-      // Lean from true vertical (left-right roll). v1 — verify axis/sign on-device.
-      const roll = Math.atan2(g.x, -g.y) * (180 / Math.PI);
-      setTiltDegrees(Math.abs(roll));
+      setDeviceRoll((Math.atan2(g.x, -g.y) * 180) / Math.PI);
     });
     return () => sub.remove();
   }, [visible, tiltMode]);
@@ -234,7 +262,7 @@ export function CameraCaptureHost() {
         uri: picture.uri,
         width: picture.width,
         height: picture.height,
-        tilt: tiltMode ? tiltDegreesRef.current : null,
+        tiltLineAngle: tiltMode ? lineAngleRef.current : null,
       });
     } catch (error) {
       requestRef.current?.reject(
@@ -253,7 +281,7 @@ export function CameraCaptureHost() {
       width: reviewPhoto.width,
       height: reviewPhoto.height,
       kind: 'photo',
-      tiltDegrees: reviewPhoto.tilt,
+      tiltLineAngle: reviewPhoto.tiltLineAngle,
     });
   }
 
@@ -295,6 +323,7 @@ export function CameraCaptureHost() {
 
   const shutterDisabled = !isCameraReady || isCapturing;
   const inReview = reviewPhoto != null;
+  const isLevel = deviceRoll != null && Math.abs(deviceRoll) <= LEVEL_TOLERANCE_DEG;
 
   return (
     <Modal
@@ -304,10 +333,17 @@ export function CameraCaptureHost() {
       statusBarTranslucent
     >
       <GestureHandlerRootView style={styles.container}>
-        {/* Capture frame — fitted to the 4:3 photo ratio so preview == saved photo */}
         {visible && permissionsReady ? (
-          <GestureDetector gesture={pinchGesture}>
-            <View style={styles.frame}>
+          <GestureDetector gesture={activeGesture}>
+            <View
+              style={styles.frame}
+              onLayout={(e) =>
+                setFrameSize({
+                  w: e.nativeEvent.layout.width,
+                  h: e.nativeEvent.layout.height,
+                })
+              }
+            >
               <CameraView
                 ref={cameraRef}
                 style={StyleSheet.absoluteFill}
@@ -325,7 +361,7 @@ export function CameraCaptureHost() {
                   );
                 }}
               />
-              {showGrid ? (
+              {showGrid && !tiltMode ? (
                 <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                   <View style={[styles.gridLineV, { left: '33.33%' }]} />
                   <View style={[styles.gridLineV, { left: '66.66%' }]} />
@@ -333,31 +369,15 @@ export function CameraCaptureHost() {
                   <View style={[styles.gridLineH, { top: '66.66%' }]} />
                 </View>
               ) : null}
+              {tiltMode ? <TiltOverlay angleDeg={lineAngleDeg} showHint /> : null}
               <View pointerEvents="none" style={styles.liveStamp}>
                 <TimestampStamp
                   date={now}
                   latitude={fix?.latitude ?? null}
                   longitude={fix?.longitude ?? null}
                   accuracy={fix?.accuracy}
-                  tiltDegrees={tiltMode ? tiltDegrees : null}
                 />
               </View>
-              {tiltMode ? (
-                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                  <View style={styles.plumbLine} />
-                  <View style={styles.tiltReadoutWrap}>
-                    <Text
-                      style={[
-                        styles.tiltReadout,
-                        tiltDegrees != null && tiltDegrees < 0.6 && styles.tiltReadoutLevel,
-                      ]}
-                    >
-                      {tiltDegrees != null ? `${tiltDegrees.toFixed(1)}°` : '—'}
-                    </Text>
-                    <Text style={styles.tiltHint}>Lay the line along the pole</Text>
-                  </View>
-                </View>
-              ) : null}
             </View>
           </GestureDetector>
         ) : null}
@@ -377,6 +397,9 @@ export function CameraCaptureHost() {
               style={StyleSheet.absoluteFill}
               resizeMode="contain"
             />
+            {reviewPhoto.tiltLineAngle != null ? (
+              <TiltOverlay angleDeg={reviewPhoto.tiltLineAngle} />
+            ) : null}
             <View style={[styles.reviewLabelWrap, { top: insets.top + 10 }]}>
               <Text style={styles.reviewLabel}>PREVIEW</Text>
             </View>
@@ -418,13 +441,15 @@ export function CameraCaptureHost() {
                 >
                   <Text style={styles.iconText}>Tilt</Text>
                 </Pressable>
-                <Pressable
-                  onPress={() => setShowGrid((g) => !g)}
-                  hitSlop={12}
-                  style={styles.iconButton}
-                >
-                  <Text style={styles.iconText}>{showGrid ? '⊞' : '⊡'}</Text>
-                </Pressable>
+                {!tiltMode ? (
+                  <Pressable
+                    onPress={() => setShowGrid((g) => !g)}
+                    hitSlop={12}
+                    style={styles.iconButton}
+                  >
+                    <Text style={styles.iconText}>{showGrid ? '⊞' : '⊡'}</Text>
+                  </Pressable>
+                ) : null}
                 {mode === 'photo' ? (
                   <Pressable
                     onPress={() => setFlash((f) => (f === 'off' ? 'on' : 'off'))}
@@ -437,14 +462,23 @@ export function CameraCaptureHost() {
               </View>
             </View>
 
+            {/* Hold-level assist (Tilt mode) */}
+            {tiltMode ? (
+              <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
+                <Text style={[styles.levelPill, isLevel ? styles.levelOk : styles.levelWarn]}>
+                  {isLevel ? '◎ Phone level' : '▲ Hold phone level for a straight photo'}
+                </Text>
+              </View>
+            ) : null}
+
             {isRecording ? (
-              <View style={[styles.recBadge, { top: insets.top + 60 }]}>
+              <View style={[styles.recBadge, { top: insets.top + 90 }]}>
                 <View style={styles.recDot} />
                 <Text style={styles.recText}>REC · max 30s</Text>
               </View>
             ) : null}
 
-            {!isRecording ? (
+            {!isRecording && !tiltMode ? (
               <View style={[styles.zoomRow, { bottom: insets.bottom + 112 }]}>
                 {ZOOM_PRESETS.map((preset) => {
                   const active = Math.abs(zoom - preset.value) < 0.03;
@@ -557,48 +591,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  iconText: { color: '#ffffff', fontSize: 17, fontWeight: '600' },
   iconButtonActive: { backgroundColor: '#2563EB' },
-  plumbLine: {
-    position: 'absolute',
-    left: '50%',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    marginLeft: -1,
-    backgroundColor: '#F5C518',
-    opacity: 0.9,
-  },
-  tiltReadoutWrap: {
-    position: 'absolute',
-    top: 12,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    gap: 4,
-  },
-  tiltReadout: {
+  iconText: { color: '#ffffff', fontSize: 17, fontWeight: '600' },
+  absTopLeft: { position: 'absolute', left: 20 },
+  levelWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  levelPill: {
+    fontSize: 12,
+    fontWeight: '700',
     color: '#ffffff',
-    fontSize: 28,
-    fontWeight: '800',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 14,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 12,
     overflow: 'hidden',
   },
-  tiltReadoutLevel: { color: '#4ade80' },
-  tiltHint: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '600',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  absTopLeft: { position: 'absolute', left: 20 },
+  levelOk: { backgroundColor: 'rgba(22,163,74,0.85)' },
+  levelWarn: { backgroundColor: 'rgba(202,138,4,0.9)' },
   recBadge: {
     position: 'absolute',
     alignSelf: 'center',

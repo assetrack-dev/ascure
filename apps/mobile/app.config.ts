@@ -59,7 +59,7 @@ export default {
 
     android: {
       package: 'local.ascure.field',
-      versionCode: 3,
+      versionCode: 4,
       usesCleartextTraffic: true,
       adaptiveIcon: {
         foregroundImage: './assets/brand/adaptive-foreground.png',

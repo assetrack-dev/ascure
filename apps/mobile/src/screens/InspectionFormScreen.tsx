@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { captureWithCamera } from '../camera/captureWithCamera';
 import { TimestampStamp } from '../camera/TimestampStamp';
+import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import {
@@ -93,7 +94,7 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
   captureHeight: number;
   layoutWidth: number;
   layoutHeight: number;
-  tiltDegrees?: number | null;
+  tiltLineAngle?: number | null;
 };
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
@@ -611,7 +612,7 @@ export function InspectionFormScreen() {
       timestampLabel: formatPhotoTimestampLabel(capturedAt),
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
-      tiltDegrees: capturedAsset.tiltDegrees ?? null,
+      tiltLineAngle: capturedAsset.tiltLineAngle ?? null,
       ...(await getOverlayCaptureSize(
         capturedAsset.uri,
         capturedAsset.width,
@@ -1201,12 +1202,14 @@ export function InspectionFormScreen() {
                   style={styles.overlayCaptureImage}
                   resizeMode="cover"
                 />
+                {pendingOverlayPhoto.tiltLineAngle != null ? (
+                  <TiltOverlay angleDeg={pendingOverlayPhoto.tiltLineAngle} />
+                ) : null}
                 <View style={styles.overlayStampWrap}>
                   <TimestampStamp
                     date={new Date(pendingOverlayPhoto.timestamp)}
                     latitude={pendingOverlayPhoto.latitude ?? null}
                     longitude={pendingOverlayPhoto.longitude ?? null}
-                    tiltDegrees={pendingOverlayPhoto.tiltDegrees ?? null}
                   />
                 </View>
               </View>

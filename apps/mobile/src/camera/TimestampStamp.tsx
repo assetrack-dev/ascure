@@ -1,8 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-// Shared, compact timestamp + GPS (+ optional pole-tilt) stamp — rendered
-// identically on the live camera (bottom-right) and burned into the saved photo
-// (WYSIWYG). Coordinates only (no reverse-geocode) so it works fully offline.
+// Shared, compact timestamp + GPS stamp — rendered identically on the live camera
+// (bottom-right) and burned into the saved photo (WYSIWYG). Coordinates only
+// (no reverse-geocode) so it works fully offline. (Pole-tilt is drawn separately
+// by <TiltOverlay>, not here.)
 
 const MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -28,7 +29,6 @@ export type TimestampStampProps = {
   latitude: number | null;
   longitude: number | null;
   accuracy?: number | null;
-  tiltDegrees?: number | null;
 };
 
 export function TimestampStamp({
@@ -36,7 +36,6 @@ export function TimestampStamp({
   latitude,
   longitude,
   accuracy,
-  tiltDegrees,
 }: TimestampStampProps) {
   const hours24 = date.getHours();
   const meridiem = hours24 < 12 ? 'am' : 'pm';
@@ -56,8 +55,6 @@ export function TimestampStamp({
     coordsLine = 'GPS: locating…';
   }
 
-  const showTilt = typeof tiltDegrees === 'number' && Number.isFinite(tiltDegrees);
-
   return (
     <View style={styles.panel}>
       <View style={styles.row}>
@@ -70,9 +67,6 @@ export function TimestampStamp({
         </View>
       </View>
       <Text style={styles.coords}>{coordsLine}</Text>
-      {showTilt ? (
-        <Text style={styles.tilt}>Tilt {(tiltDegrees as number).toFixed(1)}° from vertical</Text>
-      ) : null}
     </View>
   );
 }
@@ -112,5 +106,4 @@ const styles = StyleSheet.create({
   date: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   day: { color: '#E2E8F0', fontSize: 10, fontWeight: '500', marginTop: 1 },
   coords: { color: '#ffffff', fontSize: 10, fontWeight: '600' },
-  tilt: { color: '#F5C518', fontSize: 10, fontWeight: '700' },
 });
