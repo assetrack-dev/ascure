@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -10,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { captureWithCamera } from '../camera/captureWithCamera';
 
 export interface EmergencyMedia {
   uri: string;
@@ -70,33 +71,11 @@ export function DeclareEmergencySheet({
   async function capture(kind: 'photo' | 'video') {
     setCaptureError(null);
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        setCaptureError('Camera permission is required.');
-        return;
-      }
+      const asset = await captureWithCamera({
+        mode: kind === 'video' ? 'video' : 'photo',
+      });
 
-      const result = await ImagePicker.launchCameraAsync(
-        kind === 'video'
-          ? {
-              mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-              videoMaxDuration: 30,
-              quality: 0.7,
-            }
-          : {
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsEditing: false,
-              quality: 0.7,
-            },
-      );
-
-      if (result.canceled) {
-        return;
-      }
-
-      const asset = result.assets[0];
-      if (!asset?.uri) {
-        setCaptureError('Could not read the captured file.');
+      if (!asset) {
         return;
       }
 
@@ -187,6 +166,31 @@ export function DeclareEmergencySheet({
                 </Text>
               </Pressable>
             </View>
+
+            {media ? (
+              <View style={styles.previewWrap}>
+                {media.kind === 'photo' ? (
+                  <Image
+                    source={{ uri: media.uri }}
+                    style={styles.previewImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.previewVideo}>
+                    <Text style={styles.previewVideoIcon}>🎥</Text>
+                  </View>
+                )}
+                <View style={styles.previewMeta}>
+                  <Text style={styles.previewMetaText}>
+                    {media.kind === 'photo' ? 'Photo attached' : 'Video attached (max 30s)'}
+                  </Text>
+                  <Pressable onPress={() => setMedia(null)} hitSlop={8}>
+                    <Text style={styles.previewRemove}>Remove</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
             <Text style={styles.helper}>
               Photo or a short video (max 30s) — e.g. an NCV live-current check.
             </Text>
@@ -290,6 +294,32 @@ const styles = StyleSheet.create({
   captureButtonText: { fontSize: 14, color: '#334155', fontWeight: '600' },
   helper: { fontSize: 12, color: '#64748B', marginTop: 8 },
   error: { fontSize: 13, color: '#B91C1C', marginTop: 10 },
+  previewWrap: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  previewImage: { width: '100%', height: 160, backgroundColor: '#0F172A' },
+  previewVideo: {
+    width: '100%',
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F172A',
+  },
+  previewVideoIcon: { fontSize: 34 },
+  previewMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  previewMetaText: { fontSize: 13, color: '#334155', fontWeight: '600' },
+  previewRemove: { fontSize: 13, color: '#B91C1C', fontWeight: '600' },
   footer: { flexDirection: 'row', gap: 10, marginTop: 16 },
   cancelButton: {
     flex: 1,

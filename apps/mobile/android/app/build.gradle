@@ -92,8 +92,17 @@ android {
         applicationId 'local.ascure.field'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
+        versionCode 3
         versionName "1.1.0"
+
+        // Optional side-by-side build for field testing:
+        //   ./gradlew assembleRelease -PdevVariant
+        // installs as `local.ascure.field.dev` alongside the production app so
+        // crews can compare old vs new on one device. Omit the flag for the real build.
+        if (project.hasProperty('devVariant')) {
+            applicationIdSuffix '.dev'
+            versionNameSuffix '-dev'
+        }
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

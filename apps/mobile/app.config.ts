@@ -33,10 +33,13 @@ export default {
 
     plugins: [
       [
-        'expo-image-picker',
+        'expo-camera',
         {
           cameraPermission:
-            'Allow ASCURE Field to use your camera to capture inspection photos.',
+            'Allow ASCURE Field to use your camera to capture inspection photos and video.',
+          microphonePermission:
+            'Allow ASCURE Field to use your microphone when recording emergency video.',
+          recordAudioAndroid: true,
         },
       ],
       [
@@ -56,7 +59,7 @@ export default {
 
     android: {
       package: 'local.ascure.field',
-      versionCode: 2,
+      versionCode: 3,
       usesCleartextTraffic: true,
       adaptiveIcon: {
         foregroundImage: './assets/brand/adaptive-foreground.png',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as ImagePicker from 'expo-image-picker';
+import { captureWithCamera } from '../camera/captureWithCamera';
+import { TimestampStamp } from '../camera/TimestampStamp';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import {
@@ -56,6 +57,7 @@ type PendingMaintenanceProofOverlayPhoto = Omit<CapturedMaintenanceProofPhoto, '
   captureHeight: number;
   layoutWidth: number;
   layoutHeight: number;
+  tiltDegrees?: number | null;
 };
 
 export function DefectDetailScreen() {
@@ -372,26 +374,10 @@ export function DefectDetailScreen() {
       setSavingMaintenanceAction('capture');
       setError(null);
 
-      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      const capturedAsset = await captureWithCamera({ mode: 'photo' });
 
-      if (!cameraPermission.granted) {
-        throw new Error('Camera permission is required to capture repair proof.');
-      }
-
-      const captureResult = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.7,
-      });
-
-      if (captureResult.canceled) {
+      if (!capturedAsset) {
         return;
-      }
-
-      const capturedAsset = captureResult.assets[0];
-
-      if (!capturedAsset?.uri) {
-        throw new Error('Unable to read the captured proof photo.');
       }
 
       const capturedAt = new Date();
@@ -405,6 +391,7 @@ export function DefectDetailScreen() {
         timestampLabel: formatPhotoTimestampLabel(capturedAt),
         latitude,
         longitude,
+        tiltDegrees: capturedAsset.tiltDegrees ?? null,
         ...(await getOverlayCaptureSize(
           capturedAsset.uri,
           capturedAsset.width,
@@ -961,14 +948,13 @@ export function DefectDetailScreen() {
                     style={styles.overlayCaptureImage}
                     resizeMode="cover"
                   />
-                  <View style={styles.overlayBadge}>
-                    <Text style={styles.overlayText}>{pendingOverlayPhoto.timestampLabel}</Text>
-                    {hasCoordinatePair(pendingOverlayPhoto.latitude, pendingOverlayPhoto.longitude) ? (
-                      <Text style={styles.overlayText}>
-                        Lat: {formatOverlayCoordinate(pendingOverlayPhoto.latitude)}, Lng:{' '}
-                        {formatOverlayCoordinate(pendingOverlayPhoto.longitude)}
-                      </Text>
-                    ) : null}
+                  <View style={styles.overlayStampWrap}>
+                    <TimestampStamp
+                      date={new Date(pendingOverlayPhoto.timestamp)}
+                      latitude={pendingOverlayPhoto.latitude ?? null}
+                      longitude={pendingOverlayPhoto.longitude ?? null}
+                      tiltDegrees={pendingOverlayPhoto.tiltDegrees ?? null}
+                    />
                   </View>
                 </View>
               </View>
@@ -1829,6 +1815,11 @@ const createStyles = (t: Theme) =>
   },
   overlayCaptureImage: {
     ...StyleSheet.absoluteFillObject,
+  },
+  overlayStampWrap: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
   },
   overlayBadge: {
     position: 'absolute',

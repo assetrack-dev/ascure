@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as ImagePicker from 'expo-image-picker';
+import { captureWithCamera } from '../camera/captureWithCamera';
+import { TimestampStamp } from '../camera/TimestampStamp';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import {
@@ -92,6 +93,7 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
   captureHeight: number;
   layoutWidth: number;
   layoutHeight: number;
+  tiltDegrees?: number | null;
 };
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
@@ -570,12 +572,8 @@ export function InspectionFormScreen() {
       return null;
     }
 
-    const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
-
-    if (!cameraPermission.granted) {
-      throw new Error('Camera permission is required to capture inspection photos.');
-    }
-
+    // Location is still gated before opening the camera so we fail fast without
+    // a GPS fix (the photo overlay needs coordinates).
     const isLocationEnabled = await Location.hasServicesEnabledAsync();
 
     if (!isLocationEnabled) {
@@ -588,20 +586,10 @@ export function InspectionFormScreen() {
       throw new Error('Location permission is required to attach GPS to the photo.');
     }
 
-    const captureResult = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,
-      quality: 0.7,
-    });
+    const capturedAsset = await captureWithCamera({ mode: 'photo' });
 
-    if (captureResult.canceled) {
+    if (!capturedAsset) {
       return null;
-    }
-
-    const capturedAsset = captureResult.assets[0];
-
-    if (!capturedAsset?.uri) {
-      throw new Error('Unable to read the captured photo.');
     }
 
     const capturedAt = new Date();
@@ -623,6 +611,7 @@ export function InspectionFormScreen() {
       timestampLabel: formatPhotoTimestampLabel(capturedAt),
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
+      tiltDegrees: capturedAsset.tiltDegrees ?? null,
       ...(await getOverlayCaptureSize(
         capturedAsset.uri,
         capturedAsset.width,
@@ -1212,12 +1201,13 @@ export function InspectionFormScreen() {
                   style={styles.overlayCaptureImage}
                   resizeMode="cover"
                 />
-                <View style={styles.overlayBadge}>
-                  <Text style={styles.overlayText}>{pendingOverlayPhoto.timestampLabel}</Text>
-                  <Text style={styles.overlayText}>
-                    Lat: {formatOverlayCoordinate(pendingOverlayPhoto.latitude)}, Lng:{' '}
-                    {formatOverlayCoordinate(pendingOverlayPhoto.longitude)}
-                  </Text>
+                <View style={styles.overlayStampWrap}>
+                  <TimestampStamp
+                    date={new Date(pendingOverlayPhoto.timestamp)}
+                    latitude={pendingOverlayPhoto.latitude ?? null}
+                    longitude={pendingOverlayPhoto.longitude ?? null}
+                    tiltDegrees={pendingOverlayPhoto.tiltDegrees ?? null}
+                  />
                 </View>
               </View>
             </View>
@@ -2706,6 +2696,11 @@ const createStyles = (t: Theme) =>
   },
   overlayCaptureImage: {
     ...StyleSheet.absoluteFillObject,
+  },
+  overlayStampWrap: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
   },
   overlayBadge: {
     position: 'absolute',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as ImagePicker from 'expo-image-picker';
+import { captureWithCamera } from '../camera/captureWithCamera';
 import * as Location from 'expo-location';
 import {
   Alert,
@@ -438,27 +438,9 @@ export function CheckInScreen() {
       setError(null);
       setIsCapturingPhoto(true);
 
-      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      const capturedAsset = await captureWithCamera({ mode: 'photo' });
 
-      if (!cameraPermission.granted) {
-        setError('Camera permission is required to capture site photos.');
-        return;
-      }
-
-      const captureResult = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.7,
-      });
-
-      if (captureResult.canceled) {
-        return;
-      }
-
-      const capturedAsset = captureResult.assets[0];
-
-      if (!capturedAsset?.uri) {
-        setError('Unable to read the captured site photo.');
+      if (!capturedAsset) {
         return;
       }
 
