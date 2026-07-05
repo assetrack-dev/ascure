@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { InspectionCompletionStatus, Prisma, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import {
+  assetAccessWhere,
+  siteVisitAccessWhere,
+} from '../common/authorization/site-visit-scope';
+import { buildScopeContext } from '../common/authorization/scope-context';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateAssetTypeDto,
@@ -388,10 +392,18 @@ export class MasterDataService {
   }
 
   async listAssets(user: RequestUser, substationId?: string) {
+    // The bare list (no substation filter) is the admin-web Assets table — scope
+    // it to the caller's own company for non-admins (ADMIN → tenant-wide). The
+    // substation-filtered path is shared with the mobile inspection flow + the
+    // cross-team map, so it stays tenant-wide (mobile always passes substation_id).
+    const companyScope = substationId
+      ? {}
+      : assetAccessWhere(user, await buildScopeContext(this.prisma, user));
     const assets = await this.prisma.asset.findMany({
       where: {
         tenantId: user.tenantId,
         ...(substationId ? { substationId } : {}),
+        ...companyScope,
       },
       include: {
         assetType: {

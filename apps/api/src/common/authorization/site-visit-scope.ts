@@ -158,3 +158,31 @@ function buildSiteVisitScope(
   // TECHNICIAN / VIEWER / CLIENT: only their own teams' visits.
   return { team: ownTeamMembership };
 }
+
+/**
+ * Asset visibility filter for the STRICT own-company scope. An Asset row carries
+ * no team/org/mainhead column, so scope is applied transitively: an asset is
+ * visible when the caller created it, has an inspection on it, or it was created
+ * during a visit they may access ({@link siteVisitAccessWhere}). ADMIN → {}
+ * (tenant-wide).
+ *
+ * Single source of truth shared by MasterDataService.listAssets (the company-
+ * scoped /assets table) and AssetsService.mutableAssetScope (the edit/delete
+ * gate), so the read scope and the mutation gate cannot drift apart.
+ */
+export function assetAccessWhere(
+  user: RequestUser,
+  ctx?: ScopeContext,
+): Prisma.AssetWhereInput {
+  if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+    return {};
+  }
+  const scopeWhere = siteVisitAccessWhere(user, ctx);
+  return {
+    OR: [
+      { createdByUserId: user.id },
+      { inspections: { some: { siteVisit: scopeWhere } } },
+      { createdDuringVisit: scopeWhere },
+    ],
+  };
+}

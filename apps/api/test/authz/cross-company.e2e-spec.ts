@@ -106,13 +106,16 @@ describe('Authz · cross-company isolation (work & findings are org-private)', (
     });
   });
 
-  // DECISION (surfaced by calibration): the physical asset register is currently
-  // tenant-wide — GET /assets/:id and GET /assets return any asset in the tenant
-  // regardless of company. That is defensible (the poles are the utility's shared
-  // infrastructure, not contractor-private), but it IS a product/security choice
-  // to confirm. See apps/api/test/README.md. Left as a visible TODO rather than
-  // asserted either way, so it neither blesses a leak nor reds the suite.
-  it.todo(
-    'DECISION: confirm GET /assets/:id + GET /assets are intentionally tenant-wide (or scope them to org/team)',
-  );
+  // DECISION (owner, 2026-07-06): the bare GET /assets register — the admin-web
+  // Assets table — is now scoped to the caller's own company. techA (company A)
+  // must not see company B's asset in the list. The substation-filtered
+  // GET /assets?substation_id + the /assets/map read stay tenant-wide by design,
+  // so mobile crews still see shared poles to avoid double-inspecting one.
+  it('scopes the bare GET /assets register to the caller company', async () => {
+    const res = await http(app, token.techA).get('/api/v1/assets');
+    expect(res.status).toBe(200);
+    const body = JSON.stringify(res.body);
+    expect(body).toContain(IDS.asset.a);
+    expect(body).not.toContain(IDS.asset.b);
+  });
 });

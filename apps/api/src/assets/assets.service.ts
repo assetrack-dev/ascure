@@ -17,7 +17,7 @@ import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildScopeContext } from '../common/authorization/scope-context';
 import {
-  siteVisitAccessWhere,
+  assetAccessWhere,
   siteVisitMapWhere,
 } from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -1202,17 +1202,7 @@ export class AssetsService {
     user: RequestUser,
   ): Promise<Prisma.AssetWhereInput> {
     const ctx = await buildScopeContext(this.prisma, user);
-    if (ctx.isAdmin) {
-      return {};
-    }
-    const scopeWhere = siteVisitAccessWhere(user, ctx);
-    return {
-      OR: [
-        { createdByUserId: user.id },
-        { inspections: { some: { siteVisit: scopeWhere } } },
-        { createdDuringVisit: scopeWhere },
-      ],
-    };
+    return assetAccessWhere(user, ctx);
   }
 
   private activeSiteVisitStatuses() {
