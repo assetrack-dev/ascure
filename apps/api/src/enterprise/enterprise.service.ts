@@ -86,11 +86,34 @@ const ORGANIZATION_INCLUDE = Prisma.validator<Prisma.OrganizationInclude>()({
       },
     ],
   },
+  mainheadAssignments: {
+    where: {
+      isActive: true,
+    },
+    include: {
+      mainhead: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          isActive: true,
+        },
+      },
+    },
+    orderBy: [
+      {
+        mainhead: {
+          name: 'asc',
+        },
+      },
+    ],
+  },
   _count: {
     select: {
       branches: true,
       capabilities: true,
       capabilityAssignments: true,
+      mainheadAssignments: true,
       memberships: true,
       teams: true,
       assignedUsers: true,
@@ -429,6 +452,14 @@ export class EnterpriseService {
                 },
               },
             },
+            organizationAssignments: {
+              where: {
+                isActive: true,
+              },
+              select: {
+                organizationId: true,
+              },
+            },
           },
         }),
         // Pilot Execution Sprint: assignment pickers (/enterprise/options)
@@ -505,7 +536,15 @@ export class EnterpriseService {
       organizations,
       branches,
       operationalRegions,
-      mainheads,
+      // Flatten the company↔MAINHEAD assignment rows into a flat organizationIds[]
+      // per MAINHEAD so a MANAGER's Team/User picker can show only the MAINHEADs
+      // assigned to their own company (works for region-scoped MAINHEADs too).
+      mainheads: mainheads.map(({ organizationAssignments, ...mainhead }) => ({
+        ...mainhead,
+        organizationIds: organizationAssignments.map(
+          (assignment) => assignment.organizationId,
+        ),
+      })),
       capabilities,
       projects,
       workPackages,
@@ -539,7 +578,17 @@ export class EnterpriseService {
             organization.id,
             dto.capabilityIds,
           );
+        }
 
+        if (dto.mainheadIds !== undefined) {
+          await this.syncOrganizationMainheads(
+            tx,
+            organization.id,
+            dto.mainheadIds,
+          );
+        }
+
+        if (dto.capabilityIds !== undefined || dto.mainheadIds !== undefined) {
           return tx.organization.findUniqueOrThrow({
             where: {
               id: organization.id,
@@ -608,7 +657,8 @@ export class EnterpriseService {
 
         if (
           Object.keys(data).length === 0 &&
-          dto.capabilityIds === undefined
+          dto.capabilityIds === undefined &&
+          dto.mainheadIds === undefined
         ) {
           this.assertHasChanges(data);
         }
@@ -624,6 +674,10 @@ export class EnterpriseService {
 
         if (dto.capabilityIds !== undefined) {
           await this.syncOrganizationCapabilities(tx, id, dto.capabilityIds);
+        }
+
+        if (dto.mainheadIds !== undefined) {
+          await this.syncOrganizationMainheads(tx, id, dto.mainheadIds);
         }
 
         return tx.organization.findUniqueOrThrow({
@@ -1810,6 +1864,76 @@ export class EnterpriseService {
           id: randomUUID(),
           organizationId,
           capabilityId,
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  private async assertMainheadsExist(
+    tx: Prisma.TransactionClient,
+    mainheadIds: string[],
+  ) {
+    if (mainheadIds.length === 0) {
+      return;
+    }
+
+    const count = await tx.mainhead.count({
+      where: {
+        id: {
+          in: mainheadIds,
+        },
+      },
+    });
+
+    if (count !== mainheadIds.length) {
+      throw new NotFoundException('One or more MAINHEAD records were not found.');
+    }
+  }
+
+  /**
+   * Curate a company's MAINHEAD set (OrganizationMainhead). ADMIN-only entry
+   * point (the enterprise controller gates org mutations to ADMIN). Replaces the
+   * full set: MAINHEADs absent from the list are unlinked, present ones linked.
+   * This is what a MANAGER's Team/User MAINHEAD picker draws from, so it is the
+   * single place company↔MAINHEAD ownership is decided.
+   */
+  private async syncOrganizationMainheads(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    mainheadIds: string[] | undefined,
+  ) {
+    const normalizedMainheadIds = this.normalizeIdList(mainheadIds);
+    await this.assertMainheadsExist(tx, normalizedMainheadIds);
+
+    await tx.organizationMainhead.deleteMany({
+      where: {
+        organizationId,
+        ...(normalizedMainheadIds.length > 0
+          ? {
+              mainheadId: {
+                notIn: normalizedMainheadIds,
+              },
+            }
+          : {}),
+      },
+    });
+
+    for (const mainheadId of normalizedMainheadIds) {
+      await tx.organizationMainhead.upsert({
+        where: {
+          organizationId_mainheadId: {
+            organizationId,
+            mainheadId,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          organizationId,
+          mainheadId,
           isActive: true,
         },
         update: {

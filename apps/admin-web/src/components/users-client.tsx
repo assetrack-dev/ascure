@@ -473,8 +473,10 @@ function UserFormModal({
   const isCreateMode = mode === "create";
   const activeMainheads = enterpriseOptions?.mainheads ?? [];
   const activeOperationalRegions = enterpriseOptions?.operationalRegions ?? [];
-  // Item B: a manager may grant MAINHEAD access only within their own company —
-  // MAINHEADs whose branch belongs to the manager's org (join via branch options).
+  // A manager may grant MAINHEAD access only within their own company: the
+  // MAINHEADs ADMIN assigned to their org (OrganizationMainhead → organizationIds),
+  // OR — legacy fallback — MAINHEADs whose branch belongs to their org. The
+  // assignment path is what makes region-scoped MAINHEADs (no branch) selectable.
   const companyBranchIds = new Set(
     (enterpriseOptions?.branches ?? [])
       .filter((branch) => !!managerOrgId && branch.organizationId === managerOrgId)
@@ -482,7 +484,10 @@ function UserFormModal({
   );
   const companyMainheads = isManagerOnly
     ? activeMainheads.filter(
-        (mainhead) => !!mainhead.branchId && companyBranchIds.has(mainhead.branchId),
+        (mainhead) =>
+          !!managerOrgId &&
+          ((mainhead.organizationIds ?? []).includes(managerOrgId) ||
+            (!!mainhead.branchId && companyBranchIds.has(mainhead.branchId))),
       )
     : activeMainheads;
   // Managers get a simplified, company-locked form: a restricted role list, no

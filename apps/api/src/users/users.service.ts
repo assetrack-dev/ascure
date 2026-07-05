@@ -397,10 +397,27 @@ export class UsersService {
         // (non-governance) capabilities; validate/strip here (needs a DB lookup).
         const managerScoped = user.role !== UserRole.ADMIN;
         if (managerScoped && requestedMainheadAccessIds !== undefined) {
+          // Only the MAINHEADs the manager is ADDING must belong to their company.
+          // A technician can already carry MAINHEAD access an ADMIN set (e.g. a
+          // region-scoped one), and the edit form re-sends that unchanged set on
+          // every save — including a plain team/name change. Validating the whole
+          // set would then block the manager from editing the user at all. So diff
+          // against what the user already has and check only the additions.
+          const existingAccessRows = await tx.userMainheadAccess.findMany({
+            where: { userId: id },
+            select: { mainheadId: true },
+          });
+          const existingMainheadIds = new Set<string>([
+            ...existingAccessRows.map((row) => row.mainheadId),
+            ...(existingUser.mainheadId ? [existingUser.mainheadId] : []),
+          ]);
+          const addedMainheadIds = requestedMainheadAccessIds.filter(
+            (mainheadId) => !existingMainheadIds.has(mainheadId),
+          );
           await assertMainheadsInOwnCompany(
             tx,
             user.organizationId,
-            requestedMainheadAccessIds,
+            addedMainheadIds,
           );
         }
         const effectiveCapabilityIds =
@@ -1461,23 +1478,19 @@ export class UsersService {
         organizationId = team.organizationId;
       }
 
+      // A user on a team follows the team's operational area: the team's branch
+      // and MAINHEAD always WIN — adopt them rather than fighting a stale per-user
+      // value. This encodes "the crew follows the team" and removes the conflict
+      // that blocked moving a technician into a team with a different branch /
+      // MAINHEAD. MAINHEAD *access* (visibility, UserMainheadAccess) is a separate
+      // axis and stays untouched — that's for QA/oversight roles that span several
+      // MAINHEADs without being tied to one team. (Organization is deliberately
+      // NOT auto-adopted above — it stays a guarded identity check.)
       if (team.branchId) {
-        if (branchId && branchId !== team.branchId) {
-          throw new BadRequestException(
-            'Selected team does not belong to the selected branch.',
-          );
-        }
-
         branchId = team.branchId;
       }
 
       if (team.mainheadId) {
-        if (mainheadId && mainheadId !== team.mainheadId) {
-          throw new BadRequestException(
-            'Selected team does not belong to the selected MAINHEAD.',
-          );
-        }
-
         mainheadId = team.mainheadId;
       }
     }

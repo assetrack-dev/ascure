@@ -850,6 +850,7 @@ function normalizeOption(rawOption: unknown): EnterpriseOptionRecord | null {
     region: readString(record, "region"),
     state: readString(record, "state"),
     description: readString(record, "description"),
+    organizationIds: normalizeStringArray(record, "organizationIds"),
   };
 }
 

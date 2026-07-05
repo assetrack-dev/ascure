@@ -27,10 +27,14 @@ export function isGovernanceCapabilityCode(
 }
 
 /**
- * Assert every MAINHEAD id belongs to the actor's own company (a MAINHEAD's
- * company is its `branch.organizationId`). Rejects a foreign-company MAINHEAD, a
- * region-only MAINHEAD (no branch → no company, so not a manager's to grant),
- * and an unknown id. Used to bound what a MANAGER may attach to a team/user.
+ * Assert every MAINHEAD id belongs to the actor's own company. A MAINHEAD belongs
+ * to a company when EITHER:
+ *  - it is explicitly assigned to the company (OrganizationMainhead, active) — the
+ *    ADMIN-curated set, which works for region-scoped MAINHEADs (no branch); OR
+ *  - its branch is in the company (`branch.organizationId`) — the legacy link,
+ *    kept so branch-scoped setups keep working without re-assignment.
+ * Rejects a foreign-company MAINHEAD and an unknown id. Used to bound what a
+ * MANAGER may attach to a team/user.
  */
 export async function assertMainheadsInOwnCompany(
   tx: Prisma.TransactionClient,
@@ -48,7 +52,14 @@ export async function assertMainheadsInOwnCompany(
 
   const rows = await tx.mainhead.findMany({
     where: { id: { in: mainheadIds } },
-    select: { id: true, branch: { select: { organizationId: true } } },
+    select: {
+      id: true,
+      branch: { select: { organizationId: true } },
+      organizationAssignments: {
+        where: { organizationId, isActive: true },
+        select: { id: true },
+      },
+    },
   });
   const byId = new Map(rows.map((row) => [row.id, row]));
 
@@ -57,7 +68,9 @@ export async function assertMainheadsInOwnCompany(
     if (!mainhead) {
       throw new NotFoundException('MAINHEAD not found.');
     }
-    if (mainhead.branch?.organizationId !== organizationId) {
+    const assignedToCompany = mainhead.organizationAssignments.length > 0;
+    const branchInCompany = mainhead.branch?.organizationId === organizationId;
+    if (!assignedToCompany && !branchInCompany) {
       throw new ForbiddenException(
         'You can only assign MAINHEADs that belong to your own company.',
       );

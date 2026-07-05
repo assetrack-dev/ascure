@@ -566,7 +566,11 @@ export class TeamsService {
         throw new NotFoundException('MAINHEAD not found.');
       }
 
-      if (branchId && branchId !== mainhead.branchId) {
+      // Only enforce the branch match when the MAINHEAD is itself branch-scoped.
+      // A region-scoped MAINHEAD (branchId null) is orthogonal to the team's
+      // branch, so attaching it must NOT be rejected just because the team has a
+      // branch — the team keeps its branch and gains the region-scoped MAINHEAD.
+      if (mainhead.branchId && branchId && branchId !== mainhead.branchId) {
         throw new BadRequestException(
           'Selected MAINHEAD does not belong to the selected branch.',
         );

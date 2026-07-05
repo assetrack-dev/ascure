@@ -78,6 +78,7 @@ interface EnterpriseFormState {
   area: string;
   description: string;
   capabilityIds: string[];
+  mainheadIds: string[];
 }
 
 const PAGE_CONFIG: Record<
@@ -218,6 +219,7 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   area: "",
   description: "",
   capabilityIds: [],
+  mainheadIds: [],
 };
 
 function toneClassName(tone: EnterpriseTone) {
@@ -334,6 +336,32 @@ function readCapabilityIds(row: EnterpriseListRow | null) {
     .filter((id) => id);
 }
 
+function readOrgMainheadIds(row: EnterpriseListRow | null) {
+  const assignments = row?.raw.mainheadAssignments;
+
+  if (!Array.isArray(assignments)) {
+    return [];
+  }
+
+  return assignments
+    .map((assignment) => {
+      if (!assignment || typeof assignment !== "object" || Array.isArray(assignment)) {
+        return "";
+      }
+
+      const mainhead = (assignment as Record<string, unknown>).mainhead;
+
+      if (!mainhead || typeof mainhead !== "object" || Array.isArray(mainhead)) {
+        return "";
+      }
+
+      const id = (mainhead as Record<string, unknown>).id;
+
+      return typeof id === "string" ? id : "";
+    })
+    .filter((id) => id);
+}
+
 function toDateInputValue(date: string | null | undefined) {
   if (!date) {
     return "";
@@ -411,6 +439,7 @@ function createFormFromRow(
     area: readRawString(row, "area"),
     description: readRawString(row, "description"),
     capabilityIds: readCapabilityIds(row),
+    mainheadIds: readOrgMainheadIds(row),
   };
 }
 
@@ -430,6 +459,7 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     // MAIN_CONTRACTOR (or any higher org). Null = a top-level organization.
     payload.parentOrganizationId = form.parentOrganizationId || null;
     payload.capabilityIds = form.capabilityIds;
+    payload.mainheadIds = form.mainheadIds;
   }
 
   if (kind === "branches") {
@@ -566,6 +596,96 @@ function CapabilityPicker({
   );
 }
 
+/**
+ * ADMIN-only picker on the Organization form: choose which MAINHEADs this company
+ * is responsible for (OrganizationMainhead). This is the set a MANAGER's Team/User
+ * MAINHEAD dropdown draws from — the single place company↔MAINHEAD ownership is set.
+ * Searchable + scrollable because a tenant can have many MAINHEADs.
+ */
+function MainheadMultiSelect({
+  values,
+  options,
+  onChange,
+}: {
+  values: string[];
+  options: EnterpriseOptions | null;
+  onChange: (nextValues: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const mainheads = options?.mainheads ?? [];
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? mainheads.filter((mainhead) =>
+        `${mainhead.code ?? ""} ${mainhead.name}`
+          .toLowerCase()
+          .includes(normalizedQuery),
+      )
+    : mainheads;
+
+  function toggleMainhead(mainheadId: string, checked: boolean) {
+    onChange(
+      checked
+        ? Array.from(new Set([...values, mainheadId]))
+        : values.filter((id) => id !== mainheadId),
+    );
+  }
+
+  return (
+    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      <legend className="px-1 text-sm font-semibold text-slate-700">
+        Assigned MAINHEAD
+      </legend>
+      <p className="px-1 text-xs text-slate-500">
+        The MAINHEADs this company is responsible for. Managers can attach only
+        these to their teams and users.
+      </p>
+      {mainheads.length === 0 ? (
+        <p className="mt-2 px-1 text-xs text-slate-500">
+          No MAINHEAD records exist yet — create them on the MAINHEAD page first.
+        </p>
+      ) : (
+        <>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search MAINHEAD"
+            className={`${inputClassName} mt-2`}
+          />
+          <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pr-1">
+            {filtered.map((mainhead) => (
+              <label
+                key={mainhead.id}
+                className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={values.includes(mainhead.id)}
+                  onChange={(event) =>
+                    toggleMainhead(mainhead.id, event.target.checked)
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                <span className="truncate">{optionLabel(mainhead)}</span>
+              </label>
+            ))}
+            {filtered.length === 0 ? (
+              <p className="px-1 py-2 text-xs text-slate-500">
+                No MAINHEAD matches your search.
+              </p>
+            ) : null}
+          </div>
+          {values.length > 0 ? (
+            <p className="mt-2 px-1 text-xs font-medium text-slate-600">
+              {values.length} MAINHEAD selected
+            </p>
+          ) : null}
+        </>
+      )}
+    </fieldset>
+  );
+}
+
 function EnterpriseFormModal({
   kind,
   mode,
@@ -600,9 +720,11 @@ function EnterpriseFormModal({
 }) {
   const config = PAGE_CONFIG[kind];
   const isCreateMode = mode === "create";
-  // Company-scoped MAINHEADs for a manager's team form (Item A): MAINHEADs whose
-  // branch belongs to the manager's own company. mainhead options carry branchId;
-  // branch options carry organizationId — join them client-side.
+  // Company-scoped MAINHEADs for a manager's team form: the MAINHEADs ADMIN
+  // assigned to the manager's own company (OrganizationMainhead → organizationIds),
+  // OR — as a fallback for legacy branch-scoped setups — MAINHEADs whose branch
+  // belongs to the manager's company. The first path works for region-scoped
+  // MAINHEADs (no branch), which the branch join alone would miss.
   const managerBranchIds = new Set(
     (options?.branches ?? [])
       .filter(
@@ -612,7 +734,10 @@ function EnterpriseFormModal({
       .map((branch) => branch.id),
   );
   const companyMainheads = (options?.mainheads ?? []).filter(
-    (mainhead) => !!mainhead.branchId && managerBranchIds.has(mainhead.branchId),
+    (mainhead) =>
+      !!ownOrganizationId &&
+      ((mainhead.organizationIds ?? []).includes(ownOrganizationId) ||
+        (!!mainhead.branchId && managerBranchIds.has(mainhead.branchId))),
   );
 
   return (
@@ -734,6 +859,11 @@ function EnterpriseFormModal({
                 values={values.capabilityIds}
                 options={options}
                 onChange={(nextValues) => onChange("capabilityIds", nextValues)}
+              />
+              <MainheadMultiSelect
+                values={values.mainheadIds}
+                options={options}
+                onChange={(nextValues) => onChange("mainheadIds", nextValues)}
               />
             </>
           ) : null}

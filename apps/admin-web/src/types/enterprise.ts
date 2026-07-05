@@ -63,6 +63,10 @@ export interface EnterpriseOptionRecord {
   region?: string | null;
   state?: string | null;
   description?: string | null;
+  // MAINHEAD options only: the ids of the companies this MAINHEAD is assigned to
+  // (OrganizationMainhead). Lets a MANAGER's Team/User picker show only their
+  // own company's MAINHEADs.
+  organizationIds?: string[];
 }
 
 export interface EnterpriseOptions {

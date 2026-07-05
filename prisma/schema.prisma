@@ -503,6 +503,7 @@ model Organization {
   memberships            OrganizationMembership[]
   capabilities           OrganizationCapability[]
   capabilityAssignments  OrganizationCapabilityAssignment[]
+  mainheadAssignments    OrganizationMainhead[]
   branches               Branch[]
   teams                  Team[]
   assignedUsers          User[]                             @relation("UserOperationalOrganization")
@@ -568,6 +569,28 @@ model OrganizationCapabilityAssignment {
   @@unique([organizationId, capabilityId])
   @@index([organizationId])
   @@index([capabilityId])
+  @@index([isActive])
+}
+
+// Which MAINHEADs a company (Organization) is responsible for. ADMIN curates this
+// set; a MANAGER may then attach only these MAINHEADs to their teams/users. This
+// is the company↔MAINHEAD link that does NOT depend on a branch, so it works for
+// region-scoped MAINHEADs (branch = null) that belong to no single company via a
+// branch. Mirrors OrganizationCapabilityAssignment.
+model OrganizationMainhead {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  mainheadId     String       @db.Uuid
+  isActive       Boolean      @default(true)
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  mainhead       Mainhead     @relation(fields: [mainheadId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, mainheadId])
+  @@index([organizationId])
+  @@index([mainheadId])
   @@index([isActive])
 }
 
@@ -666,6 +689,7 @@ model Mainhead {
   teams                 Team[]
   assignedUsers         User[]               @relation("UserOperationalMainhead")
   userAccesses          UserMainheadAccess[]
+  organizationAssignments OrganizationMainhead[]
   capabilityAssignments MainheadCapability[]
   projects              Project[]
   workPackages          WorkPackage[]

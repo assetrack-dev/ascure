@@ -57,6 +57,13 @@ export class CreateOrganizationDto {
   @IsArray()
   @IsUUID(undefined, { each: true })
   capabilityIds?: string[];
+
+  // The MAINHEADs this company is responsible for (OrganizationMainhead). ADMIN
+  // curates this; a MANAGER's Team/User picker draws from it.
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  mainheadIds?: string[];
 }
 
 export class UpdateOrganizationDto {
@@ -88,6 +95,11 @@ export class UpdateOrganizationDto {
   @IsArray()
   @IsUUID(undefined, { each: true })
   capabilityIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  mainheadIds?: string[];
 }
 
 export class CreateBranchDto {
