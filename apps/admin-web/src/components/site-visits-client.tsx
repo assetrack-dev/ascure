@@ -11,7 +11,6 @@ import {
   ChevronRight,
   ChevronsUpDown,
   CheckCircle2,
-  Clock3,
   Plus,
   RefreshCw,
   Search,
@@ -32,7 +31,6 @@ import type { EnterpriseOptions } from "@/types/enterprise";
 import type { ManagedTeam } from "@/types/users";
 import type {
   OperationalDomain,
-  OperationalHealthStatus,
   SiteVisitListItem,
   SiteVisitSubstation,
   SiteVisitStatus,
@@ -41,7 +39,6 @@ import type {
 } from "@/types/site-visits";
 
 type SortKey =
-  | "health"
   | "status"
   | "pencawang"
   | "mainhead"
@@ -52,7 +49,6 @@ type SortKey =
   | "startedAt";
 type SortDirection = "asc" | "desc";
 type StatusFilter = "ALL" | SiteVisitStatus;
-type HealthFilter = "ALL" | OperationalHealthStatus;
 type ValidationFilter = "ALL" | SiteVisitValidationStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
 type OperationalDomainFilter = "ALL" | OperationalDomain;
@@ -95,12 +91,6 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Completed", value: "COMPLETED" },
   { label: "Cancelled", value: "CANCELLED" },
 ];
-const HEALTH_OPTIONS: Array<{ label: string; value: HealthFilter }> = [
-  { label: "All health", value: "ALL" },
-  { label: "Healthy", value: "HEALTHY" },
-  { label: "Warning", value: "WARNING" },
-  { label: "Critical", value: "CRITICAL" },
-];
 const VALIDATION_OPTIONS: Array<{ label: string; value: ValidationFilter }> = [
   { label: "All validation", value: "ALL" },
   { label: "Pending", value: "PENDING" },
@@ -137,11 +127,6 @@ const STATUS_RANK: Record<SiteVisitStatus, number> = {
   COMPLETED: 3,
   CANCELLED: 4,
   UNKNOWN: 5,
-};
-const HEALTH_RANK: Record<OperationalHealthStatus, number> = {
-  CRITICAL: 0,
-  WARNING: 1,
-  HEALTHY: 2,
 };
 const filterControlClassName =
   "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
@@ -346,10 +331,6 @@ function formatValidationLabel(status: SiteVisitValidationStatus) {
 }
 
 function getSortValue(visit: SiteVisitListItem, sortKey: SortKey) {
-  if (sortKey === "health") {
-    return HEALTH_RANK[visit.operationalHealthStatus];
-  }
-
   if (sortKey === "status") {
     return STATUS_RANK[visit.status];
   }
@@ -410,30 +391,6 @@ function uniqueTeams(visits: SiteVisitListItem[]) {
 
   return Array.from(teams.entries()).sort((left, right) =>
     left[1].localeCompare(right[1], "en", { sensitivity: "base" }),
-  );
-}
-
-function HealthBadge({ status }: { status: OperationalHealthStatus }) {
-  const className =
-    status === "CRITICAL"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : status === "WARNING"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-emerald-200 bg-emerald-50 text-emerald-700";
-  const dotClassName =
-    status === "CRITICAL"
-      ? "bg-red-500"
-      : status === "WARNING"
-        ? "bg-amber-500"
-        : "bg-emerald-500";
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${className}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
-      {formatEnum(status)}
-    </span>
   );
 }
 
@@ -892,7 +849,6 @@ function SiteVisitsContent() {
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [memberFilter, setMemberFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
-  const [healthFilter, setHealthFilter] = useState<HealthFilter>("ALL");
   const [validationFilter, setValidationFilter] = useState<ValidationFilter>("ALL");
   const [visitTypeFilter, setVisitTypeFilter] = useState<VisitTypeFilter>("ALL");
   const [operationalDomainFilter, setOperationalDomainFilter] =
@@ -1007,7 +963,6 @@ function SiteVisitsContent() {
     teamFilter,
     memberFilter,
     statusFilter,
-    healthFilter,
     validationFilter,
     visitTypeFilter,
     operationalDomainFilter,
@@ -1056,8 +1011,6 @@ function SiteVisitsContent() {
           ),
         );
       const matchesStatus = statusFilter === "ALL" || visit.status === statusFilter;
-      const matchesHealth =
-        healthFilter === "ALL" || visit.operationalHealthStatus === healthFilter;
       const matchesValidation =
         validationFilter === "ALL" || visit.validationStatus === validationFilter;
       const matchesVisitType =
@@ -1075,7 +1028,6 @@ function SiteVisitsContent() {
         matchesTeam &&
         matchesMember &&
         matchesStatus &&
-        matchesHealth &&
         matchesValidation &&
         matchesVisitType &&
         matchesOperationalDomain &&
@@ -1085,7 +1037,6 @@ function SiteVisitsContent() {
     });
   }, [
     endDate,
-    healthFilter,
     mainheadFilter,
     memberFilter,
     operationalDomainFilter,
@@ -1136,10 +1087,6 @@ function SiteVisitsContent() {
       .filter((teamIdentifier): teamIdentifier is string => Boolean(teamIdentifier)),
   ).size;
   const completedVisitCount = visits.filter((visit) => visit.status === "COMPLETED").length;
-  const overdueVisitCount = visits.filter((visit) => visit.isOverdue).length;
-  const criticalVisitCount = visits.filter(
-    (visit) => visit.operationalHealthStatus === "CRITICAL",
-  ).length;
   const averageCompletion =
     visits.length === 0
       ? 0
@@ -1167,7 +1114,6 @@ function SiteVisitsContent() {
     setTeamFilter("ALL");
     setMemberFilter("");
     setStatusFilter("ALL");
-    setHealthFilter("ALL");
     setValidationFilter("ALL");
     setVisitTypeFilter("ALL");
     setOperationalDomainFilter("ALL");
@@ -1339,24 +1285,12 @@ function SiteVisitsContent() {
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-4 sm:grid-cols-3">
                   <OperationalStat
                     label="Active"
                     value={activeVisitCount}
                     icon={Activity}
                     tone="live"
-                  />
-                  <OperationalStat
-                    label="Critical"
-                    value={criticalVisitCount}
-                    icon={AlertTriangle}
-                    tone={criticalVisitCount > 0 ? "danger" : "neutral"}
-                  />
-                  <OperationalStat
-                    label="Overdue"
-                    value={overdueVisitCount}
-                    icon={Clock3}
-                    tone={overdueVisitCount > 0 ? "danger" : "neutral"}
                   />
                   <OperationalStat
                     label="Completion"
@@ -1405,23 +1339,6 @@ function SiteVisitsContent() {
                             className={filterControlClassName}
                           >
                             {STATUS_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Health</span>
-                          <select
-                            value={healthFilter}
-                            onChange={(event) =>
-                              setHealthFilter(event.target.value as HealthFilter)
-                            }
-                            className={filterControlClassName}
-                          >
-                            {HEALTH_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -1573,7 +1490,6 @@ function SiteVisitsContent() {
                     <table className="w-full min-w-[920px] table-fixed text-left text-sm xl:min-w-0">
                       <colgroup>
                         <col className="w-[9%]" />
-                        <col className="w-[9%]" />
                         <col className="w-[22%]" />
                         <col className="w-[13%]" />
                         <col className="w-[13%]" />
@@ -1583,15 +1499,6 @@ function SiteVisitsContent() {
                       </colgroup>
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                          <th className="px-3 py-3.5">
-                            <SortButton
-                              label="Health"
-                              sortKey="health"
-                              activeSortKey={sortKey}
-                              direction={sortDirection}
-                              onSort={handleSort}
-                            />
-                          </th>
                           <th className="px-3 py-3.5">
                             <SortButton
                               label="Status"
@@ -1664,9 +1571,6 @@ function SiteVisitsContent() {
                             className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
                             aria-label={`Open site visit ${displayPencawang(visit)}`}
                           >
-                            <td className="px-3 py-4 align-top">
-                              <HealthBadge status={visit.operationalHealthStatus} />
-                            </td>
                             <td className="px-3 py-4 align-top">
                               <StatusBadge status={visit.status} />
                             </td>
