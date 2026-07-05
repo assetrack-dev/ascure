@@ -14,12 +14,20 @@ import {
 } from "@/lib/auth";
 import {
   fetchMapAssets,
+  formatMaintenanceCategory,
   isMapAssetInspected,
+  mapAssetDefectState,
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
+  EMERGENCY_DEFECT_MARKER_COLOR,
+  OPEN_DEFECT_MARKER_COLOR,
+  NO_DEFECT_MARKER_COLOR,
+  UNINSPECTED_DEFECT_MARKER_COLOR,
   type MapAsset,
+  type MapColorMode,
 } from "@/lib/map";
 import { roleLabel } from "@/lib/roles";
+import { MAINTENANCE_CATEGORIES, type MaintenanceCategory } from "@/types/defects";
 import type { AuthSession } from "@/types/auth";
 
 const GoogleAssetMap = dynamic(() => import("@/components/google-asset-map"), {
@@ -182,7 +190,10 @@ function MapContent() {
   const [mainSel, setMainSel] = useState<Set<string>>(new Set());
   const [teamSel, setTeamSel] = useState<Set<string>>(new Set());
   const [statusSel, setStatusSel] = useState<Set<string>>(new Set());
+  const [catSel, setCatSel] = useState<Set<string>>(new Set());
   const [inspectedSel, setInspectedSel] = useState<InspectedFilter>("all");
+  // View preference (not a filter): how to colour the pins.
+  const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -252,6 +263,24 @@ function MapContent() {
     () => buildOptions(assets, (a) => ({ id: a.status, label: a.status })),
     [assets],
   );
+  // Defect-category options are multi-valued per asset (a pole can carry defects
+  // in several categories), so they can't go through buildOptions — count each
+  // asset once per distinct open-defect category it has.
+  const categoryOptions = useMemo<Option[]>(() => {
+    const counts = new Map<MaintenanceCategory, number>();
+    for (const asset of assets) {
+      for (const category of asset.defectCategories) {
+        counts.set(category, (counts.get(category) ?? 0) + 1);
+      }
+    }
+    return MAINTENANCE_CATEGORIES.filter((category) => counts.has(category)).map(
+      (category) => ({
+        value: category,
+        label: formatMaintenanceCategory(category),
+        count: counts.get(category) ?? 0,
+      }),
+    );
+  }, [assets]);
 
   // Drop any selected value that no longer exists after the asset set changes
   // (e.g. Refresh), so the active-count badge and the checkbox list stay in sync
@@ -277,7 +306,8 @@ function MapContent() {
     prune(setMainSel, mainOptions);
     prune(setTeamSel, teamOptions);
     prune(setStatusSel, statusOptions);
-  }, [subOptions, typeOptions, mainOptions, teamOptions, statusOptions]);
+    prune(setCatSel, categoryOptions);
+  }, [subOptions, typeOptions, mainOptions, teamOptions, statusOptions, categoryOptions]);
 
   const filtered = useMemo(() => {
     const matchesSet = (set: Set<string>, value: string | null) =>
@@ -288,6 +318,11 @@ function MapContent() {
       if (!matchesSet(mainSel, a.mainhead?.id ?? null)) return false;
       if (!matchesSet(teamSel, a.team?.id ?? null)) return false;
       if (!matchesSet(statusSel, a.status)) return false;
+      // Defect category is multi-valued: keep the pole if any open defect it
+      // carries is in the selected set (empty set = no constraint).
+      if (catSel.size > 0 && !a.defectCategories.some((c) => catSel.has(c))) {
+        return false;
+      }
       if (inspectedSel !== "all") {
         const inspected = isMapAssetInspected(a);
         if (inspectedSel === "inspected" && !inspected) return false;
@@ -295,14 +330,39 @@ function MapContent() {
       }
       return true;
     });
-  }, [assets, subSel, typeSel, mainSel, teamSel, statusSel, inspectedSel]);
+  }, [assets, subSel, typeSel, mainSel, teamSel, statusSel, catSel, inspectedSel]);
 
   const counts = useMemo(() => {
     let inspected = 0;
+    let emergency = 0;
+    let defect = 0;
+    let clean = 0;
+    let uninspected = 0;
     for (const asset of filtered) {
       if (isMapAssetInspected(asset)) inspected += 1;
+      switch (mapAssetDefectState(asset)) {
+        case "emergency":
+          emergency += 1;
+          break;
+        case "defect":
+          defect += 1;
+          break;
+        case "clean":
+          clean += 1;
+          break;
+        default:
+          uninspected += 1;
+      }
     }
-    return { total: filtered.length, inspected, notInspected: filtered.length - inspected };
+    return {
+      total: filtered.length,
+      inspected,
+      notInspected: filtered.length - inspected,
+      emergency,
+      defect,
+      clean,
+      uninspected,
+    };
   }, [filtered]);
 
   const hasActiveFilters =
@@ -311,6 +371,7 @@ function MapContent() {
     mainSel.size > 0 ||
     teamSel.size > 0 ||
     statusSel.size > 0 ||
+    catSel.size > 0 ||
     inspectedSel !== "all";
 
   const resetFilters = useCallback(() => {
@@ -319,6 +380,7 @@ function MapContent() {
     setMainSel(new Set());
     setTeamSel(new Set());
     setStatusSel(new Set());
+    setCatSel(new Set());
     setInspectedSel("all");
   }, []);
 
@@ -413,6 +475,13 @@ function MapContent() {
               onToggle={toggle(setStatusSel)}
               onClear={() => setStatusSel(new Set())}
             />
+            <FilterDropdown
+              label="Defect Category"
+              options={categoryOptions}
+              selected={catSel}
+              onToggle={toggle(setCatSel)}
+              onClear={() => setCatSel(new Set())}
+            />
             {/* Inspected segmented control */}
             <div className="inline-flex h-9 items-center overflow-hidden rounded-md border border-[var(--line)] bg-[var(--chrome)] shadow-[var(--shadow-soft)]">
               {(
@@ -448,16 +517,68 @@ function MapContent() {
             ) : null}
           </div>
 
-          {/* Legend + counts */}
-          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-[var(--muted)]">
-            <span className="inline-flex items-center gap-2">
-              <LegendDot color={INSPECTED_MARKER_COLOR} />
-              Inspected ({counts.inspected})
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <LegendDot color={NOT_INSPECTED_MARKER_COLOR} />
-              Not inspected ({counts.notInspected})
-            </span>
+          {/* Colour-mode toggle + legend + counts */}
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[var(--muted)]">
+            {/* Colour-by segmented control */}
+            <div className="inline-flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase text-[var(--muted)]">
+                Colour
+              </span>
+              <div className="inline-flex h-9 items-center overflow-hidden rounded-md border border-[var(--line)] bg-[var(--chrome)] shadow-[var(--shadow-soft)]">
+                {(
+                  [
+                    ["inspection", "Inspection"],
+                    ["defect", "Defects"],
+                  ] as [MapColorMode, string][]
+                ).map(([value, lbl]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setColorMode(value)}
+                    className={`h-full px-3 text-sm font-medium transition ${
+                      colorMode === value
+                        ? "bg-[var(--brand)] text-[var(--on-brand)]"
+                        : "text-[var(--foreground)] hover:bg-[var(--brand-soft)]"
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {colorMode === "inspection" ? (
+              <>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={INSPECTED_MARKER_COLOR} />
+                  Inspected ({counts.inspected})
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={NOT_INSPECTED_MARKER_COLOR} />
+                  Not inspected ({counts.notInspected})
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={EMERGENCY_DEFECT_MARKER_COLOR} />
+                  Emergency ({counts.emergency})
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={OPEN_DEFECT_MARKER_COLOR} />
+                  Open defect ({counts.defect})
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={NO_DEFECT_MARKER_COLOR} />
+                  No defect ({counts.clean})
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <LegendDot color={UNINSPECTED_DEFECT_MARKER_COLOR} />
+                  Not inspected ({counts.uninspected})
+                </span>
+              </>
+            )}
+
             <span className="font-semibold text-[var(--foreground)]">
               Showing {counts.total} of {assets.length} located{" "}
               {assets.length === 1 ? "asset" : "assets"}
@@ -479,11 +600,12 @@ function MapContent() {
             ) : useGoogle ? (
               <GoogleAssetMap
                 assets={filtered}
+                colorMode={colorMode}
                 apiKey={GOOGLE_MAPS_API_KEY}
                 onLoadError={() => setGoogleFailed(true)}
               />
             ) : (
-              <GlobalAssetMap assets={filtered} />
+              <GlobalAssetMap assets={filtered} colorMode={colorMode} />
             )}
           </div>
         </div>

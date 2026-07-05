@@ -10,10 +10,11 @@ import {
   useApiIsLoaded,
 } from "@vis.gl/react-google-maps";
 import {
-  INSPECTED_MARKER_COLOR,
-  NOT_INSPECTED_MARKER_COLOR,
+  formatMaintenanceCategory,
   isMapAssetInspected,
+  mapAssetMarkerColor,
   type MapAsset,
+  type MapColorMode,
 } from "@/lib/map";
 
 declare global {
@@ -25,6 +26,7 @@ declare global {
 
 interface GoogleAssetMapProps {
   assets: MapAsset[];
+  colorMode: MapColorMode;
   apiKey: string;
   /** Called if Google Maps fails to load (e.g. key restricted / API not enabled). */
   onLoadError?: () => void;
@@ -78,11 +80,13 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function MapLayers({
   assets,
+  colorMode,
   selectedId,
   onSelect,
   onClose,
 }: {
   assets: MapAsset[];
+  colorMode: MapColorMode;
   selectedId: string | null;
   onSelect: (a: MapAsset) => void;
   onClose: () => void;
@@ -98,27 +102,22 @@ function MapLayers({
   return (
     <>
       <FitBounds assets={assets} />
-      {assets.map((asset) => {
-        const inspected = isMapAssetInspected(asset);
-        return (
-          <Marker
-            key={asset.id}
-            position={{ lat: asset.latitude, lng: asset.longitude }}
-            onClick={() => onSelect(asset)}
-            title={asset.assetCode}
-            icon={{
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 7,
-              fillColor: inspected
-                ? INSPECTED_MARKER_COLOR
-                : NOT_INSPECTED_MARKER_COLOR,
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 1.5,
-            }}
-          />
-        );
-      })}
+      {assets.map((asset) => (
+        <Marker
+          key={asset.id}
+          position={{ lat: asset.latitude, lng: asset.longitude }}
+          onClick={() => onSelect(asset)}
+          title={asset.assetCode}
+          icon={{
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 7,
+            fillColor: mapAssetMarkerColor(asset, colorMode),
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 1.5,
+          }}
+        />
+      ))}
       {selected ? (
         <InfoWindow
           position={{ lat: selected.latitude, lng: selected.longitude }}
@@ -150,6 +149,24 @@ function MapLayers({
                 label="Status"
                 value={isMapAssetInspected(selected) ? "Inspected" : "Not inspected"}
               />
+              {selected.openDefectCount > 0 ? (
+                <>
+                  <InfoRow
+                    label="Defects"
+                    value={`${selected.openDefectCount} open${
+                      selected.hasEmergencyDefect ? " · emergency" : ""
+                    }`}
+                  />
+                  {selected.defectCategories.length > 0 ? (
+                    <InfoRow
+                      label="Category"
+                      value={selected.defectCategories
+                        .map(formatMaintenanceCategory)
+                        .join(", ")}
+                    />
+                  ) : null}
+                </>
+              ) : null}
             </div>
             <a
               href={`/assets/${encodeURIComponent(selected.id)}`}
@@ -179,6 +196,7 @@ function MapLayers({
  */
 export default function GoogleAssetMap({
   assets,
+  colorMode,
   apiKey,
   onLoadError,
 }: GoogleAssetMapProps) {
@@ -209,6 +227,7 @@ export default function GoogleAssetMap({
         >
           <MapLayers
             assets={assets}
+            colorMode={colorMode}
             selectedId={selectedId}
             onSelect={(a) => setSelectedId(a.id)}
             onClose={() => setSelectedId(null)}

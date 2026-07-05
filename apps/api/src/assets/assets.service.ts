@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import {
   AssetStatus,
+  DefectSeverity,
+  DefectStatus,
   InspectionCompletionStatus,
+  MaintenanceCategory,
   Prisma,
   SiteVisitStatus,
   UserRole,
@@ -34,6 +37,28 @@ import {
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
   'An asset with this code already exists in this Pencawang.';
+
+// Defect statuses that still need field/maintenance work — a pole "has a defect"
+// on the map only while at least one of these is open. RESOLVED/CLOSED drop off.
+const OPEN_DEFECT_STATUSES = [
+  DefectStatus.OPEN,
+  DefectStatus.IN_PROGRESS,
+  DefectStatus.MONITORING,
+] as const;
+
+// Severity ordering so the map can surface a pole's single worst open defect.
+const DEFECT_SEVERITY_RANK: Record<DefectSeverity, number> = {
+  [DefectSeverity.LOW]: 1,
+  [DefectSeverity.MEDIUM]: 2,
+  [DefectSeverity.HIGH]: 3,
+  [DefectSeverity.CRITICAL]: 4,
+};
+const DEFECT_SEVERITY_BY_RANK = [
+  DefectSeverity.LOW,
+  DefectSeverity.MEDIUM,
+  DefectSeverity.HIGH,
+  DefectSeverity.CRITICAL,
+] as const;
 
 @Injectable()
 export class AssetsService {
@@ -123,11 +148,73 @@ export class AssetsService {
       orderBy: { assetCode: 'asc' },
     });
 
+    // Attach a lightweight open-defect summary per pole so the map can filter by
+    // maintenance category and recolour by defect. One extra query keyed on the
+    // already-scoped asset ids (admin-web only — mobile never calls this route),
+    // and no lazy materialization here so the map stays fast: the dashboard /
+    // defects pages are what materialize defects from failed items.
+    const assetIds = assets.map((asset) => asset.id);
+    const openDefects =
+      assetIds.length > 0
+        ? await this.prisma.defect.findMany({
+            where: {
+              status: { in: [...OPEN_DEFECT_STATUSES] },
+              inspectionItemResult: {
+                isDefect: true,
+                inspection: { assetId: { in: assetIds } },
+              },
+            },
+            select: {
+              severity: true,
+              maintenanceCategory: true,
+              isEmergency: true,
+              inspectionItemResult: {
+                select: { inspection: { select: { assetId: true } } },
+              },
+            },
+          })
+        : [];
+
+    type DefectSummary = {
+      openDefectCount: number;
+      categories: Set<MaintenanceCategory>;
+      maxSeverityRank: number;
+      hasEmergency: boolean;
+    };
+    const defectsByAsset = new Map<string, DefectSummary>();
+    for (const defect of openDefects) {
+      const assetId = defect.inspectionItemResult.inspection.assetId;
+      let summary = defectsByAsset.get(assetId);
+      if (!summary) {
+        summary = {
+          openDefectCount: 0,
+          categories: new Set<MaintenanceCategory>(),
+          maxSeverityRank: 0,
+          hasEmergency: false,
+        };
+        defectsByAsset.set(assetId, summary);
+      }
+      summary.openDefectCount += 1;
+      // Null category = legacy/untagged → SELENGGARAAN, matching the defect
+      // materialization default so the map buckets identically to the list.
+      summary.categories.add(
+        defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN,
+      );
+      summary.maxSeverityRank = Math.max(
+        summary.maxSeverityRank,
+        DEFECT_SEVERITY_RANK[defect.severity],
+      );
+      if (defect.isEmergency) {
+        summary.hasEmergency = true;
+      }
+    }
+
     return assets.map(({ inspections, createdDuringVisit, ...asset }) => {
       const latest = inspections[0] ?? null;
       // Prefer the latest submitted inspection's visit ("inspected by"), then
       // the asset's creation visit, for the team/mainhead association.
       const visit = latest?.siteVisit ?? createdDuringVisit ?? null;
+      const defectSummary = defectsByAsset.get(asset.id) ?? null;
       return {
         ...asset,
         latestInspection: latest
@@ -140,6 +227,15 @@ export class AssetsService {
         mainhead: visit?.mainheadRecord
           ? { id: visit.mainheadRecord.id, name: visit.mainheadRecord.name }
           : null,
+        openDefectCount: defectSummary?.openDefectCount ?? 0,
+        defectCategories: defectSummary
+          ? Array.from(defectSummary.categories)
+          : [],
+        maxDefectSeverity:
+          defectSummary && defectSummary.maxSeverityRank > 0
+            ? DEFECT_SEVERITY_BY_RANK[defectSummary.maxSeverityRank - 1]
+            : null,
+        hasEmergencyDefect: defectSummary?.hasEmergency ?? false,
       };
     });
   }

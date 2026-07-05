@@ -6,12 +6,18 @@ import "leaflet/dist/leaflet.css";
 import {
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
+  EMERGENCY_DEFECT_MARKER_COLOR,
+  OPEN_DEFECT_MARKER_COLOR,
+  formatMaintenanceCategory,
   isMapAssetInspected,
+  mapAssetMarkerColor,
   type MapAsset,
+  type MapColorMode,
 } from "@/lib/map";
 
 interface GlobalAssetMapProps {
   assets: MapAsset[];
+  colorMode: MapColorMode;
 }
 
 function escapeHtml(value: string): string {
@@ -44,7 +50,23 @@ function popupHtml(asset: MapAsset): string {
   const badge = inspected
     ? `<span style="color:${INSPECTED_MARKER_COLOR};font-weight:600">Inspected</span>`
     : `<span style="color:${NOT_INSPECTED_MARKER_COLOR};font-weight:600">Not inspected</span>`;
-  return `<strong>${escapeHtml(asset.assetCode)}</strong>${meta}<br/>${badge}`;
+  let defectLine = "";
+  if (asset.openDefectCount > 0) {
+    const color = asset.hasEmergencyDefect
+      ? EMERGENCY_DEFECT_MARKER_COLOR
+      : OPEN_DEFECT_MARKER_COLOR;
+    const emergency = asset.hasEmergencyDefect ? " · emergency" : "";
+    const categories = asset.defectCategories
+      .map(formatMaintenanceCategory)
+      .join(", ");
+    const categorySuffix = categories
+      ? ` <span style="color:#475569">(${escapeHtml(categories)})</span>`
+      : "";
+    defectLine = `<br/><span style="color:${color};font-weight:600">${asset.openDefectCount} open defect${
+      asset.openDefectCount === 1 ? "" : "s"
+    }${emergency}</span>${categorySuffix}`;
+  }
+  return `<strong>${escapeHtml(asset.assetCode)}</strong>${meta}<br/>${badge}${defectLine}`;
 }
 
 /**
@@ -53,7 +75,7 @@ function popupHtml(asset: MapAsset): string {
  * Leaflet (no react-leaflet) inside a component the parent loads `ssr: false`.
  * Pins follow the mobile convention: lime = inspected, red = not yet inspected.
  */
-export default function GlobalAssetMap({ assets }: GlobalAssetMapProps) {
+export default function GlobalAssetMap({ assets, colorMode }: GlobalAssetMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
@@ -89,7 +111,9 @@ export default function GlobalAssetMap({ assets }: GlobalAssetMapProps) {
     };
   }, []);
 
-  // (Re)draw markers whenever the asset set changes.
+  // (Re)draw markers whenever the asset set OR the colour mode changes. Kept
+  // separate from the fit-bounds effect so toggling colour doesn't snap the
+  // viewport back (the pin set — and thus the bounds — hasn't changed).
   useEffect(() => {
     const map = mapRef.current;
     const overlay = overlayRef.current;
@@ -99,10 +123,9 @@ export default function GlobalAssetMap({ assets }: GlobalAssetMapProps) {
     overlay.clearLayers();
 
     for (const asset of assets) {
-      const inspected = isMapAssetInspected(asset);
       L.circleMarker([asset.latitude, asset.longitude], {
         radius: 6,
-        fillColor: inspected ? INSPECTED_MARKER_COLOR : NOT_INSPECTED_MARKER_COLOR,
+        fillColor: mapAssetMarkerColor(asset, colorMode),
         fillOpacity: 1,
         color: "#ffffff",
         weight: 1.5,
@@ -110,13 +133,19 @@ export default function GlobalAssetMap({ assets }: GlobalAssetMapProps) {
         .bindPopup(popupHtml(asset))
         .addTo(overlay);
     }
+  }, [assets, colorMode]);
 
-    if (locatedCount > 0) {
-      const bounds = L.latLngBounds(
-        assets.map((asset) => [asset.latitude, asset.longitude] as [number, number]),
-      );
-      map.fitBounds(bounds, { padding: [44, 44], maxZoom: 17 });
+  // Fit the viewport to the pin set — only when the pins change, not on a
+  // colour-mode toggle.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || locatedCount === 0) {
+      return;
     }
+    const bounds = L.latLngBounds(
+      assets.map((asset) => [asset.latitude, asset.longitude] as [number, number]),
+    );
+    map.fitBounds(bounds, { padding: [44, 44], maxZoom: 17 });
   }, [assets, locatedCount]);
 
   return (
