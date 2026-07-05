@@ -4,9 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
+  MapPin,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -28,25 +27,14 @@ import type {
   DefectWorkflowStatus,
   MaintenanceCategory,
 } from "@/types/defects";
+import { DEFECT_SEVERITIES, MAINTENANCE_CATEGORIES } from "@/types/defects";
 
-type SortKey =
-  | "assetCode"
-  | "defectType"
-  | "severity"
-  | "status"
-  | "lifecycleStatus"
-  | "assignedTo"
-  | "date"
-  | "dueDate"
-  | "location";
-type SortDirection = "asc" | "desc";
 type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
 type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
 type PencawangFilter = "ALL" | string;
 type CategoryFilter = "ALL" | MaintenanceCategory;
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
   { label: "All severities", value: "ALL" },
   { label: "Critical", value: "CRITICAL" },
@@ -68,40 +56,12 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
-const SEVERITY_RANK: Record<DefectSeverity, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-};
-const STATUS_RANK: Record<DefectStatus, number> = {
-  OPEN: 0,
-  IN_PROGRESS: 1,
-  MONITORING: 2,
-  RESOLVED: 3,
-  CLOSED: 4,
-  UNKNOWN: 5,
-};
-const LIFECYCLE_RANK: Record<DefectLifecycleStatus, number> = {
-  DETECTED: 0,
-  UNDER_REVIEW: 1,
-  VERIFIED: 2,
-  ASSIGNED: 3,
-  IN_PROGRESS: 4,
-  COMPLETED: 5,
-  VERIFICATION_PENDING: 6,
-  CLOSED: 7,
-  REJECTED: 8,
-  UNKNOWN: 9,
-};
 const filterControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const searchControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
-const paginationButtonClassName =
-  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 
 function DefectsLoading() {
   return (
@@ -224,49 +184,44 @@ function normalizeSearchText(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? "";
 }
 
-function getSortValue(defect: DefectListItem, sortKey: SortKey) {
-  if (sortKey === "severity") {
-    return defect.severity ? SEVERITY_RANK[defect.severity] : 99;
+function formatCategory(category: MaintenanceCategory): string {
+  if (category === "RENTIS") {
+    return "Rentis";
   }
 
-  if (sortKey === "status") {
-    return STATUS_RANK[defect.status];
+  if (category === "CAT_TIANG") {
+    return "Cat Tiang";
   }
 
-  if (sortKey === "lifecycleStatus") {
-    return defect.lifecycleStatus ? LIFECYCLE_RANK[defect.lifecycleStatus] : 99;
-  }
-
-  if (sortKey === "date") {
-    const parsedDate = defect.date ? new Date(defect.date).getTime() : 0;
-    return Number.isFinite(parsedDate) ? parsedDate : 0;
-  }
-
-  if (sortKey === "dueDate") {
-    const parsedDate = defect.dueDate ? new Date(defect.dueDate).getTime() : 0;
-    return Number.isFinite(parsedDate) ? parsedDate : 0;
-  }
-
-  if (sortKey === "location") {
-    return normalizeSearchText(defect.location);
-  }
-
-  if (sortKey === "assignedTo") {
-    return normalizeSearchText(formatAssignee(defect));
-  }
-
-  return normalizeSearchText(defect[sortKey]);
+  return "Selenggaraan";
 }
 
-function compareSortValues(left: string | number, right: string | number) {
-  if (typeof left === "number" && typeof right === "number") {
-    return left - right;
-  }
+function orderedSeverities(defects: DefectListItem[]): DefectSeverity[] {
+  const present = new Set(
+    defects
+      .map((defect) => defect.severity)
+      .filter((severity): severity is DefectSeverity => Boolean(severity)),
+  );
 
-  return String(left).localeCompare(String(right), "en", {
-    numeric: true,
-    sensitivity: "base",
-  });
+  return DEFECT_SEVERITIES.filter((severity) => present.has(severity));
+}
+
+function orderedCategories(defects: DefectListItem[]): MaintenanceCategory[] {
+  const present = new Set(
+    defects
+      .map((defect) => defect.maintenanceCategory)
+      .filter((category): category is MaintenanceCategory => Boolean(category)),
+  );
+
+  return MAINTENANCE_CATEGORIES.filter((category) => present.has(category));
+}
+
+function CategoryChip({ category }: { category: MaintenanceCategory }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">
+      {formatCategory(category)}
+    </span>
+  );
 }
 
 function SeverityBadge({ severity }: { severity: DefectSeverity | null }) {
@@ -376,34 +331,6 @@ function SlaBadge({ defect }: { defect: DefectListItem }) {
   );
 }
 
-function SortButton({
-  label,
-  sortKey,
-  activeSortKey,
-  direction,
-  onSort,
-}: {
-  label: string;
-  sortKey: SortKey;
-  activeSortKey: SortKey;
-  direction: SortDirection;
-  onSort: (key: SortKey) => void;
-}) {
-  const isActive = sortKey === activeSortKey;
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSort(sortKey)}
-      className="inline-flex items-center gap-1 text-left font-semibold text-slate-600 transition hover:text-[var(--brand)]"
-    >
-      {label}
-      <ChevronsUpDown size={14} className={isActive ? "text-[var(--brand)]" : "text-slate-400"} />
-      {isActive ? <span className="sr-only">sorted {direction}</span> : null}
-    </button>
-  );
-}
-
 function DefectsContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -419,10 +346,7 @@ function DefectsContent() {
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("date");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [expandedPoles, setExpandedPoles] = useState<Set<string>>(new Set());
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -459,21 +383,6 @@ function DefectsContent() {
       void loadDefects(storedSession.token);
     }
   }, [loadDefects]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [
-    search,
-    severityFilter,
-    statusFilter,
-    assignedUserFilter,
-    pencawangFilter,
-    categoryFilter,
-    overdueOnly,
-    startDate,
-    endDate,
-    pageSize,
-  ]);
 
   const assignedUserOptions = useMemo(() => {
     const options = new Map<string, string>();
@@ -581,42 +490,72 @@ function DefectsContent() {
     statusFilter,
   ]);
 
-  const sortedDefects = useMemo(() => {
-    return [...filteredDefects].sort((left, right) => {
-      const directionMultiplier = sortDirection === "asc" ? 1 : -1;
-      const primarySort =
-        compareSortValues(getSortValue(left, sortKey), getSortValue(right, sortKey)) *
-        directionMultiplier;
+  const pencawangGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { key: string; label: string; poles: Map<string, DefectListItem[]> }
+    >();
 
-      if (primarySort !== 0) {
-        return primarySort;
+    for (const defect of filteredDefects) {
+      const key = pencawangKeyOf(defect) || "__unassigned__";
+
+      if (!groups.has(key)) {
+        groups.set(key, { key, label: pencawangLabelOf(defect), poles: new Map() });
       }
 
-      return left.assetCode.localeCompare(right.assetCode, "en", {
-        numeric: true,
-        sensitivity: "base",
-      });
-    });
-  }, [filteredDefects, sortDirection, sortKey]);
+      const poleKey = defect.assetCode || "Unassigned";
+      const group = groups.get(key)!;
 
-  const totalPages = Math.max(1, Math.ceil(sortedDefects.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const firstItemIndex = sortedDefects.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const lastItemIndex = Math.min(currentPage * pageSize, sortedDefects.length);
-  const paginatedDefects = sortedDefects.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
+      if (!group.poles.has(poleKey)) {
+        group.poles.set(poleKey, []);
+      }
+
+      group.poles.get(poleKey)!.push(defect);
+    }
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        defectCount: Array.from(group.poles.values()).reduce(
+          (total, list) => total + list.length,
+          0,
+        ),
+        poles: Array.from(group.poles.entries())
+          .map(([assetCode, poleDefects]) => ({ assetCode, defects: poleDefects }))
+          .sort((left, right) =>
+            left.assetCode.localeCompare(right.assetCode, "en", {
+              numeric: true,
+              sensitivity: "base",
+            }),
+          ),
+      }))
+      .sort((left, right) =>
+        left.label.localeCompare(right.label, "en", {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+  }, [filteredDefects]);
+
+  const totalPoleCount = pencawangGroups.reduce(
+    (total, group) => total + group.poles.length,
+    0,
   );
   const isReadOnly = session?.user?.role !== "ADMIN";
 
-  function handleSort(nextSortKey: SortKey) {
-    if (nextSortKey === sortKey) {
-      setSortDirection((currentDirection) => (currentDirection === "asc" ? "desc" : "asc"));
-      return;
-    }
+  function togglePole(poleKey: string) {
+    setExpandedPoles((current) => {
+      const next = new Set(current);
 
-    setSortKey(nextSortKey);
-    setSortDirection(nextSortKey === "date" ? "desc" : "asc");
+      if (next.has(poleKey)) {
+        next.delete(poleKey);
+      } else {
+        next.add(poleKey);
+      }
+
+      return next;
+    });
   }
 
   function resetFilters() {
@@ -826,155 +765,109 @@ function DefectsContent() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Asset Code"
-                            sortKey="assetCode"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="min-w-64 px-5 py-3.5">
-                          <SortButton
-                            label="Defect Type"
-                            sortKey="defectType"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Severity"
-                            sortKey="severity"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Status"
-                            sortKey="status"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Governance"
-                            sortKey="lifecycleStatus"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Assignee"
-                            sortKey="assignedTo"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Date"
-                            sortKey="date"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Due Date"
-                            sortKey="dueDate"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Location"
-                            sortKey="location"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {paginatedDefects.map((defect) => (
-                        <tr
-                          key={defect.id}
-                          tabIndex={0}
-                          onClick={() => openDefect(defect.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              openDefect(defect.id);
-                            }
-                          }}
-                          className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
-                          aria-label={`Open defect ${defect.defectType} for ${defect.assetCode}`}
-                        >
-                          <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-900">
-                            {defect.assetCode}
-                          </td>
-                          <td className="px-5 py-4 text-slate-700">
-                            <div className="font-medium text-slate-900">{defect.defectType}</div>
-                            {defect.remark ? (
-                              <div className="mt-1 line-clamp-1 text-xs text-[var(--muted)]">
-                                {defect.remark}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <SeverityBadge severity={defect.severity} />
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <StatusBadge status={defect.status} />
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <div className="flex flex-col items-start gap-2">
-                              <LifecycleBadge status={defect.lifecycleStatus} />
-                              <OutcomeBadge outcome={defect.resolutionOutcome} />
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            {formatAssignee(defect)}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            {formatDate(defect.date)}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <div className="flex flex-col items-start gap-2">
-                              <span className="text-sm text-slate-600">
-                                {formatDueDate(defect.dueDate)}
-                              </span>
-                              <SlaBadge defect={defect} />
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            {defect.location ?? "Not recorded"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="divide-y divide-slate-100">
+                  {pencawangGroups.map((group) => (
+                    <div key={group.key} className="px-5 py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <MapPin size={16} className="shrink-0 text-slate-400" />
+                          <span className="truncate text-sm font-bold uppercase tracking-wide text-slate-700">
+                            {group.label}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-xs font-medium text-[var(--muted)]">
+                          {group.poles.length} pole{group.poles.length === 1 ? "" : "s"}
+                          {" · "}
+                          {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
+                        </span>
+                      </div>
 
-                  {paginatedDefects.length === 0 ? (
-                    <div className="border-t border-slate-100 px-5 py-12 text-center">
+                      <div className="mt-3 space-y-2">
+                        {group.poles.map((pole) => {
+                          const poleKey = `${group.key}::${pole.assetCode}`;
+                          const isExpanded = expandedPoles.has(poleKey);
+                          const severities = orderedSeverities(pole.defects);
+                          const categories = orderedCategories(pole.defects);
+                          const poleOverdue = pole.defects.some(
+                            (defect) => defect.isOverdue,
+                          );
+
+                          return (
+                            <div
+                              key={poleKey}
+                              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => togglePole(poleKey)}
+                                aria-expanded={isExpanded}
+                                className="flex w-full flex-wrap items-center gap-2.5 px-4 py-3 text-left transition hover:bg-slate-50"
+                              >
+                                <ChevronRight
+                                  size={16}
+                                  className={`shrink-0 text-slate-400 transition-transform ${
+                                    isExpanded ? "rotate-90" : ""
+                                  }`}
+                                />
+                                <span className="font-semibold text-slate-900">
+                                  {pole.assetCode}
+                                </span>
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                                  {pole.defects.length} defect
+                                  {pole.defects.length === 1 ? "" : "s"}
+                                </span>
+                                {severities.map((severity) => (
+                                  <SeverityBadge key={severity} severity={severity} />
+                                ))}
+                                {categories.map((category) => (
+                                  <CategoryChip key={category} category={category} />
+                                ))}
+                                {poleOverdue ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                                    <AlertTriangle size={12} />
+                                    Overdue
+                                  </span>
+                                ) : null}
+                              </button>
+
+                              {isExpanded ? (
+                                <div className="divide-y divide-slate-100 border-t border-slate-100">
+                                  {pole.defects.map((defect) => (
+                                    <button
+                                      key={defect.id}
+                                      type="button"
+                                      onClick={() => openDefect(defect.id)}
+                                      className="flex w-full flex-wrap items-center gap-2.5 py-2.5 pl-9 pr-4 text-left text-sm transition hover:bg-teal-50/40"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate font-medium text-slate-900">
+                                        {defect.defectType}
+                                      </span>
+                                      <SeverityBadge severity={defect.severity} />
+                                      {defect.maintenanceCategory ? (
+                                        <CategoryChip
+                                          category={defect.maintenanceCategory}
+                                        />
+                                      ) : null}
+                                      <StatusBadge status={defect.status} />
+                                      <LifecycleBadge status={defect.lifecycleStatus} />
+                                      <OutcomeBadge outcome={defect.resolutionOutcome} />
+                                      <SlaBadge defect={defect} />
+                                      <span className="shrink-0 text-xs text-[var(--muted)]">
+                                        {formatDate(defect.date)}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {pencawangGroups.length === 0 ? (
+                    <div className="px-5 py-12 text-center">
                       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
                         <SlidersHorizontal size={20} />
                       </div>
@@ -985,55 +878,10 @@ function DefectsContent() {
                   ) : null}
                 </div>
 
-                <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-[var(--muted)]">
-                    Showing {firstItemIndex}-{lastItemIndex} of {sortedDefects.length}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                      Rows
-                      <select
-                        value={pageSize}
-                        onChange={(event) => setPageSize(Number(event.target.value))}
-                        className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
-                      >
-                        {PAGE_SIZE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <div className="inline-flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPage((currentPageNumber) => Math.max(1, currentPageNumber - 1))}
-                        disabled={currentPage === 1}
-                        className={paginationButtonClassName}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft size={17} />
-                      </button>
-                      <span className="min-w-20 text-center text-sm font-semibold text-slate-700">
-                        {currentPage} / {totalPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPage((currentPageNumber) =>
-                            Math.min(totalPages, currentPageNumber + 1),
-                          )
-                        }
-                        disabled={currentPage === totalPages}
-                        className={paginationButtonClassName}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight size={17} />
-                      </button>
-                    </div>
-                  </div>
+                <div className="border-t border-slate-200 px-5 py-4 text-sm text-[var(--muted)]">
+                  {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects
+                  across {pencawangGroups.length} Pencawang · {filteredDefects.length}{" "}
+                  defect{filteredDefects.length === 1 ? "" : "s"} total
                 </div>
               </section>
             )}
