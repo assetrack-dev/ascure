@@ -3285,6 +3285,7 @@ export class DefectsService {
     closureVerifiedByUserId: string | null;
     status: DefectStatus;
     severity: DefectSeverity;
+    maintenanceCategory: MaintenanceCategory | null;
     isEmergency: boolean;
     lifecycleStatus: DefectLifecycleStatus | null;
     resolutionOutcome: DefectResolutionOutcome | null;
@@ -3415,6 +3416,7 @@ export class DefectsService {
       remark: item.remark,
       status: defect.status,
       severity: defect.severity,
+      maintenanceCategory: defect.maintenanceCategory,
       isEmergency: defect.isEmergency,
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,

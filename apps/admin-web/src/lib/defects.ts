@@ -21,6 +21,7 @@ import type {
   DefectTimelineEntry,
   DefectTimelineEventType,
   DefectWorkflowStatus,
+  MaintenanceCategory,
 } from "@/types/defects";
 
 type ApiRecord = Record<string, unknown>;
@@ -154,6 +155,22 @@ function normalizeSeverity(value: string | null): DefectSeverity | null {
     normalizedValue === "HIGH" ||
     normalizedValue === "MEDIUM" ||
     normalizedValue === "LOW"
+  ) {
+    return normalizedValue;
+  }
+
+  return null;
+}
+
+function normalizeMaintenanceCategory(
+  value: string | null,
+): MaintenanceCategory | null {
+  const normalizedValue = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    normalizedValue === "RENTIS" ||
+    normalizedValue === "CAT_TIANG" ||
+    normalizedValue === "SELENGGARAAN"
   ) {
     return normalizedValue;
   }
@@ -441,6 +458,9 @@ function normalizeDefect(rawDefect: unknown, index: number): DefectListItem | nu
       "Unspecified defect",
     severity: normalizeSeverity(
       firstString(record, ["severity", "defectSeverity", "priority"]),
+    ),
+    maintenanceCategory: normalizeMaintenanceCategory(
+      firstString(record, ["maintenanceCategory", "category"]),
     ),
     status,
     lifecycleStatus: lifecycleStatus === "UNKNOWN" ? "DETECTED" : lifecycleStatus,

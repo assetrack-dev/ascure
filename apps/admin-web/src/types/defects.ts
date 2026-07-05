@@ -1,4 +1,5 @@
 export const DEFECT_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
+export const MAINTENANCE_CATEGORIES = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"] as const;
 export const DEFECT_WORKFLOW_STATUSES = [
   "OPEN",
   "IN_PROGRESS",
@@ -38,6 +39,8 @@ export const ALL_DEFECT_RESOLUTION_OUTCOMES = [
 ] as const;
 
 export type DefectSeverity = (typeof DEFECT_SEVERITIES)[number];
+
+export type MaintenanceCategory = (typeof MAINTENANCE_CATEGORIES)[number];
 
 export type DefectWorkflowStatus = (typeof DEFECT_WORKFLOW_STATUSES)[number];
 
@@ -150,6 +153,7 @@ export interface DefectListItem {
   } | null;
   defectType: string;
   severity: DefectSeverity | null;
+  maintenanceCategory?: MaintenanceCategory | null;
   status: DefectStatus;
   lifecycleStatus?: DefectLifecycleStatus | null;
   resolutionOutcome?: DefectResolutionOutcome | null;

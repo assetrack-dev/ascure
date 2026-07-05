@@ -26,6 +26,7 @@ import type {
   DefectSeverity,
   DefectStatus,
   DefectWorkflowStatus,
+  MaintenanceCategory,
 } from "@/types/defects";
 
 type SortKey =
@@ -43,6 +44,7 @@ type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
 type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
 type PencawangFilter = "ALL" | string;
+type CategoryFilter = "ALL" | MaintenanceCategory;
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -51,6 +53,12 @@ const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
   { label: "High", value: "HIGH" },
   { label: "Medium", value: "MEDIUM" },
   { label: "Low", value: "LOW" },
+];
+const MAINTENANCE_CATEGORY_OPTIONS: Array<{ label: string; value: CategoryFilter }> = [
+  { label: "All categories", value: "ALL" },
+  { label: "Rentis", value: "RENTIS" },
+  { label: "Cat Tiang", value: "CAT_TIANG" },
+  { label: "Selenggaraan", value: "SELENGGARAAN" },
 ];
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
@@ -407,6 +415,7 @@ function DefectsContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [assignedUserFilter, setAssignedUserFilter] = useState<AssignedUserFilter>("ALL");
   const [pencawangFilter, setPencawangFilter] = useState<PencawangFilter>("ALL");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -459,6 +468,7 @@ function DefectsContent() {
     statusFilter,
     assignedUserFilter,
     pencawangFilter,
+    categoryFilter,
     overdueOnly,
     startDate,
     endDate,
@@ -520,6 +530,8 @@ function DefectsContent() {
           : defect.assignedUserId === assignedUserFilter);
       const matchesPencawang =
         pencawangFilter === "ALL" || pencawangKeyOf(defect) === pencawangFilter;
+      const matchesCategory =
+        categoryFilter === "ALL" || defect.maintenanceCategory === categoryFilter;
       const matchesOverdue = !overdueOnly || Boolean(defect.isOverdue);
       const matchesStartDate = !startDate || (defectDate && defectDate >= startDate);
       const matchesEndDate = !endDate || (defectDate && defectDate <= endDate);
@@ -549,6 +561,7 @@ function DefectsContent() {
         matchesStatus &&
         matchesAssignedUser &&
         matchesPencawang &&
+        matchesCategory &&
         matchesOverdue &&
         matchesStartDate &&
         matchesEndDate &&
@@ -558,6 +571,7 @@ function DefectsContent() {
   }, [
     assignedUserFilter,
     pencawangFilter,
+    categoryFilter,
     defects,
     endDate,
     overdueOnly,
@@ -611,6 +625,7 @@ function DefectsContent() {
     setStatusFilter("ALL");
     setAssignedUserFilter("ALL");
     setPencawangFilter("ALL");
+    setCategoryFilter("ALL");
     setOverdueOnly(false);
     setStartDate("");
     setEndDate("");
@@ -729,6 +744,23 @@ function DefectsContent() {
                         {pencawangOptions.map(([key, label]) => (
                           <option key={key} value={key}>
                             {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="sr-only">Maintenance category</span>
+                      <select
+                        value={categoryFilter}
+                        onChange={(event) =>
+                          setCategoryFilter(event.target.value as CategoryFilter)
+                        }
+                        className={filterControlClassName}
+                      >
+                        {MAINTENANCE_CATEGORY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
