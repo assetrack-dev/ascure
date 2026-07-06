@@ -9,6 +9,7 @@ import {
   StatusBar as NativeStatusBar,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -23,11 +24,13 @@ import { useCapabilities } from '../useCapabilities';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
+  BottomCTA,
   Card,
   EmptyState,
   ErrorBanner,
   InlineButton,
   LoadingBlock,
+  Mono,
   Screen,
   SectionTitle,
   SelectCard,
@@ -219,6 +222,9 @@ export function AddAssetScreen() {
       SAVR_OPERATIONAL_STATUS_OPTIONS[0],
     [operationalStatus],
   );
+  // The active survey mode, shown as a read-only mono badge. The scope is derived
+  // from the visit (SAVT) or the chosen asset type (SAVR) — not a free toggle.
+  const scopeBadge = isSAVTWorkflow ? 'SAVT' : isSAVRWorkflow ? 'SAVR' : null;
 
   // Suggest the next NO TIANG RONDAAN from the last code entered in this
   // Pencawang (tappable chip; the field stays empty). New SAVR poles only —
@@ -809,6 +815,8 @@ export function AddAssetScreen() {
     );
   }
 
+  const hasGpsFix = latitude.trim().length > 0 && longitude.trim().length > 0;
+
   return (
     <Screen
       title={isEditMode ? 'Edit Asset' : 'Add Asset'}
@@ -823,29 +831,21 @@ export function AddAssetScreen() {
         </>
       }
       keyboardAware
-      footer={
+      bottomBar={
         isEditMode ? (
-          <AppButton
-            label={isSubmitting ? 'Updating Asset...' : 'Update Asset'}
+          <BottomCTA
+            label={isSubmitting ? 'Updating asset...' : 'Update Asset'}
             onPress={() => handleSubmit('detail')}
             loading={isSubmitting}
             disabled={isSaveDisabled}
           />
         ) : (
-          <View style={{ gap: 10 }}>
-            <AppButton
-              label={isSubmitting ? 'Saving...' : 'Save & inspect'}
-              onPress={() => handleSubmit('inspect')}
-              loading={isSubmitting}
-              disabled={isSaveDisabled}
-            />
-            <AppButton
-              label="Save & add another"
-              onPress={() => handleSubmit('another')}
-              variant="secondary"
-              disabled={isSaveDisabled}
-            />
-          </View>
+          <BottomCTA
+            label={isSubmitting ? 'Saving...' : 'Save & Inspect'}
+            onPress={() => handleSubmit('inspect')}
+            loading={isSubmitting}
+            disabled={isSaveDisabled}
+          />
         )
       }
     >
@@ -876,11 +876,13 @@ export function AddAssetScreen() {
                   >
                     <View style={styles.dropdownLabelWrap}>
                       <Text style={styles.dropdownLabel}>Selected Pencawang</Text>
-                      <Text style={styles.dropdownValue}>
-                        {selectedSubstation
-                          ? `${selectedSubstation.code} - ${selectedSubstation.name}`
-                          : 'Choose a pencawang'}
-                      </Text>
+                      {selectedSubstation ? (
+                        <Mono size={14} color={theme.colors.textPrimary}>
+                          {`${selectedSubstation.code} - ${selectedSubstation.name}`}
+                        </Mono>
+                      ) : (
+                        <Text style={styles.dropdownValue}>Choose a pencawang</Text>
+                      )}
                     </View>
                     <Text style={styles.dropdownCaret}>{isSubstationMenuOpen ? 'Hide' : 'Choose'}</Text>
                   </Pressable>
@@ -907,7 +909,10 @@ export function AddAssetScreen() {
           ) : null}
 
           <Card>
-            <SectionTitle>Asset Type</SectionTitle>
+            <View style={styles.sectionHeaderRow}>
+              <SectionTitle>Asset Type</SectionTitle>
+              {scopeBadge ? <StatusChip label={scopeBadge} tone="info" /> : null}
+            </View>
             {assetTypes.length === 0 ? (
               <EmptyState
                 title="No asset types available"
@@ -925,11 +930,13 @@ export function AddAssetScreen() {
                 >
                   <View style={styles.dropdownLabelWrap}>
                     <Text style={styles.dropdownLabel}>Selected Asset Type</Text>
-                    <Text style={styles.dropdownValue}>
-                      {selectedAssetType
-                        ? `${selectedAssetType.code} - ${selectedAssetType.name}`
-                        : 'Choose an asset type'}
-                    </Text>
+                    {selectedAssetType ? (
+                      <Mono size={14} color={theme.colors.textPrimary}>
+                        {`${selectedAssetType.code} - ${selectedAssetType.name}`}
+                      </Mono>
+                    ) : (
+                      <Text style={styles.dropdownValue}>Choose an asset type</Text>
+                    )}
                   </View>
                   <Text style={styles.dropdownCaret}>{isAssetTypeMenuOpen ? 'Hide' : 'Choose'}</Text>
                 </Pressable>
@@ -958,9 +965,9 @@ export function AddAssetScreen() {
             {isSAVTWorkflow && routePrefix ? (
               <View style={styles.routeContext}>
                 <Text style={styles.routeContextLabel}>KOD TIANG</Text>
-                <Text style={styles.routeContextValue} numberOfLines={1}>
+                <Mono size={16} color={theme.colors.infoText}>
                   {routePrefix}
-                </Text>
+                </Mono>
               </View>
             ) : null}
             <TextField
@@ -986,9 +993,12 @@ export function AddAssetScreen() {
                   pressed && styles.suggestionChipPressed,
                 ]}
               >
-                <Text style={styles.suggestionChipText} numberOfLines={1}>
-                  Next: {suggestedCode}
-                </Text>
+                <View style={styles.suggestionChipTextWrap}>
+                  <Text style={styles.suggestionChipEyebrow}>NEXT</Text>
+                  <Mono size={15} color={theme.colors.infoText}>
+                    {suggestedCode}
+                  </Mono>
+                </View>
                 <Text style={styles.suggestionChipHint}>Tap to use</Text>
               </Pressable>
             ) : null}
@@ -1051,13 +1061,42 @@ export function AddAssetScreen() {
 
           <Card>
             <SectionTitle>GPS</SectionTitle>
-            <View style={styles.coordinateSummaryRow}>
-              <Text style={styles.coordinateSummaryText} numberOfLines={1}>
+            {/* Confirmed GPS reads as a green card; coords + accuracy in mono. */}
+            <View style={[styles.gpsCard, hasGpsFix ? styles.gpsCardConfirmed : styles.gpsCardPending]}>
+              <View style={styles.gpsCardHeader}>
+                <Feather
+                  name={hasGpsFix ? 'check-circle' : 'map-pin'}
+                  size={16}
+                  color={hasGpsFix ? theme.colors.successText : theme.colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.gpsCardStatus,
+                    { color: hasGpsFix ? theme.colors.successText : theme.colors.textSecondary },
+                  ]}
+                >
+                  {hasGpsFix
+                    ? hasInitialMapLocation
+                      ? 'Map selected'
+                      : 'GPS captured'
+                    : isLocating
+                      ? 'Reading GPS...'
+                      : 'No GPS fix yet'}
+                </Text>
+                <Mono
+                  size={12}
+                  color={hasGpsFix ? theme.colors.successText : theme.colors.textMuted}
+                >
+                  {formatGpsAccuracy(gpsAccuracyMeters)}
+                </Mono>
+              </View>
+              <Mono
+                size={15}
+                color={hasGpsFix ? theme.colors.textPrimary : theme.colors.textMuted}
+              >
                 {formatCoordinateSummary(latitude, longitude)}
-              </Text>
-              <Text style={styles.coordinateAccuracyText}>{formatGpsAccuracy(gpsAccuracyMeters)}</Text>
+              </Mono>
             </View>
-            {hasInitialMapLocation ? <Text style={styles.coordinateSourceText}>Map selected</Text> : null}
             <View style={styles.coordinateInputRow}>
               <View style={styles.coordinateInputCell}>
                 <TextField
@@ -1090,7 +1129,7 @@ export function AddAssetScreen() {
               </View>
               <View style={styles.coordinateActionCell}>
                 <AppButton
-                  label={isOpeningMapPicker ? 'Opening...' : 'Map'}
+                  label={isOpeningMapPicker ? 'Opening...' : 'Pick on map'}
                   onPress={handleOpenMapPicker}
                   variant="secondary"
                   loading={isOpeningMapPicker}
@@ -1102,6 +1141,17 @@ export function AddAssetScreen() {
               <Text style={styles.coordinateSourceText}>Location permission off. Manual entry works.</Text>
             ) : null}
           </Card>
+
+          {/* Secondary save path lives in-content; the primary "Save & Inspect"
+              is the docked BottomCTA. New poles only (edit has a single CTA). */}
+          {!isEditMode ? (
+            <AppButton
+              label="Save pole only"
+              onPress={() => handleSubmit('another')}
+              variant="secondary"
+              disabled={isSaveDisabled}
+            />
+          ) : null}
         </>
       ) : null}
     </Screen>
@@ -1188,12 +1238,12 @@ function MapCoordinatePicker({
         <View style={styles.mapPickerFooter}>
           <View style={styles.mapPickerCoordinatePanel}>
             <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
-            <Text style={styles.mapPickerCoordinateValue}>
+            <Mono size={14} color={theme.colors.textPrimary}>
               Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
-            </Text>
-            <Text style={styles.mapPickerAccuracyText}>
+            </Mono>
+            <Mono size={13} muted>
               {formatGpsAccuracy(accuracyMeters)}
-            </Text>
+            </Mono>
           </View>
           <AppButton
             label="Confirm Coordinates"
@@ -1218,11 +1268,11 @@ function formatCoordinateSummary(latitude: string, longitude: string) {
   const latitudeLabel = latitude.trim() || 'N/A';
   const longitudeLabel = longitude.trim() || 'N/A';
 
-  return `Lat ${latitudeLabel} · Lng ${longitudeLabel}`;
+  return `${latitudeLabel}, ${longitudeLabel}`;
 }
 
 function formatGpsAccuracy(value: number | null) {
-  return value === null ? 'GPS --' : `GPS ±${Math.round(value)}m`;
+  return value === null ? 'GPS --' : `±${Math.round(value)}m`;
 }
 
 function parseCoordinate(
@@ -1483,6 +1533,12 @@ function getMetadataCoordinateSource(
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
     suggestionChip: {
       marginTop: 10,
       flexDirection: 'row',
@@ -1491,7 +1547,7 @@ const createStyles = (t: Theme) =>
       gap: 10,
       paddingHorizontal: 12,
       paddingVertical: 9,
-      borderRadius: 8,
+      borderRadius: t.radius.chip,
       borderWidth: 1,
       borderColor: t.colors.infoBorder,
       backgroundColor: t.colors.infoSoft,
@@ -1499,41 +1555,46 @@ const createStyles = (t: Theme) =>
     suggestionChipPressed: {
       backgroundColor: t.colors.surfacePressed,
     },
-    suggestionChipText: {
+    suggestionChipTextWrap: {
       flexShrink: 1,
-      fontSize: 15,
-      fontWeight: '700',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    suggestionChipEyebrow: {
+      fontSize: 11,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 1.2,
       color: t.colors.infoText,
+      opacity: 0.8,
     },
     suggestionChipHint: {
       fontSize: 12,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: t.colors.infoText,
       opacity: 0.8,
     },
     routeContext: {
-      marginBottom: 10,
+      marginBottom: 4,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 8,
+      borderRadius: t.radius.chip,
       borderWidth: 1,
       borderColor: t.colors.infoBorder,
       backgroundColor: t.colors.infoSoft,
+      gap: 2,
     },
     routeContextLabel: {
-      fontSize: 12,
-      fontWeight: '600',
+      fontSize: 11,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 1.2,
       color: t.colors.infoText,
       opacity: 0.8,
     },
-    routeContextValue: {
-      fontSize: 16,
-      fontWeight: '700',
-      color: t.colors.infoText,
-    },
     dropdownField: {
       minHeight: 52,
-      borderRadius: 8,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.card,
@@ -1545,7 +1606,7 @@ const createStyles = (t: Theme) =>
       alignItems: 'center',
     },
     dropdownFieldOpen: {
-      borderColor: t.colors.textPrimary,
+      borderColor: t.colors.primary,
       backgroundColor: t.colors.surfaceMuted,
     },
     dropdownFieldPressed: {
@@ -1561,21 +1622,24 @@ const createStyles = (t: Theme) =>
     dropdownLabel: {
       fontSize: 11,
       lineHeight: 15,
-      fontWeight: '700',
-      color: t.colors.textSecondary,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 1.2,
+      color: t.colors.textMuted,
       textTransform: 'uppercase',
     },
     dropdownValue: {
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
       color: t.colors.textPrimary,
     },
     dropdownCaret: {
       fontSize: 12,
       lineHeight: 16,
       fontWeight: '700',
-      color: t.colors.textPrimary,
+      fontFamily: t.fonts.bodyBold,
+      color: t.colors.primary,
     },
     dropdownOptions: {
       paddingTop: 8,
@@ -1589,7 +1653,7 @@ const createStyles = (t: Theme) =>
     },
     statusOptionButton: {
       minHeight: 38,
-      borderRadius: 8,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.card,
@@ -1600,41 +1664,42 @@ const createStyles = (t: Theme) =>
       flexBasis: '47%',
     },
     statusOptionButtonSelected: {
-      borderColor: t.colors.textPrimary,
+      borderColor: t.colors.primary,
       backgroundColor: t.colors.surfaceMuted,
     },
-    coordinateSummaryRow: {
-      minHeight: 38,
+    // Confirmed GPS card (handoff 2j) — green when a fix is captured.
+    gpsCard: {
       borderRadius: t.radius.card,
       borderWidth: 1,
+      padding: 12,
+      gap: 8,
+    },
+    gpsCardConfirmed: {
+      borderColor: t.colors.successBorder,
+      backgroundColor: t.colors.successSoft,
+    },
+    gpsCardPending: {
       borderColor: t.colors.border,
       backgroundColor: t.colors.surfaceMuted,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+    },
+    gpsCardHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
+      gap: 8,
     },
-    coordinateSummaryText: {
+    gpsCardStatus: {
       flex: 1,
-      color: t.colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '700',
-    },
-    coordinateAccuracyText: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '700',
-      textAlign: 'right',
+      fontFamily: t.fonts.bodyBold,
     },
     coordinateSourceText: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     coordinateInputRow: {
       flexDirection: 'row',
@@ -1670,7 +1735,7 @@ const createStyles = (t: Theme) =>
     mapPickerHeaderButton: {
       minWidth: 72,
       minHeight: 40,
-      borderRadius: t.radius.card,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.border,
       alignItems: 'center',
@@ -1683,6 +1748,7 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     mapPickerHeaderTitleWrap: {
       flex: 1,
@@ -1694,6 +1760,7 @@ const createStyles = (t: Theme) =>
       fontSize: 18,
       lineHeight: 24,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
       textAlign: 'center',
     },
     mapPickerSubtitle: {
@@ -1701,6 +1768,7 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       textAlign: 'center',
     },
     mapPickerHeaderSide: {
@@ -1731,17 +1799,6 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
-    },
-    mapPickerCoordinateValue: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 19,
-      fontWeight: '800',
-    },
-    mapPickerAccuracyText: {
-      color: t.colors.textSecondary,
-      fontSize: 13,
-      lineHeight: 18,
-      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
   });

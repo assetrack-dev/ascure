@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
@@ -20,10 +20,12 @@ import {
   BodyText,
   Card,
   ErrorBanner,
+  Mono,
   Screen,
   SectionTitle,
   SkeletonCard,
-  StatusChip,
+  StatusSpineTile,
+  type SpineTone,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 
@@ -142,30 +144,57 @@ export function DashboardScreen() {
 
       {!isLoading && !capsLoading && dashboard ? (
         <>
+          {/* Hero metric — the single "are we on track?" number, adapting to what
+              the role can see. Inspection crews lead with inspections done; a
+              maintenance-only crew leads with open defects. */}
+          {canInspect ? (
+            <HeroMetric
+              value={dashboard.totalInspections}
+              label="Inspections completed"
+              caption={`${formatNumber(dashboard.totalAssets)} assets in scope`}
+              coverage={
+                dashboard.totalAssets > 0
+                  ? dashboard.totalInspections / dashboard.totalAssets
+                  : null
+              }
+            />
+          ) : showDefectStats ? (
+            <HeroMetric
+              value={dashboard.openDefects}
+              label="Open defects"
+              caption={`${formatNumber(dashboard.totalDefects)} defects tracked`}
+              coverage={
+                dashboard.totalDefects > 0
+                  ? dashboard.closedDefects / dashboard.totalDefects
+                  : null
+              }
+              coverageLabel="closed"
+              tone="danger"
+            />
+          ) : null}
+
+          {/* Compact mini-stat cards below the hero (real totals only). */}
           {canInspect || showDefectStats ? (
-            <View style={styles.statGrid}>
+            <View style={styles.miniRow}>
               {canInspect ? (
                 <>
-                  <StatCard label="Total Assets" value={dashboard.totalAssets} />
-                  <StatCard label="Total Inspections" value={dashboard.totalInspections} />
+                  <MiniStat label="Total Assets" value={dashboard.totalAssets} />
+                  <MiniStat label="Inspections" value={dashboard.totalInspections} />
                 </>
               ) : null}
               {showDefectStats ? (
-                <StatCard label="Total Defects" value={dashboard.totalDefects} />
+                <MiniStat label="Total Defects" value={dashboard.totalDefects} />
               ) : null}
             </View>
           ) : null}
 
+          {/* Defects as a single proportion bar + legend with mono counts. */}
           {showDefectStats ? (
-            <View style={styles.statGrid}>
-              <StatusStatCard label="Open" value={dashboard.openDefects} status="OPEN" />
-              <StatusStatCard
-                label="In Progress"
-                value={dashboard.inProgressDefects}
-                status="IN_PROGRESS"
-              />
-              <StatusStatCard label="Closed" value={dashboard.closedDefects} status="CLOSED" />
-            </View>
+            <DefectBreakdown
+              open={dashboard.openDefects}
+              inProgress={dashboard.inProgressDefects}
+              closed={dashboard.closedDefects}
+            />
           ) : null}
 
           {canSeeTeamActivity && teamActivity ? (
@@ -183,9 +212,16 @@ export function DashboardScreen() {
                 <BodyText muted>No recent defects found.</BodyText>
               ) : (
                 dashboard.recentDefects.map((defect) => (
-                  <RecentDefectRow
+                  <StatusSpineTile
                     key={defect.id}
-                    defect={defect}
+                    code={defect.assetCode || 'Unknown Asset'}
+                    spine={spineForDefect(defect)}
+                    chip={{
+                      label: formatStatus(defect.status),
+                      tone: getStatusTone(defect.status),
+                    }}
+                    secondary={defect.label}
+                    meta={[formatDateTime(defect.createdAt)]}
                     onPress={() => navigation.navigate('DefectDetail', { defectId: defect.id })}
                   />
                 ))
@@ -216,59 +252,138 @@ export function DashboardScreen() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  return (
-    <View style={styles.statCard}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{formatNumber(value)}</Text>
-    </View>
-  );
-}
-
-function StatusStatCard({
-  label,
+/**
+ * The dark hero metric card (handoff 1c): a mono eyebrow, one big Space Grotesk
+ * number, a caption, and — where a real ratio exists — a thin progress bar so
+ * the number reads "against a whole" without inventing any figures.
+ */
+function HeroMetric({
   value,
-  status,
+  label,
+  caption,
+  coverage,
+  coverageLabel = 'inspected',
+  tone = 'primary',
 }: {
-  label: string;
   value: number;
-  status: DefectStatus;
+  label: string;
+  caption: string;
+  coverage: number | null;
+  coverageLabel?: string;
+  tone?: 'primary' | 'danger';
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const accent = tone === 'danger' ? theme.colors.danger : theme.colors.primary;
+  const pct = coverage !== null ? Math.max(0, Math.min(1, coverage)) : null;
+
   return (
-    <View style={styles.statusStatCard}>
-      <StatusChip label={label} tone={getStatusTone(status)} />
-      <Text style={styles.statusStatValue}>{formatNumber(value)}</Text>
+    <View style={styles.hero}>
+      <Text style={styles.heroEyebrow}>{label.toUpperCase()}</Text>
+      <View style={styles.heroValueRow}>
+        <Text style={styles.heroValue}>{formatNumber(value)}</Text>
+      </View>
+      <Text style={styles.heroCaption}>{caption}</Text>
+
+      {pct !== null ? (
+        <View style={styles.heroProgressWrap}>
+          <View style={styles.heroTrack}>
+            <View
+              style={[
+                styles.heroFill,
+                { width: `${Math.round(pct * 100)}%`, backgroundColor: accent },
+              ]}
+            />
+          </View>
+          <Text style={styles.heroProgressLabel}>
+            <Text style={styles.heroProgressPct}>{Math.round(pct * 100)}%</Text>{' '}
+            {coverageLabel}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function RecentDefectRow({
-  defect,
-  onPress,
-}: {
-  defect: DashboardRecentDefect;
-  onPress: () => void;
-}) {
+function MiniStat({ label, value }: { label: string; value: number }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.recentDefectRow, pressed && styles.recentDefectRowPressed]}
-    >
-      <View style={styles.recentDefectHeader}>
-        <View style={styles.recentDefectTextWrap}>
-          <Text style={styles.recentDefectAsset}>{defect.assetCode || 'Unknown Asset'}</Text>
-          <Text style={styles.recentDefectLabel}>{defect.label}</Text>
-        </View>
-        <StatusChip label={formatStatus(defect.status)} tone={getStatusTone(defect.status)} />
+    <View style={styles.miniCard}>
+      <Text style={styles.miniValue}>{formatNumber(value)}</Text>
+      <Text style={styles.miniLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const DEFECT_SEGMENTS = [
+  { key: 'open', label: 'Open', tone: 'warning' as const },
+  { key: 'inProgress', label: 'In Progress', tone: 'info' as const },
+  { key: 'closed', label: 'Closed', tone: 'success' as const },
+];
+
+/**
+ * Defect status as one stacked proportion bar + a legend of mono counts
+ * (handoff 1c) — replaces the three identical status stat cards.
+ */
+function DefectBreakdown({
+  open,
+  inProgress,
+  closed,
+}: {
+  open: number;
+  inProgress: number;
+  closed: number;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const counts: Record<string, number> = { open, inProgress, closed };
+  const colorFor = (tone: 'warning' | 'info' | 'success') =>
+    tone === 'warning'
+      ? theme.colors.warning
+      : tone === 'success'
+        ? theme.colors.success
+        : theme.colors.primary;
+  const total = open + inProgress + closed;
+
+  return (
+    <Card>
+      <SectionTitle>Defects</SectionTitle>
+
+      <View style={styles.proportionBar}>
+        {total === 0 ? (
+          <View style={styles.proportionEmpty} />
+        ) : (
+          DEFECT_SEGMENTS.map((segment) => {
+            const count = counts[segment.key];
+            if (count <= 0) {
+              return null;
+            }
+            return (
+              <View
+                key={segment.key}
+                style={{
+                  width: `${(count / total) * 100}%`,
+                  backgroundColor: colorFor(segment.tone),
+                }}
+              />
+            );
+          })
+        )}
       </View>
-      <Text style={styles.recentDefectDate}>{formatDateTime(defect.createdAt)}</Text>
-    </Pressable>
+
+      <View style={styles.legend}>
+        {DEFECT_SEGMENTS.map((segment) => (
+          <View key={segment.key} style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colorFor(segment.tone) }]} />
+            <Text style={styles.legendLabel}>{segment.label}</Text>
+            <Mono size={13} color={colorFor(segment.tone)}>
+              {formatNumber(counts[segment.key])}
+            </Mono>
+          </View>
+        ))}
+      </View>
+    </Card>
   );
 }
 
@@ -283,13 +398,13 @@ function TeamActivityCard({ activity }: { activity: DailyTeamActivity }) {
   return (
     <Card>
       <SectionTitle>Today's Team Activity</SectionTitle>
-      <Text style={styles.teamActivityDate}>{formatActivityDate(activity.date)}</Text>
+      <Text style={styles.activityDate}>{formatActivityDate(activity.date)}</Text>
 
-      <View style={styles.teamActivitySummary}>
-        <Text style={styles.teamActivityTotalValue}>
+      <View style={styles.activitySummary}>
+        <Text style={styles.activityTotalValue}>
           {formatNumber(activity.totalAssetsInspectedToday)}
         </Text>
-        <Text style={styles.teamActivityTotalLabel}>
+        <Text style={styles.activityTotalLabel}>
           {activity.totalAssetsInspectedToday === 1 ? 'pole inspected' : 'poles inspected'}
           {activity.activeTeamCount > 0
             ? ` · ${activity.activeTeamCount} ${
@@ -302,9 +417,15 @@ function TeamActivityCard({ activity }: { activity: DailyTeamActivity }) {
       {activity.teams.length === 0 ? (
         <BodyText muted>No inspections submitted today yet.</BodyText>
       ) : (
-        <View style={styles.teamActivityList}>
-          {activity.teams.map((team) => (
-            <TeamActivityRow key={team.teamId} team={team} maxValue={maxValue} />
+        <View style={styles.leaderboard}>
+          {activity.teams.map((team, index) => (
+            <LeaderboardRow
+              key={team.teamId}
+              rank={index + 1}
+              name={team.teamName}
+              value={team.assetsInspectedToday}
+              maxValue={maxValue}
+            />
           ))}
         </View>
       )}
@@ -312,69 +433,45 @@ function TeamActivityCard({ activity }: { activity: DailyTeamActivity }) {
   );
 }
 
-function TeamActivityRow({
-  team,
-  maxValue,
-}: {
-  team: DailyTeamActivityTeam;
-  maxValue: number;
-}) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  // Floor non-zero bars at a sliver so a team with work always reads as > 0.
-  const fraction =
-    maxValue > 0 && team.assetsInspectedToday > 0
-      ? Math.max(team.assetsInspectedToday / maxValue, 0.06)
-      : 0;
-
-  return (
-    <View style={styles.teamActivityRow}>
-      <View style={styles.teamActivityRowTop}>
-        <Text style={styles.teamActivityTeamName} numberOfLines={1}>
-          {team.teamName}
-        </Text>
-        <Text style={styles.teamActivityCount}>
-          {formatNumber(team.assetsInspectedToday)}
-        </Text>
-      </View>
-      <View style={styles.teamActivityTrack}>
-        <View
-          style={[styles.teamActivityFill, { width: `${Math.round(fraction * 100)}%` }]}
-        />
-      </View>
-    </View>
-  );
-}
-
-function UserActivityRow({
+/**
+ * A crew leaderboard row (handoff 1c): rank badge (solidFill), name + optional
+ * subtitle, a progress bar sized to the leader, and a mono value.
+ */
+function LeaderboardRow({
+  rank,
   name,
   subtitle,
   value,
   maxValue,
 }: {
+  rank: number;
   name: string;
-  subtitle: string | null;
+  subtitle?: string | null;
   value: number;
   maxValue: number;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Floor non-zero bars at a sliver so anyone with work always reads as > 0.
   const fraction =
     maxValue > 0 && value > 0 ? Math.max(value / maxValue, 0.06) : 0;
 
   return (
-    <View style={styles.teamActivityRow}>
-      <View style={styles.teamActivityRowTop}>
-        <Text style={styles.teamActivityTeamName} numberOfLines={1}>
-          {name}
-          {subtitle ? ` · ${subtitle}` : ''}
-        </Text>
-        <Text style={styles.teamActivityCount}>{formatNumber(value)}</Text>
+    <View style={styles.leaderRow}>
+      <View style={styles.rankBadge}>
+        <Text style={styles.rankBadgeText}>{rank}</Text>
       </View>
-      <View style={styles.teamActivityTrack}>
-        <View
-          style={[styles.teamActivityFill, { width: `${Math.round(fraction * 100)}%` }]}
-        />
+      <View style={styles.leaderBody}>
+        <View style={styles.leaderTopRow}>
+          <Text style={styles.leaderName} numberOfLines={1}>
+            {name}
+            {subtitle ? <Text style={styles.leaderSubtitle}>{` · ${subtitle}`}</Text> : null}
+          </Text>
+          <Mono size={14}>{formatNumber(value)}</Mono>
+        </View>
+        <View style={styles.leaderTrack}>
+          <View style={[styles.leaderFill, { width: `${Math.round(fraction * 100)}%` }]} />
+        </View>
       </View>
     </View>
   );
@@ -420,13 +517,13 @@ function UserActivityCard({
   return (
     <Card>
       <SectionTitle>Today's Crew Activity</SectionTitle>
-      <Text style={styles.teamActivityDate}>{formatActivityDate(activity.date)}</Text>
+      <Text style={styles.activityDate}>{formatActivityDate(activity.date)}</Text>
 
-      <View style={styles.teamActivitySummary}>
-        <Text style={styles.teamActivityTotalValue}>
+      <View style={styles.activitySummary}>
+        <Text style={styles.activityTotalValue}>
           {formatNumber(activity.totalAssetsInspectedToday)}
         </Text>
-        <Text style={styles.teamActivityTotalLabel}>
+        <Text style={styles.activityTotalLabel}>
           {activity.totalAssetsInspectedToday === 1 ? 'pole inspected' : 'poles inspected'}
           {activity.activeUserCount > 0
             ? ` · ${activity.activeUserCount} ${
@@ -439,10 +536,11 @@ function UserActivityCard({
       {activity.users.length === 0 ? (
         <BodyText muted>No inspections submitted today yet.</BodyText>
       ) : (
-        <View style={styles.teamActivityList}>
-          {activity.users.map((row) => (
-            <UserActivityRow
+        <View style={styles.leaderboard}>
+          {activity.users.map((row, index) => (
+            <LeaderboardRow
               key={row.userId}
+              rank={index + 1}
               name={row.name}
               subtitle={row.teamName}
               value={row.assetsInspectedToday}
@@ -463,16 +561,17 @@ function UserActivityCard({
         ) : monthError ? (
           <ErrorBanner message={monthError} />
         ) : month ? (
-          <View style={styles.teamActivityList}>
-            <Text style={styles.teamActivityDate}>
+          <View style={styles.leaderboard}>
+            <Text style={styles.activityDate}>
               {month.period} · {formatNumber(month.totalAssetsInspected)} poles total
             </Text>
             {month.users.length === 0 ? (
               <BodyText muted>No inspections this month yet.</BodyText>
             ) : (
-              month.users.map((row) => (
-                <UserActivityRow
+              month.users.map((row, index) => (
+                <LeaderboardRow
                   key={row.userId}
+                  rank={index + 1}
                   name={row.name}
                   subtitle={row.teamName}
                   value={row.assetsInspected}
@@ -528,6 +627,23 @@ function getStatusTone(status: DefectStatus) {
   return 'neutral';
 }
 
+/** Spine encodes severity, except a done defect always reads green (handoff C2). */
+function spineForDefect(defect: DashboardRecentDefect): SpineTone {
+  if (defect.status === 'CLOSED') {
+    return 'green';
+  }
+  if (defect.severity === 'CRITICAL' || defect.severity === 'HIGH') {
+    return 'red';
+  }
+  if (defect.severity === 'MEDIUM') {
+    return 'amber';
+  }
+  if (defect.status === 'IN_PROGRESS') {
+    return 'blue';
+  }
+  return 'neutral';
+}
+
 function formatStatus(value: string) {
   return value
     .toLowerCase()
@@ -542,150 +658,221 @@ function formatNumber(value: number) {
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
-    statGrid: {
+    // Hero metric — dark card, big display number (handoff 1c).
+    hero: {
+      backgroundColor: t.colors.solidFill,
+      borderRadius: t.radius.card,
+      padding: 20,
+      gap: 6,
+      borderWidth: 1,
+      borderColor: t.colors.solidFill,
+      ...t.shadow.raised,
+    },
+    heroEyebrow: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.4,
+      color: t.colors.onSolidFill,
+      opacity: 0.6,
+    },
+    heroValueRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+    },
+    heroValue: {
+      fontSize: 56,
+      lineHeight: 60,
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      letterSpacing: -1.5,
+      color: t.colors.onSolidFill,
+    },
+    heroCaption: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontFamily: t.fonts.body,
+      color: t.colors.onSolidFill,
+      opacity: 0.66,
+    },
+    heroProgressWrap: {
+      marginTop: 8,
+      gap: 6,
+    },
+    heroTrack: {
+      height: 8,
+      borderRadius: t.radius.pill,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      overflow: 'hidden',
+    },
+    heroFill: {
+      height: '100%',
+      borderRadius: t.radius.pill,
+    },
+    heroProgressLabel: {
+      fontSize: 12,
+      fontFamily: t.fonts.body,
+      color: t.colors.onSolidFill,
+      opacity: 0.72,
+    },
+    heroProgressPct: {
+      fontFamily: t.fonts.monoMedium,
+      color: t.colors.onSolidFill,
+    },
+
+    // Compact mini-stat cards.
+    miniRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 12,
     },
-    statCard: {
+    miniCard: {
       flexGrow: 1,
-      flexBasis: 140,
-      minHeight: 94,
+      flexBasis: 100,
+      minHeight: 78,
       backgroundColor: t.colors.card,
       borderRadius: t.radius.card,
       padding: 14,
-      gap: 8,
+      gap: 4,
       borderWidth: 1,
       borderColor: t.colors.border,
+      ...t.shadow.card,
     },
-    statLabel: {
+    miniValue: {
+      fontSize: 24,
+      lineHeight: 30,
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    miniLabel: {
       fontSize: 12,
       lineHeight: 16,
+      fontFamily: t.fonts.bodySemibold,
       fontWeight: '600',
       color: t.colors.textSecondary,
     },
-    statValue: {
-      fontSize: 28,
-      lineHeight: 34,
-      fontWeight: '700',
-      color: t.colors.textPrimary,
+
+    // Defect proportion bar + legend.
+    proportionBar: {
+      flexDirection: 'row',
+      height: 14,
+      borderRadius: t.radius.pill,
+      overflow: 'hidden',
+      backgroundColor: t.colors.surfaceMuted,
     },
-    statusStatCard: {
-      flexGrow: 1,
-      flexBasis: 110,
-      minHeight: 92,
-      backgroundColor: t.colors.card,
-      borderRadius: t.radius.card,
-      padding: 14,
-      gap: 10,
-      borderWidth: 1,
-      borderColor: t.colors.border,
+    proportionEmpty: {
+      flex: 1,
+      backgroundColor: t.colors.surfaceMuted,
     },
-    statusStatValue: {
-      fontSize: 26,
-      lineHeight: 32,
-      fontWeight: '700',
-      color: t.colors.textPrimary,
+    legend: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 16,
+      marginTop: 2,
     },
-    teamActivityDate: {
+    legendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    legendDot: {
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+    },
+    legendLabel: {
+      fontSize: 13,
+      fontFamily: t.fonts.bodyMedium,
+      fontWeight: '500',
+      color: t.colors.textSecondary,
+    },
+
+    // Team / crew activity + leaderboard.
+    activityDate: {
       fontSize: 13,
       lineHeight: 18,
+      fontFamily: t.fonts.bodySemibold,
       fontWeight: '600',
       color: t.colors.textSecondary,
       marginTop: -4,
     },
-    teamActivitySummary: {
+    activitySummary: {
       flexDirection: 'row',
       alignItems: 'baseline',
       flexWrap: 'wrap',
       gap: 8,
     },
-    teamActivityTotalValue: {
-      fontSize: 30,
-      lineHeight: 34,
+    activityTotalValue: {
+      fontSize: 32,
+      lineHeight: 36,
+      fontFamily: t.fonts.display,
       fontWeight: '700',
+      letterSpacing: -0.6,
       color: t.colors.primary,
     },
-    teamActivityTotalLabel: {
+    activityTotalLabel: {
       flexShrink: 1,
       fontSize: 13,
       lineHeight: 18,
+      fontFamily: t.fonts.bodyMedium,
       fontWeight: '500',
       color: t.colors.textSecondary,
     },
-    teamActivityList: {
+    leaderboard: {
       gap: 12,
       marginTop: 2,
     },
-    teamActivityRow: {
+    leaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    rankBadge: {
+      width: 26,
+      height: 26,
+      borderRadius: 8,
+      backgroundColor: t.colors.solidFill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rankBadgeText: {
+      fontSize: 13,
+      fontFamily: t.fonts.monoMedium,
+      color: t.colors.onSolidFill,
+    },
+    leaderBody: {
+      flex: 1,
       gap: 6,
     },
-    teamActivityRowTop: {
+    leaderTopRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
     },
-    teamActivityTeamName: {
+    leaderName: {
       flex: 1,
       fontSize: 14,
       lineHeight: 19,
+      fontFamily: t.fonts.bodySemibold,
       fontWeight: '600',
       color: t.colors.textPrimary,
     },
-    teamActivityCount: {
-      fontSize: 15,
-      lineHeight: 20,
-      fontWeight: '700',
-      color: t.colors.textPrimary,
-      fontVariant: ['tabular-nums'],
+    leaderSubtitle: {
+      fontFamily: t.fonts.body,
+      fontWeight: '400',
+      color: t.colors.textMuted,
     },
-    teamActivityTrack: {
+    leaderTrack: {
       height: 8,
-      borderRadius: 999,
+      borderRadius: t.radius.pill,
       backgroundColor: t.colors.primarySoft,
       overflow: 'hidden',
     },
-    teamActivityFill: {
+    leaderFill: {
       height: '100%',
-      borderRadius: 999,
+      borderRadius: t.radius.pill,
       backgroundColor: t.colors.primary,
-    },
-    recentDefectRow: {
-      borderRadius: t.radius.card,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      padding: 14,
-      gap: 10,
-    },
-    recentDefectRowPressed: {
-      backgroundColor: t.colors.surfacePressed,
-    },
-    recentDefectHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    recentDefectTextWrap: {
-      flex: 1,
-      gap: 4,
-    },
-    recentDefectAsset: {
-      fontSize: 16,
-      lineHeight: 21,
-      fontWeight: '700',
-      color: t.colors.textPrimary,
-    },
-    recentDefectLabel: {
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '500',
-      color: t.colors.textPrimary,
-    },
-    recentDefectDate: {
-      fontSize: 13,
-      lineHeight: 18,
-      color: t.colors.textSecondary,
     },
   });

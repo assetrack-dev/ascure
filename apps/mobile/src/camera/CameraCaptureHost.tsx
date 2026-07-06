@@ -23,6 +23,7 @@ import {
   Gesture,
 } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 
 import { registerCameraCaptureHost, type CaptureRequest } from './captureWithCamera';
 import { TimestampStamp } from './TimestampStamp';
@@ -406,9 +407,9 @@ export function CameraCaptureHost() {
             <Pressable
               onPress={handleCancel}
               hitSlop={12}
-              style={[styles.iconButton, styles.absTopLeft, { top: insets.top + 8 }]}
+              style={[styles.iconButtonSquare, styles.absTopLeft, { top: insets.top + 8 }]}
             >
-              <Text style={styles.iconText}>✕</Text>
+              <Feather name="x" size={22} color="#ffffff" />
             </Pressable>
             <View style={[styles.reviewBar, { paddingBottom: insets.bottom + 24 }]}>
               <Pressable onPress={retakePhoto} style={styles.reviewButton}>
@@ -430,8 +431,8 @@ export function CameraCaptureHost() {
         {!inReview ? (
           <>
             <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-              <Pressable onPress={handleCancel} hitSlop={12} style={styles.iconButton}>
-                <Text style={styles.iconText}>✕</Text>
+              <Pressable onPress={handleCancel} hitSlop={12} style={styles.iconButtonSquare}>
+                <Feather name="x" size={22} color="#ffffff" />
               </Pressable>
               <View style={styles.topRight}>
                 <Pressable
@@ -439,24 +440,38 @@ export function CameraCaptureHost() {
                   hitSlop={12}
                   style={[styles.iconButton, tiltMode && styles.iconButtonActive]}
                 >
+                  <Feather
+                    name="compass"
+                    size={16}
+                    color="#ffffff"
+                    style={styles.iconGlyphLead}
+                  />
                   <Text style={styles.iconText}>Tilt</Text>
                 </Pressable>
                 {!tiltMode ? (
                   <Pressable
                     onPress={() => setShowGrid((g) => !g)}
                     hitSlop={12}
-                    style={styles.iconButton}
+                    style={styles.iconButtonSquare}
                   >
-                    <Text style={styles.iconText}>{showGrid ? '⊞' : '⊡'}</Text>
+                    <Feather
+                      name="grid"
+                      size={20}
+                      color={showGrid ? '#ffffff' : 'rgba(255,255,255,0.5)'}
+                    />
                   </Pressable>
                 ) : null}
                 {mode === 'photo' ? (
                   <Pressable
                     onPress={() => setFlash((f) => (f === 'off' ? 'on' : 'off'))}
                     hitSlop={12}
-                    style={styles.iconButton}
+                    style={styles.iconButtonSquare}
                   >
-                    <Text style={styles.iconText}>{flash === 'on' ? '⚡On' : '⚡Off'}</Text>
+                    <Feather
+                      name={flash === 'on' ? 'zap' : 'zap-off'}
+                      size={20}
+                      color="#ffffff"
+                    />
                   </Pressable>
                 ) : null}
               </View>
@@ -519,9 +534,9 @@ export function CameraCaptureHost() {
                   <Pressable
                     onPress={() => setFacing((c) => (c === 'back' ? 'front' : 'back'))}
                     hitSlop={12}
-                    style={styles.iconButton}
+                    style={styles.iconButtonSquare}
                   >
-                    <Text style={styles.iconText}>⟲</Text>
+                    <Feather name="refresh-cw" size={20} color="#ffffff" />
                   </Pressable>
                 ) : null}
               </View>
@@ -587,10 +602,21 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     paddingHorizontal: 12,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
+  // Square variant for single-icon control chips (close / grid / flash / flip).
+  iconButtonSquare: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  iconGlyphLead: { marginRight: 6 },
   iconButtonActive: { backgroundColor: '#2563EB' },
   iconText: { color: '#ffffff', fontSize: 17, fontWeight: '600' },
   absTopLeft: { position: 'absolute', left: 20 },

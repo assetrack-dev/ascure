@@ -14,8 +14,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { useSession } from '../context/AuthContext';
@@ -51,10 +53,12 @@ import {
 } from '../utils';
 import {
   AppButton,
+  BottomCTA,
   EmptyState,
   ErrorBanner,
   InlineButton,
   LoadingBlock,
+  Mono,
   Screen,
   StatusChip,
   SuccessBanner,
@@ -255,6 +259,13 @@ export function InspectionFormScreen() {
   );
   const allSectionsComplete =
     !isGroupedChecklist || checklistSections.every((section) => isSectionComplete(section));
+  // Group-progress readout for the top bar ("N/M groups" + fill). Counts only
+  // apply to the grouped flow; a single-group / read-only list has no accordion.
+  const totalGroupCount = checklistSections.length;
+  const doneGroupCount = isGroupedChecklist
+    ? checklistSections.filter((section) => isSectionComplete(section)).length
+    : totalGroupCount;
+  const groupProgress = totalGroupCount > 0 ? doneGroupCount / totalGroupCount : 0;
 
   const loadForm = useCallback(async () => {
     try {
@@ -1013,6 +1024,36 @@ export function InspectionFormScreen() {
     }
   }
 
+  // Submit gating for the docked CTA: block until the grouped checklist has every
+  // group marked done (same rule handleSubmitInspection enforces), and surface the
+  // reason as the button's hint. The handler itself is unchanged.
+  const submitBlocked = isBusy || isTemplateEmpty || (isGroupedChecklist && !allSectionsComplete);
+  const submitHint = isTemplateEmpty
+    ? 'Submit · no checklist items'
+    : isGroupedChecklist && !allSectionsComplete
+      ? `Submit · finish all groups (${doneGroupCount}/${totalGroupCount})`
+      : undefined;
+
+  const bottomBar =
+    !isLoading && form && !isVisitClosed ? (
+      isSubmitted ? (
+        <BottomCTA
+          label={isAmending ? 'Re-opening…' : 'Amend / Edit'}
+          onPress={handleAmendInspection}
+          loading={isAmending}
+          disabled={isBusy}
+        />
+      ) : (
+        <BottomCTA
+          label={isSubmitting ? 'Submitting…' : 'Submit Inspection'}
+          onPress={handleSubmitInspection}
+          loading={isSubmitting}
+          disabled={submitBlocked}
+          hint={submitHint}
+        />
+      )
+    ) : null;
+
   return (
     <Screen
       title="Inspection"
@@ -1033,8 +1074,12 @@ export function InspectionFormScreen() {
           <InlineButton label="Refresh" onPress={loadForm} disabled={isBusy} />
         </>
       }
-      footer={
-        <View style={styles.stickyActionArea}>
+      bottomBar={bottomBar}
+    >
+      {isLoading ? <LoadingBlock label="Loading inspection form..." /> : null}
+
+      {!isLoading && form ? (
+        <>
           <ErrorBanner message={error} />
           <WarningBanner
             message={
@@ -1050,55 +1095,14 @@ export function InspectionFormScreen() {
           ) : (
             <SuccessBanner message={saveNotice} />
           )}
-          {isVisitClosed ? null : (
-            <View style={styles.footerActions}>
-              {isSubmitted ? (
-                <View style={styles.footerActionPrimary}>
-                  <AppButton
-                    label={isAmending ? 'Re-opening...' : 'Amend / Edit'}
-                    onPress={handleAmendInspection}
-                    variant="secondary"
-                    loading={isAmending}
-                    disabled={isBusy}
-                  />
-                </View>
-              ) : (
-                <>
-                  <View style={styles.footerActionSecondary}>
-                    <AppButton
-                      label={isSavingDraft ? 'Saving...' : 'Save Draft'}
-                      onPress={handleSaveDraft}
-                      variant="secondary"
-                      loading={isSavingDraft}
-                      disabled={isBusy || isTemplateEmpty}
-                    />
-                  </View>
-                  <View style={styles.footerActionPrimary}>
-                    <AppButton
-                      label={isSubmitting ? 'Submitting...' : 'Submit'}
-                      onPress={handleSubmitInspection}
-                      loading={isSubmitting}
-                      disabled={isBusy || isTemplateEmpty}
-                    />
-                  </View>
-                </>
-              )}
-            </View>
-          )}
-        </View>
-      }
-    >
-      {isLoading ? <LoadingBlock label="Loading inspection form..." /> : null}
 
-      {!isLoading && form ? (
-        <>
           <View style={styles.inspectionHeaderCard}>
             <View style={styles.summaryHeader}>
               <View style={styles.summaryTitleWrap}>
                 <Text style={styles.kickerLabel}>Asset Code</Text>
-                <Text style={styles.summaryAsset} numberOfLines={2}>
+                <Mono size={20} color={theme.colors.textPrimary}>
                   {form.inspection.asset.assetCode}
-                </Text>
+                </Mono>
               </View>
               <StatusChip
                 label={isSubmitted ? 'Completed' : 'In Progress'}
@@ -1121,6 +1125,30 @@ export function InspectionFormScreen() {
             </Text>
           </View>
 
+          {isGroupedChecklist ? (
+            <View style={styles.progressCard}>
+              <View style={styles.progressHeaderRow}>
+                <Text style={styles.progressLabel}>Checklist progress</Text>
+                <Mono size={13} color={theme.colors.textSecondary}>
+                  {doneGroupCount}/{totalGroupCount} groups
+                </Mono>
+              </View>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${Math.round(groupProgress * 100)}%`,
+                      backgroundColor: allSectionsComplete
+                        ? theme.colors.success
+                        : theme.colors.primary,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ) : null}
+
           {!isReadOnly ? (
             <Pressable
               accessibilityRole="button"
@@ -1132,7 +1160,8 @@ export function InspectionFormScreen() {
                 (pressed || isDeclaringEmergency) && styles.declareEmergencyButtonPressed,
               ]}
             >
-              <Text style={styles.declareEmergencyButtonText}>🚨 Report Emergency</Text>
+              <Text style={styles.declareEmergencyEmoji}>🚨</Text>
+              <Text style={styles.declareEmergencyButtonText}>Declare Emergency</Text>
             </Pressable>
           ) : null}
 
@@ -1198,6 +1227,20 @@ export function InspectionFormScreen() {
             onRetakePhoto={handleRetakePhoto}
             onRemovePhoto={handleRemovePhoto}
           />
+
+          {/* Save Draft is a secondary action (the primary Submit lives in the
+              docked CTA); hidden once read-only/submitted. */}
+          {!isReadOnly ? (
+            <View style={styles.saveDraftRow}>
+              <AppButton
+                label={isSavingDraft ? 'Saving...' : 'Save Draft'}
+                onPress={handleSaveDraft}
+                variant="secondary"
+                loading={isSavingDraft}
+                disabled={isBusy || isTemplateEmpty}
+              />
+            </View>
+          ) : null}
 
           {pendingOverlayPhoto ? (
             <View pointerEvents="none" style={styles.overlayCaptureRoot}>
@@ -1389,58 +1432,54 @@ function ChecklistSectionCard({
   onPreviewPhoto: (uri: string) => void;
 }) {
   const theme = useTheme();
+  const c = theme.colors;
   const styles = useMemo(() => createStyles(theme), [theme]);
   const normalizedTitle = section.title.trim().toUpperCase();
   const sectionTitle = PRIORITY_SECTION_TITLES.includes(normalizedTitle)
     ? normalizedTitle
     : section.title;
-  const sectionTone = getSectionTone(sectionTitle);
   const totalCount = section.items.length;
-  // A completed group turns the whole header green; otherwise it follows the section tone.
-  const doneTone = DONE_SECTION_TONE;
   // Chip: explicitly-done wins, else in-progress if any answers, else not started.
-  // When done, the chip goes solid green so it stays distinct against the green header.
+  // Done = soft-success; in-progress = soft-warning; untouched = muted neutral.
   const chip = complete
-    ? { bg: doneTone.chip, fg: '#ffffff', label: 'Done' }
+    ? { bg: c.successSoft, fg: c.successText, label: 'Done' }
     : answeredCount > 0
-      ? { bg: '#fef9c3', fg: '#854d0e', label: `${answeredCount}/${totalCount}` }
-      : { bg: '#f1f5f9', fg: '#64748b', label: 'Not started' };
+      ? { bg: c.warningSoft, fg: c.warningText, label: `${answeredCount}/${totalCount}` }
+      : { bg: c.surfaceMuted, fg: c.textMuted, label: 'Not started' };
   const showItems = !collapsible || expanded;
+  // Number/check badge: a completed group flips to a soft-success check; an open
+  // group carries the blue spine accent, so it reads like the rest of the app.
+  const badgeBg = complete ? c.successSoft : c.primarySoft;
+  const badgeBorder = complete ? c.successBorder : c.primary;
+  const badgeText = complete ? c.successText : c.primary;
 
   const header = (
     <View
       style={[
         styles.sectionHeader,
-        complete && {
-          backgroundColor: doneTone.headerBg,
-          borderBottomColor: doneTone.border,
-        },
+        complete && { backgroundColor: c.successSoft, borderBottomColor: c.successBorder },
       ]}
     >
       <View
         style={[
           styles.sectionIndexBadge,
-          {
-            backgroundColor: complete ? doneTone.badgeBg : sectionTone.surface,
-            borderColor: complete ? doneTone.border : sectionTone.border,
-          },
+          { backgroundColor: badgeBg, borderColor: badgeBorder },
         ]}
       >
-        <Text
-          style={[
-            styles.sectionIndexText,
-            { color: complete ? doneTone.text : sectionTone.accent },
-          ]}
-        >
-          {String(sectionIndex + 1).padStart(2, '0')}
-        </Text>
+        {complete ? (
+          <Feather name="check" size={18} color={badgeText} />
+        ) : (
+          <Mono size={13} color={badgeText}>
+            {String(sectionIndex + 1).padStart(2, '0')}
+          </Mono>
+        )}
       </View>
       <View style={styles.sectionHeaderText}>
-        <Text style={[styles.sectionHeading, complete && { color: doneTone.text }]}>
+        <Text style={[styles.sectionHeading, complete && { color: c.successText }]}>
           {sectionTitle}
         </Text>
-        <Text style={[styles.sectionMeta, complete && { color: doneTone.meta }]}>
-          {totalCount} checks
+        <Text style={[styles.sectionMeta, complete && { color: c.successText }]}>
+          {answeredCount} of {totalCount} answered
         </Text>
       </View>
       {collapsible ? (
@@ -1448,9 +1487,11 @@ function ChecklistSectionCard({
           <View style={[styles.sectionChip, { backgroundColor: chip.bg }]}>
             <Text style={[styles.sectionChipText, { color: chip.fg }]}>{chip.label}</Text>
           </View>
-          <Text style={[styles.sectionChevron, complete && { color: doneTone.text }]}>
-            {expanded ? '▾' : '▸'}
-          </Text>
+          <Feather
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={complete ? c.successText : c.textMuted}
+          />
         </View>
       ) : null}
     </View>
@@ -1461,13 +1502,13 @@ function ChecklistSectionCard({
       onLayout={onLayout}
       style={[
         styles.sectionCard,
-        { borderColor: complete ? doneTone.border : sectionTone.border },
+        complete && { borderColor: c.successBorder },
       ]}
     >
       <View
         style={[
           styles.sectionTopRail,
-          { backgroundColor: complete ? doneTone.chip : sectionTone.accent },
+          { backgroundColor: complete ? c.success : c.primary },
         ]}
       />
       {collapsible ? (
@@ -1577,34 +1618,31 @@ function ChecklistItemCard({
         />
       ) : null}
       {inputType === 'NUMBER' ? (
-        <TextField
+        <ReadingBox
           label="Number"
           value={typeof value === 'string' ? value : ''}
           onChangeText={onChange}
-          placeholder="Enter number"
-          keyboardType="decimal-pad"
-          editable={!disabled}
+          placeholder="0"
+          disabled={disabled}
         />
       ) : null}
       {inputType === 'READING' ? (
-        <TextField
+        <ReadingBox
           label="Reading"
           value={typeof value === 'string' ? value : ''}
           onChangeText={onChange}
-          placeholder="Enter reading"
-          keyboardType="decimal-pad"
-          editable={!disabled}
+          placeholder="0"
+          disabled={disabled}
         />
       ) : null}
       {inputType === 'OCR' ? (
         <>
-          <TextField
+          <ReadingBox
             label="Reading"
             value={typeof value === 'string' ? value : ''}
             onChangeText={onChange}
-            placeholder="Scan or enter reading"
-            keyboardType="decimal-pad"
-            editable={!disabled}
+            placeholder="Scan or enter"
+            disabled={disabled}
           />
           {scanPhotoUri ? (
             <Pressable
@@ -1632,7 +1670,7 @@ function ChecklistItemCard({
             ]}
           >
             {scanning ? (
-              <ActivityIndicator size="small" color={theme.colors.textOnPrimary} />
+              <ActivityIndicator size="small" color={theme.colors.onSolidFill} />
             ) : (
               <Text style={styles.scanButtonIcon}>⌖</Text>
             )}
@@ -1936,6 +1974,35 @@ function ImageCaptureField({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const hasPhotos = photos.length > 0;
 
+  // Empty + editable → a single dashed capture tile is the whole affordance
+  // (handoff 2a). Once at least one photo exists, show GPS-stamped thumbnails and
+  // an "Add Photo" button below.
+  if (!hasPhotos && !disabled) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Take photo"
+        disabled={capturing}
+        onPress={onCapture}
+        style={({ pressed }) => [
+          styles.imageDashedTile,
+          pressed && !capturing && styles.imageDashedTilePressed,
+          capturing && styles.scanButtonDisabled,
+        ]}
+      >
+        {capturing ? (
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+        ) : (
+          <Feather name="camera" size={22} color={theme.colors.textMuted} />
+        )}
+        <Text style={styles.imageDashedTileText}>
+          {capturing ? 'Opening Camera…' : 'Take Photo'}
+        </Text>
+        <Text style={styles.imageCaptureHint}>Timestamp &amp; GPS added automatically</Text>
+      </Pressable>
+    );
+  }
+
   return (
     <View style={styles.imageCaptureField}>
       {hasPhotos ? (
@@ -1954,6 +2021,10 @@ function ImageCaptureField({
                   resizeMode="cover"
                 />
               </Pressable>
+              <View style={[styles.imageThumbGps, { backgroundColor: theme.colors.success }]}>
+                <Feather name="map-pin" size={9} color="#ffffff" />
+                <Text style={styles.imageThumbGpsText}>GPS ✓</Text>
+              </View>
               <View style={styles.imageThumbPill}>
                 <PhotoStatusPill state={photo.uploadState} />
               </View>
@@ -1987,7 +2058,7 @@ function ImageCaptureField({
           ]}
         >
           {capturing ? (
-            <ActivityIndicator size="small" color={theme.colors.textOnPrimary} />
+            <ActivityIndicator size="small" color={theme.colors.onSolidFill} />
           ) : (
             <Text style={styles.scanButtonIcon}>📷</Text>
           )}
@@ -1996,6 +2067,46 @@ function ImageCaptureField({
           </Text>
         </Pressable>
       ) : null}
+    </View>
+  );
+}
+
+// Large mono value box for numeric readings (NUMBER / READING / OCR). Purely a
+// visual treatment of a single-line input — same onChange contract as before,
+// styled as a "field instrument" value box (handoff 2a). `unit` is optional and
+// only rendered when the caller passes one.
+function ReadingBox({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  disabled,
+  unit,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (next: string) => void;
+  placeholder?: string;
+  disabled: boolean;
+  unit?: string | null;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return (
+    <View style={styles.readingWrap}>
+      <Text style={styles.controlLabel}>{label}</Text>
+      <View style={[styles.readingBox, disabled && styles.readingBoxDisabled]}>
+        <TextInput
+          style={styles.readingInput}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+          editable={!disabled}
+        />
+        {unit ? <Text style={styles.readingUnit}>{unit}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -2171,58 +2282,6 @@ function formatFieldType(value: string) {
   return normalized || 'UNKNOWN';
 }
 
-// Green "done" palette — applied to the whole group header once it's marked done.
-const DONE_SECTION_TONE = {
-  headerBg: '#dcfce7', // green-100 header field
-  badgeBg: '#bbf7d0', // green-200 index badge
-  border: '#86efac', // green-300 borders
-  chip: '#16a34a', // green-600 solid chip + top rail
-  text: '#166534', // green-800 title / badge / chevron
-  meta: '#15803d', // green-700 subtext
-};
-
-function getSectionTone(sectionTitle: string) {
-  const normalizedTitle = sectionTitle.trim().toUpperCase();
-
-  if (normalizedTitle === 'TIANG') {
-    return {
-      accent: '#334155',
-      surface: '#f1f5f9',
-      border: '#cbd5e1',
-    };
-  }
-
-  if (normalizedTitle === 'PENGALIR') {
-    return {
-      accent: '#0f766e',
-      surface: '#ecfdf5',
-      border: '#99f6e4',
-    };
-  }
-
-  if (normalizedTitle === 'AKSESORI') {
-    return {
-      accent: '#92400e',
-      surface: '#fffbeb',
-      border: '#fde68a',
-    };
-  }
-
-  if (normalizedTitle === 'PERALATAN') {
-    return {
-      accent: '#475569',
-      surface: '#f8fafc',
-      border: '#cbd5e1',
-    };
-  }
-
-  return {
-    accent: '#111827',
-    surface: '#f8fafc',
-    border: '#d9e1ea',
-  };
-}
-
 function getPhotoStatusLabel(state: PhotoUploadState) {
   if (state === 'uploaded') {
     return 'Uploaded';
@@ -2299,28 +2358,80 @@ async function delay(durationMs: number) {
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
-  stickyActionArea: {
-    gap: 12,
+  saveDraftRow: {
+    marginTop: 2,
   },
-  footerActions: {
-    minHeight: 52,
-    flexDirection: 'row',
+  // Top-of-form group progress (handoff 2a): "N/M groups" + a token-filled track.
+  progressCard: {
+    backgroundColor: t.colors.card,
+    borderRadius: t.radius.card,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    padding: 14,
     gap: 10,
+    ...t.shadow.card,
   },
-  footerActionSecondary: {
-    flex: 0.92,
+  progressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  footerActionPrimary: {
-    flex: 1.08,
-    minHeight: 52,
+  progressLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: t.fonts.bodySemibold,
+    color: t.colors.textSecondary,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: t.radius.pill,
+    backgroundColor: t.colors.surfaceMuted,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: t.radius.pill,
+    backgroundColor: t.colors.primary,
+  },
+  // Mono "value box" for numeric readings.
+  readingWrap: {
+    gap: 8,
+  },
+  readingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 56,
+    borderRadius: t.radius.control,
+    borderWidth: 1,
+    borderColor: t.colors.borderStrong,
+    backgroundColor: t.colors.surfaceMuted,
+    paddingHorizontal: 14,
+  },
+  readingBoxDisabled: {
+    opacity: 0.6,
+  },
+  readingInput: {
+    flex: 1,
+    fontFamily: t.fonts.monoMedium,
+    fontSize: 22,
+    letterSpacing: 0.4,
+    color: t.colors.textPrimary,
+    paddingVertical: 8,
+  },
+  readingUnit: {
+    fontFamily: t.fonts.monoMedium,
+    fontSize: 14,
+    color: t.colors.textMuted,
   },
   inspectionHeaderCard: {
     backgroundColor: t.colors.card,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: t.radius.card,
+    padding: t.spacing.card,
     gap: 10,
     borderWidth: 1,
     borderColor: t.colors.border,
+    ...t.shadow.card,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -2333,18 +2444,12 @@ const createStyles = (t: Theme) =>
     gap: 4,
   },
   kickerLabel: {
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '600',
-    letterSpacing: 0,
-    color: t.colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: t.fonts.mono,
+    letterSpacing: 1.2,
+    color: t.colors.textMuted,
     textTransform: 'uppercase',
-  },
-  summaryAsset: {
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: '700',
-    color: t.colors.textPrimary,
   },
   contextChipRow: {
     flexDirection: 'row',
@@ -2353,7 +2458,7 @@ const createStyles = (t: Theme) =>
   },
   contextChip: {
     maxWidth: '100%',
-    borderRadius: 999,
+    borderRadius: t.radius.pill,
     borderWidth: 1,
     borderColor: t.colors.border,
     backgroundColor: t.colors.surfaceMuted,
@@ -2361,7 +2466,8 @@ const createStyles = (t: Theme) =>
     paddingVertical: 4,
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '700',
+    fontWeight: '600',
+    fontFamily: t.fonts.bodySemibold,
     color: t.colors.textSecondary,
   },
   summaryMetaText: {
@@ -2371,11 +2477,12 @@ const createStyles = (t: Theme) =>
   },
   photoSection: {
     backgroundColor: t.colors.card,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: t.radius.card,
+    padding: t.spacing.card,
     gap: 12,
     borderWidth: 1,
     borderColor: t.colors.border,
+    ...t.shadow.card,
   },
   photoSectionHeader: {
     flexDirection: 'row',
@@ -2388,9 +2495,11 @@ const createStyles = (t: Theme) =>
     gap: 4,
   },
   sectionHeading: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '600',
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    fontFamily: t.fonts.display,
+    letterSpacing: 0.2,
     color: t.colors.textPrimary,
   },
   photoCount: {
@@ -2404,7 +2513,7 @@ const createStyles = (t: Theme) =>
     textAlignVertical: 'center',
     fontSize: 13,
     lineHeight: 28,
-    fontWeight: '600',
+    fontFamily: t.fonts.monoMedium,
   },
   emptyPhotoPanel: {
     minHeight: 56,
@@ -2429,9 +2538,9 @@ const createStyles = (t: Theme) =>
     textAlign: 'center',
   },
   itemCard: {
-    padding: 10,
+    padding: 12,
     gap: 10,
-    borderRadius: 8,
+    borderRadius: t.radius.control,
     borderWidth: 1,
     borderColor: t.colors.border,
     backgroundColor: t.colors.card,
@@ -2447,10 +2556,11 @@ const createStyles = (t: Theme) =>
   },
   sectionCard: {
     backgroundColor: t.colors.card,
-    borderRadius: 8,
+    borderRadius: t.radius.card,
     borderWidth: 1,
     borderColor: t.colors.border,
     overflow: 'hidden',
+    ...t.shadow.card,
   },
   sectionTopRail: {
     height: 3,
@@ -2467,18 +2577,13 @@ const createStyles = (t: Theme) =>
     borderBottomColor: t.colors.border,
   },
   sectionIndexBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: t.colors.primary,
-    borderWidth: 1,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: t.colors.primarySoft,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  sectionIndexText: {
-    color: t.colors.textOnPrimary,
-    fontSize: 13,
-    fontWeight: '600',
   },
   sectionHeaderText: {
     flex: 1,
@@ -2507,17 +2612,15 @@ const createStyles = (t: Theme) =>
     gap: 8,
   },
   sectionChip: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
+    borderRadius: t.radius.chip,
+    paddingHorizontal: 8,
     paddingVertical: 3,
   },
   sectionChipText: {
     fontSize: 11,
     fontWeight: '700',
-  },
-  sectionChevron: {
-    fontSize: 16,
-    color: t.colors.textSecondary,
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.2,
   },
   sectionShowChecklist: {
     paddingHorizontal: 12,
@@ -2606,7 +2709,7 @@ const createStyles = (t: Theme) =>
     fontSize: 11,
     lineHeight: 15,
     color: t.colors.textSecondary,
-    fontWeight: '600',
+    fontFamily: t.fonts.mono,
   },
   photoDetailsGrid: {
     flexDirection: 'row',
@@ -2744,16 +2847,18 @@ const createStyles = (t: Theme) =>
     textAlign: 'right',
     color: '#ffffff',
   },
+  // Dark "SCAN"/capture button = solidFill (ink in light, neutral-dark in dark),
+  // per the handoff's field-instrument treatment (handoff 2a + PART B gotcha).
   scanButton: {
     marginTop: 8,
-    minHeight: 44,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    borderRadius: 8,
+    borderRadius: t.radius.control,
     paddingHorizontal: 14,
-    backgroundColor: t.colors.primary,
+    backgroundColor: t.colors.solidFill,
   },
   scanButtonDisabled: {
     opacity: 0.55,
@@ -2762,14 +2867,16 @@ const createStyles = (t: Theme) =>
     opacity: 0.85,
   },
   scanButtonIcon: {
-    color: t.colors.textOnPrimary,
+    color: t.colors.onSolidFill,
     fontSize: 16,
     fontWeight: '700',
   },
   scanButtonText: {
-    color: t.colors.textOnPrimary,
+    color: t.colors.onSolidFill,
     fontSize: 14,
     fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.2,
   },
   scanPhotoThumbWrap: {
     marginTop: 8,
@@ -2810,43 +2917,44 @@ const createStyles = (t: Theme) =>
     gap: 4,
   },
   itemLabel: {
-    fontSize: 14,
+    fontSize: 14.5,
     lineHeight: 20,
-    fontWeight: '500',
+    fontWeight: '600',
+    fontFamily: t.fonts.bodySemibold,
     color: t.colors.textPrimary,
   },
   requiredLabel: {
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
     color: t.colors.warningText,
     backgroundColor: t.colors.warningSoft,
     paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 999,
+    borderRadius: t.radius.chip,
     borderWidth: 1,
     borderColor: t.colors.warningBorder,
   },
   helperText: {
     fontSize: 12,
     lineHeight: 17,
+    fontFamily: t.fonts.body,
     color: t.colors.textSecondary,
   },
   resultControl: {
     gap: 8,
   },
   controlLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: t.colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: t.fonts.mono,
+    letterSpacing: 1.2,
+    color: t.colors.textMuted,
     textTransform: 'uppercase',
   },
   resultButtonRow: {
     flexDirection: 'row',
-    gap: 6,
-    borderRadius: 8,
-    backgroundColor: t.colors.surfaceMuted,
-    padding: 5,
+    gap: 8,
   },
   optionStack: {
     gap: 6,
@@ -2908,34 +3016,81 @@ const createStyles = (t: Theme) =>
     fontWeight: '600',
     color: t.colors.dangerText,
   },
+  // Always-visible "Declare Emergency" — soft-danger (redSoft) so it reads as a
+  // present-but-not-accidental action (handoff 2a). Same handler + isTempId guard.
   declareEmergencyButton: {
-    backgroundColor: t.colors.danger,
-    borderRadius: 12,
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: t.colors.dangerSoft,
+    borderRadius: t.radius.control,
+    borderWidth: 1,
+    borderColor: t.colors.dangerBorder,
     paddingVertical: 14,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     alignItems: 'center',
-    marginBottom: 14,
+    justifyContent: 'center',
   },
   declareEmergencyButtonPressed: {
     opacity: 0.85,
   },
+  declareEmergencyEmoji: {
+    fontSize: 15,
+  },
   declareEmergencyButtonText: {
     fontSize: 15,
     fontWeight: '800',
-    color: t.colors.textOnPrimary,
-    // Stretch the label to the full button width and center it, so Android can't
-    // clip the trailing word ("Emergency") when measuring a string that starts
-    // with an emoji (the 🚨 advance width is mis-measured, shrinking the text box).
-    alignSelf: 'stretch',
-    textAlign: 'center',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.2,
+    color: t.colors.dangerText,
   },
   imageCaptureField: {
     gap: 8,
+  },
+  imageDashedTile: {
+    minHeight: 120,
+    borderRadius: t.radius.card,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: t.colors.borderStrong,
+    backgroundColor: t.colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+  },
+  imageDashedTilePressed: {
+    backgroundColor: t.colors.surfacePressed,
+    borderColor: t.colors.primary,
+  },
+  imageDashedTileText: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    color: t.colors.textPrimary,
   },
   imageThumbRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  imageThumbGps: {
+    position: 'absolute',
+    left: 4,
+    top: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: t.radius.chip,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  imageThumbGpsText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.2,
   },
   imageThumbWrap: {
     position: 'relative',
@@ -2976,65 +3131,72 @@ const createStyles = (t: Theme) =>
     lineHeight: 16,
   },
   imageCaptureHint: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: t.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    color: t.colors.textMuted,
+    textAlign: 'center',
   },
+  // Pass / Fail / N-A — three big (~50px) tappable buttons on a card surface.
+  // Selected = soft status fill + colored border + colored text (handoff 2a),
+  // so the choice is unmistakable outdoors without a heavy solid block.
   choiceButton: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
+    minHeight: 50,
+    borderRadius: t.radius.control,
+    borderWidth: 1.5,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.card,
     paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   choiceButtonSelected: {
     borderColor: t.colors.primary,
-    backgroundColor: t.colors.primary,
+    backgroundColor: t.colors.primarySoft,
   },
   choiceButtonPassSelected: {
     borderColor: t.colors.success,
-    backgroundColor: t.colors.success,
+    backgroundColor: t.colors.successSoft,
   },
   choiceButtonFail: {
-    borderColor: 'transparent',
+    borderColor: t.colors.border,
   },
   choiceButtonFailSelected: {
     borderColor: t.colors.danger,
-    backgroundColor: t.colors.danger,
+    backgroundColor: t.colors.dangerSoft,
   },
   choiceButtonNaSelected: {
-    borderColor: t.colors.textSecondary,
-    backgroundColor: t.colors.textSecondary,
+    borderColor: t.colors.borderStrong,
+    backgroundColor: t.colors.surfaceMuted,
   },
   choiceButtonDisabled: {
     opacity: 0.55,
   },
   choiceButtonPressed: {
     opacity: 0.92,
+    transform: [{ scale: 0.99 }],
   },
   choiceButtonText: {
-    fontSize: 14,
-    lineHeight: 19,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.3,
     color: t.colors.textSecondary,
   },
   choiceButtonTextSelected: {
-    color: t.colors.textOnPrimary,
+    color: t.colors.primary,
   },
   choiceButtonPassTextSelected: {
-    color: t.colors.onStatus,
+    color: t.colors.successText,
   },
   choiceButtonFailText: {
     color: t.colors.textSecondary,
   },
   choiceButtonFailTextSelected: {
-    color: t.colors.onStatus,
+    color: t.colors.dangerText,
   },
   choiceButtonNaTextSelected: {
-    color: t.colors.onStatus,
+    color: t.colors.textPrimary,
   },
   });

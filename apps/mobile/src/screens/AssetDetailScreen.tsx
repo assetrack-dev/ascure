@@ -32,7 +32,8 @@ import {
   SiteVisit,
 } from '../types';
 import { formatDateTime } from '../utils';
-import { HeaderIconButton, StatusChip } from '../ui';
+import { Feather } from '@expo/vector-icons';
+import { HeaderIconButton, Mono, StatusChip } from '../ui';
 import { Theme, useTheme } from '../theme';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -512,6 +513,7 @@ export function AssetDetailScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ExpoStatusBar style="dark" />
       <View style={styles.screen}>
+        {/* Compact back bar — the code now leads the dark identity hero below. */}
         <View style={styles.header}>
           <View style={styles.headerSide}>
             <HeaderIconButton
@@ -521,15 +523,10 @@ export function AssetDetailScreen() {
             />
           </View>
           <View style={styles.headerTitleWrap}>
-            <Text style={styles.title}>Asset Detail</Text>
-            <Text
-              style={styles.subtitle}
-              numberOfLines={2}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {asset.assetCode || 'No asset code available'}
+            <Text style={styles.eyebrow} numberOfLines={1}>
+              {asset.assetType || 'Asset'}
             </Text>
+            <Text style={styles.title}>Asset Detail</Text>
           </View>
           <View style={[styles.headerSide, styles.headerSideRight]}>
             <HeaderIconButton
@@ -547,32 +544,52 @@ export function AssetDetailScreen() {
           </View>
         ) : null}
 
-        <View style={styles.actionPanel}>
+        {/* Dark identity hero (handoff 2e) — mono code, type/location, live badges. */}
+        <View style={styles.hero}>
+          <Mono size={26} color="#FFFFFF">{asset.assetCode || 'No code'}</Mono>
+          <Text style={styles.heroType} numberOfLines={2}>
+            {[asset.assetType, asset.location].filter(Boolean).join(' · ') || 'No asset type'}
+          </Text>
+          <View style={styles.heroBadges}>
+            <View style={styles.heroBadge}>
+              <View
+                style={[
+                  styles.heroBadgeDot,
+                  { backgroundColor: heroStatusDotColor(asset.status, theme) },
+                ]}
+              />
+              <Text style={styles.heroBadgeText}>{formatLabel(asset.status)}</Text>
+            </View>
+            {latestInspection ? (
+              <View style={styles.heroBadge}>
+                <Text style={styles.heroBadgeText}>Cycle {latestInspection.cycleNumber}</Text>
+              </View>
+            ) : null}
+            {latestInspection?.totalDefects && latestInspection.totalDefects > 0 ? (
+              <View style={styles.heroBadge}>
+                <Text style={[styles.heroBadgeText, { color: '#F0B4B4' }]}>
+                  {latestInspection.totalDefects} defect
+                  {latestInspection.totalDefects > 1 ? 's' : ''}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        {/* The two crew actions front-and-center: Edit (secondary) + Inspect (primary). */}
+        <View style={styles.primaryActionRow}>
           <Pressable
             onPress={handleEditAsset}
             disabled={!editableAsset}
             style={({ pressed }) => [
-              styles.actionButton,
+              styles.primaryAction,
               styles.actionButtonSecondary,
               !editableAsset && styles.disabledButton,
               pressed && editableAsset && styles.pressedButton,
             ]}
           >
+            <Feather name="edit-2" size={16} color={theme.colors.textPrimary} />
             <Text style={styles.actionButtonSecondaryText}>Edit</Text>
-          </Pressable>
-
-          <Pressable
-            onPress={handleConfirmMarkAssetNotFound}
-            disabled={asset.status === 'NOT_FOUND' || isMarkingNotFound}
-            style={({ pressed }) => [
-              styles.actionButton,
-              styles.actionButtonGhost,
-              (asset.status === 'NOT_FOUND' || isMarkingNotFound) && styles.disabledButton,
-              pressed && asset.status !== 'NOT_FOUND' && !isMarkingNotFound && styles.pressedButton,
-            ]}
-          >
-            {isMarkingNotFound ? <ActivityIndicator color={theme.colors.textPrimary} /> : null}
-            <Text style={styles.actionButtonGhostText}>Mark Not Found</Text>
           </Pressable>
 
           {canInspect ? (
@@ -580,7 +597,7 @@ export function AssetDetailScreen() {
               onPress={handleStartInspection}
               disabled={!visitId || isStartingInspection}
               style={({ pressed }) => [
-                styles.actionButton,
+                styles.primaryAction,
                 styles.actionButtonPrimary,
                 (!visitId || isStartingInspection) && styles.disabledButton,
                 pressed && visitId && !isStartingInspection && styles.pressedButton,
@@ -588,29 +605,17 @@ export function AssetDetailScreen() {
             >
               {isStartingInspection ? (
                 <ActivityIndicator color={theme.colors.textOnPrimary} />
-              ) : null}
-              <Text style={styles.actionButtonPrimaryText}>Inspection</Text>
+              ) : (
+                <Feather name="clipboard" size={16} color={theme.colors.textOnPrimary} />
+              )}
+              <Text style={styles.actionButtonPrimaryText}>Inspect</Text>
             </Pressable>
           ) : null}
-
-          <Pressable
-            onPress={handleConfirmDeleteAsset}
-            disabled={isDeleting}
-            style={({ pressed }) => [
-              styles.actionButton,
-              styles.actionButtonDanger,
-              isDeleting && styles.disabledButton,
-              pressed && !isDeleting && styles.pressedButton,
-            ]}
-          >
-            {isDeleting ? <ActivityIndicator color={theme.colors.danger} /> : null}
-            <Text style={styles.actionButtonDangerText}>Delete</Text>
-          </Pressable>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Asset</Text>
-          <InfoRow label="Asset Code" value={asset.assetCode || 'No asset code available'} />
+          <InfoRow label="Asset Code" value={asset.assetCode || 'No asset code available'} mono />
           {asset.name ? <InfoRow label="Asset Name" value={asset.name} /> : null}
           <InfoRow label="Asset Type" value={asset.assetType || 'No asset type available'} />
           <View style={styles.statusLine}>
@@ -673,7 +678,7 @@ export function AssetDetailScreen() {
           <Text style={styles.cardTitle}>Latest Inspection</Text>
           {latestInspection ? (
             <>
-              <InfoRow label="Cycle" value={`Cycle ${latestInspection.cycleNumber}`} />
+              <InfoRow label="Cycle" value={`Cycle ${latestInspection.cycleNumber}`} mono />
               <InfoRow label="Status" value={formatLabel(latestInspection.status)} />
               <InfoRow label="Submitted" value={formatDateTime(latestInspection.submittedAt)} />
               {latestInspection.createdAt ? (
@@ -764,6 +769,7 @@ export function AssetDetailScreen() {
             }
             style={({ pressed }) => [styles.historyButton, pressed && styles.pressedButton]}
           >
+            <Feather name="clock" size={15} color={theme.colors.textSecondary} />
             <Text style={styles.historyButtonText}>View All Inspections</Text>
           </Pressable>
         ) : null}
@@ -818,19 +824,53 @@ export function AssetDetailScreen() {
           )}
         </View>
 
+        {/* Lower, de-emphasized asset management (handoff 2e). */}
+        <View style={styles.manageRow}>
+          <Pressable
+            onPress={handleConfirmMarkAssetNotFound}
+            disabled={asset.status === 'NOT_FOUND' || isMarkingNotFound}
+            style={({ pressed }) => [
+              styles.manageButton,
+              (asset.status === 'NOT_FOUND' || isMarkingNotFound) && styles.disabledButton,
+              pressed && asset.status !== 'NOT_FOUND' && !isMarkingNotFound && styles.pressedButton,
+            ]}
+          >
+            {isMarkingNotFound ? <ActivityIndicator color={theme.colors.textSecondary} /> : null}
+            <Text style={styles.manageButtonText}>Mark Not Found</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleConfirmDeleteAsset}
+            disabled={isDeleting}
+            style={({ pressed }) => [
+              styles.manageButton,
+              styles.manageButtonDanger,
+              isDeleting && styles.disabledButton,
+              pressed && !isDeleting && styles.pressedButton,
+            ]}
+          >
+            {isDeleting ? <ActivityIndicator color={theme.colors.danger} /> : null}
+            <Text style={styles.manageButtonDangerText}>Delete</Text>
+          </Pressable>
+        </View>
+
         </ScrollView>
       </View>
     </SafeAreaView>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+      {mono ? (
+        <Mono size={13}>{value}</Mono>
+      ) : (
+        <Text style={styles.infoValue}>{value}</Text>
+      )}
     </View>
   );
 }
@@ -912,6 +952,17 @@ function getAssetStatusTone(status: Asset['status']) {
   }
 
   return 'neutral' as const;
+}
+
+/** Status dot color for the dark identity hero badge (handoff 2e). */
+function heroStatusDotColor(status: Asset['status'], theme: Theme) {
+  if (status === 'ACTIVE') {
+    return '#7FE0A0';
+  }
+  if (status === 'NOT_FOUND' || status === 'REMOVED') {
+    return theme.colors.warning;
+  }
+  return theme.colors.textMuted;
 }
 
 function formatResult(result: InspectionItemResultValue) {
@@ -1009,24 +1060,23 @@ const createStyles = (t: Theme) =>
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 2,
+      gap: 1,
     },
-    title: {
+    eyebrow: {
       fontSize: 11,
       lineHeight: 14,
       fontWeight: '700',
-      letterSpacing: 1,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.6,
       textTransform: 'uppercase',
-      color: t.colors.textSecondary,
+      color: t.colors.textMuted,
       textAlign: 'center',
     },
-    // The asset code = NO TIANG RONDAAN. Field crew identify the pole by this, so
-    // it's the dominant element in the header (the generic "Asset Detail" label is
-    // demoted to a small eyebrow above it).
-    subtitle: {
-      fontSize: 48,
-      lineHeight: 56,
-      fontWeight: '800',
+    title: {
+      fontSize: 17,
+      lineHeight: 22,
+      fontWeight: '700',
+      fontFamily: t.fonts.display,
       color: t.colors.textPrimary,
       textAlign: 'center',
     },
@@ -1034,6 +1084,101 @@ const createStyles = (t: Theme) =>
       paddingHorizontal: t.spacing.screen,
       paddingBottom: 128,
       gap: 12,
+    },
+
+    // Dark identity hero (handoff 2e)
+    hero: {
+      borderRadius: t.radius.card,
+      padding: 20,
+      gap: 5,
+      backgroundColor: t.colors.solidFill,
+      overflow: 'hidden',
+    },
+    heroType: {
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '500',
+      fontFamily: t.fonts.bodyMedium,
+      color: 'rgba(255,255,255,0.76)',
+      marginTop: 1,
+    },
+    heroBadges: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderRadius: t.radius.chip,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    heroBadgeDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+    },
+    heroBadgeText: {
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
+
+    // Primary crew actions (handoff 2e)
+    primaryActionRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    primaryAction: {
+      flex: 1,
+      minHeight: 52,
+      borderRadius: t.radius.control,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 16,
+    },
+
+    // Lower, de-emphasized management (handoff 2e)
+    manageRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 4,
+    },
+    manageButton: {
+      flex: 1,
+      minHeight: 42,
+      borderRadius: t.radius.control,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 12,
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    manageButtonDanger: {
+      borderColor: t.colors.dangerBorder,
+    },
+    manageButtonText: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
+    },
+    manageButtonDangerText: {
+      color: t.colors.danger,
+      fontSize: 13,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     card: {
       backgroundColor: t.colors.card,
@@ -1047,6 +1192,7 @@ const createStyles = (t: Theme) =>
       fontSize: 15,
       lineHeight: 20,
       fontWeight: '600',
+      fontFamily: t.fonts.display,
       color: t.colors.textPrimary,
     },
     miniMapWrap: {
@@ -1164,22 +1310,6 @@ const createStyles = (t: Theme) =>
       color: t.colors.dangerText,
       fontWeight: '600',
     },
-    actionPanel: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    actionButton: {
-      minHeight: 42,
-      flexGrow: 1,
-      flexBasis: 118,
-      borderRadius: t.radius.card,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 8,
-      paddingHorizontal: 14,
-    },
     actionButtonPrimary: {
       backgroundColor: t.colors.primary,
     },
@@ -1188,35 +1318,17 @@ const createStyles = (t: Theme) =>
       borderWidth: 1,
       borderColor: t.colors.border,
     },
-    actionButtonGhost: {
-      backgroundColor: t.colors.card,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
     actionButtonPrimaryText: {
       color: t.colors.textOnPrimary,
-      fontSize: 14,
+      fontSize: 15,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
     },
     actionButtonSecondaryText: {
       color: t.colors.textPrimary,
-      fontSize: 14,
+      fontSize: 15,
       fontWeight: '700',
-    },
-    actionButtonGhostText: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    actionButtonDanger: {
-      backgroundColor: t.colors.dangerSoft,
-      borderWidth: 1,
-      borderColor: t.colors.dangerBorder,
-    },
-    actionButtonDangerText: {
-      color: t.colors.danger,
-      fontSize: 14,
-      fontWeight: '700',
+      fontFamily: t.fonts.display,
     },
     imageBlock: {
       gap: 8,
@@ -1257,18 +1369,21 @@ const createStyles = (t: Theme) =>
     },
     historyButton: {
       minHeight: 44,
-      borderRadius: t.radius.card,
-      backgroundColor: t.colors.card,
+      borderRadius: t.radius.control,
+      backgroundColor: 'transparent',
       borderWidth: 1,
       borderColor: t.colors.border,
+      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      gap: 8,
       paddingHorizontal: 18,
     },
     historyButtonText: {
       fontSize: 14,
       fontWeight: '700',
-      color: t.colors.textPrimary,
+      fontFamily: t.fonts.bodyBold,
+      color: t.colors.textSecondary,
     },
     editInspectionButton: {
       minHeight: 44,
@@ -1311,11 +1426,14 @@ const createStyles = (t: Theme) =>
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '700',
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
     },
     coordinateAccuracy: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 16,
       fontWeight: '600',
+      fontFamily: t.fonts.monoMedium,
     },
   });

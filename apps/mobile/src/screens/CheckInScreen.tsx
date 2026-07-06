@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { captureWithCamera } from '../camera/captureWithCamera';
 import * as Location from 'expo-location';
 import {
@@ -12,6 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { useNavigation } from '@react-navigation/native';
@@ -24,12 +25,14 @@ import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
   BodyText,
+  BottomCTA,
   Card,
   Dropdown,
   EmptyState,
   ErrorBanner,
   InlineButton,
   LoadingBlock,
+  Mono,
   Screen,
   SectionTitle,
   SelectCard,
@@ -738,10 +741,12 @@ export function CheckInScreen() {
     );
   }
 
+  const hasGpsFix = checkInLatitude.trim().length > 0 && checkInLongitude.trim().length > 0;
+
   return (
     <Screen
       title="Pencawang Check-In"
-      subtitle="Start a shared site visit with the field details needed for SAVR work."
+      subtitle="Start a shared site visit for the team."
       actions={
         <>
           <InlineButton label="Back" onPress={() => navigation.goBack()} disabled={isSubmitting} />
@@ -749,12 +754,48 @@ export function CheckInScreen() {
         </>
       }
       keyboardAware
+      bottomBar={
+        !isLoading ? (
+          <BottomCTA
+            label={
+              isSubmitting
+                ? sitePhotos.length > 0
+                  ? 'Creating & uploading photos...'
+                  : 'Creating check-in...'
+                : 'Start Site Visit'
+            }
+            onPress={handleCreateVisit}
+            loading={isSubmitting}
+            disabled={!canCreateCheckIn}
+            hint={!canCreateCheckIn ? 'Start Site Visit · complete the required fields' : null}
+          />
+        ) : null
+      }
     >
       <ErrorBanner message={error} />
       {isLoading ? <LoadingBlock label="Loading teams, MAINHEADs, pencawang, and GPS..." /> : null}
 
       {!isLoading ? (
         <>
+          {/* Survey-type as a big visual toggle (handoff 2c). */}
+          <Card>
+            <EyebrowLabel>Survey Type</EyebrowLabel>
+            <View style={styles.toggleStack}>
+              <SelectCard
+                label="SAVR — Pencawang pole survey"
+                description="Inspect poles at one Pencawang."
+                selected={operationalScope === 'SAVR'}
+                onPress={() => setOperationalScope('SAVR')}
+              />
+              <SelectCard
+                label="SAVT — Route A → B (HV line)"
+                description="High-voltage line between two Pencawang."
+                selected={operationalScope === 'SAVT'}
+                onPress={() => setOperationalScope('SAVT')}
+              />
+            </View>
+          </Card>
+
           <Card>
             <SectionTitle>Team and PIC</SectionTitle>
             {teams.length === 0 ? (
@@ -772,7 +813,8 @@ export function CheckInScreen() {
                   used directly by the create call.
                 */}
                 <View style={styles.readOnlyPanel}>
-                  <FieldSummary label="Team" value={formatTeam(selectedTeam)} />
+                  <FieldSummary label="Team" value={formatTeam(selectedTeam)} mono />
+                  <View style={styles.summaryDivider} />
                   <FieldSummary label="PIC Name" value={user.name || user.email} />
                 </View>
               </>
@@ -781,40 +823,26 @@ export function CheckInScreen() {
 
           <Card>
             <SectionTitle>{isSavt ? 'Route Details (SAVT)' : 'Pencawang Details'}</SectionTitle>
-            <Dropdown
-              label="Survey Type"
-              value={operationalScope}
-              options={[
-                {
-                  label: 'SAVR — Pencawang (pole survey)',
-                  value: 'SAVR',
-                  description: 'Inspect poles at one Pencawang',
-                },
-                {
-                  label: 'SAVT — Route A → B (HV line)',
-                  value: 'SAVT',
-                  description: 'High-voltage line between two Pencawang',
-                },
-              ]}
-              onSelect={(nextValue) => setOperationalScope(nextValue as 'SAVR' | 'SAVT')}
-            />
-            <Dropdown
-              label={isSavt ? 'From Pencawang Source' : 'Pencawang Source'}
-              value={pencawangMode}
-              options={[
-                {
-                  label: 'New Pencawang',
-                  value: 'NEW',
-                  description: 'Enter site details manually',
-                },
-                {
-                  label: 'Existing Pencawang',
-                  value: 'EXISTING',
-                  description: 'Select from master data',
-                },
-              ]}
-              onSelect={(nextValue) => handleSelectPencawangMode(nextValue as PencawangMode)}
-            />
+
+            <View style={styles.fieldGroup}>
+              <EyebrowLabel>{isSavt ? 'From Pencawang Source' : 'Pencawang Source'}</EyebrowLabel>
+              <Dropdown
+                value={pencawangMode}
+                options={[
+                  {
+                    label: 'New Pencawang',
+                    value: 'NEW',
+                    description: 'Enter site details manually',
+                  },
+                  {
+                    label: 'Existing Pencawang',
+                    value: 'EXISTING',
+                    description: 'Select from master data',
+                  },
+                ]}
+                onSelect={(nextValue) => handleSelectPencawangMode(nextValue as PencawangMode)}
+              />
+            </View>
 
             {pencawangMode === 'EXISTING' && substations.length === 0 ? (
               <EmptyState
@@ -825,25 +853,27 @@ export function CheckInScreen() {
             ) : null}
 
             {pencawangMode === 'EXISTING' && substations.length > 0 ? (
-              <Dropdown
-                label="Select Pencawang"
-                value={selectedSubstationId}
-                placeholder="Choose an existing Pencawang"
-                options={substations.map((substation) => ({
-                  label: `${substation.code} - ${substation.name}`,
-                  value: substation.id,
-                  description: substation.location || null,
-                }))}
-                onSelect={(nextValue) => {
-                  const nextSubstation = substations.find(
-                    (substation) => substation.id === nextValue,
-                  );
+              <View style={styles.fieldGroup}>
+                <EyebrowLabel>Select Pencawang</EyebrowLabel>
+                <Dropdown
+                  value={selectedSubstationId}
+                  placeholder="Choose an existing Pencawang"
+                  options={substations.map((substation) => ({
+                    label: `${substation.code} - ${substation.name}`,
+                    value: substation.id,
+                    description: substation.location || null,
+                  }))}
+                  onSelect={(nextValue) => {
+                    const nextSubstation = substations.find(
+                      (substation) => substation.id === nextValue,
+                    );
 
-                  if (nextSubstation) {
-                    applyExistingSubstation(nextSubstation);
-                  }
-                }}
-              />
+                    if (nextSubstation) {
+                      applyExistingSubstation(nextSubstation);
+                    }
+                  }}
+                />
+              </View>
             ) : null}
 
             <TextField
@@ -867,61 +897,67 @@ export function CheckInScreen() {
               placeholder="Kod pencawang"
               autoCapitalize="characters"
             />
-            {mainheads.length === 0 ? (
-              <EmptyState
-                icon="database"
-                title="No MAINHEAD available"
-                description="No MAINHEAD available. Please contact admin."
-              />
-            ) : (
-              <Dropdown
-                label="MAINHEAD *"
-                value={selectedMainheadId}
-                placeholder="Choose MAINHEAD"
-                options={mainheads.map((mainhead) => ({
-                  label: formatMainheadLabel(mainhead),
-                  value: mainhead.id,
-                  description: formatMainheadDescription(mainhead),
-                }))}
-                onSelect={setSelectedMainheadId}
-              />
-            )}
+            <View style={styles.fieldGroup}>
+              <EyebrowLabel>MAINHEAD *</EyebrowLabel>
+              {mainheads.length === 0 ? (
+                <EmptyState
+                  icon="database"
+                  title="No MAINHEAD available"
+                  description="No MAINHEAD available. Please contact admin."
+                />
+              ) : (
+                <Dropdown
+                  value={selectedMainheadId}
+                  placeholder="Choose MAINHEAD"
+                  options={mainheads.map((mainhead) => ({
+                    label: formatMainheadLabel(mainhead),
+                    value: mainhead.id,
+                    description: formatMainheadDescription(mainhead),
+                  }))}
+                  onSelect={setSelectedMainheadId}
+                />
+              )}
+            </View>
 
             {isSavt ? (
-              <>
-                <Dropdown
-                  label="To Pencawang Source"
-                  value={toPencawangMode}
-                  options={[
-                    {
-                      label: 'Existing Pencawang',
-                      value: 'EXISTING',
-                      description: 'Select from master data',
-                    },
-                    {
-                      label: 'New Pencawang',
-                      value: 'NEW',
-                      description: 'Enter the destination name + code',
-                    },
-                  ]}
-                  onSelect={(nextValue) =>
-                    setToPencawangMode(nextValue as PencawangMode)
-                  }
-                />
+              <View style={styles.savtGroup}>
+                <View style={styles.fieldGroup}>
+                  <EyebrowLabel>To Pencawang Source</EyebrowLabel>
+                  <Dropdown
+                    value={toPencawangMode}
+                    options={[
+                      {
+                        label: 'Existing Pencawang',
+                        value: 'EXISTING',
+                        description: 'Select from master data',
+                      },
+                      {
+                        label: 'New Pencawang',
+                        value: 'NEW',
+                        description: 'Enter the destination name + code',
+                      },
+                    ]}
+                    onSelect={(nextValue) =>
+                      setToPencawangMode(nextValue as PencawangMode)
+                    }
+                  />
+                </View>
 
                 {toPencawangMode === 'EXISTING' ? (
                   substations.length > 0 ? (
-                    <Dropdown
-                      label="To Pencawang *"
-                      value={toPencawangId}
-                      placeholder="Choose the route's end Pencawang"
-                      options={substations.map((substation) => ({
-                        label: `${substation.code} - ${substation.name}`,
-                        value: substation.id,
-                        description: substation.location || null,
-                      }))}
-                      onSelect={setToPencawangId}
-                    />
+                    <View style={styles.fieldGroup}>
+                      <EyebrowLabel>To Pencawang *</EyebrowLabel>
+                      <Dropdown
+                        value={toPencawangId}
+                        placeholder="Choose the route's end Pencawang"
+                        options={substations.map((substation) => ({
+                          label: `${substation.code} - ${substation.name}`,
+                          value: substation.id,
+                          description: substation.location || null,
+                        }))}
+                        onSelect={setToPencawangId}
+                      />
+                    </View>
                   ) : (
                     <EmptyState
                       icon="database"
@@ -959,7 +995,7 @@ export function CheckInScreen() {
                   placeholder="Route line code, e.g. MI - KUK"
                   autoCapitalize="characters"
                 />
-              </>
+              </View>
             ) : null}
           </Card>
 
@@ -978,11 +1014,35 @@ export function CheckInScreen() {
 
           <Card>
             <SectionTitle>GPS Location</SectionTitle>
-            <View style={styles.coordinateSummaryRow}>
-              <Text style={styles.coordinateSummaryText} numberOfLines={1}>
+            {/* Confirmed GPS reads as a green card; coords + accuracy in mono. */}
+            <View style={[styles.gpsCard, hasGpsFix ? styles.gpsCardConfirmed : styles.gpsCardPending]}>
+              <View style={styles.gpsCardHeader}>
+                <Feather
+                  name={hasGpsFix ? 'check-circle' : 'map-pin'}
+                  size={16}
+                  color={hasGpsFix ? theme.colors.successText : theme.colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.gpsCardStatus,
+                    { color: hasGpsFix ? theme.colors.successText : theme.colors.textSecondary },
+                  ]}
+                >
+                  {hasGpsFix ? 'GPS captured' : isLocating ? 'Reading GPS...' : 'No GPS fix yet'}
+                </Text>
+                <Mono
+                  size={12}
+                  color={hasGpsFix ? theme.colors.successText : theme.colors.textMuted}
+                >
+                  {formatGpsAccuracy(gpsAccuracyMeters)}
+                </Mono>
+              </View>
+              <Mono
+                size={15}
+                color={hasGpsFix ? theme.colors.textPrimary : theme.colors.textMuted}
+              >
                 {formatCoordinateSummary(checkInLatitude, checkInLongitude)}
-              </Text>
-              <Text style={styles.coordinateAccuracyText}>{formatGpsAccuracy(gpsAccuracyMeters)}</Text>
+              </Mono>
             </View>
             <View style={styles.coordinateInputRow}>
               <View style={styles.coordinateInputCell}>
@@ -1016,7 +1076,7 @@ export function CheckInScreen() {
               </View>
               <View style={styles.coordinateActionCell}>
                 <AppButton
-                  label={isOpeningMapPicker ? 'Opening...' : 'Map'}
+                  label={isOpeningMapPicker ? 'Opening...' : 'Pick on map'}
                   onPress={handleOpenMapPicker}
                   variant="secondary"
                   loading={isOpeningMapPicker}
@@ -1086,21 +1146,15 @@ export function CheckInScreen() {
           </Card>
         </>
       ) : null}
-
-      <AppButton
-        label={
-          isSubmitting
-            ? sitePhotos.length > 0
-              ? 'Creating Check-In and Uploading Photos...'
-              : 'Creating Check-In...'
-            : 'Create Check-In'
-        }
-        onPress={handleCreateVisit}
-        loading={isSubmitting}
-        disabled={!canCreateCheckIn}
-      />
     </Screen>
   );
+}
+
+/** Mono uppercase eyebrow label above a grouped field (handoff 2c). */
+function EyebrowLabel({ children }: { children: ReactNode }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return <Text style={styles.eyebrow}>{children}</Text>;
 }
 
 function MapCoordinatePicker({
@@ -1154,10 +1208,12 @@ function MapCoordinatePicker({
         <View style={styles.mapPickerFooter}>
           <View style={styles.mapPickerCoordinatePanel}>
             <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
-            <Text style={styles.mapPickerCoordinateValue}>
+            <Mono size={14} color={theme.colors.textPrimary}>
               Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
-            </Text>
-            <Text style={styles.mapPickerAccuracyText}>{formatGpsAccuracy(accuracyMeters)}</Text>
+            </Mono>
+            <Mono size={13} muted>
+              {formatGpsAccuracy(accuracyMeters)}
+            </Mono>
           </View>
           <AppButton
             label="Confirm Coordinates"
@@ -1174,13 +1230,21 @@ function MapCoordinatePicker({
   );
 }
 
-function FieldSummary({ label, value }: { label: string; value: string }) {
+function FieldSummary({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.fieldSummaryRow}>
       <Text style={styles.fieldSummaryLabel}>{label}</Text>
-      <Text style={styles.fieldSummaryValue}>{value}</Text>
+      {mono ? (
+        <View style={styles.fieldSummaryValueWrap}>
+          <Mono size={13.5} color={theme.colors.textPrimary}>
+            {value}
+          </Mono>
+        </View>
+      ) : (
+        <Text style={styles.fieldSummaryValue}>{value}</Text>
+      )}
     </View>
   );
 }
@@ -1239,11 +1303,11 @@ function formatCoordinateSummary(latitude: string, longitude: string) {
   const latitudeLabel = latitude.trim() || 'N/A';
   const longitudeLabel = longitude.trim() || 'N/A';
 
-  return `Lat ${latitudeLabel} · Lng ${longitudeLabel}`;
+  return `${latitudeLabel}, ${longitudeLabel}`;
 }
 
 function formatGpsAccuracy(value: number | null) {
-  return value === null ? 'GPS --' : `GPS ±${Math.round(value)}m`;
+  return value === null ? 'GPS --' : `±${Math.round(value)}m`;
 }
 
 function parseCoordinate(
@@ -1291,6 +1355,27 @@ function createMapPickerRegion(coordinate: Coordinate): Region {
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
+    eyebrow: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      color: t.colors.textMuted,
+    },
+    toggleStack: {
+      gap: 10,
+    },
+    fieldGroup: {
+      gap: 6,
+    },
+    savtGroup: {
+      gap: 10,
+      marginTop: 2,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.border,
+    },
     readOnlyPanel: {
       borderRadius: t.radius.card,
       borderWidth: 1,
@@ -1299,9 +1384,14 @@ const createStyles = (t: Theme) =>
       padding: 12,
       gap: 10,
     },
+    summaryDivider: {
+      height: 1,
+      backgroundColor: t.colors.border,
+    },
     fieldSummaryRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
+      alignItems: 'center',
       gap: 16,
     },
     fieldSummaryLabel: {
@@ -1310,6 +1400,7 @@ const createStyles = (t: Theme) =>
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     fieldSummaryValue: {
       flex: 1.25,
@@ -1317,59 +1408,46 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
       textAlign: 'right',
     },
-    inlinePickerButton: {
-      minHeight: 44,
-      borderRadius: t.radius.control,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 14,
-      backgroundColor: t.colors.card,
+    fieldSummaryValueWrap: {
+      flex: 1.25,
+      alignItems: 'flex-end',
     },
-    inlinePickerText: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 19,
-      fontWeight: '700',
-    },
-    selectList: {
-      gap: 10,
-    },
-    coordinateSummaryRow: {
-      minHeight: 38,
+    // Confirmed GPS card (handoff 2c) — green when a fix is captured.
+    gpsCard: {
       borderRadius: t.radius.card,
       borderWidth: 1,
+      padding: 12,
+      gap: 8,
+    },
+    gpsCardConfirmed: {
+      borderColor: t.colors.successBorder,
+      backgroundColor: t.colors.successSoft,
+    },
+    gpsCardPending: {
       borderColor: t.colors.border,
       backgroundColor: t.colors.surfaceMuted,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+    },
+    gpsCardHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
+      gap: 8,
     },
-    coordinateSummaryText: {
+    gpsCardStatus: {
       flex: 1,
-      color: t.colors.textPrimary,
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '700',
-    },
-    coordinateAccuracyText: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '700',
-      textAlign: 'right',
+      fontFamily: t.fonts.bodyBold,
     },
     coordinateSourceText: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     coordinateInputRow: {
       flexDirection: 'row',
@@ -1414,10 +1492,11 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     removePhotoButton: {
       minHeight: 36,
-      borderRadius: t.radius.card,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.dangerBorder,
       alignItems: 'center',
@@ -1426,10 +1505,11 @@ const createStyles = (t: Theme) =>
       backgroundColor: t.colors.dangerSoft,
     },
     removePhotoText: {
-      color: t.colors.danger,
+      color: t.colors.dangerText,
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     pressedButton: {
       opacity: 0.82,
@@ -1454,7 +1534,7 @@ const createStyles = (t: Theme) =>
     mapPickerHeaderButton: {
       minWidth: 72,
       minHeight: 40,
-      borderRadius: t.radius.card,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.border,
       alignItems: 'center',
@@ -1467,6 +1547,7 @@ const createStyles = (t: Theme) =>
       fontSize: 14,
       lineHeight: 19,
       fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
     },
     mapPickerHeaderTitleWrap: {
       flex: 1,
@@ -1478,6 +1559,7 @@ const createStyles = (t: Theme) =>
       fontSize: 18,
       lineHeight: 24,
       fontWeight: '700',
+      fontFamily: t.fonts.display,
       textAlign: 'center',
     },
     mapPickerSubtitle: {
@@ -1485,6 +1567,7 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       textAlign: 'center',
     },
     mapPickerHeaderSide: {
@@ -1515,17 +1598,6 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
-    },
-    mapPickerCoordinateValue: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 19,
-      fontWeight: '800',
-    },
-    mapPickerAccuracyText: {
-      color: t.colors.textSecondary,
-      fontSize: 13,
-      lineHeight: 18,
-      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
   });

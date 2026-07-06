@@ -1,17 +1,17 @@
 import { Children, type ReactNode } from 'react';
 import { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSync } from '../context/SyncContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import {
-  AppButton,
-  Card,
   EmptyState,
   ErrorBanner,
-  KeyValueRow,
+  Mono,
   Screen,
   SectionTitle,
+  StatusChip,
   SuccessBanner,
   WarningBanner,
 } from '../ui';
@@ -85,10 +85,17 @@ export function SyncQueueScreen() {
     }
   }
 
+  const retryDisabled = isSyncing || activeCount === 0 || isOffline;
+  const retryHint = isOffline
+    ? 'Offline — retry when back online'
+    : activeCount === 0
+      ? 'Nothing to sync'
+      : null;
+
   return (
     <Screen
       title="Sync Queue"
-      subtitle="Offline inspection submissions and visit completion waiting for upload."
+      subtitle="Offline work waiting to upload — nothing is lost."
       leftAction={{
         icon: 'menu',
         onPress: () => navigation.openDrawer(),
@@ -105,25 +112,48 @@ export function SyncQueueScreen() {
       />
       <SuccessBanner message={notice} />
 
+      {/* Dark status panel (handoff 2g) — 4-count grid + a Retry that is clearly
+          disabled (not broken) while offline. */}
       <View style={styles.statusCard}>
         <View style={styles.summaryHeader}>
-          <SectionTitle>Queue Status</SectionTitle>
-          <StatusBadge status={summaryStatus} />
+          <View style={styles.summaryTitleWrap}>
+            <Text style={styles.summaryEyebrow}>OFFLINE SYNC</Text>
+            <Text style={styles.summaryTitle}>Queue Status</Text>
+          </View>
+          <StatusBadge status={summaryStatus} onDark />
         </View>
+
         <View style={styles.statsGrid}>
-          <QueueStat label="Pending" value={getPendingQueueCount(snapshot)} />
-          <QueueStat label="Syncing" value={getSyncingQueueCount(snapshot)} />
-          <QueueStat label="Failed" value={getFailedQueueCount(snapshot)} />
-          <QueueStat label="Completed" value={getCompletedQueueCount(snapshot)} />
+          <QueueStat label="Pending" value={getPendingQueueCount(snapshot)} tone="amber" />
+          <QueueStat label="Syncing" value={getSyncingQueueCount(snapshot)} tone="blue" />
+          <QueueStat label="Failed" value={getFailedQueueCount(snapshot)} tone="red" />
+          <QueueStat label="Completed" value={getCompletedQueueCount(snapshot)} tone="green" />
         </View>
-        <View style={styles.retryActionWrap}>
-          <AppButton
-            label={isSyncing ? 'Syncing...' : 'Retry Sync'}
-            onPress={handleRetry}
-            loading={isSyncing}
-            disabled={isSyncing || activeCount === 0 || isOffline}
-          />
-        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: retryDisabled }}
+          disabled={retryDisabled}
+          onPress={handleRetry}
+          style={({ pressed }) => [
+            styles.retryButton,
+            retryDisabled && styles.retryButtonDisabled,
+            pressed && !retryDisabled && styles.retryButtonPressed,
+          ]}
+        >
+          {isSyncing ? (
+            <ActivityIndicator color={theme.colors.textOnPrimary} size="small" />
+          ) : (
+            <Feather
+              name="refresh-cw"
+              size={17}
+              color={retryDisabled ? theme.colors.onChromeFaint : theme.colors.textOnPrimary}
+            />
+          )}
+          <Text style={[styles.retryLabel, retryDisabled && styles.retryLabelDisabled]}>
+            {isSyncing ? 'Syncing...' : retryDisabled && retryHint ? retryHint : 'Retry Sync'}
+          </Text>
+        </Pressable>
       </View>
 
       <QueueSection title="Syncing" emptyText="No queued work is syncing right now.">
@@ -179,92 +209,155 @@ function QueueSection({
   const hasChildren = Children.count(children) > 0;
 
   return (
-    <Card>
+    <View style={styles.section}>
       <SectionTitle>{title}</SectionTitle>
-      {hasChildren ? <View style={styles.queueList}>{children}</View> : (
+      {hasChildren ? (
+        <View style={styles.queueList}>{children}</View>
+      ) : (
         <EmptyState title={title} description={emptyText} />
       )}
-    </Card>
+    </View>
+  );
+}
+
+/** Spine color for a queue card (handoff 2g) — mirrors the status grid tones. */
+function spineForStatus(t: Theme, status: SyncQueueDisplayStatus): string {
+  switch (status) {
+    case 'SYNCING':
+      return t.colors.primary;
+    case 'FAILED':
+      return t.colors.danger;
+    case 'COMPLETED':
+      return t.colors.success;
+    default:
+      return t.colors.warning;
+  }
+}
+
+/** Shared card shell with a status spine + a live spinner while syncing. */
+function QueueCardShell({
+  title,
+  subtitle,
+  status,
+  children,
+  errorMessage,
+}: {
+  title: string;
+  subtitle?: string | null;
+  status: SyncQueueDisplayStatus;
+  children: ReactNode;
+  errorMessage?: string | null;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return (
+    <View style={styles.queueCard}>
+      <View style={[styles.queueSpine, { backgroundColor: spineForStatus(theme, status) }]} />
+      <View style={styles.queueBody}>
+        <View style={styles.itemHeader}>
+          <View style={styles.itemTitleWrap}>
+            <Text style={styles.assetCode} numberOfLines={1}>
+              {title}
+            </Text>
+            {subtitle ? (
+              <Text style={styles.assetName} numberOfLines={2}>
+                {subtitle}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.itemHeaderRight}>
+            {status === 'SYNCING' ? (
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+            ) : null}
+            <StatusBadge status={status} />
+          </View>
+        </View>
+        <View style={styles.factRow}>{children}</View>
+        {errorMessage ? (
+          <View style={styles.inlineError}>
+            <Text style={styles.inlineErrorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+/** One compact "chip" describing what the queued item holds (photos/assets). */
+function QueueFact({ icon, label }: { icon: keyof typeof Feather.glyphMap; label: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return (
+    <View style={styles.factChip}>
+      <Feather name={icon} size={12} color={theme.colors.textMuted} />
+      <Text style={styles.factText}>{label}</Text>
+    </View>
   );
 }
 
 function QueueItemCard({ item }: { item: OfflineInspectionQueueItem }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={styles.queueCard}>
-      <View style={styles.itemHeader}>
-        <View style={styles.itemTitleWrap}>
-          <Text style={styles.assetCode}>{item.summary.assetCode}</Text>
-          <Text style={styles.assetName} numberOfLines={2}>
-            {item.summary.assetName ?? 'Unnamed asset'}
-          </Text>
-        </View>
-        <StatusBadge status={item.status} />
-      </View>
-      <KeyValueRow label="Pencawang" value={item.summary.substationName} />
-      <KeyValueRow label="Template" value={`${item.summary.templateName} v${item.summary.templateVersion}`} />
-      <KeyValueRow label="Cycle" value={String(item.summary.inspectionCycle)} />
-      <KeyValueRow label="Photos" value={String(item.photos.length)} />
-      <KeyValueRow label="Queued" value={formatDateTime(item.createdAt)} />
-      <KeyValueRow label="Attempts" value={String(item.attemptCount)} />
-      {item.errorMessage ? (
-        <View style={styles.inlineError}>
-          <Text style={styles.inlineErrorText}>{item.errorMessage}</Text>
-        </View>
-      ) : null}
-    </View>
+    <QueueCardShell
+      title={item.summary.assetCode}
+      subtitle={item.summary.assetName ?? 'Unnamed asset'}
+      status={item.status}
+      errorMessage={item.errorMessage}
+    >
+      <QueueFact icon="map-pin" label={item.summary.substationName} />
+      <QueueFact
+        icon="file-text"
+        label={`${item.summary.templateName} v${item.summary.templateVersion}`}
+      />
+      <QueueFact icon="repeat" label={`Cycle ${item.summary.inspectionCycle}`} />
+      <QueueFact
+        icon="image"
+        label={`${item.photos.length} photo${item.photos.length === 1 ? '' : 's'}`}
+      />
+      <QueueFact icon="clock" label={formatDateTime(item.createdAt)} />
+      <QueueFact
+        icon="rotate-cw"
+        label={`${item.attemptCount} attempt${item.attemptCount === 1 ? '' : 's'}`}
+      />
+    </QueueCardShell>
   );
 }
 
 function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueItem }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={styles.queueCard}>
-      <View style={styles.itemHeader}>
-        <View style={styles.itemTitleWrap}>
-          <Text style={styles.assetCode}>Complete Visit</Text>
-          <Text style={styles.assetName} numberOfLines={2}>
-            {item.summary.substationName}
-          </Text>
-        </View>
-        <StatusBadge status={item.status} />
-      </View>
-      <KeyValueRow label="Team" value={item.summary.teamName} />
-      <KeyValueRow
-        label="Progress"
-        value={`${item.summary.inspectedAssets}/${item.summary.totalAssets} assets`}
+    <QueueCardShell
+      title="Complete Visit"
+      subtitle={item.summary.substationName}
+      status={item.status}
+      errorMessage={item.errorMessage}
+    >
+      <QueueFact icon="users" label={item.summary.teamName} />
+      <QueueFact
+        icon="check-square"
+        label={`${item.summary.inspectedAssets}/${item.summary.totalAssets} assets`}
       />
-      <KeyValueRow label="Queued" value={formatDateTime(item.createdAt)} />
-      <KeyValueRow label="Attempts" value={String(item.attemptCount)} />
-      {item.errorMessage ? (
-        <View style={styles.inlineError}>
-          <Text style={styles.inlineErrorText}>{item.errorMessage}</Text>
-        </View>
-      ) : null}
-    </View>
+      <QueueFact icon="clock" label={formatDateTime(item.createdAt)} />
+      <QueueFact
+        icon="rotate-cw"
+        label={`${item.attemptCount} attempt${item.attemptCount === 1 ? '' : 's'}`}
+      />
+    </QueueCardShell>
   );
 }
 
 function CompletedQueueCard({ record }: { record: CompletedInspectionSyncRecord }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={styles.queueCard}>
-      <View style={styles.itemHeader}>
-        <View style={styles.itemTitleWrap}>
-          <Text style={styles.assetCode}>{record.summary.assetCode}</Text>
-          <Text style={styles.assetName} numberOfLines={2}>
-            {record.summary.assetName ?? 'Unnamed asset'}
-          </Text>
-        </View>
-        <StatusBadge status={record.status} />
-      </View>
-      <KeyValueRow label="Pencawang" value={record.summary.substationName} />
-      <KeyValueRow label="Photos" value={String(record.photoCount)} />
-      <KeyValueRow label="Completed" value={formatDateTime(record.completedAt)} />
-    </View>
+    <QueueCardShell
+      title={record.summary.assetCode}
+      subtitle={record.summary.assetName ?? 'Unnamed asset'}
+      status={record.status}
+    >
+      <QueueFact icon="map-pin" label={record.summary.substationName} />
+      <QueueFact
+        icon="image"
+        label={`${record.photoCount} photo${record.photoCount === 1 ? '' : 's'}`}
+      />
+      <QueueFact icon="check" label={formatDateTime(record.completedAt)} />
+    </QueueCardShell>
   );
 }
 
@@ -273,60 +366,97 @@ function CompletedVisitCompletionCard({
 }: {
   record: CompletedVisitCompletionSyncRecord;
 }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={styles.queueCard}>
-      <View style={styles.itemHeader}>
-        <View style={styles.itemTitleWrap}>
-          <Text style={styles.assetCode}>Visit Completed</Text>
-          <Text style={styles.assetName} numberOfLines={2}>
-            {record.summary.substationName}
-          </Text>
-        </View>
-        <StatusBadge status={record.status} />
-      </View>
-      <KeyValueRow label="Team" value={record.summary.teamName} />
-      <KeyValueRow label="Completed" value={formatDateTime(record.completedAt)} />
-    </View>
+    <QueueCardShell
+      title="Visit Completed"
+      subtitle={record.summary.substationName}
+      status={record.status}
+    >
+      <QueueFact icon="users" label={record.summary.teamName} />
+      <QueueFact icon="check" label={formatDateTime(record.completedAt)} />
+    </QueueCardShell>
   );
 }
 
-function QueueStat({ label, value }: { label: string; value: number }) {
+type StatTone = 'amber' | 'blue' | 'red' | 'green';
+
+function QueueStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: StatTone;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const color =
+    tone === 'amber'
+      ? theme.colors.warning
+      : tone === 'red'
+        ? theme.colors.danger
+        : tone === 'green'
+          ? theme.colors.success
+          : theme.colors.chromeAccent;
+
   return (
     <View style={styles.statBox}>
-      <Text style={styles.statValue}>{value}</Text>
+      <Mono size={30} color={value > 0 ? color : theme.colors.onChromeFaint}>
+        {String(value)}
+      </Mono>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
-function StatusBadge({ status }: { status: SyncQueueDisplayStatus }) {
+function StatusBadge({
+  status,
+  onDark = false,
+}: {
+  status: SyncQueueDisplayStatus;
+  onDark?: boolean;
+}) {
+  if (onDark) {
+    // On the dark status panel, StatusChip's soft light fills read poorly; use a
+    // self-contained pill in the same tone family.
+    return <DarkStatusBadge status={status} />;
+  }
+  return <StatusChip label={formatStatus(status)} tone={statusChipTone(status)} />;
+}
+
+function DarkStatusBadge({ status }: { status: SyncQueueDisplayStatus }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const color =
+    status === 'COMPLETED'
+      ? theme.colors.success
+      : status === 'FAILED'
+        ? theme.colors.danger
+        : status === 'SYNCING'
+          ? theme.colors.chromeAccent
+          : theme.colors.warning;
   return (
-    <View
-      style={[
-        styles.statusBadge,
-        status === 'COMPLETED' && styles.statusCompleted,
-        status === 'SYNCING' && styles.statusSyncing,
-        status === 'FAILED' && styles.statusFailed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.statusText,
-          status === 'COMPLETED' && styles.statusTextCompleted,
-          status === 'SYNCING' && styles.statusTextSyncing,
-          status === 'FAILED' && styles.statusTextFailed,
-        ]}
-      >
-        {formatStatus(status)}
-      </Text>
+    <View style={[styles.darkBadge, { borderColor: color }]}>
+      <View style={[styles.darkBadgeDot, { backgroundColor: color }]} />
+      <Text style={[styles.darkBadgeText, { color }]}>{formatStatus(status)}</Text>
     </View>
   );
+}
+
+function statusChipTone(
+  status: SyncQueueDisplayStatus,
+): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'COMPLETED') {
+    return 'success';
+  }
+  if (status === 'FAILED') {
+    return 'danger';
+  }
+  if (status === 'SYNCING') {
+    return 'info';
+  }
+  return 'warning';
 }
 
 function formatStatus(status: SyncQueueDisplayStatus) {
@@ -363,13 +493,15 @@ function getQueueSummaryStatus({
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
+    // Dark status panel (handoff 2g) — chrome tokens so it reads dark in both modes.
     statusCard: {
-      backgroundColor: t.colors.card,
-      borderRadius: 8,
+      backgroundColor: t.colors.solidFill,
+      borderRadius: t.radius.card,
       borderWidth: 1,
-      borderColor: t.colors.border,
-      padding: 20,
-      paddingBottom: 22,
+      borderColor: t.colors.chromeBorderStrong,
+      padding: 18,
+      gap: 16,
+      ...t.shadow.raised,
     },
     summaryHeader: {
       minHeight: 38,
@@ -378,78 +510,161 @@ const createStyles = (t: Theme) =>
       justifyContent: 'space-between',
       gap: 12,
     },
+    summaryTitleWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    summaryEyebrow: {
+      fontSize: 11,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.5,
+      color: t.colors.onSolidFill,
+      opacity: 0.55,
+    },
+    summaryTitle: {
+      fontSize: 19,
+      lineHeight: 24,
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      letterSpacing: -0.3,
+      color: t.colors.onSolidFill,
+    },
     statsGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 12,
-      marginTop: 20,
+      gap: 10,
       alignItems: 'stretch',
     },
-    retryActionWrap: {
-      minHeight: 52,
-      marginTop: 20,
-      width: '100%',
-    },
     statBox: {
-      width: '47%',
-      minHeight: 96,
-      borderRadius: 8,
+      width: '47.5%',
+      flexGrow: 1,
+      minHeight: 88,
+      borderRadius: t.radius.control,
       borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.surfaceMuted,
-      padding: 12,
+      borderColor: t.colors.chromeBorder,
+      backgroundColor: t.colors.chromeActive,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
       justifyContent: 'center',
-      gap: 3,
-    },
-    statValue: {
-      fontSize: 22,
-      lineHeight: 28,
-      fontWeight: '700',
-      color: t.colors.textPrimary,
+      gap: 4,
     },
     statLabel: {
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '600',
-      color: t.colors.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1,
+      color: t.colors.onChromeMuted,
       textTransform: 'uppercase',
+    },
+    retryButton: {
+      minHeight: 54,
+      borderRadius: t.radius.control,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      paddingHorizontal: 18,
+      backgroundColor: t.colors.primary,
+    },
+    retryButtonDisabled: {
+      backgroundColor: t.colors.chromeActive,
+      borderWidth: 1,
+      borderColor: t.colors.chromeBorder,
+    },
+    retryButtonPressed: {
+      backgroundColor: t.colors.primaryStrong,
+      transform: [{ scale: 0.99 }],
+    },
+    retryLabel: {
+      fontSize: 16,
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+      color: t.colors.textOnPrimary,
+    },
+    retryLabelDisabled: {
+      color: t.colors.onChromeFaint,
+    },
+
+    section: {
+      gap: 10,
     },
     queueList: {
       gap: 10,
     },
+
+    // Queue card with a status spine (handoff 2g / consistent with StatusSpineTile).
     queueCard: {
-      borderRadius: 8,
+      flexDirection: 'row',
+      borderRadius: t.radius.card,
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.card,
-      padding: 12,
+      overflow: 'hidden',
+      ...t.shadow.card,
+    },
+    queueSpine: {
+      width: 5,
+      alignSelf: 'stretch',
+    },
+    queueBody: {
+      flex: 1,
+      padding: 14,
       gap: 10,
     },
     itemHeader: {
-      minHeight: 42,
+      minHeight: 40,
       flexDirection: 'row',
       alignItems: 'flex-start',
       justifyContent: 'space-between',
       gap: 12,
+    },
+    itemHeaderRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     },
     itemTitleWrap: {
       flex: 1,
       gap: 3,
     },
     assetCode: {
-      fontSize: 15,
-      lineHeight: 20,
-      fontWeight: '700',
+      fontSize: 16,
+      lineHeight: 21,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
       color: t.colors.textPrimary,
     },
     assetName: {
       fontSize: 13,
       lineHeight: 18,
+      fontFamily: t.fonts.body,
+      color: t.colors.textSecondary,
+    },
+    factRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 7,
+    },
+    factChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      borderRadius: t.radius.chip,
+      backgroundColor: t.colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+    },
+    factText: {
+      fontSize: 12,
+      fontFamily: t.fonts.bodyMedium,
       fontWeight: '500',
       color: t.colors.textSecondary,
     },
     inlineError: {
-      borderRadius: 8,
+      borderRadius: t.radius.chip,
       borderWidth: 1,
       borderColor: t.colors.dangerBorder,
       backgroundColor: t.colors.dangerSoft,
@@ -459,41 +674,29 @@ const createStyles = (t: Theme) =>
       fontSize: 13,
       lineHeight: 18,
       fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
       color: t.colors.dangerText,
     },
-    statusBadge: {
+
+    // Self-contained badge for the dark status panel.
+    darkBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
       borderRadius: t.radius.pill,
       borderWidth: 1,
-      borderColor: t.colors.warningBorder,
-      backgroundColor: t.colors.warningSoft,
       paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingVertical: 5,
     },
-    statusCompleted: {
-      borderColor: t.colors.successBorder,
-      backgroundColor: t.colors.successSoft,
+    darkBadgeDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
     },
-    statusSyncing: {
-      borderColor: t.colors.infoBorder,
-      backgroundColor: t.colors.infoSoft,
-    },
-    statusFailed: {
-      borderColor: t.colors.dangerBorder,
-      backgroundColor: t.colors.dangerSoft,
-    },
-    statusText: {
-      fontSize: 12,
-      lineHeight: 16,
+    darkBadgeText: {
+      fontSize: 11,
       fontWeight: '700',
-      color: t.colors.warningText,
-    },
-    statusTextCompleted: {
-      color: t.colors.successText,
-    },
-    statusTextSyncing: {
-      color: t.colors.infoText,
-    },
-    statusTextFailed: {
-      color: t.colors.dangerText,
+      fontFamily: t.fonts.bodyBold,
+      letterSpacing: 0.3,
     },
   });

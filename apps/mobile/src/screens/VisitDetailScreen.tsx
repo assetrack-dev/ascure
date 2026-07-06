@@ -1,23 +1,27 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
 import { cachedFetch } from '../offlineCache';
 import {
   AppButton,
+  BottomCTA,
   Card,
   EmptyState,
   ErrorBanner,
   KeyValueRow,
   LoadingBlock,
+  Mono,
   Screen,
   SectionTitle,
   StatusChip,
   SuccessBanner,
   TextField,
   WarningBanner,
+  type SpineTone,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import {
@@ -29,6 +33,7 @@ import {
 import {
   getAssetRowLabels,
   getSubmittedInspectionAssetIds,
+  isAssetInspected,
 } from '../assetDisplay';
 import { Asset, SiteVisit, SiteVisitSummary, UserRole } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
@@ -309,6 +314,21 @@ export function VisitDetailScreen() {
     });
   }
 
+  const terminal = visit ? isVisitTerminal(visit.status) : false;
+  const ctaInactive = terminal || isCompletionQueued || isCompleting;
+  const ctaLabel = isOffline ? 'Queue Visit Completion' : 'Complete Visit';
+  const ctaHint = isCompletionQueued
+    ? 'Completion Queued'
+    : terminal
+      ? 'Visit Completed'
+      : isCompleting
+        ? 'Completing Visit...'
+        : null;
+  // Show the de-emphasized admin section only when at least one admin card is
+  // applicable — mirrors each card's own role/status gate (pure read; the cards
+  // still self-hide independently, so this never orphans an empty label).
+  const showAdminSection = visit ? hasAdminSection(user?.role, terminal) : false;
+
   return (
     <Screen
       title="Visit Detail"
@@ -323,6 +343,17 @@ export function VisitDetailScreen() {
         accessibilityLabel: 'Refresh',
         disabled: isLoading,
       }}
+      bottomBar={
+        !isLoading && visit ? (
+          <BottomCTA
+            label={ctaLabel}
+            onPress={handleConfirmCompleteVisit}
+            loading={isCompleting}
+            disabled={ctaInactive}
+            hint={ctaHint}
+          />
+        ) : undefined
+      }
     >
       <ErrorBanner message={error} />
       <WarningBanner
@@ -338,7 +369,10 @@ export function VisitDetailScreen() {
 
       {!isLoading && visit ? (
         <>
-          <VisitProgressCard rollup={createVisitRollup(visit, assets)} />
+          <VisitProgressHero
+            rollup={createVisitRollup(visit, assets)}
+            status={visit.status}
+          />
 
           <Card>
             <SectionTitle>Visit</SectionTitle>
@@ -355,7 +389,6 @@ export function VisitDetailScreen() {
             <KeyValueRow label="Started" value={formatDateTime(visit.startedAt)} />
             {visit.completedAt ? <KeyValueRow label="Completed" value={formatDateTime(visit.completedAt)} /> : null}
             {hasCheckInCoordinate(visit) ? <VisitGpsReadout visit={visit} /> : null}
-            <StatusChip label={formatStatusLabel(visit.status)} tone={getVisitStatusTone(visit.status)} />
           </Card>
 
           <VisitAssetMap
@@ -379,7 +412,8 @@ export function VisitDetailScreen() {
                   pressed && !isVisitTerminal(visit.status) && styles.buttonPressed,
                 ]}
               >
-                <Text style={styles.addAssetButtonText}>+ Add</Text>
+                <Feather name="plus" size={15} color={theme.colors.textOnPrimary} />
+                <Text style={styles.addAssetButtonText}>Add</Text>
               </Pressable>
             </View>
 
@@ -392,7 +426,7 @@ export function VisitDetailScreen() {
               <>
                 <View style={styles.assetList}>
                   {assets.slice(0, VISIBLE_ASSET_LIMIT).map((asset) => (
-                    <AssetListRow
+                    <VisitAssetTile
                       key={asset.id}
                       asset={asset}
                       visit={visit}
@@ -419,11 +453,15 @@ export function VisitDetailScreen() {
             <Card>
               <View style={styles.assetHeader}>
                 <SectionTitle>Available Assets</SectionTitle>
-                <Text style={styles.countText}>{availableAssets.length}</Text>
+                <View style={styles.countPill}>
+                  <Mono size={13} color={theme.colors.textSecondary}>
+                    {String(availableAssets.length)}
+                  </Mono>
+                </View>
               </View>
               <View style={styles.assetList}>
                 {availableAssets.map((asset) => (
-                  <AssetListRow
+                  <VisitAssetTile
                     key={asset.id}
                     asset={asset}
                     visit={visit}
@@ -438,61 +476,70 @@ export function VisitDetailScreen() {
             </Card>
           ) : null}
 
-          <ReassignTeamCard
-            visit={visit}
-            token={token}
-            userRole={user?.role}
-            onReassigned={loadVisitData}
-          />
+          {!terminal && !isCompletionQueued ? (
+            <Card>
+              <SectionTitle>Completion Notes</SectionTitle>
+              <TextField
+                label="Completion Notes"
+                value={completionNotes}
+                onChangeText={setCompletionNotes}
+                placeholder="Add final notes before completing this visit"
+                editable={!terminal && !isCompletionQueued && !isCompleting}
+                multiline
+                autoCapitalize="characters"
+              />
+            </Card>
+          ) : null}
 
-          <Card>
-            <SectionTitle>Complete Visit</SectionTitle>
-            <TextField
-              label="Completion Notes"
-              value={completionNotes}
-              onChangeText={setCompletionNotes}
-              placeholder="Add final notes for this visit"
-              editable={!isVisitTerminal(visit.status) && !isCompletionQueued && !isCompleting}
-              multiline
-              autoCapitalize="characters"
-            />
-            <AppButton
-              label={
-                isCompletionQueued
-                  ? 'Completion Queued'
-                  : isVisitTerminal(visit.status)
-                    ? 'Visit Completed'
-                    : isCompleting
-                      ? 'Completing Visit...'
-                      : isOffline
-                        ? 'Queue Visit Completion'
-                        : 'Complete Visit'
-              }
-              variant={isVisitTerminal(visit.status) ? 'secondary' : 'primary'}
-              onPress={handleConfirmCompleteVisit}
-              loading={isCompleting}
-              disabled={isVisitTerminal(visit.status) || isCompletionQueued || isCompleting}
-            />
-          </Card>
+          {showAdminSection ? (
+            <View style={styles.adminSection}>
+              <View style={styles.adminDivider}>
+                <View style={styles.adminDividerLine} />
+                <Text style={styles.adminEyebrow}>MANAGE VISIT</Text>
+                <View style={styles.adminDividerLine} />
+              </View>
 
-          <EditVisitDetailsCard
-            visit={visit}
-            token={token}
-            userRole={user?.role}
-            onUpdated={loadVisitData}
-          />
+              <ReassignTeamCard
+                visit={visit}
+                token={token}
+                userRole={user?.role}
+                onReassigned={loadVisitData}
+              />
 
-          <DeleteVisitCard
-            visit={visit}
-            substationId={substationId}
-            token={token}
-            userRole={user?.role}
-            onDeleted={() => navigation.goBack()}
-          />
+              <EditVisitDetailsCard
+                visit={visit}
+                token={token}
+                userRole={user?.role}
+                onUpdated={loadVisitData}
+              />
+
+              <DeleteVisitCard
+                visit={visit}
+                substationId={substationId}
+                token={token}
+                userRole={user?.role}
+                onDeleted={() => navigation.goBack()}
+              />
+            </View>
+          ) : null}
         </>
       ) : null}
     </Screen>
   );
+}
+
+/** Which roles have at least one applicable admin card (pure read, mirrors the
+ *  per-card gates — the cards still self-hide, this just gates the eyebrow). */
+function hasAdminSection(role: UserRole | undefined, terminal: boolean): boolean {
+  if (role === 'ADMIN' || role === 'MANAGER') {
+    // Edit + Danger Zone always show for these roles.
+    return true;
+  }
+  if (role === 'SUPERVISOR' || role === 'TECHNICIAN') {
+    // Reassign / Edit are available only while the visit is still open.
+    return !terminal;
+  }
+  return false;
 }
 
 function ReassignTeamCard({
@@ -1012,44 +1059,75 @@ function DeleteVisitCard({
   );
 }
 
-function VisitProgressCard({ rollup }: { rollup: SiteVisitSummary }) {
+/**
+ * Progress hero (handoff 2f) — leads the screen with the big "18 / 21 poles"
+ * count, a progress bar, and remaining + defects mini-stats. Mono for counts.
+ */
+function VisitProgressHero({
+  rollup,
+  status,
+}: {
+  rollup: SiteVisitSummary;
+  status: string;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const pct = Math.min(Math.max(rollup.completionPercentage, 0), 100);
   return (
-    <Card>
-      <View style={styles.progressHeader}>
-        <View style={styles.progressTitleWrap}>
-          <SectionTitle>Visit Progress</SectionTitle>
-          <Text style={styles.progressSubtitle}>
-            {rollup.inspectedAssets}/{rollup.totalAssets} inspected
-          </Text>
-        </View>
-        <Text style={styles.progressPercent}>{rollup.completionPercentage}%</Text>
+    <View style={styles.hero}>
+      <View style={styles.heroTopRow}>
+        <Text style={styles.heroEyebrow}>VISIT PROGRESS</Text>
+        <StatusChip label={formatStatusLabel(status)} tone={getVisitStatusTone(status)} />
       </View>
-      <View style={styles.progressTrack}>
-        <View
-          style={[
-            styles.progressFill,
-            { width: `${Math.min(Math.max(rollup.completionPercentage, 0), 100)}%` },
-          ]}
+
+      <View style={styles.heroCountRow}>
+        <Text style={styles.heroCount}>
+          {rollup.inspectedAssets}
+          <Text style={styles.heroCountTotal}> / {rollup.totalAssets}</Text>
+        </Text>
+        <Text style={styles.heroCountLabel}>poles inspected</Text>
+      </View>
+
+      <View style={styles.heroTrack}>
+        <View style={[styles.heroFill, { width: `${pct}%` }]} />
+      </View>
+
+      <View style={styles.heroStats}>
+        <HeroStat label="Remaining" value={rollup.pendingAssets} tone="muted" />
+        <HeroStat label="Done" value={rollup.inspectedAssets} tone="success" />
+        <HeroStat
+          label="Defects"
+          value={rollup.defectsFound}
+          tone={rollup.defectsFound > 0 ? 'danger' : 'muted'}
         />
       </View>
-      <View style={styles.progressStats}>
-        <ProgressStat label="Pending" value={rollup.pendingAssets} />
-        <ProgressStat label="Done" value={rollup.inspectedAssets} />
-        <ProgressStat label="Defects" value={rollup.defectsFound} />
-      </View>
-    </Card>
+    </View>
   );
 }
 
-function ProgressStat({ label, value }: { label: string; value: number }) {
+function HeroStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: 'muted' | 'success' | 'danger';
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const color =
+    tone === 'success'
+      ? theme.colors.success
+      : tone === 'danger'
+        ? theme.colors.danger
+        : theme.colors.onChrome;
   return (
-    <View style={styles.progressStat}>
-      <Text style={styles.progressStatValue}>{value}</Text>
-      <Text style={styles.progressStatLabel}>{label}</Text>
+    <View style={styles.heroStat}>
+      <Mono size={20} color={color}>
+        {String(value)}
+      </Mono>
+      <Text style={styles.heroStatLabel}>{label}</Text>
     </View>
   );
 }
@@ -1123,10 +1201,24 @@ function VisitAssetMap({
   );
 }
 
-function AssetListRow({
+/** Spine tone for a visit asset row (handoff 2f, consistent with StatusSpineTile):
+ *  not-found = neutral, submitted-inspection = green, otherwise not-yet = blue. */
+function spineForAsset(asset: Asset): SpineTone {
+  if (asset.status === 'NOT_FOUND') {
+    return 'neutral';
+  }
+  return isAssetInspected(asset as Parameters<typeof isAssetInspected>[0]) ? 'green' : 'blue';
+}
+
+/**
+ * A visit-asset row in the spined-tile language (handoff 2f) — status spine +
+ * thumbnail + mono pole code + subtitle, with a right-side chevron (open) or an
+ * action label ("Link"/"Linking" for available assets). Replaces AssetListRow.
+ */
+function VisitAssetTile({
   asset,
   visit,
-  rightLabel = '>',
+  rightLabel,
   disabled = false,
   onPress,
 }: {
@@ -1147,38 +1239,59 @@ function AssetListRow({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.assetRow,
+        styles.assetTile,
         asset.status === 'NOT_FOUND' && styles.assetRowMuted,
         disabled && styles.assetRowDisabled,
         pressed && !disabled && styles.assetRowPressed,
       ]}
     >
-      <View style={styles.thumbnailFrame}>
-        {thumbnailUri ? (
-          <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} resizeMode="cover" />
+      <View style={[styles.assetSpine, { backgroundColor: spineTileColor(theme, spineForAsset(asset)) }]} />
+      <View style={styles.assetTileInner}>
+        <View style={styles.thumbnailFrame}>
+          {thumbnailUri ? (
+            <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} resizeMode="cover" />
+          ) : (
+            <View style={styles.thumbnailPlaceholder}>
+              <Feather name="image" size={16} color={theme.colors.textMuted} />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.assetTextWrap}>
+          <Text style={styles.assetName} numberOfLines={1}>
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text style={styles.assetMeta} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+
+        {rightLabel ? (
+          <Text style={styles.rowActionLabel}>{rightLabel}</Text>
         ) : (
-          <View style={styles.thumbnailPlaceholder}>
-            <Text style={styles.thumbnailPlaceholderText}>No image</Text>
-          </View>
+          <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
         )}
       </View>
-
-      <View style={styles.assetTextWrap}>
-        <Text style={styles.assetName} numberOfLines={1}>
-          {title}
-        </Text>
-        {subtitle ? (
-          <Text style={styles.assetMeta} numberOfLines={1}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-
-      <Text style={rightLabel === '>' ? styles.rowArrow : styles.rowActionLabel}>
-        {rightLabel}
-      </Text>
     </Pressable>
   );
+}
+
+/** Spine color resolver mirroring ui.tsx's StatusSpineTile spine mapping. */
+function spineTileColor(t: Theme, tone: SpineTone): string {
+  switch (tone) {
+    case 'blue':
+      return t.colors.primary;
+    case 'red':
+      return t.colors.danger;
+    case 'amber':
+      return t.colors.warning;
+    case 'green':
+      return t.colors.success;
+    default:
+      return t.colors.borderStrong;
+  }
 }
 
 function VisitGpsReadout({ visit }: { visit: SiteVisit }) {
@@ -1420,71 +1533,112 @@ function isMappedAsset(
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
-    progressHeader: {
-      minHeight: 40,
+    // Progress hero (handoff 2f) — dark panel, big mono count, bar + mini-stats.
+    hero: {
+      backgroundColor: t.colors.solidFill,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.chromeBorderStrong,
+      padding: 18,
+      gap: 14,
+      ...t.shadow.raised,
+    },
+    heroTopRow: {
       flexDirection: 'row',
-      alignItems: 'flex-start',
+      alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
     },
-    progressTitleWrap: {
-      flex: 1,
-      gap: 3,
+    heroEyebrow: {
+      fontSize: 11,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.5,
+      color: t.colors.onSolidFill,
+      opacity: 0.55,
     },
-    progressSubtitle: {
-      color: t.colors.textSecondary,
+    heroCountRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 10,
+    },
+    heroCount: {
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      fontSize: 46,
+      lineHeight: 50,
+      letterSpacing: -1,
+      color: t.colors.onSolidFill,
+    },
+    heroCountTotal: {
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      fontSize: 30,
+      color: t.colors.onSolidFill,
+      opacity: 0.5,
+    },
+    heroCountLabel: {
       fontSize: 13,
-      lineHeight: 18,
-      fontWeight: '600',
+      fontFamily: t.fonts.bodyMedium,
+      fontWeight: '500',
+      color: t.colors.onChromeMuted,
     },
-    progressPercent: {
-      minWidth: 52,
-      color: t.colors.textPrimary,
-      fontSize: 22,
-      lineHeight: 28,
-      fontWeight: '800',
-      textAlign: 'right',
-    },
-    progressTrack: {
+    heroTrack: {
       height: 8,
       borderRadius: 4,
       overflow: 'hidden',
-      backgroundColor: t.colors.surfaceMuted,
+      backgroundColor: t.colors.chromeActive,
       borderWidth: 1,
-      borderColor: t.colors.border,
+      borderColor: t.colors.chromeBorder,
     },
-    progressFill: {
+    heroFill: {
       height: '100%',
       borderRadius: 5,
       backgroundColor: t.colors.success,
     },
-    progressStats: {
+    heroStats: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 10,
     },
-    progressStat: {
+    heroStat: {
       flex: 1,
-      minHeight: 52,
-      borderRadius: t.radius.card,
+      minHeight: 54,
+      borderRadius: t.radius.control,
       borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.surfaceMuted,
+      borderColor: t.colors.chromeBorder,
+      backgroundColor: t.colors.chromeActive,
       justifyContent: 'center',
-      paddingHorizontal: 10,
+      paddingHorizontal: 12,
       gap: 2,
     },
-    progressStatValue: {
-      color: t.colors.textPrimary,
-      fontSize: 16,
-      lineHeight: 21,
-      fontWeight: '800',
-    },
-    progressStatLabel: {
-      color: t.colors.textSecondary,
+    heroStatLabel: {
       fontSize: 11,
       lineHeight: 15,
-      fontWeight: '700',
+      fontFamily: t.fonts.mono,
+      letterSpacing: 0.8,
+      color: t.colors.onChromeMuted,
       textTransform: 'uppercase',
+    },
+    // De-emphasized admin section (handoff 2f) — labelled divider + reduced weight.
+    adminSection: {
+      gap: t.spacing.section,
+      opacity: 0.9,
+    },
+    adminDivider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 4,
+    },
+    adminDividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: t.colors.border,
+    },
+    adminEyebrow: {
+      fontSize: 11,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.5,
+      color: t.colors.textMuted,
     },
     mapHeader: {
       minHeight: 44,
@@ -1526,31 +1680,31 @@ const createStyles = (t: Theme) =>
       justifyContent: 'space-between',
       gap: 12,
     },
-    countText: {
-      minWidth: 36,
-      borderRadius: 18,
-      overflow: 'hidden',
+    countPill: {
+      minWidth: 34,
+      borderRadius: t.radius.pill,
       backgroundColor: t.colors.surfaceMuted,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingHorizontal: 11,
+      paddingVertical: 5,
       borderWidth: 1,
       borderColor: t.colors.border,
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-      textAlign: 'center',
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     addAssetButton: {
       minHeight: 38,
-      borderRadius: t.radius.card,
+      borderRadius: t.radius.control,
+      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      gap: 5,
       backgroundColor: t.colors.primary,
       paddingHorizontal: 14,
     },
     addAssetButtonText: {
       color: t.colors.textOnPrimary,
       fontSize: 14,
+      fontFamily: t.fonts.bodyBold,
       fontWeight: '700',
     },
     assetList: {
@@ -1559,16 +1713,27 @@ const createStyles = (t: Theme) =>
     viewAllAssetsWrap: {
       marginTop: t.spacing.section,
     },
-    assetRow: {
+    // Spined visit-asset tile (handoff 2f).
+    assetTile: {
       minHeight: 66,
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
       borderRadius: t.radius.card,
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.card,
-      padding: 8,
+      overflow: 'hidden',
+    },
+    assetSpine: {
+      width: 5,
+      alignSelf: 'stretch',
+    },
+    assetTileInner: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
     },
     assetRowMuted: {
       opacity: 0.56,
@@ -1578,12 +1743,11 @@ const createStyles = (t: Theme) =>
     },
     assetRowPressed: {
       backgroundColor: t.colors.surfacePressed,
-      transform: [{ scale: 0.995 }],
     },
     thumbnailFrame: {
-      width: 48,
-      height: 48,
-      borderRadius: t.radius.card,
+      width: 46,
+      height: 46,
+      borderRadius: t.radius.control,
       overflow: 'hidden',
       backgroundColor: t.colors.surfaceMuted,
       borderWidth: 1,
@@ -1597,14 +1761,6 @@ const createStyles = (t: Theme) =>
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 8,
-    },
-    thumbnailPlaceholderText: {
-      color: t.colors.textSecondary,
-      fontSize: 11,
-      lineHeight: 14,
-      fontWeight: '600',
-      textAlign: 'center',
     },
     assetTextWrap: {
       flex: 1,
@@ -1612,14 +1768,16 @@ const createStyles = (t: Theme) =>
     },
     assetName: {
       color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 19,
-      fontWeight: '700',
+      fontSize: 15,
+      lineHeight: 20,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
     },
     assetMeta: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
+      fontFamily: t.fonts.bodyMedium,
       fontWeight: '500',
     },
     gpsPanel: {
@@ -1633,29 +1791,25 @@ const createStyles = (t: Theme) =>
     },
     gpsValue: {
       color: t.colors.textPrimary,
-      fontSize: 13,
+      fontSize: 12.5,
       lineHeight: 18,
-      fontWeight: '700',
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
     },
     gpsAccuracy: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 16,
-      fontWeight: '600',
-    },
-    rowArrow: {
-      width: 18,
-      color: t.colors.textMuted,
-      fontSize: 20,
-      fontWeight: '700',
-      textAlign: 'right',
+      fontFamily: t.fonts.mono,
+      letterSpacing: 0.2,
     },
     rowActionLabel: {
       minWidth: 54,
-      color: t.colors.textPrimary,
+      color: t.colors.primary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '800',
+      fontFamily: t.fonts.bodyBold,
+      fontWeight: '700',
       textAlign: 'right',
     },
     disabledButton: {

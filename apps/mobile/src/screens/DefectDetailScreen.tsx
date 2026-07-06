@@ -31,7 +31,8 @@ import {
   InspectionImage,
 } from '../types';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
-import { Screen } from '../ui';
+import { BottomCTA, Screen } from '../ui';
+import { Feather } from '@expo/vector-icons';
 import { Theme, useTheme } from '../theme';
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
@@ -528,6 +529,41 @@ export function DefectDetailScreen() {
     ? defect.maintenanceProofImages
     : defect?.evidenceImages ?? [];
 
+  // Severity leads the hero; a critical/high (or emergency) defect gets the deep
+  // red treatment so it's unmissable outdoors (handoff 1e).
+  const isEmergency = Boolean(defect?.isEmergency);
+  const isCriticalSeverity =
+    defect?.severity === 'CRITICAL' || defect?.severity === 'HIGH' || isEmergency;
+
+  // The one action that matters, pinned to the bottom CTA (handoff 1e). It mirrors
+  // the highest-priority *existing* maintenance handler for the current state —
+  // the in-card action stacks stay authoritative; this is a thumb-reach shortcut.
+  const primaryCta: {
+    label: string;
+    hint: string;
+    onPress: () => void;
+    loading: boolean;
+    variant: 'primary' | 'danger';
+  } | null = !defect
+    ? null
+    : canVerifyClosure
+      ? {
+          label: 'Verify & Close Defect',
+          hint: 'Closing...',
+          onPress: handleVerifyClosure,
+          loading: isClosing,
+          variant: 'primary',
+        }
+      : canShowMaintenanceActions
+        ? {
+            label: isEmergency ? 'Claim & Start Repair' : 'Mark In Progress',
+            hint: 'Saving...',
+            onPress: handleMarkInProgress,
+            loading: savingMaintenanceAction === 'start',
+            variant: isCriticalSeverity ? 'danger' : 'primary',
+          }
+        : null;
+
   return (
     <Screen
       title="Defect Detail"
@@ -537,6 +573,18 @@ export function DefectDetailScreen() {
         onPress: () => navigation.goBack(),
         accessibilityLabel: 'Back',
       }}
+      bottomBar={
+        primaryCta ? (
+          <BottomCTA
+            label={primaryCta.label}
+            hint={primaryCta.hint}
+            onPress={primaryCta.onPress}
+            variant={primaryCta.variant}
+            loading={primaryCta.loading}
+            disabled={savingMaintenanceAction !== null || isClosing}
+          />
+        ) : undefined
+      }
     >
         {isLoading ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 36, gap: 12 }}>
@@ -593,22 +641,65 @@ export function DefectDetailScreen() {
 
         {!isLoading && defect ? (
           <>
-            <View style={styles.card}>
-              <View style={styles.summaryHeader}>
-                <View style={styles.summaryTitleWrap}>
-                  <Text style={styles.assetCodeText}>{defect.assetCode || 'Unknown Asset'}</Text>
-                  <Text style={styles.mutedText} numberOfLines={1}>
-                    {defect.assetType || 'No asset type'} · {defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : 'No cycle'}
+            {/* Severity-led hero (handoff 1e) — full-width color header so an
+                emergency reads instantly outdoors. */}
+            <View style={[styles.hero, isCriticalSeverity ? styles.heroCritical : styles.heroNeutral]}>
+              <View style={styles.heroTopRow}>
+                <View
+                  style={[
+                    styles.heroSevBadge,
+                    isEmergency ? styles.heroSevBadgeEmergency : styles.heroSevBadgeDefault,
+                  ]}
+                >
+                  {isEmergency ? (
+                    <Feather name="alert-triangle" size={13} color={theme.colors.dangerText} />
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.heroSevBadgeText,
+                      isEmergency
+                        ? styles.heroSevBadgeTextEmergency
+                        : styles.heroSevBadgeTextDefault,
+                    ]}
+                  >
+                    {isEmergency ? 'EMERGENCY' : formatEnumLabel(defect.severity).toUpperCase()}
                   </Text>
                 </View>
-                <StatusBadge status={defect.status} />
+                <Text style={styles.heroCode} numberOfLines={1}>
+                  {defect.assetCode || 'Unknown asset'}
+                </Text>
               </View>
-              <View style={styles.statusGrid}>
-                <CompactFact label="Lifecycle" value={formatEnumLabel(getDisplayLifecycleStatus(defect.lifecycleStatus))} />
-                <CompactFact label="Outcome" value={formatEnumLabel(defect.resolutionOutcome)} />
-                <CompactFact label="Assigned" value={defect.assignedTo || 'Unassigned'} />
-                <CompactFact label="Submitted" value={formatDateTime(defect.submittedAt)} />
+              <Text style={styles.heroTitle}>{defect.label}</Text>
+              <View style={styles.heroLocRow}>
+                <Feather name="map-pin" size={14} color="rgba(255,255,255,0.72)" />
+                <Text style={styles.heroLocText} numberOfLines={2}>
+                  {[defect.assetType, defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : null]
+                    .filter(Boolean)
+                    .join(' · ') || 'No asset type'}
+                </Text>
               </View>
+            </View>
+
+            {/* Photo strip — before/proof thumbnails + "+N" (handoff 1e). */}
+            <PhotoStrip
+              images={proofImages.length ? proofImages : defect.images}
+              onOpenImagePreview={(params) => navigation.navigate('ImagePreview', params)}
+            />
+
+            {/* 3-up key facts (handoff 1e). */}
+            <View style={styles.factRow}>
+              <KeyFact label="Severity" value={formatEnumLabel(defect.severity)} emphasize={isCriticalSeverity} />
+              <KeyFact label="Asset type" value={defect.assetType || 'Not set'} />
+              <KeyFact
+                label="Status"
+                value={formatStatus(getDisplayLifecycleStatus(defect.lifecycleStatus))}
+              />
+            </View>
+
+            {/* Vertical lifecycle timeline (handoff 1e). */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Lifecycle</Text>
+              <LifecycleTimeline defect={defect} />
             </View>
 
             <View style={styles.card}>
@@ -1055,15 +1146,168 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CompactFact({ label, value }: { label: string; value: string }) {
+function KeyFact({
+  label,
+  value,
+  emphasize = false,
+}: {
+  label: string;
+  value: string;
+  emphasize?: boolean;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={styles.compactFact}>
-      <Text style={styles.compactFactLabel}>{label}</Text>
-      <Text style={styles.compactFactValue} numberOfLines={1}>
+    <View style={styles.keyFact}>
+      <Text style={styles.keyFactLabel}>{label}</Text>
+      <Text
+        style={[styles.keyFactValue, emphasize && { color: theme.colors.danger }]}
+        numberOfLines={1}
+      >
         {value}
       </Text>
+    </View>
+  );
+}
+
+/** Photo strip — up to 2 thumbnails then a "+N" tile (handoff 1e). */
+function PhotoStrip({
+  images,
+  onOpenImagePreview,
+}: {
+  images: Array<InspectionImage | DefectEvidenceImage>;
+  onOpenImagePreview: (params: ImagePreviewParams) => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const usable = images.filter((image) => Boolean(getImageSourceUri(image)));
+
+  if (usable.length === 0) {
+    return null;
+  }
+
+  const previewImages = usable.map((image, index) => ({
+    uri: getImageSourceUri(image) ?? '',
+    title: `Photo ${index + 1}`,
+  }));
+  const shown = usable.slice(0, 3);
+  const overflow = usable.length - 3;
+
+  return (
+    <View style={styles.photoStrip}>
+      {shown.map((image, index) => {
+        const isLastWithOverflow = index === 2 && overflow > 0;
+        return (
+          <TouchableOpacity
+            key={`${image.id ?? getImageSourceUri(image) ?? 'photo'}-${index}`}
+            activeOpacity={0.85}
+            style={styles.photoTile}
+            onPress={() => onOpenImagePreview({ images: previewImages, index })}
+          >
+            <Image
+              source={{ uri: getImageSourceUri(image) ?? undefined }}
+              style={styles.photoTileImage}
+              resizeMode="cover"
+            />
+            {isLastWithOverflow ? (
+              <View style={styles.photoOverflow}>
+                <Text style={styles.photoOverflowText}>+{overflow + 1}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+type TimelineNodeState = 'done' | 'now' | 'todo';
+
+/** Vertical lifecycle timeline: raised -> verified -> ready -> repair. Node
+ *  state (done/now/todo) is derived from the defect's lifecycle (handoff 1e). */
+function LifecycleTimeline({ defect }: { defect: DefectDetail }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const lifecycle = getDisplayLifecycleStatus(defect.lifecycleStatus);
+  const isClosed = defect.status === 'CLOSED' || lifecycle === 'CLOSED';
+
+  const order = ['DETECTED', 'UNDER_REVIEW', 'VERIFIED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'VERIFICATION_PENDING', 'CLOSED'];
+  const rank = (status: string) => {
+    const idx = order.indexOf(status);
+    return idx === -1 ? 0 : idx;
+  };
+  const currentRank = rank(lifecycle);
+
+  const stepState = (reachedAt: number, activeAt: number): TimelineNodeState => {
+    if (isClosed || currentRank > activeAt) {
+      return 'done';
+    }
+    if (currentRank >= reachedAt) {
+      return 'now';
+    }
+    return 'todo';
+  };
+
+  const steps: Array<{ title: string; meta?: string | null; state: TimelineNodeState }> = [
+    {
+      title: 'Raised in inspection',
+      meta: [defect.cycleNumber ? `Cycle ${defect.cycleNumber}` : null, formatDateTime(defect.submittedAt)]
+        .filter(Boolean)
+        .join(' · '),
+      state: 'done',
+    },
+    {
+      title: defect.isEmergency ? 'Verified & flagged emergency' : 'Verified',
+      meta: defect.verifiedAt ? formatDateTime(defect.verifiedAt) : 'Awaiting QA/QC',
+      state: stepState(rank('VERIFIED'), rank('VERIFIED')),
+    },
+    {
+      title: defect.assignedTo ? 'Assigned to maintenance' : 'Ready to claim',
+      meta: defect.assignedTo
+        ? [defect.assignedTo, formatDateTime(defect.assignedAt)].filter(Boolean).join(' · ')
+        : 'Unassigned · awaiting maintenance',
+      state: stepState(rank('ASSIGNED'), rank('IN_PROGRESS')),
+    },
+    {
+      title: 'Repair & closure',
+      meta: isClosed
+        ? formatDateTime(defect.closureVerifiedAt ?? defect.closedAt)
+        : lifecycle === 'IN_PROGRESS'
+          ? 'In progress'
+          : null,
+      state: isClosed ? 'done' : lifecycle === 'IN_PROGRESS' ? 'now' : 'todo',
+    },
+  ];
+
+  return (
+    <View style={styles.timeline}>
+      {steps.map((step, index) => {
+        const isLast = index === steps.length - 1;
+        const dotStyle =
+          step.state === 'done'
+            ? styles.tlDotDone
+            : step.state === 'now'
+              ? styles.tlDotNow
+              : styles.tlDotTodo;
+        return (
+          <View key={step.title} style={styles.tlRow}>
+            <View style={styles.tlRail}>
+              <View style={[styles.tlDot, dotStyle]}>
+                {step.state === 'done' ? (
+                  <Feather name="check" size={11} color={theme.colors.onSolidFill} />
+                ) : null}
+              </View>
+              {!isLast ? <View style={styles.tlLine} /> : null}
+            </View>
+            <View style={styles.tlContent}>
+              <Text style={[styles.tlTitle, step.state === 'todo' && styles.tlTitleTodo]}>
+                {step.title}
+              </Text>
+              {step.meta ? <Text style={styles.tlMeta}>{step.meta}</Text> : null}
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -1150,28 +1394,6 @@ function EvidenceGrid({
           })}
         </View>
       )}
-    </View>
-  );
-}
-
-function StatusBadge({ status }: { status: DefectStatus }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  const style = getStatusStyle(status);
-
-  return (
-    <View
-      style={[
-        styles.statusBadge,
-        {
-          backgroundColor: style.backgroundColor,
-          borderColor: style.borderColor,
-        },
-      ]}
-    >
-      <Text style={[styles.statusBadgeText, { color: style.color }]}>
-        {formatStatus(status)}
-      </Text>
     </View>
   );
 }
@@ -1491,64 +1713,227 @@ const createStyles = (t: Theme) =>
     borderWidth: 1,
     borderColor: t.colors.border,
   },
-  summaryHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  summaryTitleWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  assetCodeText: {
-    color: t.colors.textPrimary,
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: '800',
-    fontFamily: t.fonts.monoMedium,
-  },
   mutedText: {
     color: t.colors.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '600',
+    fontFamily: t.fonts.bodySemibold,
   },
   sectionTitle: {
     color: t.colors.textPrimary,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
+    fontFamily: t.fonts.display,
   },
-  statusGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  compactFact: {
-    flexGrow: 1,
-    flexBasis: '47%',
-    minWidth: 136,
+
+  // Severity-led hero (handoff 1e). Dark, full-width; critical = deep red.
+  hero: {
     borderRadius: t.radius.card,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 18,
+    gap: 8,
+    overflow: 'hidden',
+  },
+  heroCritical: {
+    // Deep-red field alert. Built from the danger family so dark mode stays legible.
+    backgroundColor: t.mode === 'dark' ? '#4A0E10' : '#5A1012',
+  },
+  heroNeutral: {
+    backgroundColor: t.colors.solidFill,
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  heroSevBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: t.radius.chip,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  heroSevBadgeDefault: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  heroSevBadgeEmergency: {
+    backgroundColor: '#FFFFFF',
+  },
+  heroSevBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.4,
+  },
+  heroSevBadgeTextDefault: {
+    color: '#FFFFFF',
+  },
+  heroSevBadgeTextEmergency: {
+    color: t.colors.dangerText,
+  },
+  heroCode: {
+    marginLeft: 'auto',
+    fontSize: 13,
+    fontFamily: t.fonts.monoMedium,
+    letterSpacing: 0.3,
+    color: 'rgba(255,255,255,0.82)',
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  heroTitle: {
+    color: '#FFFFFF',
+    fontSize: 23,
+    lineHeight: 28,
+    fontFamily: t.fonts.display,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  heroLocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 2,
+  },
+  heroLocText: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 13.5,
+    lineHeight: 18,
+    fontWeight: '500',
+    fontFamily: t.fonts.bodyMedium,
+  },
+
+  // Photo strip (handoff 1e)
+  photoStrip: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  photoTile: {
+    flex: 1,
+    height: 92,
+    borderRadius: t.radius.control,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: t.colors.border,
     backgroundColor: t.colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 2,
   },
-  compactFactLabel: {
-    color: t.colors.textSecondary,
-    fontSize: 10,
+  photoTileImage: {
+    width: '100%',
+    height: '100%',
+  },
+  photoOverflow: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(18,22,28,0.62)',
+  },
+  photoOverflowText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+    fontFamily: t.fonts.monoMedium,
+  },
+
+  // 3-up key facts (handoff 1e)
+  factRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  keyFact: {
+    flex: 1,
+    borderRadius: t.radius.control,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 4,
+    ...t.shadow.card,
+  },
+  keyFactLabel: {
+    color: t.colors.textMuted,
+    fontSize: 11,
     lineHeight: 14,
     fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+    letterSpacing: 0.2,
     textTransform: 'uppercase',
   },
-  compactFactValue: {
+  keyFactValue: {
     color: t.colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+  },
+
+  // Vertical lifecycle timeline (handoff 1e)
+  timeline: {
+    gap: 0,
+    marginTop: 2,
+  },
+  tlRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  tlRail: {
+    width: 18,
+    alignItems: 'center',
+  },
+  tlDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  tlDotDone: {
+    backgroundColor: t.colors.success,
+    borderColor: t.colors.success,
+  },
+  tlDotNow: {
+    backgroundColor: t.colors.primary,
+    borderColor: t.colors.primary,
+  },
+  tlDotTodo: {
+    backgroundColor: t.colors.card,
+    borderColor: t.colors.borderStrong,
+  },
+  tlLine: {
+    flex: 1,
+    width: 2,
+    minHeight: 18,
+    marginVertical: 2,
+    backgroundColor: t.colors.border,
+  },
+  tlContent: {
+    flex: 1,
+    paddingBottom: 16,
+    gap: 2,
+  },
+  tlTitle: {
+    color: t.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+  },
+  tlTitleTodo: {
+    color: t.colors.textMuted,
+    fontWeight: '600',
+    fontFamily: t.fonts.bodySemibold,
+  },
+  tlMeta: {
+    color: t.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: t.fonts.body,
   },
   infoRow: {
     flexDirection: 'row',
@@ -1766,18 +2151,6 @@ const createStyles = (t: Theme) =>
     color: t.colors.success,
     fontSize: 14,
     lineHeight: 19,
-    fontWeight: '800',
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderWidth: 1,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    lineHeight: 15,
     fontWeight: '800',
   },
   statusButton: {

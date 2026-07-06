@@ -24,15 +24,17 @@ import {
   SyncQueueSnapshot,
 } from '../syncQueue';
 import {
-  AppButton,
+  BottomCTA,
   Card,
   EmptyState,
   ErrorBanner,
+  Mono,
+  NetworkPill,
   Screen,
-  SectionTitle,
   SkeletonCard,
-  StatusChip,
+  StatusSpineTile,
   WarningBanner,
+  type SpineTone,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import {
@@ -95,6 +97,23 @@ type MainheadQueueGroup = {
 const UNSPECIFIED_MAINHEAD_KEY = '__UNSPECIFIED__';
 const UNSPECIFIED_MAINHEAD_LABEL = 'Other / Unspecified';
 
+// Status group → spine colour: in-progress reads blue (active), a rejected item
+// reads red (needs attention), completed reads green (handoff C2).
+const QUEUE_SPINE: Record<InspectionQueueStatusGroup, SpineTone> = {
+  IN_PROGRESS: 'blue',
+  COMPLETED: 'green',
+  NEEDS_ATTENTION: 'red',
+};
+
+const QUEUE_CHIP_TONE: Record<
+  InspectionQueueStatusGroup,
+  'info' | 'success' | 'danger'
+> = {
+  IN_PROGRESS: 'info',
+  COMPLETED: 'success',
+  NEEDS_ATTENTION: 'danger',
+};
+
 export function HomeScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'Home'>['navigation']>();
   const { token, user, setUser, handleUnauthorized } = useSession();
@@ -107,6 +126,8 @@ export function HomeScreen() {
     useState<MobileWorkspaceId | null>(null);
   const [selectedScope, setSelectedScope] = useState<OperationalScope>('SAVR');
   const [capabilities, setCapabilities] = useState<EffectiveCapability[]>([]);
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const workspaces = useMemo(
     () => getAvailableMobileWorkspaces(user, capabilities),
     [user, capabilities],
@@ -124,6 +145,10 @@ export function HomeScreen() {
   const availableScopes = useMemo(
     () => getAvailableInspectionScopes(activeVisits, completedVisits),
     [activeVisits, completedVisits],
+  );
+  const scopeCounts = useMemo(
+    () => countVisitsByScope(activeVisits, completedVisits, availableScopes),
+    [activeVisits, completedVisits, availableScopes],
   );
   const queueItems = useMemo(
     () => buildInspectionQueueItems(activeVisits, completedVisits, selectedScope),
@@ -272,6 +297,17 @@ export function HomeScreen() {
     [handleOpenVisit],
   );
 
+  // Persistent offline / sync signal for the identity-row pill (handoff 1b /
+  // C4). Counts come straight from the live useSync() snapshot — never faked.
+  const queuedCount = getActiveQueueCount(syncQueueSnapshot);
+  const networkLabel = isOffline
+    ? queuedCount > 0
+      ? `Offline · ${queuedCount} queued`
+      : 'Offline'
+    : isSyncingQueue || queuedCount > 0
+      ? `Syncing · ${queuedCount}`
+      : 'Synced';
+
   return (
     <Screen
       title="Workspace"
@@ -280,24 +316,39 @@ export function HomeScreen() {
         onPress: () => navigation.openDrawer(),
         accessibilityLabel: 'Menu',
       }}
-      rightActions={[
-        {
-          icon: 'refresh',
-          onPress: loadHomeData,
-          accessibilityLabel: 'Refresh',
-          disabled: isLoading,
-        },
-        ...(canInspect
-          ? [
-              {
-                icon: 'add' as const,
-                onPress: () => navigation.navigate('CheckIn'),
-                accessibilityLabel: 'Create Check In',
-              },
-            ]
-          : []),
-      ]}
+      rightAction={{
+        icon: 'refresh',
+        onPress: loadHomeData,
+        accessibilityLabel: 'Refresh',
+        disabled: isLoading,
+      }}
+      bottomBar={
+        // Primary Check-In action moves off the header "+" into a thumb-reach
+        // docked CTA (handoff 1b / C5). Inspection-scope only.
+        canInspect ? (
+          <BottomCTA
+            label="Start Check-In"
+            onPress={() => navigation.navigate('CheckIn')}
+          />
+        ) : undefined
+      }
     >
+      {/* Identity row + persistent offline/sync pill (handoff 1b). */}
+      <View style={styles.identityRow}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{getInitials(user.name)}</Text>
+        </View>
+        <View style={styles.identityText}>
+          <Text style={styles.identityName} numberOfLines={1}>
+            {user.name}
+          </Text>
+          <Text style={styles.identityRole} numberOfLines={1}>
+            {formatRole(user.role)}
+          </Text>
+        </View>
+        <NetworkPill online={!isOffline} label={networkLabel} />
+      </View>
+
       <ErrorBanner message={error} />
       <WarningBanner
         message={
@@ -339,6 +390,7 @@ export function HomeScreen() {
         <InspectionWorkspaceView
           availableScopes={availableScopes}
           selectedScope={selectedScope}
+          scopeCounts={scopeCounts}
           queueItems={queueItems}
           onSelectScope={setSelectedScope}
           onOpenQueueItem={handleOpenQueueItem}
@@ -373,71 +425,51 @@ function WorkspaceEntry({
     return null;
   }
 
+  // Segmented control (handoff 1b): one track, the active workspace reads as a
+  // solid raised segment. Immediate swap, no animation (gloved use).
   return (
-    <Card>
-      <View style={styles.listHeader}>
-        <SectionTitle>Workspaces</SectionTitle>
-        <Text style={styles.countText}>{workspaces.length}</Text>
-      </View>
-      <View style={styles.workspaceGrid}>
-        {workspaces.map((workspace) => (
-          <WorkspaceCard
+    <View style={styles.segmented}>
+      {workspaces.map((workspace) => {
+        const selected = workspace.id === selectedWorkspaceId;
+        const iconName = workspace.id === 'INSPECTION' ? 'clipboard' : 'tool';
+
+        return (
+          <Pressable
             key={workspace.id}
-            workspace={workspace}
-            selected={workspace.id === selectedWorkspaceId}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
             onPress={() => onSelectWorkspace(workspace.id)}
-          />
-        ))}
-      </View>
-    </Card>
-  );
-}
-
-function WorkspaceCard({
-  workspace,
-  selected,
-  onPress,
-}: {
-  workspace: MobileWorkspace;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  const iconName = workspace.id === 'INSPECTION' ? 'clipboard' : 'tool';
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.workspaceCard,
-        selected && styles.workspaceCardSelected,
-        pressed && styles.visitRowPressed,
-      ]}
-    >
-      <View style={styles.workspaceIcon}>
-        <Feather name={iconName} size={17} color={theme.colors.primary} />
-      </View>
-      <View style={styles.workspaceTextWrap}>
-        <Text style={styles.workspaceTitle}>{workspace.label}</Text>
-        <Text style={styles.workspaceMeta}>
-          {workspace.id === 'INSPECTION' ? 'Operational queue' : 'Assigned tasks'}
-        </Text>
-      </View>
-    </Pressable>
+            style={[styles.segment, selected && styles.segmentActive]}
+          >
+            <Feather
+              name={iconName}
+              size={15}
+              color={selected ? theme.colors.textPrimary : theme.colors.textMuted}
+            />
+            <Text
+              style={[styles.segmentText, selected && styles.segmentTextActive]}
+              numberOfLines={1}
+            >
+              {workspace.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
 function InspectionWorkspaceView({
   availableScopes,
   selectedScope,
+  scopeCounts,
   queueItems,
   onSelectScope,
   onOpenQueueItem,
 }: {
   availableScopes: OperationalScope[];
   selectedScope: OperationalScope;
+  scopeCounts: Record<string, number>;
   queueItems: InspectionQueueItem[];
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
@@ -455,44 +487,48 @@ function InspectionWorkspaceView({
   );
   const showMainheadHeaders = mainheadGroups.length > 1;
 
-  const renderStatusCard = (
+  // One labelled status group ("In Progress" / "Needs attention" / "Completed"),
+  // its rows rendered as spine tiles whose spine encodes the status (handoff 1b).
+  const renderStatusGroup = (
     entry: MainheadQueueGroup['statusGroups'][number],
   ) => (
-    <Card key={entry.group}>
-      <View style={styles.listHeader}>
-        <StatusChip label={entry.label} tone={entry.tone} />
-        <Text style={styles.countText}>{entry.items.length}</Text>
+    <View key={entry.group} style={styles.statusGroup}>
+      <View style={styles.groupHeader}>
+        <Text style={styles.groupTitle}>{entry.label}</Text>
+        <Mono size={12} muted>
+          {entry.items.length}
+        </Mono>
       </View>
-      <View style={styles.queueGrid}>
-        {entry.items.map((item) => (
-          <InspectionQueueCard
-            key={item.id}
-            item={item}
-            onOpenItem={onOpenQueueItem}
-          />
-        ))}
-      </View>
-    </Card>
+      {entry.items.map((item) => (
+        <StatusSpineTile
+          key={item.id}
+          code={item.title}
+          spine={QUEUE_SPINE[item.group]}
+          chip={{ label: entry.label, tone: QUEUE_CHIP_TONE[item.group] }}
+          secondary={item.subtitle}
+          onPress={() => onOpenQueueItem(item)}
+        />
+      ))}
+    </View>
   );
 
   return (
     <>
-      {/* Scope selector — a compact pill row at the top instead of a full card. */}
-      <View style={styles.scopeGrid}>
+      {/* Count-badged scope chips (handoff 1b): active chip = solid ink fill. */}
+      <View style={styles.scopeRow}>
         {availableScopes.map((scope) => (
-          <ScopeCard
+          <ScopeChip
             key={scope}
             scope={scope}
+            count={scopeCounts[scope] ?? 0}
             selected={scope === selectedScope}
             onPress={() => onSelectScope(scope)}
           />
         ))}
       </View>
 
-      {/* One card per status group (no "Inspection Queue" wrapper, no per-item
-          status pill — the card header carries the single status chip). When the
-          queue spans more than one Mainhead, those status cards are nested under a
-          per-Mainhead section header. */}
+      {/* Spine-tile queue grouped by status; when the queue spans more than one
+          Mainhead, those status groups nest under a per-Mainhead section header. */}
       {queueItems.length === 0 ? (
         <Card>
           <EmptyState
@@ -503,9 +539,9 @@ function InspectionWorkspaceView({
         </Card>
       ) : !showMainheadHeaders ? (
         // Single Mainhead (or none): keep the original flat per-status layout.
-        (mainheadGroups[0]?.statusGroups ?? []).map(renderStatusCard)
+        (mainheadGroups[0]?.statusGroups ?? []).map(renderStatusGroup)
       ) : (
-        // Multiple Mainheads: a labelled section per Mainhead, status cards within.
+        // Multiple Mainheads: a labelled section per Mainhead, status groups within.
         mainheadGroups.map((group) => (
           <View key={group.key} style={styles.mainheadSection}>
             <View style={styles.mainheadHeader}>
@@ -513,9 +549,11 @@ function InspectionWorkspaceView({
               <Text style={styles.mainheadTitle} numberOfLines={1}>
                 {group.label}
               </Text>
-              <Text style={styles.mainheadCount}>{group.total}</Text>
+              <Mono size={12} muted>
+                {group.total}
+              </Mono>
             </View>
-            {group.statusGroups.map(renderStatusCard)}
+            {group.statusGroups.map(renderStatusGroup)}
           </View>
         ))
       )}
@@ -523,12 +561,14 @@ function InspectionWorkspaceView({
   );
 }
 
-function ScopeCard({
+function ScopeChip({
   scope,
+  count,
   selected,
   onPress,
 }: {
   scope: OperationalScope;
+  count: number;
   selected: boolean;
   onPress: () => void;
 }) {
@@ -538,49 +578,19 @@ function ScopeCard({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected }}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.scopeCard,
-        selected && styles.scopeCardSelected,
-        pressed && styles.visitRowPressed,
-      ]}
+      style={[styles.scopeChip, selected && styles.scopeChipActive]}
     >
-      <Text style={[styles.scopeTitle, selected && styles.scopeTitleSelected]}>
+      <Text
+        style={[styles.scopeChipLabel, selected && styles.scopeChipLabelActive]}
+      >
         {SCOPE_LABELS[scope]}
       </Text>
-    </Pressable>
-  );
-}
-
-function InspectionQueueCard({
-  item,
-  onOpenItem,
-}: {
-  item: InspectionQueueItem;
-  onOpenItem: (item: InspectionQueueItem) => void;
-}) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={() => {
-        onOpenItem(item);
-      }}
-      style={({ pressed }) => [
-        styles.queueCard,
-        pressed && styles.visitRowPressed,
-      ]}
-    >
-      <View style={styles.queueCardHeader}>
-        <Text style={[styles.queueTitle, { flex: 1 }]} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
-      </View>
-      <Text style={styles.queueSubtitle} numberOfLines={2}>
-        {item.subtitle}
+      <Text
+        style={[styles.scopeChipCount, selected && styles.scopeChipCountActive]}
+      >
+        {count}
       </Text>
     </Pressable>
   );
@@ -598,13 +608,13 @@ type MaintenanceGroups = Record<MaintenanceGroupKey, DefectListItem[]>;
 const MAINTENANCE_GROUPS: Array<{
   key: MaintenanceGroupKey;
   label: string;
-  tone: 'info' | 'success' | 'warning' | 'neutral' | 'danger';
+  spine: SpineTone;
 }> = [
-  { key: 'EMERGENCY', label: '🚨 Emergency', tone: 'danger' },
-  { key: 'READY', label: 'Ready to Claim', tone: 'warning' },
-  { key: 'ACTIVE', label: 'In Progress', tone: 'info' },
-  { key: 'AWAITING_CLOSURE', label: 'Awaiting Closure', tone: 'success' },
-  { key: 'DONE', label: 'Recently Closed', tone: 'neutral' },
+  { key: 'EMERGENCY', label: 'Emergency', spine: 'red' },
+  { key: 'READY', label: 'Ready to Claim', spine: 'amber' },
+  { key: 'ACTIVE', label: 'In Progress', spine: 'blue' },
+  { key: 'AWAITING_CLOSURE', label: 'Awaiting Closure', spine: 'green' },
+  { key: 'DONE', label: 'Recently Closed', spine: 'neutral' },
 ];
 
 const SEVERITY_RANK: Record<DefectSeverity, number> = {
@@ -734,24 +744,35 @@ function MaintenanceWorkspaceView({
           }
 
           return (
-            <Card key={group.key}>
-              <View style={styles.listHeader}>
-                <StatusChip label={group.label} tone={group.tone} />
-                <Text style={styles.countText}>{items.length}</Text>
+            <View key={group.key} style={styles.statusGroup}>
+              <View style={styles.groupHeader}>
+                {group.key === 'EMERGENCY' ? (
+                  <Feather name="alert-triangle" size={14} color={theme.colors.danger} />
+                ) : null}
+                <Text
+                  style={[
+                    styles.groupTitle,
+                    group.key === 'EMERGENCY' && styles.groupTitleDanger,
+                  ]}
+                >
+                  {group.label}
+                </Text>
+                <Mono size={12} muted>
+                  {items.length}
+                </Mono>
               </View>
-              <View style={styles.queueGrid}>
-                {items.map((item) => (
-                  <MaintenanceTaskCard
-                    key={item.id}
-                    item={item}
-                    claimable={isClaimableDefect(item)}
-                    claiming={claimingId === item.id}
-                    onOpen={() => onOpenDefect(item.id)}
-                    onClaim={() => handleClaim(item.id)}
-                  />
-                ))}
-              </View>
-            </Card>
+              {items.map((item) => (
+                <MaintenanceTaskCard
+                  key={item.id}
+                  item={item}
+                  spine={group.spine}
+                  claimable={isClaimableDefect(item)}
+                  claiming={claimingId === item.id}
+                  onOpen={() => onOpenDefect(item.id)}
+                  onClaim={() => handleClaim(item.id)}
+                />
+              ))}
+            </View>
           );
         })
       )}
@@ -761,12 +782,14 @@ function MaintenanceWorkspaceView({
 
 function MaintenanceTaskCard({
   item,
+  spine,
   claimable,
   claiming,
   onOpen,
   onClaim,
 }: {
   item: DefectListItem;
+  spine: SpineTone;
   claimable: boolean;
   claiming: boolean;
   onOpen: () => void;
@@ -778,58 +801,56 @@ function MaintenanceTaskCard({
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value));
 
+  // Emergency severity should still lead with red regardless of the group spine.
+  const rowSpine: SpineTone =
+    item.severity === 'CRITICAL' || item.severity === 'HIGH' ? 'red' : spine;
+
   return (
-    <View style={styles.maintenanceCard}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={onOpen}
-        style={({ pressed }) => [
-          styles.maintenanceCardBody,
-          pressed && styles.visitRowPressed,
+    <View style={styles.maintenanceItem}>
+      <StatusSpineTile
+        code={item.assetCode || 'Unknown asset'}
+        spine={rowSpine}
+        chip={{ label: item.severity ?? 'MEDIUM', tone: severityTone(item.severity) }}
+        secondary={item.label}
+        meta={[
+          metaParts.length > 0 ? metaParts.join(' · ') : null,
+          item.isOverdue ? 'OVERDUE' : null,
         ]}
-      >
-        <View style={styles.queueCardHeader}>
-          <Text
-            style={[styles.queueTitle, { flex: 1, fontFamily: theme.fonts.monoMedium }]}
-            numberOfLines={1}
-          >
-            {item.assetCode || 'Unknown asset'}
-          </Text>
-          <SeverityChip severity={item.severity} />
-        </View>
-        <Text style={styles.queueSubtitle} numberOfLines={2}>
-          {item.label}
-        </Text>
-        {metaParts.length > 0 ? (
-          <Text style={styles.maintenanceMeta} numberOfLines={1}>
-            {metaParts.join(' · ')}
-          </Text>
-        ) : null}
-        {item.isOverdue ? <Text style={styles.overdueText}>Overdue</Text> : null}
-      </Pressable>
+        onPress={onOpen}
+      />
       {claimable ? (
-        <AppButton
-          label={claiming ? 'Claiming…' : 'Claim & Start'}
-          variant="primary"
-          loading={claiming}
+        <Pressable
+          accessibilityRole="button"
+          disabled={claiming}
           onPress={onClaim}
-        />
+          style={({ pressed }) => [
+            styles.claimButton,
+            claiming && styles.claimButtonDisabled,
+            pressed && !claiming && styles.claimButtonPressed,
+          ]}
+        >
+          <Text style={styles.claimButtonText}>
+            {claiming ? 'Claiming…' : 'Claim & Start'}
+          </Text>
+        </Pressable>
       ) : null}
     </View>
   );
 }
 
-function SeverityChip({ severity }: { severity?: DefectSeverity | null }) {
-  const tone =
-    severity === 'CRITICAL'
-      ? 'danger'
-      : severity === 'HIGH'
-        ? 'warning'
-        : severity === 'LOW'
-          ? 'neutral'
-          : 'info';
-
-  return <StatusChip label={severity ?? 'MEDIUM'} tone={tone} />;
+function severityTone(
+  severity?: DefectSeverity | null,
+): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+  if (severity === 'CRITICAL') {
+    return 'danger';
+  }
+  if (severity === 'HIGH') {
+    return 'warning';
+  }
+  if (severity === 'LOW') {
+    return 'neutral';
+  }
+  return 'info';
 }
 
 function groupMaintenanceDefects(
@@ -959,6 +980,34 @@ function toTimestamp(value?: string | null) {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function getInitials(name?: string | null) {
+  const trimmed = (name ?? '').trim();
+
+  if (!trimmed) {
+    return '—';
+  }
+
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.charAt(0) ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1].charAt(0) : '';
+
+  return (first + last).toUpperCase() || '—';
+}
+
+function formatRole(role?: string | null) {
+  const trimmed = (role ?? '').trim();
+
+  if (!trimmed) {
+    return 'Field crew';
+  }
+
+  return trimmed
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   return Promise.all(
     visits.map(async (visit) => {
@@ -1056,6 +1105,22 @@ function getAvailableInspectionScopes(
   }
 
   return SCOPE_ORDER.filter((scope) => scopes.has(scope));
+}
+
+function countVisitsByScope(
+  activeVisits: SiteVisit[],
+  completedVisits: SiteVisit[],
+  scopes: OperationalScope[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+
+  for (const scope of scopes) {
+    counts[scope] = [...activeVisits, ...completedVisits].filter((visit) =>
+      isVisitInScope(visit, scope),
+    ).length;
+  }
+
+  return counts;
 }
 
 function buildMainheadQueueGroups(
@@ -1244,8 +1309,15 @@ function SyncQueueSummaryCard({
     <Pressable
       accessibilityRole="button"
       onPress={onOpen}
-      style={({ pressed }) => [styles.syncSummaryCard, pressed && styles.visitRowPressed]}
+      style={({ pressed }) => [styles.syncSummaryCard, pressed && styles.pressed]}
     >
+      <View style={styles.syncSummaryIcon}>
+        <Feather
+          name={failedCount > 0 ? 'alert-triangle' : 'upload-cloud'}
+          size={18}
+          color={failedCount > 0 ? theme.colors.danger : theme.colors.warningText}
+        />
+      </View>
       <View style={styles.syncSummaryTextWrap}>
         <Text style={styles.syncSummaryTitle}>
           {failedCount > 0 ? 'Sync needs attention' : isSyncing || syncingCount > 0 ? 'Syncing offline work' : 'Pending sync'}
@@ -1261,23 +1333,205 @@ function SyncQueueSummaryCard({
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
-    listHeader: {
+    // --- Identity row + persistent offline pill (handoff 1b) -----------------
+    identityRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    avatar: {
+      width: 44,
+      height: 44,
+      borderRadius: t.radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.solidFill,
+    },
+    avatarText: {
+      color: t.colors.onSolidFill,
+      fontSize: 15,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.5,
+    },
+    identityText: {
+      flex: 1,
+      gap: 2,
+    },
+    identityName: {
+      color: t.colors.textPrimary,
+      fontSize: 16,
+      fontFamily: t.fonts.display,
+    },
+    identityRole: {
+      color: t.colors.textMuted,
+      fontSize: 12,
+      fontFamily: t.fonts.bodySemibold,
+    },
+
+    // --- Segmented workspace control (handoff 1b) ----------------------------
+    segmented: {
+      flexDirection: 'row',
+      gap: 4,
+      padding: 4,
+      borderRadius: t.radius.control,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    segment: {
+      flex: 1,
       minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'center',
+      gap: 8,
+      borderRadius: t.radius.chip + 2,
+    },
+    segmentActive: {
+      backgroundColor: t.colors.card,
+      ...t.shadow.card,
+    },
+    segmentText: {
+      color: t.colors.textMuted,
+      fontSize: 14,
+      fontFamily: t.fonts.bodySemibold,
+    },
+    segmentTextActive: {
+      color: t.colors.textPrimary,
+      fontFamily: t.fonts.display,
+    },
+
+    // --- Count-badged scope chips (handoff 1b) -------------------------------
+    scopeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    scopeChip: {
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      paddingLeft: 14,
+      paddingRight: 8,
+    },
+    scopeChipActive: {
+      backgroundColor: t.colors.solidFill,
+      borderColor: t.colors.solidFill,
+    },
+    scopeChipLabel: {
+      color: t.colors.textSecondary,
+      fontSize: 13,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.3,
+    },
+    scopeChipLabelActive: {
+      color: t.colors.onSolidFill,
+    },
+    scopeChipCount: {
+      minWidth: 22,
+      textAlign: 'center',
+      overflow: 'hidden',
+      borderRadius: t.radius.pill,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      backgroundColor: t.colors.surfaceMuted,
+      color: t.colors.textSecondary,
+      fontSize: 12,
+      fontFamily: t.fonts.monoMedium,
+    },
+    scopeChipCountActive: {
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      color: t.colors.onSolidFill,
+    },
+
+    // --- Status groups + tiles ----------------------------------------------
+    statusGroup: {
+      gap: 10,
+    },
+    groupHeader: {
+      minHeight: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 2,
+    },
+    groupTitle: {
+      flex: 1,
+      color: t.colors.textSecondary,
+      fontSize: 11,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+    },
+    groupTitleDanger: {
+      color: t.colors.danger,
+    },
+    mainheadSection: {
       gap: 12,
     },
+    mainheadHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 2,
+      paddingTop: 2,
+    },
+    mainheadTitle: {
+      flex: 1,
+      color: t.colors.textSecondary,
+      fontSize: 12.5,
+      lineHeight: 16,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      fontFamily: t.fonts.display,
+    },
+
+    // --- Maintenance task (spine tile + claim button) ------------------------
+    maintenanceItem: {
+      gap: 8,
+    },
+    claimButton: {
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: t.radius.control,
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 16,
+    },
+    claimButtonDisabled: {
+      opacity: 0.6,
+    },
+    claimButtonPressed: {
+      backgroundColor: t.colors.primaryStrong,
+    },
+    claimButtonText: {
+      color: t.colors.textOnPrimary,
+      fontSize: 15,
+      fontFamily: t.fonts.display,
+    },
+
+    // --- Pending-sync summary card ------------------------------------------
     syncSummaryCard: {
       minHeight: 72,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      borderRadius: 8,
+      borderRadius: t.radius.card,
       borderWidth: 1,
       borderColor: t.colors.warningBorder,
       backgroundColor: t.colors.warningSoft,
-      padding: 14,
+      padding: t.spacing.card,
+    },
+    syncSummaryIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: t.radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.colors.card,
     },
     syncSummaryTextWrap: {
       flex: 1,
@@ -1287,198 +1541,16 @@ const createStyles = (t: Theme) =>
       color: t.colors.textPrimary,
       fontSize: 15,
       lineHeight: 20,
-      fontWeight: '700',
+      fontFamily: t.fonts.display,
     },
     syncSummaryMeta: {
       color: t.colors.textSecondary,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '600',
-    },
-    countText: {
-      minWidth: 36,
-      borderRadius: 18,
-      overflow: 'hidden',
-      backgroundColor: t.colors.surfaceMuted,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-      textAlign: 'center',
-    },
-    workspaceGrid: {
-      gap: 10,
-    },
-    workspaceCard: {
-      minHeight: 72,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      padding: 12,
-    },
-    workspaceCardSelected: {
-      borderColor: t.colors.primary,
-      backgroundColor: t.colors.primarySoft,
-    },
-    workspaceIcon: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: t.colors.card,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
-    workspaceTextWrap: {
-      flex: 1,
-      gap: 3,
-    },
-    workspaceTitle: {
-      color: t.colors.textPrimary,
-      fontSize: 15,
-      lineHeight: 20,
-      fontWeight: '700',
-    },
-    workspaceMeta: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '600',
-    },
-    scopeGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    scopeCard: {
-      minHeight: 42,
-      minWidth: 88,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      paddingHorizontal: 12,
-    },
-    scopeCardSelected: {
-      borderColor: t.colors.primary,
-      backgroundColor: t.colors.primarySoft,
-    },
-    scopeTitle: {
-      color: t.colors.textPrimary,
-      fontSize: 13,
-      lineHeight: 18,
-      fontWeight: '700',
-      textAlign: 'center',
-    },
-    scopeTitleSelected: {
-      color: t.colors.primaryStrong,
-    },
-    queueGrid: {
-      gap: 10,
-    },
-    mainheadSection: {
-      gap: 10,
-    },
-    mainheadHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 4,
-      paddingTop: 2,
-    },
-    mainheadTitle: {
-      flex: 1,
-      color: t.colors.textSecondary,
-      fontSize: 12.5,
-      lineHeight: 16,
-      fontWeight: '800',
-      letterSpacing: 0.5,
-      textTransform: 'uppercase',
-      fontFamily: t.fonts.display,
-    },
-    mainheadCount: {
-      color: t.colors.textMuted,
-      fontSize: 12,
-      fontWeight: '700',
       fontFamily: t.fonts.bodySemibold,
     },
-    queueGroup: {
-      gap: 8,
-    },
-    queueGroupHeader: {
-      minHeight: 30,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    queueCard: {
-      minHeight: 104,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      padding: 12,
-      gap: 8,
-    },
-    maintenanceCard: {
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      padding: 12,
-      gap: 10,
-    },
-    maintenanceCardBody: {
-      gap: 6,
-      borderRadius: 6,
-    },
-    maintenanceMeta: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '600',
-      fontFamily: t.fonts.bodySemibold,
-    },
-    overdueText: {
-      color: t.colors.danger,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '800',
-      textTransform: 'uppercase',
-    },
-    queueCardHeader: {
-      minHeight: 30,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    queueTitle: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 19,
-      fontWeight: '700',
-      fontFamily: t.fonts.display,
-    },
-    queueSubtitle: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 17,
-      fontWeight: '500',
-      fontFamily: t.fonts.body,
-    },
-    visitRowPressed: {
+
+    pressed: {
       backgroundColor: t.colors.surfacePressed,
       transform: [{ scale: 0.995 }],
     },

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { LongPressEvent, Region } from 'react-native-maps';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -12,7 +13,7 @@ import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
 import { useCapabilities } from '../useCapabilities';
 import type { AppDrawerScreenProps } from '../navigation/types';
-import { AppButton, BodyText, ErrorBanner, LoadingBlock, Screen, SuccessBanner } from '../ui';
+import { AppButton, ErrorBanner, LoadingBlock, Mono, Screen, SuccessBanner } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
@@ -105,6 +106,10 @@ type MapControlDeckProps = {
   currentAccuracy: number | null;
   locationMessage: string | null;
   onRequestCurrentLocation: () => void;
+  visibleAssetCount: number;
+  totalAssetCount: number;
+  visibleDefectCount: number;
+  totalDefectCount: number;
 };
 
 const DEFAULT_REGION: Region = {
@@ -661,15 +666,6 @@ export function MapScreen() {
       <ErrorBanner message={error} />
       <SuccessBanner message={submitNotice} />
 
-      <View style={styles.mapSummary}>
-        <Text style={styles.mapSummaryText}>
-          Assets: {filteredAssetsWithCoordinates.length}/{assetsWithCoordinates.length}
-        </Text>
-        <Text style={styles.mapSummaryText}>
-          Defects: {filteredDefectMarkers.length}/{defectMarkers.length}
-        </Text>
-      </View>
-
       <View style={styles.mapShell}>
         {isLoading ? (
           <View style={styles.mapLoadingState}>
@@ -715,35 +711,60 @@ export function MapScreen() {
         {!isLoading && !selectedCoordinate ? <MapCrosshair /> : null}
 
         {!isLoading ? (
-          <>
-            <MapControlDeck
-              mapMode={mapMode}
-              onChangeMapMode={updateMapMode}
-              mapType={mapType}
-              onChangeMapType={setMapType}
-              showHeatmap={showHeatmap}
-              showFeederLines={showFeederLines}
-              showSequenceWarnings={showSequenceWarnings}
-              onToggleHeatmap={() => setShowHeatmap((currentValue) => !currentValue)}
-              onToggleFeederLines={() => setShowFeederLines((currentValue) => !currentValue)}
-              onToggleSequenceWarnings={() =>
-                setShowSequenceWarnings((currentValue) => !currentValue)
-              }
-              currentAccuracy={currentAccuracy}
-              locationMessage={locationMessage}
-              onRequestCurrentLocation={() => {
-                void requestCurrentLocation(true);
-              }}
-            />
-          </>
+          <MapControlDeck
+            mapMode={mapMode}
+            onChangeMapMode={updateMapMode}
+            mapType={mapType}
+            onChangeMapType={setMapType}
+            showHeatmap={showHeatmap}
+            showFeederLines={showFeederLines}
+            showSequenceWarnings={showSequenceWarnings}
+            onToggleHeatmap={() => setShowHeatmap((currentValue) => !currentValue)}
+            onToggleFeederLines={() => setShowFeederLines((currentValue) => !currentValue)}
+            onToggleSequenceWarnings={() =>
+              setShowSequenceWarnings((currentValue) => !currentValue)
+            }
+            currentAccuracy={currentAccuracy}
+            locationMessage={locationMessage}
+            onRequestCurrentLocation={() => {
+              void requestCurrentLocation(true);
+            }}
+            visibleAssetCount={filteredAssetsWithCoordinates.length}
+            totalAssetCount={assetsWithCoordinates.length}
+            visibleDefectCount={filteredDefectMarkers.length}
+            totalDefectCount={defectMarkers.length}
+          />
         ) : null}
 
+        {/* Severity filter surfaces in a bottom sheet (handoff 1d) — chip colour =
+            pin colour. Only relevant in Defects mode, and only while no add-asset
+            peek card is showing. Drives the existing selectedDefectSeverity
+            filter via setMapFilters (no new logic). */}
+        {!isLoading && mapMode === 'defects' && !selectedCoordinate ? (
+          <SeverityFilterSheet
+            selected={selectedDefectSeverity}
+            onSelect={(nextValue) =>
+              setMapFilters((current) => ({
+                ...current,
+                selectedDefectSeverity:
+                  current.selectedDefectSeverity === nextValue ? ALL_FILTER_VALUE : nextValue,
+              }))
+            }
+            // Lift above the docked "Drop Pin" bar when the crew can add assets so
+            // the two bottom sheets don't overlap.
+            liftForDropPin={canInspect}
+          />
+        ) : null}
+
+        {/* Add-asset peek card (handoff 1d): grab handle, mono coords, big blue
+            navigate button. Restyle of the old selectedPinPanel — same handlers. */}
         {canInspect && selectedCoordinate ? (
-          <View style={styles.selectedPinPanel}>
-            <Text style={styles.selectedPinTitle}>Drag pin to adjust location</Text>
-            <BodyText muted>
+          <View style={styles.peekCard}>
+            <View style={styles.grabHandle} />
+            <Text style={styles.peekTitle}>Drag pin to adjust location</Text>
+            <Mono size={13} muted>
               {selectedCoordinate.latitude.toFixed(6)}, {selectedCoordinate.longitude.toFixed(6)}
-            </BodyText>
+            </Mono>
             <AppButton
               label="Add Asset Here"
               onPress={() =>
@@ -764,7 +785,7 @@ export function MapScreen() {
         ) : null}
 
         {canInspect && !isLoading && !selectedCoordinate ? (
-          <View style={styles.selectedPinPanel}>
+          <View style={styles.dropPinBar}>
             <AppButton label="Drop Pin to Add Asset" onPress={handleDropPinAtCentre} />
           </View>
         ) : null}
@@ -787,12 +808,22 @@ function MapControlDeck({
   currentAccuracy,
   locationMessage,
   onRequestCurrentLocation,
+  visibleAssetCount,
+  totalAssetCount,
+  visibleDefectCount,
+  totalDefectCount,
 }: MapControlDeckProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [openMenu, setOpenMenu] = useState<MapControlMenu>(null);
   const hasActiveLayers = showHeatmap || showFeederLines || showSequenceWarnings;
   const mapTypeLabel = mapType === 'hybrid' ? 'Sat' : 'Map';
+  // The floating count strip reflects the active mode, so the crew sees the
+  // number that matches what's on the map (poles in Assets mode, defects in
+  // Defects mode) rather than both at once.
+  const countLabel = mapMode === 'defects' ? 'DEFECTS' : 'ASSETS';
+  const countVisible = mapMode === 'defects' ? visibleDefectCount : visibleAssetCount;
+  const countTotal = mapMode === 'defects' ? totalDefectCount : totalAssetCount;
 
   function toggleMenu(nextMenu: Exclude<MapControlMenu, null>) {
     setOpenMenu((currentMenu) => (currentMenu === nextMenu ? null : nextMenu));
@@ -801,6 +832,9 @@ function MapControlDeck({
   return (
     <View pointerEvents="box-none" style={styles.mapControlsOverlay}>
       <View style={styles.mapControlsStack}>
+        {/* Floating "search/summary" bar over a full-bleed map (handoff 1d): a
+            mode toggle + a live mono count of what's shown, then the layer /
+            map-type / GPS controls. */}
         <View style={styles.mapControlRail}>
           <MapFilterBar mapMode={mapMode} onChangeMapMode={onChangeMapMode} />
 
@@ -825,9 +859,17 @@ function MapControlDeck({
                 pressed ? styles.mapControlPressed : null,
               ]}
             >
-              <Text style={styles.locationButtonText}>GPS</Text>
+              <Feather name="navigation" size={15} color={theme.colors.textOnPrimary} />
             </Pressable>
           </View>
+        </View>
+
+        <View style={styles.mapCountStrip}>
+          <Text style={styles.mapCountLabel}>{countLabel}</Text>
+          <Mono size={12.5} color={theme.colors.textPrimary}>
+            {countVisible}
+            <Text style={styles.mapCountTotal}>{` / ${countTotal}`}</Text>
+          </Mono>
         </View>
 
         {openMenu === 'layers' ? (
@@ -893,6 +935,118 @@ function MapControlDeck({
             ) : null}
           </View>
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+// Severity chips = pin colours (handoff 1d), mapped onto the four named tokens.
+// Values match what getDefectSeverityFilterValue() emits so tapping a chip drives
+// the existing selectedDefectSeverity filter directly.
+const SEVERITY_CHIP_OPTIONS: { label: string; value: string; tone: SeverityChipTone }[] = [
+  { label: 'Critical', value: 'critical', tone: 'danger' },
+  { label: 'High', value: 'high', tone: 'danger' },
+  { label: 'Medium', value: 'medium', tone: 'warning' },
+  { label: 'Low', value: 'low', tone: 'success' },
+];
+
+type SeverityChipTone = 'danger' | 'warning' | 'success';
+
+function severityChipColor(theme: Theme, tone: SeverityChipTone): string {
+  switch (tone) {
+    case 'danger':
+      return theme.colors.danger;
+    case 'warning':
+      return theme.colors.warning;
+    default:
+      return theme.colors.success;
+  }
+}
+
+/**
+ * Bottom sheet of colour-coded severity chips (handoff 1d) — chip colour matches
+ * the defect pin colour. Tapping toggles the existing selectedDefectSeverity
+ * filter; "All" clears it. Purely presentational over existing filter state.
+ */
+function SeverityFilterSheet({
+  selected,
+  onSelect,
+  liftForDropPin = false,
+}: {
+  selected: MapFilterValue;
+  onSelect: (nextValue: string) => void;
+  liftForDropPin?: boolean;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const isAll = selected === ALL_FILTER_VALUE;
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={[styles.severitySheetOverlay, liftForDropPin ? styles.severitySheetLifted : null]}
+    >
+      <View style={styles.severitySheet}>
+        <View style={styles.grabHandle} />
+        <Text style={styles.severitySheetTitle}>Filter by severity</Text>
+        <View style={styles.severityChipRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: isAll }}
+            onPress={() => onSelect(ALL_FILTER_VALUE)}
+            style={({ pressed }) => [
+              styles.severityChip,
+              isAll ? styles.severityChipAllActive : styles.severityChipAll,
+              pressed ? styles.mapControlPressed : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.severityChipText,
+                isAll ? styles.severityChipTextAllActive : styles.severityChipTextAll,
+              ]}
+            >
+              All
+            </Text>
+          </Pressable>
+
+          {SEVERITY_CHIP_OPTIONS.map((option) => {
+            const active = normalizeFilterValue(selected) === option.value;
+            const color = severityChipColor(theme, option.tone);
+
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => onSelect(option.value)}
+                style={({ pressed }) => [
+                  styles.severityChip,
+                  {
+                    borderColor: color,
+                    backgroundColor: active ? color : 'transparent',
+                  },
+                  pressed ? styles.mapControlPressed : null,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.severityDot,
+                    { backgroundColor: active ? theme.colors.textOnPrimary : color },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.severityChipText,
+                    { color: active ? theme.colors.textOnPrimary : theme.colors.textPrimary },
+                  ]}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
@@ -1844,27 +1998,36 @@ function addUniqueMessage(messages: string[], message: string) {
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
-    mapSummary: {
-      backgroundColor: t.colors.card,
-      borderRadius: t.radius.card,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    mapSummaryText: {
-      fontSize: 13,
-      color: t.colors.textSecondary,
-      fontWeight: '600',
-    },
+    // Full-bleed map surface with floating chrome (handoff 1d).
     mapShell: {
       flex: 1,
       minHeight: 420,
       borderRadius: t.radius.card,
       overflow: 'hidden',
+    },
+    // Floating live-count strip under the control rail (mono counts).
+    mapCountStrip: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      ...t.shadow.card,
+    },
+    mapCountLabel: {
+      fontSize: 10,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.2,
+      color: t.colors.textMuted,
+    },
+    mapCountTotal: {
+      fontFamily: t.fonts.mono,
+      color: t.colors.textMuted,
     },
     mapLoadingState: {
       flex: 1,
@@ -2095,31 +2258,122 @@ const createStyles = (t: Theme) =>
     locationStatusTextError: {
       color: t.colors.dangerText,
     },
-    selectedPinPanel: {
+    // Grab handle shared by the peek card + severity sheet (handoff 1d).
+    grabHandle: {
+      alignSelf: 'center',
+      width: 36,
+      height: 4,
+      borderRadius: t.radius.pill,
+      backgroundColor: t.colors.borderStrong,
+      marginBottom: 4,
+    },
+    // Add-asset peek card — a bottom sheet raised over the map.
+    peekCard: {
       position: 'absolute',
       left: 12,
       right: 12,
       bottom: 12,
       backgroundColor: t.colors.card,
-      borderRadius: MAP_CONTROL_RADIUS,
-      padding: 14,
+      borderTopLeftRadius: t.radius.sheet,
+      borderTopRightRadius: t.radius.sheet,
+      borderRadius: t.radius.sheet,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 16,
       gap: 10,
       borderWidth: 1,
       borderColor: t.colors.border,
-      shadowColor: t.colors.shadow,
-      shadowOffset: {
-        width: 0,
-        height: 4,
-      },
-      shadowOpacity: 0.12,
-      shadowRadius: 8,
-      elevation: 3,
+      ...t.shadow.raised,
     },
-    selectedPinTitle: {
+    peekTitle: {
       fontSize: 15,
       lineHeight: 20,
-      color: t.colors.textPrimary,
+      fontFamily: t.fonts.bodyBold,
       fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    // Docked "drop pin" bar (thumb reach) over a full-bleed map.
+    dropPinBar: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: 12,
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.sheet,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      ...t.shadow.raised,
+    },
+    // Severity filter bottom sheet.
+    severitySheetOverlay: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: 12,
+      alignItems: 'stretch',
+    },
+    // Clears the docked "Drop Pin to Add Asset" bar (bottom: 12, ~72px tall).
+    severitySheetLifted: {
+      bottom: 92,
+    },
+    severitySheet: {
+      backgroundColor: t.colors.card,
+      borderRadius: t.radius.sheet,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 14,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      ...t.shadow.raised,
+    },
+    severitySheetTitle: {
+      fontSize: 11,
+      fontFamily: t.fonts.mono,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      color: t.colors.textMuted,
+    },
+    severityChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    severityChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      minHeight: 34,
+      borderRadius: t.radius.pill,
+      borderWidth: 1.5,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    severityChipAll: {
+      borderColor: t.colors.borderStrong,
+      backgroundColor: 'transparent',
+    },
+    severityChipAllActive: {
+      borderColor: t.colors.solidFill,
+      backgroundColor: t.colors.solidFill,
+    },
+    severityDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    severityChipText: {
+      fontSize: 12.5,
+      fontFamily: t.fonts.bodyBold,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
+    severityChipTextAll: {
+      color: t.colors.textPrimary,
+    },
+    severityChipTextAllActive: {
+      color: t.colors.onSolidFill,
     },
     sequenceWarningMarkerContainer: {
       width: 44,

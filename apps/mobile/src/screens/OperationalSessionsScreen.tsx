@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { cachedFetch } from '../offlineCache';
@@ -13,7 +12,7 @@ import {
   getOperationalSessionAssignedQaLabel,
   getOperationalSessionGroup,
   getOperationalSessionMetadataSummary,
-  getOperationalSessionProgressLabel,
+  getOperationalSessionProgress,
   getOperationalSessionStatusTone,
   OPERATIONAL_SESSION_GROUPS,
   type OperationalSessionGroupKey,
@@ -25,11 +24,31 @@ import {
   EmptyState,
   ErrorBanner,
   LoadingBlock,
+  Mono,
   Screen,
   SectionTitle,
   StatusChip,
+  StatusSpineTile,
+  type SpineTone,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
+
+// Render groups by ACTION PRIORITY (handoff 2h): Needs Attention first, then
+// In Progress, then Assigned, then Completed. The source array's declaration
+// order differs, so map to this local order without mutating it.
+const GROUP_RENDER_ORDER: OperationalSessionGroupKey[] = [
+  'NEEDS_ATTENTION',
+  'IN_PROGRESS',
+  'ASSIGNED',
+  'COMPLETED',
+];
+
+const GROUP_SPINE: Record<OperationalSessionGroupKey, SpineTone> = {
+  NEEDS_ATTENTION: 'red',
+  IN_PROGRESS: 'blue',
+  ASSIGNED: 'amber',
+  COMPLETED: 'green',
+};
 
 export function OperationalSessionsScreen() {
   const theme = useTheme();
@@ -86,9 +105,18 @@ export function OperationalSessionsScreen() {
     [groupedSessions],
   );
 
+  const renderGroups = useMemo(
+    () =>
+      GROUP_RENDER_ORDER.map(
+        (key) => OPERATIONAL_SESSION_GROUPS.find((entry) => entry.group === key)!,
+      ).filter((entry) => showFinalItems || entry.group !== 'COMPLETED'),
+    [showFinalItems],
+  );
+
   return (
     <Screen
-      title="Operational Sessions"
+      title="Sessions"
+      subtitle="Assigned inspection work — triage by priority."
       leftAction={{
         icon: 'back',
         onPress: () => navigation.goBack(),
@@ -111,7 +139,11 @@ export function OperationalSessionsScreen() {
               Assigned operational sessions for field inspection work.
             </BodyText>
           </View>
-          <Text style={styles.countText}>{visibleCount}</Text>
+          <View style={styles.countPill}>
+            <Mono size={15} color={theme.colors.textPrimary}>
+              {String(visibleCount)}
+            </Mono>
+          </View>
         </View>
         <Pressable
           accessibilityRole="switch"
@@ -144,13 +176,12 @@ export function OperationalSessionsScreen() {
       ) : null}
 
       {visibleCount > 0
-        ? OPERATIONAL_SESSION_GROUPS.filter(
-            (entry) => showFinalItems || entry.group !== 'COMPLETED',
-          ).map((entry) => (
+        ? renderGroups.map((entry) => (
             <SessionGroup
               key={entry.group}
               label={entry.label}
               tone={entry.tone}
+              spine={GROUP_SPINE[entry.group]}
               sessions={groupedSessions[entry.group]}
               onOpen={(session) =>
                 navigation.navigate('OperationalSessionDetail', {
@@ -168,96 +199,81 @@ export function OperationalSessionsScreen() {
 function SessionGroup({
   label,
   tone,
+  spine,
   sessions,
   onOpen,
 }: {
   label: string;
   tone: 'info' | 'success' | 'danger';
+  spine: SpineTone;
   sessions: OperationalSession[];
   onOpen: (session: OperationalSession) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
-    <Card>
-      <View style={styles.listHeader}>
+    <View style={styles.group}>
+      <View style={styles.groupHeader}>
         <SectionTitle>{label}</SectionTitle>
         <StatusChip label={String(sessions.length)} tone={tone} />
       </View>
-
       {sessions.length === 0 ? (
         <Text style={styles.emptyGroupText}>No sessions in this group.</Text>
       ) : (
         <View style={styles.sessionList}>
           {sessions.map((session) => (
-            <SessionCard key={session.id} session={session} onPress={() => onOpen(session)} />
+            <SessionRow
+              key={session.id}
+              session={session}
+              spine={spine}
+              onPress={() => onOpen(session)}
+            />
           ))}
         </View>
       )}
-    </Card>
+    </View>
   );
 }
 
-function SessionCard({
+function SessionRow({
   session,
+  spine,
   onPress,
 }: {
   session: OperationalSession;
+  spine: SpineTone;
   onPress: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const progress = getOperationalSessionProgress(session);
+  const dueLabel = formatSessionDate(session.dueDate);
+  const qaLabel = getOperationalSessionAssignedQaLabel(session);
+
   return (
-    <Pressable
-      accessibilityRole="button"
+    <StatusSpineTile
+      code={session.sessionNo}
+      spine={spine}
+      chip={{
+        label: formatOperationalSessionStatus(session.status),
+        tone: getOperationalSessionStatusTone(session.status),
+      }}
+      secondary={getOperationalSessionMetadataSummary(session)}
+      meta={[
+        formatOperationalSessionScope(session.scope),
+        `Due ${dueLabel}`,
+        `QA · ${qaLabel}`,
+      ]}
       onPress={onPress}
-      style={({ pressed }) => [styles.sessionCard, pressed && styles.pressedRow]}
-    >
-      <View style={styles.sessionHeader}>
-        <View style={styles.sessionTitleWrap}>
-          <Text style={styles.sessionNo} numberOfLines={1}>
-            {session.sessionNo}
-          </Text>
-          <Text style={styles.sessionScope} numberOfLines={1}>
-            {formatOperationalSessionScope(session.scope)}
+      rightSlot={
+        <View style={styles.countBadge}>
+          <Text style={styles.countBadgeText}>
+            {progress.inspectedAssets} / {progress.totalAssets}
           </Text>
         </View>
-        <StatusChip
-          label={formatOperationalSessionStatus(session.status)}
-          tone={getOperationalSessionStatusTone(session.status)}
-        />
-      </View>
-
-      <Text style={styles.locationText} numberOfLines={2}>
-        {getOperationalSessionMetadataSummary(session)}
-      </Text>
-
-      <View style={styles.metaGrid}>
-        <SessionMeta label="Due" value={formatSessionDate(session.dueDate)} />
-        <SessionMeta label="Progress" value={getOperationalSessionProgressLabel(session)} />
-        <SessionMeta label="QA/QC" value={getOperationalSessionAssignedQaLabel(session)} />
-      </View>
-
-      <View style={styles.cardFooter}>
-        <Text style={styles.updatedText} numberOfLines={1}>
-          Updated {formatSessionDate(session.updatedAt)}
-        </Text>
-        <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
-      </View>
-    </Pressable>
-  );
-}
-
-function SessionMeta({ label, value }: { label: string; value: string }) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  return (
-    <View style={styles.metaItem}>
-      <Text style={styles.metaLabel}>{label}</Text>
-      <Text style={styles.metaValue} numberOfLines={1}>
-        {value}
-      </Text>
-    </View>
+      }
+    />
   );
 }
 
@@ -297,19 +313,16 @@ const createStyles = (t: Theme) =>
       flex: 1,
       gap: 4,
     },
-    countText: {
+    countPill: {
       minWidth: 38,
-      borderRadius: 19,
-      overflow: 'hidden',
+      borderRadius: t.radius.pill,
       backgroundColor: t.colors.surfaceMuted,
       paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingVertical: 6,
       borderWidth: 1,
       borderColor: t.colors.border,
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-      textAlign: 'center',
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     toggleRow: {
       minHeight: 58,
@@ -317,7 +330,7 @@ const createStyles = (t: Theme) =>
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
-      borderRadius: 8,
+      borderRadius: t.radius.control,
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.surfaceMuted,
@@ -336,19 +349,21 @@ const createStyles = (t: Theme) =>
       color: t.colors.textPrimary,
       fontSize: 14,
       lineHeight: 19,
+      fontFamily: t.fonts.bodyBold,
       fontWeight: '700',
     },
     toggleMeta: {
       color: t.colors.textSecondary,
       fontSize: 12,
       lineHeight: 17,
+      fontFamily: t.fonts.body,
       fontWeight: '500',
     },
     switchTrack: {
       width: 44,
       height: 26,
       borderRadius: 13,
-      backgroundColor: t.colors.border,
+      backgroundColor: t.colors.borderStrong,
       padding: 3,
     },
     switchTrackOn: {
@@ -363,90 +378,39 @@ const createStyles = (t: Theme) =>
     switchThumbOn: {
       transform: [{ translateX: 18 }],
     },
+    group: {
+      gap: 10,
+    },
     emptyGroupText: {
       color: t.colors.textSecondary,
       fontSize: 13,
       lineHeight: 18,
+      fontFamily: t.fonts.bodyMedium,
       fontWeight: '500',
+    },
+    groupHeader: {
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
     },
     sessionList: {
       gap: 10,
     },
-    sessionCard: {
-      borderRadius: 8,
+    // Live count pill ("18 / 21") on the tile's top row (handoff 2h).
+    countBadge: {
+      borderRadius: t.radius.chip,
+      backgroundColor: t.colors.surfaceMuted,
       borderWidth: 1,
       borderColor: t.colors.border,
-      backgroundColor: t.colors.card,
-      padding: 12,
-      gap: 9,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
     },
-    sessionHeader: {
-      minHeight: 32,
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    sessionTitleWrap: {
-      flex: 1,
-      gap: 2,
-    },
-    sessionNo: {
-      color: t.colors.textPrimary,
-      fontSize: 15,
-      lineHeight: 20,
-      fontWeight: '800',
-    },
-    sessionScope: {
+    countBadgeText: {
+      fontSize: 12,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
       color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '700',
-    },
-    locationText: {
-      color: t.colors.textPrimary,
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '600',
-    },
-    metaGrid: {
-      gap: 7,
-    },
-    metaItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    metaLabel: {
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '600',
-    },
-    metaValue: {
-      flex: 1,
-      color: t.colors.textPrimary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '700',
-      textAlign: 'right',
-    },
-    cardFooter: {
-      minHeight: 24,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-      borderTopWidth: 1,
-      borderTopColor: t.colors.surfaceMuted,
-      paddingTop: 8,
-    },
-    updatedText: {
-      flex: 1,
-      color: t.colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-      fontWeight: '500',
     },
   });
