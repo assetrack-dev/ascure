@@ -1933,15 +1933,21 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {filteredAssetRows.map((link) => (
+                              {filteredAssetRows.map((link) => {
+                                // Carry a return path so Asset Detail's back
+                                // button comes back here, not to the Assets list.
+                                const assetHref = `/assets/${link.assetId}?from=${encodeURIComponent(
+                                  `/site-visits/${siteVisitId}`,
+                                )}`;
+                                return (
                                 <tr
                                   key={link.id}
                                   tabIndex={0}
-                                  onClick={() => router.push(`/assets/${link.assetId}`)}
+                                  onClick={() => router.push(assetHref)}
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter" || event.key === " ") {
                                       event.preventDefault();
-                                      router.push(`/assets/${link.assetId}`);
+                                      router.push(assetHref);
                                     }
                                   }}
                                   className="cursor-pointer outline-none transition hover:bg-slate-50 focus-visible:bg-slate-50"
@@ -1960,7 +1966,8 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     {formatDateTime(link.addedAt)}
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         )}

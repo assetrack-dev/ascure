@@ -51,6 +51,17 @@ function formatInspectionStatus(status: AssetDetail["inspectionStatus"]) {
   return status === "COMPLETED" ? "Completed" : "Pending";
 }
 
+/** Label for the back button, chosen from where the user arrived. */
+function backLabel(href: string): string {
+  if (href.startsWith("/site-visits")) {
+    return "Operations Detail";
+  }
+  if (href.startsWith("/map")) {
+    return "Map";
+  }
+  return "Assets";
+}
+
 function resultBadgeClassName(result: string | null | undefined) {
   const normalized = result?.toUpperCase();
 
@@ -109,6 +120,10 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  // Where the back button returns to. Defaults to the Assets list, but a `?from=`
+  // return path (e.g. set when opening an asset from a Site Visit) takes over so
+  // the user goes back where they came from.
+  const [backHref, setBackHref] = useState("/assets");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -145,6 +160,15 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
       void loadAsset(storedSession.token);
     }
   }, [loadAsset]);
+
+  useEffect(() => {
+    const from = new URLSearchParams(window.location.search).get("from");
+    // Only accept internal absolute paths (blocks protocol-relative "//" and
+    // external URLs, so `from` can't be used as an open redirect).
+    if (from && from.startsWith("/") && !from.startsWith("//")) {
+      setBackHref(from);
+    }
+  }, []);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
   const canReport =
@@ -191,11 +215,11 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
             <div>
               <button
                 type="button"
-                onClick={() => router.push("/assets")}
+                onClick={() => router.push(backHref)}
                 className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--brand)] transition hover:text-[var(--brand-strong)]"
               >
                 <ArrowLeft size={16} />
-                Assets
+                {backLabel(backHref)}
               </button>
               <p className="mt-4 text-sm font-semibold uppercase text-[var(--brand)]">
                 Asset Detail

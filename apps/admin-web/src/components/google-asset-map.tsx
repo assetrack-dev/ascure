@@ -169,7 +169,7 @@ function MapLayers({
               ) : null}
             </div>
             <a
-              href={`/assets/${encodeURIComponent(selected.id)}`}
+              href={`/assets/${encodeURIComponent(selected.id)}?from=${encodeURIComponent("/map")}`}
               style={{
                 display: "inline-block",
                 marginTop: 8,
