@@ -27,6 +27,20 @@ export interface InspectionEvidenceImage {
   createdAt?: string | null;
 }
 
+export type InspectionResultValue = "PASS" | "FAIL" | "NA";
+
+/** One answered checklist item from an inspection. */
+export interface InspectionResultItem {
+  id: string;
+  label: string;
+  /** PASS / FAIL / NA (kept as string so an unexpected value still renders). */
+  result: InspectionResultValue | string | null;
+  remark: string | null;
+  isDefect: boolean;
+  /** DefectSeverity (LOW/MEDIUM/HIGH/CRITICAL) when the item is a defect. */
+  severity: string | null;
+}
+
 export interface AssetDetail extends AssetListItem {
   name: string | null;
   latitude: number | null;
@@ -37,6 +51,8 @@ export interface AssetDetail extends AssetListItem {
     status: string | null;
     submittedAt: string | null;
     remarks?: string | null;
+    totalDefects?: number;
+    items?: InspectionResultItem[];
     images?: InspectionEvidenceImage[];
   } | null;
 }

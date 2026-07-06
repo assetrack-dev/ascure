@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CalendarDays, Camera, FileText, MapPin, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  Camera,
+  ClipboardList,
+  FileText,
+  MapPin,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import {
@@ -40,6 +49,45 @@ function formatNullable(value: string | null) {
 
 function formatInspectionStatus(status: AssetDetail["inspectionStatus"]) {
   return status === "COMPLETED" ? "Completed" : "Pending";
+}
+
+function resultBadgeClassName(result: string | null | undefined) {
+  const normalized = result?.toUpperCase();
+
+  if (normalized === "PASS") {
+    return "border-green-200 bg-green-50 text-green-700";
+  }
+  if (normalized === "FAIL") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-500";
+}
+
+function resultLabel(result: string | null | undefined) {
+  const normalized = result?.toUpperCase();
+
+  if (normalized === "NA" || normalized === "N/A") {
+    return "N/A";
+  }
+  return normalized || "—";
+}
+
+function severityBadgeClassName(severity: string | null | undefined) {
+  const normalized = severity?.toUpperCase();
+
+  if (normalized === "CRITICAL") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  if (normalized === "HIGH") {
+    return "border-orange-200 bg-orange-50 text-orange-700";
+  }
+  if (normalized === "MEDIUM") {
+    return "border-yellow-200 bg-yellow-50 text-yellow-800";
+  }
+  if (normalized === "LOW") {
+    return "border-green-200 bg-green-50 text-green-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -106,6 +154,10 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     () => buildEvidenceEntries(asset?.latestInspection?.images ?? []),
     [asset],
   );
+  const inspectionItems = asset?.latestInspection?.items ?? [];
+  const inspectionDefectCount =
+    asset?.latestInspection?.totalDefects ??
+    inspectionItems.filter((item) => item.isDefect).length;
 
   const handlePreviewReport = useCallback(async () => {
     if (!session?.token || !asset) return;
@@ -275,6 +327,77 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                     </div>
                   </div>
                 </section>
+
+                {asset.latestInspection ? (
+                  <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 text-base font-semibold text-[var(--foreground)]">
+                        <ClipboardList size={17} className="text-[var(--brand)]" />
+                        Inspection Result
+                      </div>
+                      <span className="text-sm text-[var(--muted)]">
+                        {inspectionItems.length}{" "}
+                        {inspectionItems.length === 1 ? "item" : "items"}
+                        {inspectionDefectCount > 0
+                          ? ` · ${inspectionDefectCount} ${
+                              inspectionDefectCount === 1 ? "defect" : "defects"
+                            }`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="mt-5 overflow-x-auto">
+                      {inspectionItems.length > 0 ? (
+                        <table className="min-w-full text-left text-sm">
+                          <thead>
+                            <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
+                              <th className="px-4 py-3">Checklist Item</th>
+                              <th className="px-4 py-3">Result</th>
+                              <th className="px-4 py-3">Severity</th>
+                              <th className="px-4 py-3">Remark</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {inspectionItems.map((item) => (
+                              <tr
+                                key={item.id}
+                                className={item.isDefect ? "bg-red-50/40" : undefined}
+                              >
+                                <td className="px-4 py-3 font-medium text-slate-900">
+                                  {item.label}
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  <span
+                                    className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${resultBadgeClassName(item.result)}`}
+                                  >
+                                    {resultLabel(item.result)}
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3">
+                                  {item.isDefect && item.severity ? (
+                                    <span
+                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${severityBadgeClassName(item.severity)}`}
+                                    >
+                                      {item.severity}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-slate-600">
+                                  {item.remark || "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+                          No checklist results recorded for this inspection.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
 
                 {asset.latestInspection ? (
                   <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">

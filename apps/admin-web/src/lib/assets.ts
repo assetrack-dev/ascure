@@ -4,6 +4,7 @@ import type {
   AssetInspectionStatus,
   AssetListItem,
   InspectionEvidenceImage,
+  InspectionResultItem,
 } from "@/types/assets";
 
 type ApiRecord = Record<string, unknown>;
@@ -256,6 +257,26 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
   }
 
   const latestInspection = readLatestInspection(record);
+  const items = firstArray(latestInspection, ["items", "itemResults", "results"])
+    .map((raw): InspectionResultItem | null => {
+      const itemRecord = asRecord(raw);
+      const label = readString(itemRecord, "label");
+
+      if (!label) {
+        return null;
+      }
+
+      const result = readString(itemRecord, "result");
+      return {
+        id: readString(itemRecord, "id") ?? label,
+        label,
+        result: result ? result.toUpperCase() : null,
+        remark: readString(itemRecord, "remark"),
+        isDefect: itemRecord?.isDefect === true,
+        severity: readString(itemRecord, "severity"),
+      };
+    })
+    .filter((item): item is InspectionResultItem => Boolean(item));
   const images = firstArray(latestInspection, ["images", "inspectionImages"])
     .map((image): InspectionEvidenceImage | null => {
       const imageRecord = asRecord(image);
@@ -297,6 +318,10 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
             firstString(latestInspection, ["submittedAt", "completedAt", "date", "createdAt"]) ??
             null,
           remarks: firstString(latestInspection, ["remarks", "remark", "notes"]),
+          totalDefects:
+            readNumber(latestInspection, "totalDefects") ??
+            items.filter((item) => item.isDefect).length,
+          items,
           images,
         }
       : null,
