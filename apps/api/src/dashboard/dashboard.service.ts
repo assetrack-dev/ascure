@@ -4,6 +4,8 @@ import {
   DefectSeverity,
   DefectStatus,
   InspectionCompletionStatus,
+  MaintenanceCategory,
+  OrganizationCapabilityType,
   Prisma,
   SiteVisitStatus,
   SiteVisitType,
@@ -49,6 +51,14 @@ export class DashboardService {
     const activeVisitCutoff = new Date(
       now.getTime() - overdueThresholdHours * 60 * 60 * 1000,
     );
+    // Rolling window for the daily inspection-throughput trend (distinct assets
+    // submitted per reporting-day). reportingDayBounds gives today's start in the
+    // tenant reporting TZ; step back TREND_DAYS-1 whole days for the window start.
+    const TREND_DAYS = 7;
+    const { start: reportingTodayStart } = this.reportingDayBounds(now);
+    const trendWindowStart = new Date(
+      reportingTodayStart.getTime() - (TREND_DAYS - 1) * 24 * 60 * 60 * 1000,
+    );
     const overdueDefectWhere: Prisma.DefectWhereInput = {
       ...defectWhere,
       status: {
@@ -68,7 +78,7 @@ export class DashboardService {
       totalInspections,
       defectStatusCounts,
       defectSeverityCounts,
-      recentDefectItems,
+      recentDefectRows,
       overdueDefectCount,
       criticalOverdueDefectCount,
       defectAssigneeCounts,
@@ -87,6 +97,9 @@ export class DashboardService {
       latestSiteVisitActivity,
       activeMappedVisitCount,
       assetsForMainhead,
+      orgForPersona,
+      defectCategoryCounts,
+      trendInspections,
     ] = await Promise.all([
       this.prisma.asset.count({
         where: this.accessibleAssetWhere(user, ctx),
@@ -108,46 +121,43 @@ export class DashboardService {
           _all: true,
         },
       }),
-      this.prisma.inspectionItemResult.findMany({
-        where: {
-          isDefect: true,
-          defect: {
-            isNot: null,
-          },
-          inspection: this.accessibleInspectionWhere(user, ctx),
-        },
+      // Read from the Defect table (not inspectionItemResult) so recent defects
+      // honour defectWhere — a maintenance company sees its routed pool here too.
+      this.prisma.defect.findMany({
+        where: defectWhere,
         orderBy: {
           createdAt: 'desc',
         },
         take: 10,
         select: {
-          label: true,
-          createdAt: true,
-          defect: {
+          id: true,
+          status: true,
+          severity: true,
+          dueDate: true,
+          maintenanceCategory: true,
+          assignedUser: {
             select: {
-              id: true,
-              status: true,
-              severity: true,
-              dueDate: true,
-              assignedUser: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-              assignedTeam: {
-                select: {
-                  name: true,
-                  code: true,
-                },
-              },
+              name: true,
+              email: true,
             },
           },
-          inspection: {
+          assignedTeam: {
             select: {
-              asset: {
+              name: true,
+              code: true,
+            },
+          },
+          inspectionItemResult: {
+            select: {
+              label: true,
+              createdAt: true,
+              inspection: {
                 select: {
-                  assetCode: true,
+                  asset: {
+                    select: {
+                      assetCode: true,
+                    },
+                  },
                 },
               },
             },
@@ -197,6 +207,7 @@ export class DashboardService {
           status: true,
           severity: true,
           dueDate: true,
+          maintenanceCategory: true,
           assignedUser: {
             select: {
               name: true,
@@ -348,6 +359,38 @@ export class DashboardService {
             },
           },
         },
+      }),
+      // Persona classification — the caller's org type + active capabilities tell
+      // us whether they do field work (SURVEY/INSPECTION) or maintenance
+      // (MAINTENANCE/REPAIR), so the dashboard can lead with the right sections.
+      user.organizationId
+        ? this.prisma.organization.findUnique({
+            where: { id: user.organizationId },
+            select: {
+              name: true,
+              type: true,
+              capabilities: {
+                where: { isActive: true },
+                select: { capability: true },
+              },
+            },
+          })
+        : Promise.resolve(null),
+      // Defects by maintenance category (routed work-type buckets).
+      this.prisma.defect.groupBy({
+        by: ['maintenanceCategory'],
+        where: defectWhere,
+        _count: { _all: true },
+      }),
+      // Rolling daily inspection throughput — submitted inspections in the window,
+      // bucketed to distinct assets per reporting-day below.
+      this.prisma.inspection.findMany({
+        where: {
+          ...this.accessibleInspectionWhere(user, ctx),
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
+          submittedAt: { gte: trendWindowStart },
+        },
+        select: { assetId: true, submittedAt: true },
       }),
     ]);
 
@@ -543,7 +586,108 @@ export class DashboardService {
         right.value - left.value || left.label.localeCompare(right.label),
     );
 
+    // Persona — the caller's org type + active capabilities decide which sections
+    // the dashboard leads with. ADMIN/ASCURE always get the full overview.
+    const capabilitySet = new Set(
+      orgForPersona?.capabilities.map((row) => row.capability) ?? [],
+    );
+    const doesFieldWork =
+      capabilitySet.has(OrganizationCapabilityType.SURVEY) ||
+      capabilitySet.has(OrganizationCapabilityType.INSPECTION);
+    const doesMaintenance =
+      capabilitySet.has(OrganizationCapabilityType.MAINTENANCE) ||
+      capabilitySet.has(OrganizationCapabilityType.REPAIR);
+    const personaKind: 'OVERVIEW' | 'INSPECTION' | 'MAINTENANCE' = ctx.isAdmin
+      ? 'OVERVIEW'
+      : doesMaintenance && !doesFieldWork
+        ? 'MAINTENANCE'
+        : doesFieldWork
+          ? 'INSPECTION'
+          : 'OVERVIEW';
+    const persona = {
+      kind: personaKind,
+      role: user.role,
+      companyType: orgForPersona?.type ?? null,
+      organizationName: orgForPersona?.name ?? null,
+      isQa: ctx.isQa,
+      doesFieldWork,
+      doesMaintenance,
+    };
+
+    // Defects by maintenance category — null (legacy/untagged) folds into
+    // SELENGGARAAN, matching the materialization default + the map/list.
+    const categoryCountMap = new Map<MaintenanceCategory | null, number>(
+      defectCategoryCounts.map((entry) => [
+        entry.maintenanceCategory,
+        entry._count._all,
+      ]),
+    );
+    const defectsByCategory = [
+      MaintenanceCategory.RENTIS,
+      MaintenanceCategory.CAT_TIANG,
+      MaintenanceCategory.SELENGGARAAN,
+    ].map((category) => ({
+      label: this.formatMaintenanceCategory(category),
+      value:
+        (categoryCountMap.get(category) ?? 0) +
+        (category === MaintenanceCategory.SELENGGARAAN
+          ? categoryCountMap.get(null) ?? 0
+          : 0),
+    }));
+
+    // Defects by workflow status (derived from the status counts above).
+    const defectsByStatus = [
+      { label: 'Open', value: openDefects },
+      { label: 'In Progress', value: inProgressDefects },
+      { label: 'Monitoring', value: monitoringDefects },
+      { label: 'Resolved', value: resolvedDefects },
+      { label: 'Closed', value: closedDefects },
+    ];
+
+    // Daily inspection throughput — distinct assets submitted per reporting-day
+    // across the rolling window, so an amend-resubmit counts a pole once/day.
+    const offsetMs = this.getReportingOffsetMinutes() * 60 * 1000;
+    const reportingDayStartMs = (date: Date): number => {
+      const shifted = new Date(date.getTime() + offsetMs);
+      return (
+        Date.UTC(
+          shifted.getUTCFullYear(),
+          shifted.getUTCMonth(),
+          shifted.getUTCDate(),
+        ) - offsetMs
+      );
+    };
+    const trendBuckets = new Map<number, Set<string>>();
+    for (let dayIndex = 0; dayIndex < TREND_DAYS; dayIndex += 1) {
+      const dayStartMs =
+        reportingTodayStart.getTime() -
+        (TREND_DAYS - 1 - dayIndex) * 24 * 60 * 60 * 1000;
+      trendBuckets.set(dayStartMs, new Set<string>());
+    }
+    for (const inspection of trendInspections) {
+      if (!inspection.submittedAt) {
+        continue;
+      }
+      const bucket = trendBuckets.get(
+        reportingDayStartMs(inspection.submittedAt),
+      );
+      if (bucket) {
+        bucket.add(inspection.assetId);
+      }
+    }
+    const dailyInspectionTrend = Array.from(trendBuckets.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([dayStartMs, assets]) => ({
+        // Local calendar date (YYYY-MM-DD) of the reporting-day bucket.
+        date: new Date(dayStartMs + offsetMs).toISOString().slice(0, 10),
+        value: assets.size,
+      }));
+
     return {
+      persona,
+      defectsByCategory,
+      defectsByStatus,
+      dailyInspectionTrend,
       totalAssets,
       totalInspections,
       totalDefects,
@@ -581,40 +725,51 @@ export class DashboardService {
         label: defect.inspectionItemResult.label,
         status: defect.status,
         severity: defect.severity,
+        maintenanceCategory: defect.maintenanceCategory,
         dueDate: defect.dueDate?.toISOString() ?? null,
         assignedTo: this.formatAssignmentLabel(
           defect.assignedUser,
           defect.assignedTeam,
         ),
       })),
-      recentDefects: recentDefectItems.flatMap((item) => {
-        if (!item.defect) {
-          return [];
-        }
-
+      recentDefects: recentDefectRows.map((defect) => {
         const slaState = this.calculateSlaState(
-          item.defect.status,
-          item.defect.dueDate,
+          defect.status,
+          defect.dueDate,
           now,
         );
 
         return {
-          id: item.defect.id,
-          assetCode: item.inspection.asset.assetCode,
-          label: item.label,
-          status: item.defect.status,
-          severity: item.defect.severity,
-          dueDate: item.defect.dueDate?.toISOString() ?? null,
+          id: defect.id,
+          assetCode: defect.inspectionItemResult.inspection.asset.assetCode,
+          label: defect.inspectionItemResult.label,
+          status: defect.status,
+          severity: defect.severity,
+          maintenanceCategory: defect.maintenanceCategory,
+          dueDate: defect.dueDate?.toISOString() ?? null,
           isOverdue: slaState === 'OVERDUE',
           slaState,
           assignedTo: this.formatAssignmentLabel(
-            item.defect.assignedUser,
-            item.defect.assignedTeam,
+            defect.assignedUser,
+            defect.assignedTeam,
           ),
-          createdAt: item.createdAt.toISOString(),
+          createdAt: defect.inspectionItemResult.createdAt.toISOString(),
         };
       }),
     };
+  }
+
+  private formatMaintenanceCategory(category: MaintenanceCategory): string {
+    switch (category) {
+      case MaintenanceCategory.RENTIS:
+        return 'Rentis';
+      case MaintenanceCategory.CAT_TIANG:
+        return 'Cat Tiang';
+      case MaintenanceCategory.SELENGGARAAN:
+        return 'Selenggaraan';
+      default:
+        return category;
+    }
   }
 
   /**
@@ -972,11 +1127,41 @@ export class DashboardService {
     user: RequestUser,
     ctx?: ScopeContext,
   ): Prisma.DefectWhereInput {
-    return {
+    const inspectionScope: Prisma.DefectWhereInput = {
       inspectionItemResult: {
         isDefect: true,
         inspection: this.accessibleInspectionWhere(user, ctx),
       },
+    };
+
+    // ADMIN already sees every in-tenant defect through the inspection scope.
+    if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+      return inspectionScope;
+    }
+
+    // Mirror defects.service.defectAccessScope so the dashboard counts a
+    // maintenance company's ROUTED pool (Defect.maintenanceOrganizationId), not
+    // just defects on inspections it can see. Without this a maintenance company
+    // (which typically never runs the inspection) saw ZERO defects here while the
+    // Defects page listed its whole pool.
+    const maintenanceOrgIds =
+      ctx?.maintenanceOrgIds ??
+      (user.organizationId ? [user.organizationId] : []);
+    if (maintenanceOrgIds.length === 0) {
+      return inspectionScope;
+    }
+
+    return {
+      OR: [
+        inspectionScope,
+        {
+          maintenanceOrganizationId: { in: maintenanceOrgIds },
+          inspectionItemResult: {
+            isDefect: true,
+            inspection: { tenantId: user.tenantId },
+          },
+        },
+      ],
     };
   }
 

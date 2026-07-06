@@ -1,3 +1,5 @@
+import type { MaintenanceCategory } from "@/types/defects";
+
 export type DefectSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 export type DefectSlaState = "OVERDUE" | "ON_TRACK" | "NO_DUE_DATE" | "STOPPED";
 
@@ -6,12 +8,32 @@ export interface ChartDatum {
   value: number;
 }
 
+/** One point on the daily inspection-throughput trend (a reporting-day bucket). */
+export interface DailyTrendPoint {
+  date: string; // YYYY-MM-DD
+  value: number;
+}
+
+/** Which company-type / role the dashboard is tailored for. */
+export type DashboardPersonaKind = "OVERVIEW" | "INSPECTION" | "MAINTENANCE";
+
+export interface DashboardPersona {
+  kind: DashboardPersonaKind;
+  role: string | null;
+  companyType: string | null;
+  organizationName: string | null;
+  isQa: boolean;
+  doesFieldWork: boolean;
+  doesMaintenance: boolean;
+}
+
 export interface RecentDefect {
   id: string;
   assetCode: string;
   label: string;
   status: string;
   severity?: DefectSeverity | null;
+  maintenanceCategory?: MaintenanceCategory | null;
   dueDate?: string | null;
   isOverdue?: boolean;
   slaState?: DefectSlaState | string;
@@ -25,14 +47,18 @@ export interface CriticalOverdueAlert {
   label: string;
   status: string;
   severity?: DefectSeverity | null;
+  maintenanceCategory?: MaintenanceCategory | null;
   dueDate?: string | null;
   assignedTo?: string | null;
 }
 
 export interface DashboardMetrics {
+  persona: DashboardPersona;
   totalAssets: number;
+  totalInspections: number;
   totalDefects: number;
   openDefects: number;
+  overdueDefects: number;
   activeVisits: number;
   completedVisits: number;
   overdueVisits: number;
@@ -40,9 +66,12 @@ export interface DashboardMetrics {
   operationalOverdueThresholdHours: number;
   latestVisitActivityAt?: string | null;
   defectsBySeverity: ChartDatum[];
+  defectsByCategory: ChartDatum[];
+  defectsByStatus: ChartDatum[];
   defectsByAssignee: ChartDatum[];
   defectsByTeam: ChartDatum[];
   defectsBySlaState: ChartDatum[];
+  dailyInspectionTrend: DailyTrendPoint[];
   visitsByStatus: ChartDatum[];
   visitsByValidationStatus: ChartDatum[];
   visitsByType: ChartDatum[];
@@ -54,9 +83,12 @@ export interface DashboardMetrics {
 }
 
 export interface DashboardApiResponse {
+  persona?: unknown;
   totalAssets?: number;
+  totalInspections?: number;
   totalDefects?: number;
   openDefects?: number;
+  overdueDefects?: number;
   activeVisits?: number;
   completedVisits?: number;
   overdueVisits?: number;
@@ -64,9 +96,12 @@ export interface DashboardApiResponse {
   operationalOverdueThresholdHours?: number;
   latestVisitActivityAt?: string | null;
   defectsBySeverity?: unknown;
+  defectsByCategory?: unknown;
+  defectsByStatus?: unknown;
   defectsByAssignee?: unknown;
   defectsByTeam?: unknown;
   defectsBySlaState?: unknown;
+  dailyInspectionTrend?: unknown;
   visitsByStatus?: unknown;
   visitsByValidationStatus?: unknown;
   visitsByType?: unknown;

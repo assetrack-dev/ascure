@@ -8,18 +8,23 @@ import {
   Archive,
   Bug,
   CheckCircle2,
+  ClipboardList,
   RefreshCw,
   ShieldAlert,
+  Wrench,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { DailyTrendChart } from "@/components/daily-trend-chart";
 import { MetricCard } from "@/components/metric-card";
+import { SeverityDonut } from "@/components/severity-donut";
 import { SimpleBarChart } from "@/components/simple-bar-chart";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchDashboardMetrics } from "@/lib/dashboard";
 import type { AuthSession } from "@/types/auth";
-import type { DashboardMetrics } from "@/types/dashboard";
+import type { DashboardMetrics, DashboardPersona } from "@/types/dashboard";
+import type { MaintenanceCategory } from "@/types/defects";
 
 const AUTO_REFRESH_MS = 60000;
 
@@ -114,6 +119,70 @@ function formatSlaState(state: string | null | undefined) {
     .join(" ");
 }
 
+function formatMaintenanceCategory(category: MaintenanceCategory): string {
+  if (category === "RENTIS") {
+    return "Rentis";
+  }
+  if (category === "CAT_TIANG") {
+    return "Cat Tiang";
+  }
+  return "Selenggaraan";
+}
+
+function MaintenanceCategoryChip({
+  category,
+}: {
+  category?: MaintenanceCategory | null;
+}) {
+  if (!category) {
+    return null;
+  }
+  return (
+    <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">
+      {formatMaintenanceCategory(category)}
+    </span>
+  );
+}
+
+/** Persona-aware page heading — leads with the right frame per company type. */
+function personaHeadline(persona: DashboardPersona): {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+} {
+  const org = persona.organizationName?.trim();
+  if (persona.kind === "MAINTENANCE") {
+    return {
+      eyebrow: "Maintenance Dashboard",
+      title: org || "Maintenance Overview",
+      subtitle:
+        "Defects routed to your company — your backlog by severity, status and category.",
+    };
+  }
+  if (persona.kind === "INSPECTION") {
+    return {
+      eyebrow: "Field Operations",
+      title: org || "Field Operations",
+      subtitle:
+        "Your crews' survey & inspection output — daily throughput, visits and defects found.",
+    };
+  }
+  return {
+    eyebrow: "Operations Dashboard",
+    title: "ASCURE Admin",
+    subtitle: "Field visit, asset, and defect visibility across all operations.",
+  };
+}
+
+function SectionHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <h2 className="text-lg font-semibold text-[var(--foreground)]">{title}</h2>
+      {hint ? <span className="text-sm text-[var(--muted)]">{hint}</span> : null}
+    </div>
+  );
+}
+
 function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"] }) {
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
@@ -130,6 +199,7 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
                 <th className="px-4 py-3">Asset</th>
                 <th className="px-4 py-3">Defect</th>
                 <th className="px-4 py-3">Severity</th>
+                <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">SLA</th>
                 <th className="px-4 py-3">Due</th>
@@ -152,6 +222,9 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
                       >
                         {defect.severity ?? "UNSPECIFIED"}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-4">
+                      <MaintenanceCategoryChip category={defect.maintenanceCategory} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-4">
                       <span
@@ -242,6 +315,246 @@ function CriticalOverdueAlerts({
   );
 }
 
+/**
+ * The persona-aware body of the dashboard. Every persona shares the same
+ * building blocks (KPIs, charts, tables); `persona.kind` decides which lead and
+ * in what order:
+ *  - MAINTENANCE → defect backlog first (routed pool), no field-production block.
+ *  - INSPECTION  → daily throughput + visits first, then assets/defects found.
+ *  - OVERVIEW    → the full tenant picture (ADMIN / ASCURE).
+ */
+function DashboardSections({ metrics }: { metrics: DashboardMetrics }) {
+  const { persona } = metrics;
+  const overdueThreshold = metrics.operationalOverdueThresholdHours || 24;
+
+  const dailyTrend = (
+    <DailyTrendChart
+      title="Daily inspection throughput"
+      data={metrics.dailyInspectionTrend}
+      emptyLabel="No submitted inspections in the last 7 days."
+      unitLabel="assets inspected"
+    />
+  );
+
+  const visitKpis = (
+    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      <MetricCard
+        title="Active Visits"
+        value={metrics.activeVisits}
+        detail={`Open field operations. Overdue threshold ${overdueThreshold}h.`}
+        icon={Activity}
+        tone={metrics.overdueVisits > 0 ? "warning" : "neutral"}
+      />
+      <MetricCard
+        title="Completed Visits"
+        value={metrics.completedVisits}
+        detail="Visits completed by field teams."
+        icon={CheckCircle2}
+        tone="success"
+      />
+      <MetricCard
+        title="Completion Rate"
+        value={metrics.completionRate}
+        suffix="%"
+        detail="Completed visits across non-cancelled operations."
+        icon={ShieldAlert}
+        tone="success"
+      />
+    </div>
+  );
+
+  const visitCharts = (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <SimpleBarChart
+        title="Visits by Status"
+        data={metrics.visitsByStatus}
+        emptyLabel="No site visit status counts are available yet."
+        tone="teal"
+      />
+      <SimpleBarChart
+        title="Active Visits by Team"
+        data={metrics.activeVisitsByTeam}
+        emptyLabel="No active team counts are available yet."
+        tone="amber"
+      />
+    </div>
+  );
+
+  const severityDonut = (
+    <SeverityDonut
+      title="Defects by Severity"
+      data={metrics.defectsBySeverity}
+      centerCaption="defects"
+      emptyLabel="No defects recorded yet."
+    />
+  );
+  const statusBar = (
+    <SimpleBarChart
+      title="Defects by Status"
+      data={metrics.defectsByStatus}
+      emptyLabel="No defect status counts yet."
+      tone="rose"
+    />
+  );
+  const categoryBar = (
+    <SimpleBarChart
+      title="Defects by Category"
+      data={metrics.defectsByCategory}
+      emptyLabel="No maintenance-category counts yet."
+      tone="teal"
+    />
+  );
+  const assigneeBar = (
+    <SimpleBarChart
+      title="Defects by Assignee"
+      data={metrics.defectsByAssignee}
+      emptyLabel="No assignments yet."
+      tone="amber"
+    />
+  );
+  const mainheadBar = (
+    <SimpleBarChart
+      title="Total Assets by Mainhead"
+      data={metrics.assetsByMainhead}
+      emptyLabel="No assets are attributed to a mainhead yet."
+      tone="teal"
+    />
+  );
+  const tables = (
+    <>
+      <CriticalOverdueAlerts defects={metrics.criticalOverdueAlerts} />
+      <RecentDefects defects={metrics.recentDefects} />
+    </>
+  );
+
+  // MAINTENANCE — lead with the routed-defect backlog; no field-production block.
+  if (persona.kind === "MAINTENANCE") {
+    return (
+      <div className="space-y-6">
+        <SectionHeading title="Defect backlog" hint="Routed to your company" />
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <MetricCard
+            title="Routed Defects"
+            value={metrics.totalDefects}
+            detail="Defects released to your maintenance company."
+            icon={Wrench}
+            tone="neutral"
+          />
+          <MetricCard
+            title="Open Defects"
+            value={metrics.openDefects}
+            detail="Awaiting maintenance action or closure."
+            icon={AlertTriangle}
+            tone="danger"
+          />
+          <MetricCard
+            title="Overdue"
+            value={metrics.overdueDefects}
+            detail="Past their due date and still open."
+            icon={ShieldAlert}
+            tone={metrics.overdueDefects > 0 ? "danger" : "success"}
+          />
+        </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          {severityDonut}
+          {statusBar}
+        </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          {categoryBar}
+          {assigneeBar}
+        </div>
+        {tables}
+      </div>
+    );
+  }
+
+  // INSPECTION — field-production emphasis: throughput, visits, then output.
+  if (persona.kind === "INSPECTION") {
+    return (
+      <div className="space-y-6">
+        <SectionHeading title="Today" hint="Rolling 7-day throughput" />
+        {dailyTrend}
+        <SectionHeading title="Field visits" hint={`Overdue threshold ${overdueThreshold}h`} />
+        {visitKpis}
+        {visitCharts}
+        <SectionHeading title="Assets & defects found" />
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <MetricCard
+            title="Total Assets"
+            value={metrics.totalAssets}
+            detail="Assets your crews can see."
+            icon={Archive}
+            tone="neutral"
+          />
+          <MetricCard
+            title="Inspections"
+            value={metrics.totalInspections}
+            detail="Inspections recorded by your teams."
+            icon={ClipboardList}
+            tone="neutral"
+          />
+          <MetricCard
+            title="Open Defects"
+            value={metrics.openDefects}
+            detail="Defects your crews raised, still open."
+            icon={AlertTriangle}
+            tone="warning"
+          />
+        </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          {severityDonut}
+          {mainheadBar}
+        </div>
+        {tables}
+      </div>
+    );
+  }
+
+  // OVERVIEW — the full tenant picture (ADMIN / ASCURE).
+  return (
+    <div className="space-y-6">
+      <SectionHeading title="Today" hint="Rolling 7-day throughput" />
+      {dailyTrend}
+      <SectionHeading title="Field visits" hint={`Overdue threshold ${overdueThreshold}h`} />
+      {visitKpis}
+      {visitCharts}
+      <SectionHeading title="Assets & defects" />
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <MetricCard
+          title="Total Assets"
+          value={metrics.totalAssets}
+          detail="Assets visible to the signed-in tenant."
+          icon={Archive}
+          tone="neutral"
+        />
+        <MetricCard
+          title="Total Defects"
+          value={metrics.totalDefects}
+          detail="Open, in-progress, and closed defects."
+          icon={Bug}
+          tone="warning"
+        />
+        <MetricCard
+          title="Open Defects"
+          value={metrics.openDefects}
+          detail="Defects awaiting action or closure."
+          icon={AlertTriangle}
+          tone="danger"
+        />
+      </div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        {mainheadBar}
+        {severityDonut}
+      </div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        {categoryBar}
+        {statusBar}
+      </div>
+      {tables}
+    </div>
+  );
+}
+
 function DashboardContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -310,6 +623,15 @@ function DashboardContent() {
     return () => window.clearInterval(intervalId);
   }, [autoRefresh, loadDashboard, session?.token]);
 
+  const persona = metrics?.persona ?? null;
+  const headline = persona
+    ? personaHeadline(persona)
+    : {
+        eyebrow: "Operations Dashboard",
+        title: "ASCURE Admin",
+        subtitle: "Field visit, asset, and defect visibility for utility operations.",
+      };
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -317,13 +639,13 @@ function DashboardContent() {
           <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                Operations Dashboard
+                {headline.eyebrow}
               </p>
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                ASCURE Admin
+                {headline.title}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Field visit, asset, and defect visibility for utility operations.
+                {headline.subtitle}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
@@ -362,89 +684,7 @@ function DashboardContent() {
                 {error}
               </div>
             ) : metrics ? (
-              <div className="space-y-6">
-                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                  <MetricCard
-                    title="Active Visits"
-                    value={metrics.activeVisits}
-                    detail={`Open field operations. Overdue threshold ${metrics.operationalOverdueThresholdHours || 24}h.`}
-                    icon={Activity}
-                    tone={metrics.overdueVisits > 0 ? "warning" : "neutral"}
-                  />
-                  <MetricCard
-                    title="Completed Visits"
-                    value={metrics.completedVisits}
-                    detail="Visits completed by field teams."
-                    icon={CheckCircle2}
-                    tone="success"
-                  />
-                  <MetricCard
-                    title="Completion Rate"
-                    value={metrics.completionRate}
-                    suffix="%"
-                    detail="Completed visits across non-cancelled operations."
-                    icon={ShieldAlert}
-                    tone="success"
-                  />
-                </div>
-
-                <div className="grid gap-6 xl:grid-cols-2">
-                  <SimpleBarChart
-                    title="Visits by Status"
-                    data={metrics.visitsByStatus}
-                    emptyLabel="No site visit status counts are available yet."
-                    tone="teal"
-                  />
-                  <SimpleBarChart
-                    title="Active Visits by Team"
-                    data={metrics.activeVisitsByTeam}
-                    emptyLabel="No active team counts are available yet."
-                    tone="amber"
-                  />
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                  <MetricCard
-                    title="Total Assets"
-                    value={metrics.totalAssets}
-                    detail="Assets visible to the signed-in tenant."
-                    icon={Archive}
-                    tone="neutral"
-                  />
-                  <MetricCard
-                    title="Total Defects"
-                    value={metrics.totalDefects}
-                    detail="Open, in-progress, and closed defects."
-                    icon={Bug}
-                    tone="warning"
-                  />
-                  <MetricCard
-                    title="Open Defects"
-                    value={metrics.openDefects}
-                    detail="Defects awaiting action or closure."
-                    icon={AlertTriangle}
-                    tone="danger"
-                  />
-                </div>
-
-                <div className="grid gap-6 xl:grid-cols-2">
-                  <SimpleBarChart
-                    title="Total Assets by Mainhead"
-                    data={metrics.assetsByMainhead}
-                    emptyLabel="No assets are attributed to a mainhead yet."
-                    tone="teal"
-                  />
-                  <SimpleBarChart
-                    title="Defects by Severity"
-                    data={metrics.defectsBySeverity}
-                    emptyLabel="Severity breakdown is pending backend data."
-                    tone="rose"
-                  />
-                </div>
-
-                <CriticalOverdueAlerts defects={metrics.criticalOverdueAlerts} />
-                <RecentDefects defects={metrics.recentDefects} />
-              </div>
+              <DashboardSections metrics={metrics} />
             ) : null}
           </div>
         </div>
