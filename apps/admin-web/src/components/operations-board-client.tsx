@@ -1160,6 +1160,18 @@ function OperationsBoardContent() {
       ) ?? [],
     [board],
   );
+  // Match the column count to the number of cards actually shown so the row
+  // always fills the width — hiding the (empty) QA/QC card under INSPECTOR_OWNS
+  // leaves 4, which used to sit in a fixed 5-column grid with a dangling gap.
+  // Literal class strings so Tailwind's JIT keeps them.
+  const summaryColsClass =
+    summaryQueues.length >= 5
+      ? "xl:grid-cols-5"
+      : summaryQueues.length === 4
+        ? "xl:grid-cols-4"
+        : summaryQueues.length === 3
+          ? "xl:grid-cols-3"
+          : "xl:grid-cols-2";
 
   function updateFilter<K extends keyof FilterState>(key: K, value: FilterState[K]) {
     setFilters((currentFilters) => ({
@@ -1479,7 +1491,7 @@ function OperationsBoardContent() {
               </div>
             ) : board ? (
               <div className="space-y-5">
-                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <section className={`grid gap-3 md:grid-cols-2 ${summaryColsClass}`}>
                   {summaryQueues.map((queue) => (
                     <SummaryCard key={queue.key} queue={queue} />
                   ))}
