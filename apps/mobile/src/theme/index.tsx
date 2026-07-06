@@ -25,23 +25,28 @@ const lightColors = {
   // Brand = ink
   primary: '#2563EB',
   primaryStrong: '#1D4ED8',
-  primarySoft: '#DBEAFE',
+  primarySoft: '#E7EEFF',
 
   // Content surfaces (mist)
-  background: '#E9ECEF',
+  background: '#DFE3E8',
   card: '#FFFFFF',
-  surfaceMuted: '#F4F6F8',
-  surfacePressed: '#ECEEF1',
-  border: '#D7DCE2',
-  borderStrong: '#C5CCD4',
+  surfaceMuted: '#EDF0F3',
+  surfacePressed: '#E4E8EE',
+  border: '#E4E8EE',
+  borderStrong: '#D3D9E1',
 
-  textPrimary: '#161A1F',
-  textSecondary: '#566373',
-  textMuted: '#828E9C',
+  textPrimary: '#12161C',
+  textSecondary: '#586170',
+  textMuted: '#8A93A0',
   textOnPrimary: '#FFFFFF',
   // Text/glyph that sits on a saturated STATUS fill (success/danger/info button).
   // White in light mode; ink in dark (where status fills lighten) — stays legible.
   onStatus: '#FFFFFF',
+  // Solid dark fill for avatars / active chips / "scan"+"mark done" buttons / rank
+  // badges — ink in light. In DARK this must NOT follow textPrimary (which flips
+  // light); it becomes a neutral dark (#2A323D) so white text stays legible.
+  solidFill: '#12161C',
+  onSolidFill: '#FFFFFF',
 
   // "Chrome" surfaces (drawer, map panels) — follow the theme (light in light mode)
   chrome: '#FFFFFF',
@@ -57,45 +62,48 @@ const lightColors = {
 
   // Status — functional
   danger: '#DC2626',
-  dangerSoft: '#FCEBEB',
+  dangerSoft: '#FBE8E8',
   dangerBorder: '#F2C7C7',
-  dangerText: '#791F1F',
-  success: '#16A34A',
-  successSoft: '#E9F4EA',
+  dangerText: '#B0201F',
+  success: '#15A34A',
+  successSoft: '#E4F4E9',
   successBorder: '#C5E2C8',
-  successText: '#27500A',
-  warning: '#B45309',
-  warningSoft: '#FAEFDD',
+  successText: '#12712F',
+  warning: '#D98A0B',
+  warningSoft: '#FBEFD6',
   warningBorder: '#EBD7AE',
-  warningText: '#854F0B',
-  info: '#0284C7',
-  infoSoft: '#E0F2FE',
+  warningText: '#8A5606',
+  info: '#2563EB',
+  infoSoft: '#E7EEFF',
   infoBorder: '#BAE0FB',
-  infoText: '#075985',
+  infoText: '#1D4ED8',
 
   overlay: 'rgba(8,11,15,0.55)',
-  shadow: '#0B0E12',
+  shadow: '#121C30',
 };
 
 type ColorPalette = typeof lightColors;
 
 const darkColors: ColorPalette = {
-  primary: '#3B82F6',
-  primaryStrong: '#60A5FA',
-  primarySoft: '#18233A',
+  primary: '#4C82F5',
+  primaryStrong: '#89AEF8',
+  primarySoft: 'rgba(76,130,245,0.18)',
 
-  background: '#0E1116',
-  card: '#181D24',
-  surfaceMuted: '#11151A',
+  background: '#080A0E',
+  card: '#141A23',
+  surfaceMuted: '#1A212A',
   surfacePressed: '#222932',
-  border: '#262D36',
-  borderStrong: '#3A434F',
+  border: '#242C36',
+  borderStrong: '#323C48',
 
-  textPrimary: '#E9ECEF',
-  textSecondary: '#9AA4B0',
-  textMuted: '#66717F',
+  textPrimary: '#EAEEF3',
+  textSecondary: '#9AA4B2',
+  textMuted: '#69727F',
   textOnPrimary: '#FFFFFF',
   onStatus: '#11151A',
+  // Dark-mode inversion (see lightColors.solidFill): neutral dark fill, light text.
+  solidFill: '#2A323D',
+  onSolidFill: '#EAEEF3',
 
   chrome: '#0B0E12',
   chromePanel: '#161A1F',
@@ -108,22 +116,22 @@ const darkColors: ColorPalette = {
   chromeAccent: '#60A5FA',
   chromeDanger: '#FCA5A5',
 
-  danger: '#F87171',
-  dangerSoft: '#3A1D20',
+  danger: '#F0605F',
+  dangerSoft: 'rgba(240,96,95,0.16)',
   dangerBorder: '#5A2A2D',
-  dangerText: '#FCA5A5',
-  success: '#4ADE80',
-  successSoft: '#13301E',
+  dangerText: '#F58A8A',
+  success: '#3FB569',
+  successSoft: 'rgba(63,181,105,0.15)',
   successBorder: '#234A30',
-  successText: '#A7E8BC',
-  warning: '#F5B544',
-  warningSoft: '#332817',
+  successText: '#6FD79A',
+  warning: '#E4B25E',
+  warningSoft: 'rgba(224,169,74,0.16)',
   warningBorder: '#4D3B1E',
-  warningText: '#FCD77F',
-  info: '#38BDF8',
-  infoSoft: '#0C2A3B',
+  warningText: '#E7B96A',
+  info: '#4C82F5',
+  infoSoft: 'rgba(76,130,245,0.18)',
   infoBorder: '#1E4A63',
-  infoText: '#BAE6FD',
+  infoText: '#89AEF8',
 
   overlay: 'rgba(0,0,0,0.62)',
   shadow: '#000000',
@@ -168,14 +176,17 @@ export function buildTheme(mode: ThemeMode) {
     mode,
     colors,
     fonts,
-    radius: { card: 14, control: 10, pill: 999 },
-    spacing: { screen: 16, section: 12, card: 12 },
+    // Field-grade radii: cards/sheets rounder, controls comfortable, chips subtle,
+    // pill = fully round (avatars, dots). Bottom sheets get the biggest radius.
+    radius: { card: 16, control: 14, chip: 8, sheet: 22, pill: 999 },
+    // Horizontal screen padding 20, roomier card padding 16 (outdoor legibility).
+    spacing: { screen: 20, section: 12, card: 16 },
     shadow: {
       card: {
         shadowColor: colors.shadow,
-        shadowOpacity: mode === 'dark' ? 0.4 : 0.08,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: mode === 'dark' ? 0.4 : 0.06,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 2 },
         elevation: 2,
       },
       raised: {
@@ -184,6 +195,14 @@ export function buildTheme(mode: ThemeMode) {
         shadowRadius: 20,
         shadowOffset: { width: 0, height: 8 },
         elevation: 6,
+      },
+      // Elevated blue glow under the docked primary CTA (thumb-reach button).
+      cta: {
+        shadowColor: colors.primary,
+        shadowOpacity: mode === 'dark' ? 0.5 : 0.45,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 10 },
+        elevation: 10,
       },
     },
   };

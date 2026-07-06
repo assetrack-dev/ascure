@@ -95,6 +95,10 @@ android {
         versionCode 4
         versionName "1.1.0"
 
+        // Launcher label via placeholder (AndroidManifest uses ${appLabel}) so the
+        // side-by-side build can carry its own name. Production = "ASCURE".
+        manifestPlaceholders = [appLabel: 'ASCURE']
+
         // Optional side-by-side build for field testing:
         //   ./gradlew assembleRelease -PdevVariant
         // installs as `local.ascure.field.dev` alongside the production app so
@@ -102,6 +106,8 @@ android {
         if (project.hasProperty('devVariant')) {
             applicationIdSuffix '.dev'
             versionNameSuffix '-dev'
+            // Distinct home-screen name so testers tell the preview from the live app.
+            manifestPlaceholders = [appLabel: 'ASCURE Preview']
         }
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
