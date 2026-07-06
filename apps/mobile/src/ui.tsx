@@ -47,6 +47,7 @@ export function Screen({
   rightAction,
   rightActions,
   footer,
+  bottomBar,
   scroll = true,
   keyboardAware = false,
   scrollRef,
@@ -59,6 +60,8 @@ export function Screen({
   rightAction?: HeaderAction;
   rightActions?: HeaderAction[];
   footer?: ReactNode;
+  /** Absolutely-docked bottom bar (e.g. BottomCTA); content scrolls under it. */
+  bottomBar?: ReactNode;
   scroll?: boolean;
   keyboardAware?: boolean;
   scrollRef?: RefObject<ScrollView | null>;
@@ -98,6 +101,7 @@ export function Screen({
         </View>
         {content}
         {footer ? <View style={styles.footer}>{footer}</View> : null}
+        {bottomBar ? <View style={styles.bottomBarWrap}>{bottomBar}</View> : null}
       </View>
     </SafeAreaView>
   );
@@ -609,6 +613,176 @@ export function SelectCard({
   );
 }
 
+/** Mono text for the "field instrument" feel — asset codes, coords, readings. */
+export function Mono({
+  children,
+  size = 13,
+  muted = false,
+  color,
+}: {
+  children: ReactNode;
+  size?: number;
+  muted?: boolean;
+  color?: string;
+}) {
+  const theme = useTheme();
+  return (
+    <Text
+      style={{
+        fontFamily: theme.fonts.monoMedium,
+        fontSize: size,
+        letterSpacing: 0.2,
+        color: color ?? (muted ? theme.colors.textMuted : theme.colors.textPrimary),
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+export type SpineTone = 'blue' | 'red' | 'amber' | 'green' | 'neutral';
+
+function spineColor(t: Theme, tone: SpineTone): string {
+  switch (tone) {
+    case 'blue':
+      return t.colors.primary;
+    case 'red':
+      return t.colors.danger;
+    case 'amber':
+      return t.colors.warning;
+    case 'green':
+      return t.colors.success;
+    default:
+      return t.colors.borderStrong;
+  }
+}
+
+/**
+ * A horizontal card with a full-height color "spine" on the left encoding
+ * status/severity, then a mono code + optional chip, a secondary line, and a
+ * dot-separated meta row. High-reuse across Home / Defects / Sessions / Visit
+ * assets (handoff PART C2).
+ */
+export function StatusSpineTile({
+  code,
+  spine = 'neutral',
+  chip,
+  secondary,
+  meta,
+  onPress,
+  rightSlot,
+  showChevron,
+}: {
+  code: string;
+  spine?: SpineTone;
+  chip?: { label: string; tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' };
+  secondary?: string | null;
+  meta?: (string | null | undefined)[];
+  onPress?: () => void;
+  rightSlot?: ReactNode;
+  showChevron?: boolean;
+}) {
+  const { theme, styles } = useStyles();
+  const metaParts = (meta ?? []).filter((part): part is string => Boolean(part));
+  const chevron = showChevron ?? Boolean(onPress);
+
+  const inner = (
+    <>
+      <View style={[styles.spine, { backgroundColor: spineColor(theme, spine) }]} />
+      <View style={styles.spineBody}>
+        <View style={styles.spineTopRow}>
+          <Text style={styles.spineCode} numberOfLines={1}>
+            {code}
+          </Text>
+          {chip ? <StatusChip label={chip.label} tone={chip.tone} /> : null}
+          {rightSlot}
+          {chevron ? (
+            <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+          ) : null}
+        </View>
+        {secondary ? (
+          <Text style={styles.spineSecondary} numberOfLines={2}>
+            {secondary}
+          </Text>
+        ) : null}
+        {metaParts.length > 0 ? (
+          <Text style={styles.spineMeta} numberOfLines={1}>
+            {metaParts.join('   ·   ')}
+          </Text>
+        ) : null}
+      </View>
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.spineTile, pressed && styles.spineTilePressed]}
+      >
+        {inner}
+      </Pressable>
+    );
+  }
+  return <View style={styles.spineTile}>{inner}</View>;
+}
+
+/** Inline network state pill: off = amber, on = green (handoff PART C4). */
+export function NetworkPill({ online, label }: { online: boolean; label: string }) {
+  const { styles } = useStyles();
+  return (
+    <View style={[styles.netPill, online ? styles.netPillOn : styles.netPillOff]}>
+      <View style={[styles.netDot, online ? styles.netDotOn : styles.netDotOff]} />
+      <Text style={[styles.netText, online ? styles.netTextOn : styles.netTextOff]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Bottom-docked primary CTA for thumb reach (handoff PART C5). Pass to a
+ * `Screen`'s `bottomBar` prop; the ScrollView already reserves bottom padding so
+ * content scrolls clear of it. Disabled state shows `hint` as the reason.
+ */
+export function BottomCTA({
+  label,
+  onPress,
+  variant = 'primary',
+  disabled = false,
+  loading = false,
+  hint,
+}: {
+  label: string;
+  onPress: () => void;
+  variant?: 'primary' | 'danger';
+  disabled?: boolean;
+  loading?: boolean;
+  hint?: string | null;
+}) {
+  const { theme, styles } = useStyles();
+  const inactive = disabled || loading;
+  return (
+    <View style={styles.ctaBar}>
+      <Pressable
+        disabled={inactive}
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.ctaButton,
+          variant === 'danger' ? styles.ctaButtonDanger : styles.ctaButtonPrimary,
+          inactive && styles.ctaButtonDisabled,
+          pressed && !inactive && styles.ctaButtonPressed,
+        ]}
+      >
+        {loading ? <ActivityIndicator color={theme.colors.textOnPrimary} /> : null}
+        <Text style={[styles.ctaLabel, inactive && styles.ctaLabelDisabled]}>
+          {inactive && hint ? hint : label}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const buttonVariantStyles = {
   primary: 'buttonPrimary',
   secondary: 'buttonSecondary',
@@ -710,7 +884,7 @@ function createStyles(t: Theme) {
     card: {
       backgroundColor: c.card,
       borderRadius: t.radius.card,
-      padding: 14,
+      padding: t.spacing.card,
       gap: 10,
       borderWidth: 1,
       borderColor: c.border,
@@ -834,8 +1008,8 @@ function createStyles(t: Theme) {
       color: c.textSecondary,
     },
     button: {
-      minHeight: 46,
-      borderRadius: t.radius.card,
+      minHeight: 50,
+      borderRadius: t.radius.control,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
@@ -955,34 +1129,29 @@ function createStyles(t: Theme) {
     },
     chip: {
       alignSelf: 'flex-start',
-      borderRadius: t.radius.pill,
-      paddingHorizontal: 9,
-      paddingVertical: 4,
+      borderRadius: t.radius.chip,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
       backgroundColor: c.surfaceMuted,
-      borderWidth: 1,
-      borderColor: c.border,
     },
     chipSuccess: {
       backgroundColor: c.successSoft,
-      borderColor: c.successBorder,
     },
     chipWarning: {
       backgroundColor: c.warningSoft,
-      borderColor: c.warningBorder,
     },
     chipDanger: {
       backgroundColor: c.dangerSoft,
-      borderColor: c.dangerBorder,
     },
     chipInfo: {
       backgroundColor: c.infoSoft,
-      borderColor: c.infoBorder,
     },
     chipText: {
-      fontSize: 12,
-      fontWeight: '600',
-      fontFamily: t.fonts.bodySemibold,
-      color: c.textPrimary,
+      fontSize: 11,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
+      letterSpacing: 0.3,
+      color: c.textSecondary,
     },
     chipTextSuccess: {
       color: c.successText,
@@ -1157,6 +1326,145 @@ function createStyles(t: Theme) {
     },
     headerIconButtonDisabled: {
       opacity: 0.48,
+    },
+
+    // Bottom-docked CTA (handoff C5) — solid bar + top hairline (no gradient dep).
+    bottomBarWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+    },
+    ctaBar: {
+      paddingHorizontal: t.spacing.screen,
+      paddingTop: 12,
+      paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+      backgroundColor: c.card,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    ctaButton: {
+      minHeight: 58,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 10,
+      paddingHorizontal: 18,
+      ...t.shadow.cta,
+    },
+    ctaButtonPrimary: {
+      backgroundColor: c.primary,
+    },
+    ctaButtonDanger: {
+      backgroundColor: c.danger,
+    },
+    ctaButtonDisabled: {
+      backgroundColor: c.surfaceMuted,
+      shadowOpacity: 0,
+      elevation: 0,
+    },
+    ctaButtonPressed: {
+      transform: [{ scale: 0.99 }],
+      opacity: 0.95,
+    },
+    ctaLabel: {
+      fontSize: 17,
+      fontFamily: t.fonts.display,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+      color: c.textOnPrimary,
+    },
+    ctaLabelDisabled: {
+      color: c.textMuted,
+    },
+
+    // StatusSpineTile (handoff C2)
+    spineTile: {
+      flexDirection: 'row',
+      backgroundColor: c.card,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      overflow: 'hidden',
+      ...t.shadow.card,
+    },
+    spineTilePressed: {
+      backgroundColor: c.surfaceMuted,
+    },
+    spine: {
+      width: 5,
+      alignSelf: 'stretch',
+    },
+    spineBody: {
+      flex: 1,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      gap: 5,
+    },
+    spineTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    spineCode: {
+      flex: 1,
+      fontSize: 16,
+      fontFamily: t.fonts.monoMedium,
+      letterSpacing: 0.2,
+      color: c.textPrimary,
+    },
+    spineSecondary: {
+      fontSize: 13.5,
+      lineHeight: 19,
+      fontFamily: t.fonts.body,
+      color: c.textSecondary,
+    },
+    spineMeta: {
+      fontSize: 12,
+      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
+      color: c.textMuted,
+    },
+
+    // NetworkPill (handoff C4)
+    netPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      borderRadius: t.radius.pill,
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+    },
+    netPillOn: {
+      backgroundColor: c.successSoft,
+    },
+    netPillOff: {
+      backgroundColor: c.warningSoft,
+    },
+    netDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+    },
+    netDotOn: {
+      backgroundColor: c.success,
+    },
+    netDotOff: {
+      backgroundColor: c.warning,
+    },
+    netText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
+      letterSpacing: 0.2,
+    },
+    netTextOn: {
+      color: c.successText,
+    },
+    netTextOff: {
+      color: c.warningText,
     },
   });
 }
