@@ -76,7 +76,9 @@ import {
   EmergencyMedia,
 } from '../components/DeclareEmergencySheet';
 
-type PhotoUploadState = 'uploading' | 'uploaded' | 'error';
+// 'pending' = kept locally, not uploaded yet — used while the inspection is an
+// offline temp id, so it uploads with the queued submission after reconcile.
+type PhotoUploadState = 'pending' | 'uploading' | 'uploaded' | 'error';
 
 type CapturedInspectionPhoto = InspectionImageUploadInput & {
   id: string;
@@ -482,6 +484,19 @@ export function InspectionFormScreen() {
   }
 
   async function uploadPhotoToServer(photo: CapturedInspectionPhoto) {
+    // Offline-created inspection: there's no real server id yet, so we can't
+    // upload now — POSTing to /inspections/temp_.../images fails the API's UUID
+    // check ("inspectionId must be a UUID"). Keep the photo local and let it
+    // upload with the queued submission once the inspection is reconciled to a
+    // real id (see the isTempId branch in handleSubmit / enqueueInspectionSubmission).
+    if (isTempId(inspectionId)) {
+      updatePhoto(photo.id, {
+        uploadState: 'pending',
+        uploadError: undefined,
+      });
+      return;
+    }
+
     updatePhoto(photo.id, {
       uploadState: 'uploading',
       uploadError: undefined,
@@ -2215,6 +2230,10 @@ function getPhotoStatusLabel(state: PhotoUploadState) {
 
   if (state === 'error') {
     return 'Needs retry';
+  }
+
+  if (state === 'pending') {
+    return 'Will sync';
   }
 
   return 'Uploading';
