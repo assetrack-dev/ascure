@@ -272,7 +272,13 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
         where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
         take: 1,
         orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
-        select: { id: true, completionStatus: true, submittedAt: true },
+        select: {
+          id: true,
+          completionStatus: true,
+          submittedAt: true,
+          // Checklist answers surfaced as Linked-Assets columns (DC on-screen checking).
+          itemResults: { select: { label: true, remark: true } },
+        },
       },
     },
   },
@@ -2667,6 +2673,15 @@ export class SiteVisitsService {
   private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
     const { inspections, ...asset } = link.asset;
     const latest = inspections[0] ?? null;
+    // Latest-inspection reading by checklist-item label (case/space-insensitive;
+    // the value is the item's free-text answer / OCR reading in `remark`).
+    const reading = (...labels: string[]): string | null => {
+      const wanted = labels.map((l) => l.toUpperCase().replace(/\s+/g, ' ').trim());
+      const match = latest?.itemResults?.find((item) =>
+        wanted.includes(item.label.toUpperCase().replace(/\s+/g, ' ').trim()),
+      );
+      return match?.remark?.trim() || null;
+    };
     return {
       id: link.id,
       siteVisitId: link.siteVisitId,
@@ -2687,6 +2702,11 @@ export class SiteVisitsService {
               submittedAt: latest.submittedAt?.toISOString() ?? null,
             }
           : null,
+      },
+      // Checklist readings surfaced as Linked-Assets columns for DC checking.
+      checklist: {
+        bacaanKelegaan1: reading('BACAAN KELEGAAN 1'),
+        catitan: reading('CATITAN', 'CATATAN'),
       },
     };
   }
