@@ -276,8 +276,16 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
           id: true,
           completionStatus: true,
           submittedAt: true,
-          // Checklist answers surfaced as Linked-Assets columns (DC on-screen checking).
-          itemResults: { select: { label: true, remark: true } },
+          // Recorded checklist VALUES (InspectionResult, keyed by template-item
+          // label) surfaced as Linked-Assets columns for DC checking — the same
+          // source the Download Checklist uses, NOT itemResults.remark.
+          results: {
+            select: {
+              valueText: true,
+              valueNumber: true,
+              templateItem: { select: { label: true } },
+            },
+          },
         },
       },
     },
@@ -2673,14 +2681,21 @@ export class SiteVisitsService {
   private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
     const { inspections, ...asset } = link.asset;
     const latest = inspections[0] ?? null;
-    // Latest-inspection reading by checklist-item label (case/space-insensitive;
-    // the value is the item's free-text answer / OCR reading in `remark`).
+    // Recorded value of a checklist item, matched by its template-item label
+    // (first label that hits wins). Text/OCR fields use valueText; numeric
+    // readings fall back to valueNumber. Same source as the Download Checklist.
+    const norm = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
     const reading = (...labels: string[]): string | null => {
-      const wanted = labels.map((l) => l.toUpperCase().replace(/\s+/g, ' ').trim());
-      const match = latest?.itemResults?.find((item) =>
-        wanted.includes(item.label.toUpperCase().replace(/\s+/g, ' ').trim()),
-      );
-      return match?.remark?.trim() || null;
+      for (const want of labels.map(norm)) {
+        const match = latest?.results?.find(
+          (r) => r.templateItem?.label != null && norm(r.templateItem.label) === want,
+        );
+        const value =
+          match?.valueText?.trim() ||
+          (match?.valueNumber != null ? match.valueNumber.toString() : null);
+        if (value) return value;
+      }
+      return null;
     };
     return {
       id: link.id,
@@ -2705,8 +2720,8 @@ export class SiteVisitsService {
       },
       // Checklist readings surfaced as Linked-Assets columns for DC checking.
       checklist: {
-        bacaanKelegaan1: reading('BACAAN KELEGAAN 1'),
-        catitan: reading('CATITAN', 'CATATAN'),
+        bacaanKelegaan1: reading('GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1'),
+        catitan: reading('CATITAN', 'CATATAN', 'CATATAN / REMARK'),
       },
     };
   }
