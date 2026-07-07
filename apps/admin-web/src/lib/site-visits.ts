@@ -1,5 +1,7 @@
 import { apiRequest } from "@/lib/api";
+import { DISPLAY_STATUS_LABELS } from "@/types/site-visits";
 import type {
+  DisplayStatus,
   OperationalDomain,
   OperationalHealthStatus,
   SiteVisitAssetLink,
@@ -318,6 +320,29 @@ function normalizeTeamMembers(record: ApiRecord | null) {
     .filter((user): user is SiteVisitUser => Boolean(user));
 }
 
+function normalizeDisplayStatus(
+  value: string | null,
+  operationalStatus: SiteVisitStatus,
+): DisplayStatus {
+  const v = value?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (
+    v === "NOT_STARTED" ||
+    v === "IN_PROGRESS" ||
+    v === "NEEDS_AMENDMENT" ||
+    v === "IN_REVIEW" ||
+    v === "COMPLETED" ||
+    v === "ARCHIVED" ||
+    v === "CANCELLED"
+  ) {
+    return v;
+  }
+  // Fallback for an API that predates displayStatus: coarse map from operational status.
+  if (operationalStatus === "CANCELLED") return "CANCELLED";
+  if (operationalStatus === "COMPLETED") return "COMPLETED";
+  if (operationalStatus === "OPEN") return "NOT_STARTED";
+  return "IN_PROGRESS";
+}
+
 function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem | null {
   const record = asRecord(rawVisit);
 
@@ -329,6 +354,10 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
   const summary = asRecord(record.summary);
   const substation = normalizeSubstation(record.substation);
   const status = normalizeStatus(firstString(record, ["status"]));
+  const displayStatus = normalizeDisplayStatus(
+    firstString(record, ["displayStatus"]),
+    status,
+  );
   const startedAt = firstString(record, ["startedAt", "createdAt"]);
   const mainheadRecord =
     normalizeMainheadReference(record.mainheadRecord) ??
@@ -341,6 +370,9 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
   return {
     id,
     status,
+    displayStatus,
+    displayStatusLabel:
+      firstString(record, ["displayStatusLabel"]) ?? DISPLAY_STATUS_LABELS[displayStatus],
     validationStatus: normalizeValidationStatus(firstString(record, ["validationStatus"])),
     operationalHealthStatus: normalizeHealthStatus(
       firstString(record, ["operationalHealthStatus", "healthStatus"]),
@@ -478,6 +510,7 @@ function normalizeLifecycleStatus(value: string | null): SurveyLifecycleStatus |
     normalizedValue === "RONDAAN_SELESAI" ||
     normalizedValue === "DISAHKAN_PENGURUS" ||
     normalizedValue === "PERLU_PINDAAN" ||
+    normalizedValue === "PINDAAN_SELESAI" ||
     normalizedValue === "LAPORAN_SELESAI" ||
     normalizedValue === "ARKIB"
   ) {

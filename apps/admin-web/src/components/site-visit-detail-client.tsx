@@ -69,10 +69,10 @@ const LIFECYCLE_MAIN_STEPS: {
   label: string;
   caption: string;
 }[] = [
-  { key: "DALAM_RONDAAN", label: "Dalam Rondaan", caption: "Inspecting" },
-  { key: "RONDAAN_SELESAI", label: "Rondaan Selesai", caption: "Pending DC" },
-  { key: "LAPORAN_SELESAI", label: "Laporan Selesai", caption: "Report generated" },
-  { key: "ARKIB", label: "Arkib", caption: "Archived" },
+  { key: "DALAM_RONDAAN", label: "In Progress", caption: "Inspecting" },
+  { key: "RONDAAN_SELESAI", label: "In Review", caption: "Pending DC" },
+  { key: "LAPORAN_SELESAI", label: "Completed", caption: "Report generated" },
+  { key: "ARKIB", label: "Archived", caption: "Cycle closed" },
 ];
 
 const LIFECYCLE_STEP_INDEX: Record<SurveyLifecycleStatus, number> = {

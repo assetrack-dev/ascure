@@ -101,13 +101,15 @@ export async function downloadSavtRouteChecklist(
  */
 export async function downloadBulkChecklist(
   token: string,
-  opts: { scope: string; mainhead?: string; status?: string },
+  opts: { scope: string; mainhead?: string; status?: string; ids?: string[] },
 ): Promise<void> {
   const params = new URLSearchParams();
   if (opts.scope === "SAVT") params.set("scope", "SAVT");
   if (opts.mainhead && opts.mainhead !== "ALL")
     params.set("mainhead", opts.mainhead);
   if (opts.status && opts.status !== "ALL") params.set("status", opts.status);
+  // Explicit checkbox selection (substation ids for SAVR, route codes for SAVT).
+  if (opts.ids?.length) params.set("ids", opts.ids.join(","));
   const query = params.toString() ? `?${params.toString()}` : "";
   const { blob, filename } = await apiRequestBlob(
     `/reports/bulk-checklist.xlsx${query}`,

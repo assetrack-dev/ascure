@@ -175,16 +175,27 @@ export class ReportsController {
     @Query('scope') scope: string | undefined,
     @Query('mainhead') mainhead: string | undefined,
     @Query('status') status: string | undefined,
+    @Query('ids') ids: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const lifecycleStatus = parseLifecycleStatus(status);
+    // Comma-separated selected keys — substation ids (SAVR) or route codes (SAVT).
+    const selected = (ids ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
     const { buffer, filename } =
       parseScope(scope) === OperationalScope.SAVT
-        ? await this.reportsService.buildBulkSavtChecklist(user, lifecycleStatus)
+        ? await this.reportsService.buildBulkSavtChecklist(
+            user,
+            lifecycleStatus,
+            selected,
+          )
         : await this.reportsService.buildBulkPencawangChecklist(
             user,
             mainhead,
             lifecycleStatus,
+            selected,
           );
 
     res.setHeader(
