@@ -73,9 +73,33 @@ export interface SiteVisitSummary {
   completionPercentage: number;
 }
 
+/** The one user-facing status set (mirrors @ascure/shared-utils DisplayStatus).
+ *  The API sends this on every visit; the DB enums (status, lifecycle) still
+ *  drive the real logic. */
+export type DisplayStatus =
+  | "NOT_STARTED"
+  | "IN_PROGRESS"
+  | "NEEDS_AMENDMENT"
+  | "IN_REVIEW"
+  | "COMPLETED"
+  | "ARCHIVED"
+  | "CANCELLED";
+
+export const DISPLAY_STATUS_LABELS: Record<DisplayStatus, string> = {
+  NOT_STARTED: "Not Started",
+  IN_PROGRESS: "In Progress",
+  NEEDS_AMENDMENT: "Needs Amendment",
+  IN_REVIEW: "In Review",
+  COMPLETED: "Completed",
+  ARCHIVED: "Archived",
+  CANCELLED: "Cancelled",
+};
+
 export interface SiteVisitListItem extends SiteVisitSummary {
   id: string;
   status: SiteVisitStatus;
+  displayStatus: DisplayStatus;
+  displayStatusLabel: string;
   validationStatus: SiteVisitValidationStatus;
   operationalHealthStatus: OperationalHealthStatus;
   isOverdue: boolean;

@@ -19,6 +19,11 @@ import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
+  deriveDisplayStatus,
+  DISPLAY_STATUS_LABEL,
+  type DisplayStatus,
+} from '@ascure/shared-utils';
+import {
   DEFAULT_OPERATIONAL_SCOPE,
   inferOperationalScopeFromAssetTypeCode,
 } from '../common/operational-scope';
@@ -411,9 +416,12 @@ export class ReportsService {
       orderBy: { startedAt: 'desc' },
       select: {
         substationId: true,
+        status: true,
         mainhead: true,
         mainheadRecord: { select: { name: true } },
         lifecycleStatus: true,
+        checkInLatitude: true,
+        checkInLongitude: true,
       },
     });
 
@@ -421,6 +429,13 @@ export class ReportsService {
     // Every lifecycle status seen for a Pencawang (across cycles) so the report
     // UI can narrow the Pencawang list by survey status.
     const statusesBySubstation = new Map<string, Set<SurveyLifecycleStatus>>();
+    // The current survey's unified status + the Pencawang's coordinate (its most
+    // recent visit's check-in GPS) — the report table's Status + Lokasi columns.
+    const displayStatusBySubstation = new Map<string, DisplayStatus>();
+    const coordsBySubstation = new Map<
+      string,
+      { latitude: number; longitude: number }
+    >();
     for (const visit of visits) {
       if (visit.lifecycleStatus) {
         let statuses = statusesBySubstation.get(visit.substationId);
@@ -431,21 +446,48 @@ export class ReportsService {
         statuses.add(visit.lifecycleStatus);
       }
 
-      if (mainheadBySubstation.has(visit.substationId)) {
-        continue; // first seen = most recent (ordered desc)
+      // First seen per Pencawang = most recent (ordered desc): its current status.
+      if (!displayStatusBySubstation.has(visit.substationId)) {
+        displayStatusBySubstation.set(
+          visit.substationId,
+          deriveDisplayStatus(visit.status, visit.lifecycleStatus),
+        );
       }
+
+      // First visit (most recent) that carries a check-in fix = the Pencawang point.
+      if (
+        !coordsBySubstation.has(visit.substationId) &&
+        visit.checkInLatitude != null &&
+        visit.checkInLongitude != null
+      ) {
+        coordsBySubstation.set(visit.substationId, {
+          latitude: visit.checkInLatitude,
+          longitude: visit.checkInLongitude,
+        });
+      }
+
       const name = (visit.mainheadRecord?.name ?? visit.mainhead ?? '').trim();
-      if (name) {
+      if (name && !mainheadBySubstation.has(visit.substationId)) {
         mainheadBySubstation.set(visit.substationId, name);
       }
     }
 
-    return substations.map(({ _count, ...substation }) => ({
-      ...substation,
-      mainhead: mainheadBySubstation.get(substation.id) ?? null,
-      statuses: [...(statusesBySubstation.get(substation.id) ?? [])],
-      assetCount: _count.assets,
-    }));
+    return substations.map(({ _count, ...substation }) => {
+      const displayStatus = displayStatusBySubstation.get(substation.id) ?? null;
+      const coords = coordsBySubstation.get(substation.id) ?? null;
+      return {
+        ...substation,
+        mainhead: mainheadBySubstation.get(substation.id) ?? null,
+        latitude: coords?.latitude ?? null,
+        longitude: coords?.longitude ?? null,
+        displayStatus,
+        displayStatusLabel: displayStatus
+          ? DISPLAY_STATUS_LABEL[displayStatus]
+          : null,
+        statuses: [...(statusesBySubstation.get(substation.id) ?? [])],
+        assetCount: _count.assets,
+      };
+    });
   }
 
   /**
@@ -970,20 +1012,28 @@ export class ReportsService {
     user: RequestUser,
     mainhead: string | undefined,
     lifecycleStatus?: SurveyLifecycleStatus,
+    substationIds?: string[],
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
     const mainheadFilter = (mainhead ?? '').trim();
     const allMainheads =
       !mainheadFilter || mainheadFilter.toUpperCase() === 'ALL';
+    // Explicit Pencawang selection (checkbox "Download selected") narrows at the DB.
+    const idFilter = substationIds?.map((id) => id.trim()).filter(Boolean) ?? [];
 
-    // Tenant-wide pull, narrowed by status at the DB and by scope/mainhead below.
-    // A DC bulk export runs occasionally and the status filter bounds the volume;
-    // this mirrors the per-Pencawang export's query shape.
+    const siteVisitWhere: Prisma.SiteVisitWhereInput = {
+      ...(lifecycleStatus ? { lifecycleStatus } : {}),
+      ...(idFilter.length ? { substationId: { in: idFilter } } : {}),
+    };
+    // Tenant-wide pull, narrowed by status/selection at the DB and by scope/mainhead
+    // below. A DC bulk export runs occasionally and the filters bound the volume.
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
-        ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
+        ...(Object.keys(siteVisitWhere).length
+          ? { siteVisit: siteVisitWhere }
+          : {}),
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
       select: {
@@ -1186,7 +1236,10 @@ export class ReportsService {
         pencawangCode: true,
         fromPencawang: { select: { name: true, code: true } },
         toPencawang: { select: { name: true, code: true } },
+        status: true,
         lifecycleStatus: true,
+        checkInLatitude: true,
+        checkInLongitude: true,
       },
     });
 
@@ -1228,6 +1281,11 @@ export class ReportsService {
     >();
     // Every lifecycle status seen on a route (across cycles) for the status filter.
     const statusesByRoute = new Map<string, Set<SurveyLifecycleStatus>>();
+    const displayStatusByRoute = new Map<string, DisplayStatus>();
+    const coordsByRoute = new Map<
+      string,
+      { latitude: number; longitude: number }
+    >();
     for (const visit of visits) {
       const code = (visit.routeCode ?? '').trim();
       if (!code) {
@@ -1241,6 +1299,24 @@ export class ReportsService {
           statusesByRoute.set(code, statuses);
         }
         statuses.add(visit.lifecycleStatus);
+      }
+
+      // First seen per route = most recent: its current status + check-in point.
+      if (!displayStatusByRoute.has(code)) {
+        displayStatusByRoute.set(
+          code,
+          deriveDisplayStatus(visit.status, visit.lifecycleStatus),
+        );
+      }
+      if (
+        !coordsByRoute.has(code) &&
+        visit.checkInLatitude != null &&
+        visit.checkInLongitude != null
+      ) {
+        coordsByRoute.set(code, {
+          latitude: visit.checkInLatitude,
+          longitude: visit.checkInLongitude,
+        });
       }
 
       if (byRoute.has(code)) {
@@ -1258,10 +1334,20 @@ export class ReportsService {
     }
 
     return [...byRoute.values()]
-      .map((route) => ({
-        ...route,
-        statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
-      }))
+      .map((route) => {
+        const displayStatus = displayStatusByRoute.get(route.routeCode) ?? null;
+        const coords = coordsByRoute.get(route.routeCode) ?? null;
+        return {
+          ...route,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
+          displayStatus,
+          displayStatusLabel: displayStatus
+            ? DISPLAY_STATUS_LABEL[displayStatus]
+            : null,
+          statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
+        };
+      })
       .sort((a, b) => a.routeCode.localeCompare(b.routeCode));
   }
 
@@ -1435,15 +1521,18 @@ export class ReportsService {
   async buildBulkSavtChecklist(
     user: RequestUser,
     lifecycleStatus?: SurveyLifecycleStatus,
+    routeCodes?: string[],
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
+    // Explicit route selection (checkbox "Download selected") narrows at the DB.
+    const codeFilter = routeCodes?.map((code) => code.trim()).filter(Boolean) ?? [];
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
         siteVisit: {
           operationalScope: OperationalScope.SAVT,
-          routeCode: { not: null },
+          routeCode: codeFilter.length ? { in: codeFilter } : { not: null },
           ...(lifecycleStatus ? { lifecycleStatus } : {}),
         },
       },

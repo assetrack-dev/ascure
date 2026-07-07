@@ -30,6 +30,7 @@ import type { AuthSession } from "@/types/auth";
 import type { EnterpriseOptions } from "@/types/enterprise";
 import type { ManagedTeam } from "@/types/users";
 import type {
+  DisplayStatus,
   OperationalDomain,
   SiteVisitListItem,
   SiteVisitSubstation,
@@ -48,7 +49,7 @@ type SortKey =
   | "lastActivity"
   | "startedAt";
 type SortDirection = "asc" | "desc";
-type StatusFilter = "ALL" | SiteVisitStatus;
+type StatusFilter = "ALL" | DisplayStatus;
 type ValidationFilter = "ALL" | SiteVisitValidationStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
 type OperationalDomainFilter = "ALL" | OperationalDomain;
@@ -85,10 +86,12 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const AUTO_REFRESH_MS = 60000;
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
-  { label: "Active", value: "ACTIVE" },
-  { label: "Open", value: "OPEN" },
+  { label: "Not Started", value: "NOT_STARTED" },
   { label: "In Progress", value: "IN_PROGRESS" },
+  { label: "Needs Amendment", value: "NEEDS_AMENDMENT" },
+  { label: "In Review", value: "IN_REVIEW" },
   { label: "Completed", value: "COMPLETED" },
+  { label: "Archived", value: "ARCHIVED" },
   { label: "Cancelled", value: "CANCELLED" },
 ];
 const VALIDATION_OPTIONS: Array<{ label: string; value: ValidationFilter }> = [
@@ -394,28 +397,31 @@ function uniqueTeams(visits: SiteVisitListItem[]) {
   );
 }
 
-function StatusBadge({ status }: { status: SiteVisitStatus }) {
-  const className =
-    status === "COMPLETED"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : status === "CANCELLED"
-        ? "border-slate-200 bg-slate-50 text-slate-600"
-        : status === "ACTIVE"
-          ? "border-teal-200 bg-teal-50 text-teal-700"
-          : "border-blue-200 bg-blue-50 text-blue-700";
-  const dotClassName =
-    status === "COMPLETED"
-      ? "bg-emerald-500"
-      : status === "CANCELLED"
-        ? "bg-slate-400"
-        : "bg-teal-500";
+const DISPLAY_STATUS_TONE: Record<DisplayStatus, { badge: string; dot: string }> = {
+  NOT_STARTED: { badge: "border-slate-200 bg-slate-50 text-slate-600", dot: "bg-slate-400" },
+  IN_PROGRESS: { badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500" },
+  NEEDS_AMENDMENT: { badge: "border-amber-200 bg-amber-50 text-amber-800", dot: "bg-amber-500" },
+  IN_REVIEW: { badge: "border-sky-200 bg-sky-50 text-sky-700", dot: "bg-sky-500" },
+  COMPLETED: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
+  ARCHIVED: { badge: "border-slate-200 bg-slate-100 text-slate-600", dot: "bg-slate-500" },
+  CANCELLED: { badge: "border-slate-200 bg-slate-50 text-slate-500", dot: "bg-slate-400" },
+};
+
+function StatusBadge({
+  displayStatus,
+  label,
+}: {
+  displayStatus: DisplayStatus;
+  label: string;
+}) {
+  const tone = DISPLAY_STATUS_TONE[displayStatus] ?? DISPLAY_STATUS_TONE.IN_PROGRESS;
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${tone.badge}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
-      {formatEnum(status)}
+      <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+      {label}
     </span>
   );
 }
@@ -1010,7 +1016,8 @@ function SiteVisitsContent() {
             normalizedMember,
           ),
         );
-      const matchesStatus = statusFilter === "ALL" || visit.status === statusFilter;
+      const matchesStatus =
+        statusFilter === "ALL" || visit.displayStatus === statusFilter;
       const matchesValidation =
         validationFilter === "ALL" || visit.validationStatus === validationFilter;
       const matchesVisitType =
@@ -1086,7 +1093,9 @@ function SiteVisitsContent() {
       .map((visit) => visit.team?.id ?? visit.team?.code ?? visit.team?.name)
       .filter((teamIdentifier): teamIdentifier is string => Boolean(teamIdentifier)),
   ).size;
-  const completedVisitCount = visits.filter((visit) => visit.status === "COMPLETED").length;
+  const completedVisitCount = visits.filter(
+    (visit) => visit.displayStatus === "COMPLETED",
+  ).length;
   const averageCompletion =
     visits.length === 0
       ? 0
@@ -1572,7 +1581,10 @@ function SiteVisitsContent() {
                             aria-label={`Open site visit ${displayPencawang(visit)}`}
                           >
                             <td className="px-3 py-4 align-top">
-                              <StatusBadge status={visit.status} />
+                              <StatusBadge
+                                displayStatus={visit.displayStatus}
+                                label={visit.displayStatusLabel}
+                              />
                             </td>
                             <td className="px-3 py-4 align-top">
                               <div className="min-w-0">

@@ -35,6 +35,10 @@ import {
 } from '../common/operational-health';
 import { describeInspectionRecency } from '../common/inspection-cadence';
 import {
+  deriveDisplayStatus,
+  DISPLAY_STATUS_LABEL,
+} from '@ascure/shared-utils';
+import {
   DEFAULT_OPERATION_MODE,
   DEFAULT_OPERATIONAL_SCOPE,
   getSessionKindForScope,
@@ -2507,6 +2511,22 @@ export class SiteVisitsService {
     };
   }
 
+  /** The one user-facing status (list, detail, mobile all read this) — collapses
+   *  the operational + review lifecycle into a single word. See @ascure/shared-utils. */
+  private displayStatusFields(siteVisit: {
+    status: SiteVisitStatus;
+    lifecycleStatus: SurveyLifecycleStatus | null;
+  }) {
+    const displayStatus = deriveDisplayStatus(
+      siteVisit.status,
+      siteVisit.lifecycleStatus,
+    );
+    return {
+      displayStatus,
+      displayStatusLabel: DISPLAY_STATUS_LABEL[displayStatus],
+    };
+  }
+
   private serializeSiteVisitListItem(
     siteVisit: SiteVisitBase,
     rollup: SiteVisitRollup,
@@ -2542,6 +2562,7 @@ export class SiteVisitsService {
       operationalHealthStatus,
       isOverdue,
       overdueThresholdHours,
+      ...this.displayStatusFields(siteVisit),
     };
   }
 
@@ -2586,6 +2607,7 @@ export class SiteVisitsService {
       operationalHealthStatus,
       isOverdue,
       overdueThresholdHours,
+      ...this.displayStatusFields(siteVisit),
       operationalMetadata: {
         operationMode: siteVisit.operationMode,
         operationalScope: siteVisit.operationalScope,
