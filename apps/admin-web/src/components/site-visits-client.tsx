@@ -36,7 +36,6 @@ import type {
   SiteVisitSubstation,
   SiteVisitStatus,
   SiteVisitType,
-  SiteVisitValidationStatus,
 } from "@/types/site-visits";
 
 type SortKey =
@@ -50,7 +49,6 @@ type SortKey =
   | "startedAt";
 type SortDirection = "asc" | "desc";
 type StatusFilter = "ALL" | DisplayStatus;
-type ValidationFilter = "ALL" | SiteVisitValidationStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
 type OperationalDomainFilter = "ALL" | OperationalDomain;
 
@@ -93,13 +91,6 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Completed", value: "COMPLETED" },
   { label: "Archived", value: "ARCHIVED" },
   { label: "Cancelled", value: "CANCELLED" },
-];
-const VALIDATION_OPTIONS: Array<{ label: string; value: ValidationFilter }> = [
-  { label: "All validation", value: "ALL" },
-  { label: "Pending", value: "PENDING" },
-  { label: "Validated", value: "VALIDATED" },
-  { label: "Warning", value: "WARNING" },
-  { label: "Failed", value: "FAILED" },
 ];
 const VISIT_TYPE_OPTIONS: Array<{ label: string; value: VisitTypeFilter }> = [
   { label: "All types", value: "ALL" },
@@ -325,14 +316,6 @@ function formatRefreshTime(date: Date | null) {
   }).format(date)}`;
 }
 
-function formatValidationLabel(status: SiteVisitValidationStatus) {
-  if (status === "PENDING" || status === "UNKNOWN") {
-    return "Awaiting Validation";
-  }
-
-  return formatEnum(status);
-}
-
 function getSortValue(visit: SiteVisitListItem, sortKey: SortKey) {
   if (sortKey === "status") {
     return STATUS_RANK[visit.status];
@@ -422,23 +405,6 @@ function StatusBadge({
     >
       <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
       {label}
-    </span>
-  );
-}
-
-function ValidationBadge({ status }: { status: SiteVisitValidationStatus }) {
-  const className =
-    status === "FAILED"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : status === "WARNING"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : status === "VALIDATED"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-600";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatValidationLabel(status)}
     </span>
   );
 }
@@ -850,12 +816,11 @@ function SiteVisitsContent() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
-  const [mainheadFilter, setMainheadFilter] = useState("");
-  const [pencawangFilter, setPencawangFilter] = useState("");
+  const [mainheadFilter, setMainheadFilter] = useState("ALL");
+  const [pencawangFilter, setPencawangFilter] = useState("ALL");
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [memberFilter, setMemberFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
-  const [validationFilter, setValidationFilter] = useState<ValidationFilter>("ALL");
   const [visitTypeFilter, setVisitTypeFilter] = useState<VisitTypeFilter>("ALL");
   const [operationalDomainFilter, setOperationalDomainFilter] =
     useState<OperationalDomainFilter>("ALL");
@@ -969,7 +934,6 @@ function SiteVisitsContent() {
     teamFilter,
     memberFilter,
     statusFilter,
-    validationFilter,
     visitTypeFilter,
     operationalDomainFilter,
     startDate,
@@ -978,11 +942,23 @@ function SiteVisitsContent() {
   ]);
 
   const teamOptions = useMemo(() => uniqueTeams(visits), [visits]);
+  const mainheadOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(visits.map((visit) => displayMainhead(visit)).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [visits],
+  );
+  const pencawangOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(visits.map((visit) => displayPencawang(visit)).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [visits],
+  );
 
   const filteredVisits = useMemo(() => {
     const normalizedSearch = normalizeSearchText(search);
-    const normalizedMainhead = normalizeSearchText(mainheadFilter);
-    const normalizedPencawang = normalizeSearchText(pencawangFilter);
     const normalizedMember = normalizeSearchText(memberFilter);
 
     return visits.filter((visit) => {
@@ -1003,11 +979,9 @@ function SiteVisitsContent() {
           visit.teamMembers.map((member) => `${member.name ?? ""} ${member.email ?? ""}`).join(" "),
         ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
       const matchesMainhead =
-        !normalizedMainhead ||
-        normalizeSearchText(displayMainhead(visit)).includes(normalizedMainhead);
+        mainheadFilter === "ALL" || displayMainhead(visit) === mainheadFilter;
       const matchesPencawang =
-        !normalizedPencawang ||
-        normalizeSearchText(displayPencawang(visit)).includes(normalizedPencawang);
+        pencawangFilter === "ALL" || displayPencawang(visit) === pencawangFilter;
       const matchesTeam = teamFilter === "ALL" || visit.team?.id === teamFilter;
       const matchesMember =
         !normalizedMember ||
@@ -1018,8 +992,6 @@ function SiteVisitsContent() {
         );
       const matchesStatus =
         statusFilter === "ALL" || visit.displayStatus === statusFilter;
-      const matchesValidation =
-        validationFilter === "ALL" || visit.validationStatus === validationFilter;
       const matchesVisitType =
         visitTypeFilter === "ALL" || visit.visitType === visitTypeFilter;
       const matchesOperationalDomain =
@@ -1035,7 +1007,6 @@ function SiteVisitsContent() {
         matchesTeam &&
         matchesMember &&
         matchesStatus &&
-        matchesValidation &&
         matchesVisitType &&
         matchesOperationalDomain &&
         matchesStartDate &&
@@ -1052,7 +1023,6 @@ function SiteVisitsContent() {
     startDate,
     statusFilter,
     teamFilter,
-    validationFilter,
     visitTypeFilter,
     visits,
   ]);
@@ -1118,12 +1088,11 @@ function SiteVisitsContent() {
 
   function resetFilters() {
     setSearch("");
-    setMainheadFilter("");
-    setPencawangFilter("");
+    setMainheadFilter("ALL");
+    setPencawangFilter("ALL");
     setTeamFilter("ALL");
     setMemberFilter("");
     setStatusFilter("ALL");
-    setValidationFilter("ALL");
     setVisitTypeFilter("ALL");
     setOperationalDomainFilter("ALL");
     setStartDate("");
@@ -1320,7 +1289,7 @@ function SiteVisitsContent() {
                   <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] 2xl:col-span-3">
                   <div className="border-b border-slate-200 p-5">
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,1.6fr)_repeat(5,minmax(0,1fr))]">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
                         <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Search</span>
                           <span className="relative block">
@@ -1348,23 +1317,6 @@ function SiteVisitsContent() {
                             className={filterControlClassName}
                           >
                             {STATUS_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Validation</span>
-                          <select
-                            value={validationFilter}
-                            onChange={(event) =>
-                              setValidationFilter(event.target.value as ValidationFilter)
-                            }
-                            className={filterControlClassName}
-                          >
-                            {VALIDATION_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -1443,24 +1395,34 @@ function SiteVisitsContent() {
 
                         <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>MAINHEAD</span>
-                          <input
-                            type="text"
+                          <select
                             value={mainheadFilter}
                             onChange={(event) => setMainheadFilter(event.target.value)}
-                            placeholder="MAINHEAD"
                             className={filterControlClassName}
-                          />
+                          >
+                            <option value="ALL">All MAINHEAD</option>
+                            {mainheadOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
                         </label>
 
                         <label className={filterFieldClassName}>
                           <span className={filterLabelClassName}>Pencawang</span>
-                          <input
-                            type="text"
+                          <select
                             value={pencawangFilter}
                             onChange={(event) => setPencawangFilter(event.target.value)}
-                            placeholder="Pencawang"
                             className={filterControlClassName}
-                          />
+                          >
+                            <option value="ALL">All Pencawang</option>
+                            {pencawangOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
                         </label>
 
                         <label className={filterFieldClassName}>
@@ -1553,7 +1515,6 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">Validation</th>
                           <th className="px-3 py-3.5">
                             <SortButton
                               label="Last Activity"
@@ -1619,9 +1580,6 @@ function SiteVisitsContent() {
                             </td>
                             <td className="px-3 py-4 align-top">
                               <DefectChip count={visit.defectsFound} />
-                            </td>
-                            <td className="px-3 py-4 align-top">
-                              <ValidationBadge status={visit.validationStatus} />
                             </td>
                             <td className="px-3 py-4 align-top text-slate-600">
                               <ActivityStatus date={visit.lastActivityAt} />

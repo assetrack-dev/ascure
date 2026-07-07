@@ -137,6 +137,7 @@ export interface SiteVisitAssetLink {
     id: string;
     assetCode: string;
     name: string | null;
+    noTiangLama?: string | null;
     status?: string | null;
     latitude?: number | null;
     longitude?: number | null;
@@ -146,6 +147,11 @@ export interface SiteVisitAssetLink {
       name?: string | null;
     } | null;
     substation?: SiteVisitSubstation | null;
+  };
+  /** Latest-inspection checklist readings surfaced as columns for DC checking. */
+  checklist?: {
+    bacaanKelegaan1: string | null;
+    catitan: string | null;
   };
 }
 

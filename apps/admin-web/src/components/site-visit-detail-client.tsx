@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Clock3,
   Download,
-  MapPin,
   Radio,
   RefreshCw,
   Search,
@@ -331,82 +330,6 @@ function ProgressPanel({ visit }: { visit: SiteVisitDetail }) {
         <MetricTile label="Images" value={visit.images.length} icon={Radio} />
       </div>
     </section>
-  );
-}
-
-function GisPanel({ visit }: { visit: SiteVisitDetail }) {
-  const hasCoordinates =
-    typeof visit.checkInLatitude === "number" && typeof visit.checkInLongitude === "number";
-
-  return (
-    <aside className="space-y-6">
-      <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-            <MapPin size={17} className="text-[var(--brand)]" />
-            GIS Operations
-          </div>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
-            {hasCoordinates ? "Coordinate" : "Standby"}
-          </span>
-        </div>
-
-        <div className="mt-5 h-56 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--chrome)]">
-          <div
-            className="h-full w-full"
-            style={{
-              backgroundImage:
-                "linear-gradient(rgba(233,236,239,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(233,236,239,0.12) 1px, transparent 1px)",
-              backgroundSize: "28px 28px",
-            }}
-          >
-            <div className="flex h-full items-center justify-center px-5 text-center">
-              <div>
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--chrome-line-strong)] bg-[var(--chrome-active)] text-[var(--on-chrome)]">
-                  <MapPin size={20} />
-                </div>
-                <p className="mt-3 text-sm font-semibold text-[var(--on-chrome)]">
-                  {hasCoordinates
-                    ? `${visit.checkInLatitude?.toFixed(5)}, ${visit.checkInLongitude?.toFixed(5)}`
-                    : "No check-in coordinate"}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <dl className="mt-5 space-y-3">
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <dt className="font-medium text-[var(--muted)]">Accuracy</dt>
-            <dd className="font-semibold text-slate-900">
-              {visit.checkInAccuracyMeters === null
-                ? "Not recorded"
-                : `${visit.checkInAccuracyMeters} m`}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <dt className="font-medium text-[var(--muted)]">Captured</dt>
-            <dd className="font-semibold text-slate-900">
-              {formatDateTime(visit.checkInCapturedAt)}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <dt className="font-medium text-[var(--muted)]">Feeder</dt>
-            <dd className="font-semibold text-slate-900">{formatNullable(visit.feederId)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <dt className="font-medium text-[var(--muted)]">Route</dt>
-            <dd className="font-semibold text-slate-900">{formatNullable(visit.feederRouteId)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <dt className="font-medium text-[var(--muted)]">Geometry</dt>
-            <dd className="font-semibold text-slate-900">
-              {formatNullable(visit.gisGeometryVersion)}
-            </dd>
-          </div>
-        </dl>
-      </section>
-    </aside>
   );
 }
 
@@ -1813,7 +1736,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
 
                 {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
 
-                <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="grid gap-6">
                   <div className="space-y-6">
                     <ProgressPanel visit={visit} />
 
@@ -1926,7 +1849,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           <table className="min-w-full text-left text-sm">
                             <thead>
                               <tr className="sticky top-0 z-10 border-y border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                                <th className="px-4 py-3">Asset</th>
+                                <th className="px-4 py-3">No Tiang Rondaan</th>
+                                <th className="px-4 py-3">No Tiang Lama</th>
+                                <th className="px-4 py-3">Bacaan Kelegaan 1</th>
+                                <th className="px-4 py-3">Catitan</th>
                                 <th className="px-4 py-3">Type</th>
                                 <th className="px-4 py-3">Source</th>
                                 <th className="px-4 py-3">Added</th>
@@ -1955,6 +1881,15 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                 >
                                   <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-900">
                                     {link.asset.assetCode}
+                                  </td>
+                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
+                                    {formatNullable(link.asset.noTiangLama)}
+                                  </td>
+                                  <td className="whitespace-nowrap px-4 py-4 text-slate-700">
+                                    {formatNullable(link.checklist?.bacaanKelegaan1)}
+                                  </td>
+                                  <td className="min-w-48 px-4 py-4 text-slate-600">
+                                    {formatNullable(link.checklist?.catitan)}
                                   </td>
                                   <td className="whitespace-nowrap px-4 py-4 text-slate-700">
                                     {formatNullable(link.asset.assetType?.name ?? link.asset.assetType?.code)}
@@ -2056,8 +1991,6 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                       </dl>
                     </section>
                   </div>
-
-                  <GisPanel visit={visit} />
                 </div>
 
                 {canDeleteSurvey ? (

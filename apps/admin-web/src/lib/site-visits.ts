@@ -440,11 +440,18 @@ function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink
       assetCode:
         firstString(asset, ["assetCode", "code", "noTiangRondaan"]) ?? "Unassigned",
       name: firstString(asset, ["name", "assetName"]),
+      noTiangLama: firstString(asset, ["noTiangLama"]),
       status: firstString(asset, ["status"]),
       latitude: readNumber(asset, "latitude"),
       longitude: readNumber(asset, "longitude"),
       assetType: normalizeTeam(asset.assetType),
       substation: normalizeSubstation(asset.substation),
+    },
+    checklist: {
+      bacaanKelegaan1: firstString(nestedRecord(record, "checklist"), [
+        "bacaanKelegaan1",
+      ]),
+      catitan: firstString(nestedRecord(record, "checklist"), ["catitan"]),
     },
   };
 }
