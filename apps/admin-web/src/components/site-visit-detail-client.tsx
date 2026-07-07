@@ -1883,7 +1883,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     {link.asset.assetCode}
                                   </td>
                                   <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                                    {formatNullable(link.asset.noTiangLama)}
+                                    {formatNullable(link.asset.noTiangLama ?? link.asset.name)}
                                   </td>
                                   <td className="whitespace-nowrap px-4 py-4 text-slate-700">
                                     {formatNullable(link.checklist?.bacaanKelegaan1)}
