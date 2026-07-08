@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { ChevronDown, RefreshCw, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronDown, RefreshCw, RotateCcw, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -29,6 +29,14 @@ import {
 import { roleLabel } from "@/lib/roles";
 import { MAINTENANCE_CATEGORIES, type MaintenanceCategory } from "@/types/defects";
 import type { AuthSession } from "@/types/auth";
+
+/** Label for the Back link, keyed off the `?from=` path (same idea as asset-detail). */
+function backLabel(href: string) {
+  if (href.startsWith("/maintenance-workspace")) return "Maintenance";
+  if (href.startsWith("/site-visits")) return "Operations Detail";
+  if (href.startsWith("/defects")) return "Defects";
+  return "Back";
+}
 
 const GoogleAssetMap = dynamic(() => import("@/components/google-asset-map"), {
   ssr: false,
@@ -194,6 +202,34 @@ function MapContent() {
   const [inspectedSel, setInspectedSel] = useState<InspectedFilter>("all");
   // View preference (not a filter): how to colour the pins.
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
+  // Scoped entry (e.g. the Maintenance drill-through): show only poles carrying an
+  // open defect, and offer a Back link to wherever the user came from.
+  const [defectsOnly, setDefectsOnly] = useState(false);
+  const [backHref, setBackHref] = useState<string | null>(null);
+
+  // Read the scoping params once, on mount. Deliberately `window.location.search`
+  // rather than useSearchParams — the latter forces a <Suspense> boundary in the
+  // App Router, and asset-detail already established this convention.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+
+    const substationId = params.get("substationId");
+    if (substationId) {
+      setSubSel(new Set([substationId]));
+    }
+
+    if (params.get("defectsOnly") === "1") {
+      setDefectsOnly(true);
+      // Arriving from a defect workflow — colour by defect, not by inspection.
+      setColorMode("defect");
+    }
+
+    const from = params.get("from");
+    // Internal absolute paths only (same open-redirect guard as asset-detail).
+    if (from && from.startsWith("/") && !from.startsWith("//")) {
+      setBackHref(from);
+    }
+  }, []);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -286,6 +322,12 @@ function MapContent() {
   // (e.g. Refresh), so the active-count badge and the checkbox list stay in sync
   // and a selection can't get stuck with no checkbox to clear it.
   useEffect(() => {
+    // Nothing has loaded yet, so every option list is empty and pruning would wipe
+    // a pre-seeded selection (e.g. ?substationId= from the Maintenance drill-in).
+    if (assets.length === 0) {
+      return;
+    }
+
     const prune = (
       setter: React.Dispatch<React.SetStateAction<Set<string>>>,
       options: Option[],
@@ -307,12 +349,22 @@ function MapContent() {
     prune(setTeamSel, teamOptions);
     prune(setStatusSel, statusOptions);
     prune(setCatSel, categoryOptions);
-  }, [subOptions, typeOptions, mainOptions, teamOptions, statusOptions, categoryOptions]);
+  }, [
+    assets.length,
+    subOptions,
+    typeOptions,
+    mainOptions,
+    teamOptions,
+    statusOptions,
+    categoryOptions,
+  ]);
 
   const filtered = useMemo(() => {
     const matchesSet = (set: Set<string>, value: string | null) =>
       set.size === 0 || set.has(value ?? UNASSIGNED);
     return assets.filter((a) => {
+      // Scoped defect view: only poles that actually carry an open defect.
+      if (defectsOnly && a.openDefectCount <= 0) return false;
       if (!matchesSet(subSel, a.substation?.id ?? null)) return false;
       if (!matchesSet(typeSel, a.assetType?.id ?? null)) return false;
       if (!matchesSet(mainSel, a.mainhead?.id ?? null)) return false;
@@ -330,7 +382,7 @@ function MapContent() {
       }
       return true;
     });
-  }, [assets, subSel, typeSel, mainSel, teamSel, statusSel, catSel, inspectedSel]);
+  }, [assets, defectsOnly, subSel, typeSel, mainSel, teamSel, statusSel, catSel, inspectedSel]);
 
   const counts = useMemo(() => {
     let inspected = 0;
@@ -382,6 +434,9 @@ function MapContent() {
     setStatusSel(new Set());
     setCatSel(new Set());
     setInspectedSel("all");
+    // Reset clears the scoped defect view too, otherwise the map stays narrowed
+    // with no visible filter explaining why.
+    setDefectsOnly(false);
   }, []);
 
   const toggle = useCallback(
@@ -404,6 +459,16 @@ function MapContent() {
         <div className="mx-auto max-w-6xl">
           <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
             <div>
+              {backHref ? (
+                <button
+                  type="button"
+                  onClick={() => router.push(backHref)}
+                  className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--muted)] transition hover:text-[var(--brand)]"
+                >
+                  <ArrowLeft size={16} />
+                  Back to {backLabel(backHref)}
+                </button>
+              ) : null}
               <p className="text-sm font-semibold uppercase text-[var(--brand)]">Map</p>
               <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Asset Map</h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
@@ -411,6 +476,17 @@ function MapContent() {
                 {roleLabel(session?.user?.role)} access — you see assets from the teams and
                 Pencawang you are responsible for. Click a pin for details.
               </p>
+              {defectsOnly ? (
+                <button
+                  type="button"
+                  onClick={() => setDefectsOnly(false)}
+                  title="Show every pole, not just those carrying an open defect"
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 transition hover:border-amber-300"
+                >
+                  Defect poles only
+                  <X size={13} />
+                </button>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <button

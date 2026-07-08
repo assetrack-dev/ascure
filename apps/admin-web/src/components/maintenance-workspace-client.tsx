@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Building2, Info, RefreshCw, Wrench } from "lucide-react";
+import { AlertTriangle, Building2, Info, MapPin, RefreshCw, Wrench } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -20,8 +20,27 @@ import type {
   WorkspaceLane,
   WorkspacePackage,
 } from "@/types/maintenance-workspace";
+import { DISPLAY_STATUS_LABELS, type DisplayStatus } from "@/types/site-visits";
 
 type AssignHandler = (payload: AssignMaintenanceLanePayload) => void;
+type OpenMapHandler = (substationId: string) => void;
+
+/** Sentinel group for Pencawang that have never been surveyed. */
+const NO_SURVEY_GROUP = "NO_SURVEY";
+
+/**
+ * Packages are grouped by the Pencawang's survey status. Completed leads because
+ * it is the only group whose defects can be assigned out to a maintenance team.
+ */
+const STATUS_GROUP_ORDER: DisplayStatus[] = [
+  "COMPLETED",
+  "IN_REVIEW",
+  "NEEDS_AMENDMENT",
+  "IN_PROGRESS",
+  "NOT_STARTED",
+  "ARCHIVED",
+  "CANCELLED",
+];
 
 const CATEGORY_META: Record<MaintenanceCategory, { label: string; dot: string }> = {
   RENTIS: { label: "Rentis", dot: "bg-green-500" },
@@ -150,29 +169,45 @@ function PackageCard({
   teams,
   busy,
   onAssign,
+  onOpenMap,
 }: {
   pkg: WorkspacePackage;
   canAssign: boolean;
   teams: WorkspaceAssignableTeam[];
   busy: boolean;
   onAssign: AssignHandler;
+  onOpenMap: OpenMapHandler;
 }) {
   const categories: MaintenanceCategory[] = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"];
   const laneByCategory = new Map(pkg.lanes.map((lane) => [lane.category, lane]));
+  // Role permits assigning AND the survey is Completed (report generated). The
+  // server enforces the second half independently — this only hides the picker.
+  const canAssignHere = canAssign && pkg.assignable;
 
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-[var(--foreground)]">
-            {pkg.substation.name}
-          </h3>
+          <button
+            type="button"
+            onClick={() => onOpenMap(pkg.substation.id)}
+            title="Open the defect map for this Pencawang"
+            className="group flex min-w-0 items-center gap-1.5 text-left"
+          >
+            <h3 className="truncate text-base font-semibold text-[var(--foreground)] group-hover:text-[var(--brand)] group-hover:underline">
+              {pkg.substation.name}
+            </h3>
+            <MapPin
+              size={14}
+              className="shrink-0 text-slate-400 group-hover:text-[var(--brand)]"
+            />
+          </button>
           <p className="mt-0.5 text-xs text-[var(--muted)]">
             {pkg.substation.code}
             {pkg.mainhead ? ` · ${pkg.mainhead.name}` : ""} · {pkg.totalCount} defects
           </p>
         </div>
-        {canAssign && pkg.totalCount > 0 ? (
+        {canAssignHere && pkg.totalCount > 0 ? (
           <AssignSelect
             teams={teams}
             busy={busy}
@@ -181,6 +216,14 @@ function PackageCard({
               onAssign({ substationId: pkg.substation.id, assignedToTeamId: teamId })
             }
           />
+        ) : canAssign && !pkg.assignable ? (
+          <span
+            title="Defects release to maintenance once the survey report is generated"
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]"
+          >
+            <Info size={13} />
+            Assign after report
+          </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[var(--shadow-soft)]">
             <Building2 size={13} />
@@ -224,7 +267,7 @@ function PackageCard({
                 >
                   {status.text}
                 </span>
-                {canAssign && lane.count > 0 ? (
+                {canAssignHere && lane.count > 0 ? (
                   <AssignSelect
                     teams={teams}
                     busy={busy}
@@ -284,6 +327,59 @@ function MaintenanceWorkspaceContent() {
     },
     [handleLogout],
   );
+
+  /**
+   * Drill through to the map, scoped to this Pencawang and showing only poles that
+   * carry open defects. `from` drives the map's Back button (same convention as
+   * the asset-detail page).
+   */
+  const handleOpenMap = useCallback<OpenMapHandler>(
+    (substationId) => {
+      const params = new URLSearchParams({
+        substationId,
+        defectsOnly: "1",
+        from: "/maintenance-workspace",
+      });
+      router.push(`/map?${params.toString()}`);
+    },
+    [router],
+  );
+
+  /** Packages bucketed by the Pencawang's survey status, Completed first. */
+  const groupedPackages = useMemo(() => {
+    if (!workspace) {
+      return [];
+    }
+
+    const byStatus = new Map<string, WorkspacePackage[]>();
+
+    for (const pkg of workspace.packages) {
+      const key = pkg.displayStatus ?? NO_SURVEY_GROUP;
+      const bucket = byStatus.get(key);
+
+      if (bucket) {
+        bucket.push(pkg);
+      } else {
+        byStatus.set(key, [pkg]);
+      }
+    }
+
+    return [...STATUS_GROUP_ORDER, NO_SURVEY_GROUP]
+      .filter((key) => byStatus.has(key))
+      .map((key) => {
+        const packages = byStatus.get(key) ?? [];
+
+        return {
+          key,
+          label:
+            key === NO_SURVEY_GROUP
+              ? "No survey yet"
+              : DISPLAY_STATUS_LABELS[key as DisplayStatus],
+          packages,
+          defectCount: packages.reduce((total, pkg) => total + pkg.totalCount, 0),
+        };
+      });
+  }, [workspace]);
 
   const handleAssign = useCallback<AssignHandler>(
     (payload) => {
@@ -393,16 +489,33 @@ function MaintenanceWorkspaceContent() {
                 <EmergencyLane workspace={workspace} />
 
                 {workspace.packages.length > 0 ? (
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    {workspace.packages.map((pkg) => (
-                      <PackageCard
-                        key={pkg.substation.id}
-                        pkg={pkg}
-                        canAssign={workspace.canAssign}
-                        teams={workspace.assignableTeams}
-                        busy={isAssigning}
-                        onAssign={handleAssign}
-                      />
+                  <div className="space-y-8">
+                    {groupedPackages.map((group) => (
+                      <section key={group.key}>
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-700">
+                            {group.label}
+                          </h2>
+                          <span className="text-xs font-medium text-[var(--muted)]">
+                            {group.packages.length} Pencawang
+                            {group.packages.length === 1 ? "" : "s"} · {group.defectCount}{" "}
+                            defect{group.defectCount === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        <div className="grid gap-5 lg:grid-cols-2">
+                          {group.packages.map((pkg) => (
+                            <PackageCard
+                              key={pkg.substation.id}
+                              pkg={pkg}
+                              canAssign={workspace.canAssign}
+                              teams={workspace.assignableTeams}
+                              busy={isAssigning}
+                              onAssign={handleAssign}
+                              onOpenMap={handleOpenMap}
+                            />
+                          ))}
+                        </div>
+                      </section>
                     ))}
                   </div>
                 ) : (
