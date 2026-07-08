@@ -16,7 +16,6 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Users,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -1057,12 +1056,6 @@ function SiteVisitsContent() {
   const activeVisitCount = visits.filter((visit) =>
     ["ACTIVE", "OPEN", "IN_PROGRESS"].includes(visit.status),
   ).length;
-  const activeTeamCount = new Set(
-    visits
-      .filter((visit) => ["ACTIVE", "OPEN", "IN_PROGRESS"].includes(visit.status))
-      .map((visit) => visit.team?.id ?? visit.team?.code ?? visit.team?.name)
-      .filter((teamIdentifier): teamIdentifier is string => Boolean(teamIdentifier)),
-  ).size;
   const completedVisitCount = visits.filter(
     (visit) => visit.displayStatus === "COMPLETED",
   ).length;
@@ -1285,8 +1278,8 @@ function SiteVisitsContent() {
                   />
                 </div>
 
-                <div className="grid gap-6 2xl:grid-cols-4">
-                  <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] 2xl:col-span-3">
+                <div>
+                  <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
                   <div className="border-b border-slate-200 p-5">
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
@@ -1657,54 +1650,6 @@ function SiteVisitsContent() {
                   </div>
                   </section>
 
-                  <aside className="hidden 2xl:col-span-1 2xl:block">
-                    <div className="sticky top-6 rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-bold uppercase text-[var(--muted)]">
-                            GIS Operations Slot
-                          </p>
-                          <h2 className="mt-1 text-lg font-bold text-slate-950">
-                            Map Panel Ready
-                          </h2>
-                        </div>
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-teal-200 bg-teal-50 text-teal-700">
-                          <Activity size={17} />
-                        </div>
-                      </div>
-
-                      <div className="mt-5 h-56 overflow-hidden rounded-lg border border-dashed border-slate-300 bg-[linear-gradient(90deg,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:24px_24px]">
-                        <div className="flex h-full items-center justify-center bg-white/55 p-5 text-center">
-                          <div>
-                            <p className="text-sm font-bold text-slate-900">Operational layer</p>
-                            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                              Reserved for visit overlays, field team traces, and validation alerts.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid gap-3">
-                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
-                            <Users size={14} />
-                            Active teams
-                          </span>
-                          <span className="text-sm font-bold text-slate-950">
-                            {activeTeamCount}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                          <span className="text-xs font-semibold text-slate-600">
-                            Visible visits
-                          </span>
-                          <span className="text-sm font-bold text-slate-950">
-                            {sortedVisits.length}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </aside>
                 </div>
               </div>
             )}
