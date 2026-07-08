@@ -415,6 +415,7 @@ export class ReportsService {
       },
       orderBy: { startedAt: 'desc' },
       select: {
+        id: true,
         substationId: true,
         status: true,
         mainhead: true,
@@ -422,6 +423,8 @@ export class ReportsService {
         lifecycleStatus: true,
         checkInLatitude: true,
         checkInLongitude: true,
+        // Presence only — enough to know the visit carries a compiled report.
+        reports: { select: { id: true }, take: 1 },
       },
     });
 
@@ -436,6 +439,11 @@ export class ReportsService {
       string,
       { latitude: number; longitude: number }
     >();
+    // The most recent visit that actually HAS a compiled visual report — NOT
+    // simply the most recent visit. A re-surveyed Pencawang's newest cycle has no
+    // report yet while an older completed cycle still holds the only PDF, so
+    // keying the download off the latest visit would hide an existing report.
+    const reportVisitBySubstation = new Map<string, string>();
     for (const visit of visits) {
       if (visit.lifecycleStatus) {
         let statuses = statusesBySubstation.get(visit.substationId);
@@ -466,6 +474,14 @@ export class ReportsService {
         });
       }
 
+      // First (most recent) visit carrying a report wins.
+      if (
+        visit.reports.length > 0 &&
+        !reportVisitBySubstation.has(visit.substationId)
+      ) {
+        reportVisitBySubstation.set(visit.substationId, visit.id);
+      }
+
       const name = (visit.mainheadRecord?.name ?? visit.mainhead ?? '').trim();
       if (name && !mainheadBySubstation.has(visit.substationId)) {
         mainheadBySubstation.set(visit.substationId, name);
@@ -475,6 +491,7 @@ export class ReportsService {
     return substations.map(({ _count, ...substation }) => {
       const displayStatus = displayStatusBySubstation.get(substation.id) ?? null;
       const coords = coordsBySubstation.get(substation.id) ?? null;
+      const reportVisitId = reportVisitBySubstation.get(substation.id) ?? null;
       return {
         ...substation,
         mainhead: mainheadBySubstation.get(substation.id) ?? null,
@@ -486,6 +503,9 @@ export class ReportsService {
           : null,
         statuses: [...(statusesBySubstation.get(substation.id) ?? [])],
         assetCount: _count.assets,
+        // Drives the "Visual Report" download button (null => nothing compiled).
+        reportVisitId,
+        hasReport: reportVisitId != null,
       };
     });
   }
@@ -1230,6 +1250,9 @@ export class ReportsService {
       },
       orderBy: { startedAt: 'desc' },
       select: {
+        id: true,
+        // Presence only — enough to know the visit carries a compiled report.
+        reports: { select: { id: true }, take: 1 },
         routeCode: true,
         functionalLocation: true,
         pencawangName: true,
@@ -1282,6 +1305,8 @@ export class ReportsService {
     // Every lifecycle status seen on a route (across cycles) for the status filter.
     const statusesByRoute = new Map<string, Set<SurveyLifecycleStatus>>();
     const displayStatusByRoute = new Map<string, DisplayStatus>();
+    // Newest visit on the route that actually HAS a compiled visual report.
+    const reportVisitByRoute = new Map<string, string>();
     const coordsByRoute = new Map<
       string,
       { latitude: number; longitude: number }
@@ -1319,6 +1344,13 @@ export class ReportsService {
         });
       }
 
+      // Must run BEFORE the byRoute guard: that guard short-circuits every visit
+      // after the newest one, but the newest is often the cycle WITHOUT a report
+      // (a re-survey in progress) while an older cycle holds the compiled PDF.
+      if (visit.reports.length > 0 && !reportVisitByRoute.has(code)) {
+        reportVisitByRoute.set(code, visit.id);
+      }
+
       if (byRoute.has(code)) {
         continue;
       }
@@ -1337,6 +1369,7 @@ export class ReportsService {
       .map((route) => {
         const displayStatus = displayStatusByRoute.get(route.routeCode) ?? null;
         const coords = coordsByRoute.get(route.routeCode) ?? null;
+        const reportVisitId = reportVisitByRoute.get(route.routeCode) ?? null;
         return {
           ...route,
           latitude: coords?.latitude ?? null,
@@ -1346,6 +1379,9 @@ export class ReportsService {
             ? DISPLAY_STATUS_LABEL[displayStatus]
             : null,
           statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
+          // Drives the "Visual Report" download button (null => nothing compiled).
+          reportVisitId,
+          hasReport: reportVisitId != null,
         };
       })
       .sort((a, b) => a.routeCode.localeCompare(b.routeCode));

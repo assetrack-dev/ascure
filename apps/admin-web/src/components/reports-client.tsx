@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, MapPin, RefreshCw } from "lucide-react";
+import { Download, FileText, MapPin, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -18,6 +18,7 @@ import {
   fetchReportSubstations,
   fetchSavtRoutes,
 } from "@/lib/reports";
+import { downloadCompiledReport } from "@/lib/report-templates";
 import type { AuthSession } from "@/types/auth";
 import type { ReportSavtRoute, ReportSubstation } from "@/types/reports";
 import { DISPLAY_STATUS_LABELS, type DisplayStatus } from "@/types/site-visits";
@@ -236,7 +237,10 @@ function ReportsContent() {
     });
   }
 
-  function handleDownloadError(downloadError: unknown) {
+  function handleDownloadError(
+    downloadError: unknown,
+    notFoundMessage = "That item could not be found.",
+  ) {
     if (downloadError instanceof ApiError && downloadError.status === 401) {
       handleLogout();
       return;
@@ -246,17 +250,49 @@ function ReportsContent() {
       return;
     }
     if (downloadError instanceof ApiError && downloadError.status === 404) {
-      setError("That item could not be found.");
+      setError(notFoundMessage);
       return;
     }
     setError(requestErrorMessage(downloadError, "Unable to generate the Excel report."));
+  }
+
+  /**
+   * Download the frozen visual report PDF of the newest visit that has one.
+   * `downloadingKey` is namespaced (`pdf:` / `xlsx:`) so the two buttons in a row
+   * don't both show a spinner.
+   */
+  async function handleVisualReportDownload(
+    key: string,
+    reportVisitId: string | null,
+    label: string,
+  ) {
+    if (!session?.token || downloadingKey || isBulkDownloading || !reportVisitId) {
+      return;
+    }
+    setDownloadingKey(`pdf:${key}`);
+    setError("");
+    setNotice("");
+    try {
+      await downloadCompiledReport(session.token, {
+        id: reportVisitId,
+        pencawangCode: label,
+      });
+      setNotice(`Visual report downloaded for ${label}.`);
+    } catch (downloadError) {
+      handleDownloadError(
+        downloadError,
+        "No visual report has been compiled for this survey yet.",
+      );
+    } finally {
+      setDownloadingKey(null);
+    }
   }
 
   async function handleRowDownload(key: string) {
     if (!session?.token || downloadingKey || isBulkDownloading) {
       return;
     }
-    setDownloadingKey(key);
+    setDownloadingKey(`xlsx:${key}`);
     setError("");
     setNotice("");
     try {
@@ -466,7 +502,9 @@ function ReportsContent() {
                   ) : isSavt ? (
                     filteredRoutes.map((route) => {
                       const selected = selectedKeys.has(route.routeCode);
-                      const downloading = downloadingKey === route.routeCode;
+                      const downloading = downloadingKey === `xlsx:${route.routeCode}`;
+                      const downloadingReport =
+                        downloadingKey === `pdf:${route.routeCode}`;
                       return (
                         <tr key={route.routeCode} className={selected ? "bg-teal-50/40" : ""}>
                           <td className="px-3 py-2.5">
@@ -497,19 +535,47 @@ function ReportsContent() {
                             />
                           </td>
                           <td className="px-3 py-2.5 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleRowDownload(route.routeCode)}
-                              disabled={!!downloadingKey || isBulkDownloading}
-                              className={rowButtonClassName}
-                            >
-                              {downloading ? (
-                                <RefreshCw size={13} className="animate-spin" />
-                              ) : (
-                                <Download size={13} />
-                              )}
-                              {downloading ? "…" : "Download"}
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRowDownload(route.routeCode)}
+                                disabled={!!downloadingKey || isBulkDownloading}
+                                className={rowButtonClassName}
+                              >
+                                {downloading ? (
+                                  <RefreshCw size={13} className="animate-spin" />
+                                ) : (
+                                  <Download size={13} />
+                                )}
+                                {downloading ? "…" : "Download"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleVisualReportDownload(
+                                    route.routeCode,
+                                    route.reportVisitId,
+                                    route.routeCode,
+                                  )
+                                }
+                                disabled={
+                                  !route.hasReport || !!downloadingKey || isBulkDownloading
+                                }
+                                title={
+                                  route.hasReport
+                                    ? "Download the latest compiled visual report (PDF)"
+                                    : "No visual report yet — available once the survey reaches Laporan Selesai"
+                                }
+                                className={rowButtonClassName}
+                              >
+                                {downloadingReport ? (
+                                  <RefreshCw size={13} className="animate-spin" />
+                                ) : (
+                                  <FileText size={13} />
+                                )}
+                                {downloadingReport ? "…" : "Report"}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -517,7 +583,8 @@ function ReportsContent() {
                   ) : (
                     filteredSubstations.map((substation) => {
                       const selected = selectedKeys.has(substation.id);
-                      const downloading = downloadingKey === substation.id;
+                      const downloading = downloadingKey === `xlsx:${substation.id}`;
+                      const downloadingReport = downloadingKey === `pdf:${substation.id}`;
                       return (
                         <tr key={substation.id} className={selected ? "bg-teal-50/40" : ""}>
                           <td className="px-3 py-2.5">
@@ -551,19 +618,49 @@ function ReportsContent() {
                             />
                           </td>
                           <td className="px-3 py-2.5 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleRowDownload(substation.id)}
-                              disabled={!!downloadingKey || isBulkDownloading}
-                              className={rowButtonClassName}
-                            >
-                              {downloading ? (
-                                <RefreshCw size={13} className="animate-spin" />
-                              ) : (
-                                <Download size={13} />
-                              )}
-                              {downloading ? "…" : "Download"}
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRowDownload(substation.id)}
+                                disabled={!!downloadingKey || isBulkDownloading}
+                                className={rowButtonClassName}
+                              >
+                                {downloading ? (
+                                  <RefreshCw size={13} className="animate-spin" />
+                                ) : (
+                                  <Download size={13} />
+                                )}
+                                {downloading ? "…" : "Download"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleVisualReportDownload(
+                                    substation.id,
+                                    substation.reportVisitId,
+                                    substation.code,
+                                  )
+                                }
+                                disabled={
+                                  !substation.hasReport ||
+                                  !!downloadingKey ||
+                                  isBulkDownloading
+                                }
+                                title={
+                                  substation.hasReport
+                                    ? "Download the latest compiled visual report (PDF)"
+                                    : "No visual report yet — available once the survey reaches Laporan Selesai"
+                                }
+                                className={rowButtonClassName}
+                              >
+                                {downloadingReport ? (
+                                  <RefreshCw size={13} className="animate-spin" />
+                                ) : (
+                                  <FileText size={13} />
+                                )}
+                                {downloadingReport ? "…" : "Report"}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
