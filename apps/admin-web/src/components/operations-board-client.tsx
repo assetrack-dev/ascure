@@ -55,6 +55,17 @@ type FilterState = {
   q: string;
 };
 
+// Every free-text input must debounce. Previously only `q` did, so typing in the
+// Project / Work Package / Visit ID boxes fired one board request per keystroke.
+const FREE_TEXT_FILTER_KEYS = ["q", "projectId", "workPackageId", "siteVisitId"] as const;
+
+// Those three are validated with @IsUUID server-side, so a partially typed value
+// is guaranteed to 400. Skip the request entirely instead of spending a round
+// trip (and an error banner) on every intermediate keystroke.
+const UUID_FILTER_KEYS = ["projectId", "workPackageId", "siteVisitId"] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const DEFAULT_FILTERS: FilterState = {
   mainhead: "",
   projectId: "",
@@ -230,6 +241,14 @@ function formatEnumLabel(value: string | null | undefined) {
     .join(" ");
 }
 
+// Constructing an Intl formatter is the expensive part, so build it once rather
+// than once per table row on every render.
+const BOARD_DATE_FORMATTER = new Intl.DateTimeFormat("en-MY", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+
 function formatDate(date: string | null | undefined) {
   if (!date) {
     return "Not set";
@@ -241,11 +260,7 @@ function formatDate(date: string | null | undefined) {
     return date;
   }
 
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(parsedDate);
+  return BOARD_DATE_FORMATTER.format(parsedDate);
 }
 
 function parseDateTime(date: string | null | undefined) {
@@ -614,7 +629,8 @@ function RowActionMenu({
   const canVerify = canMutate && canVerifyFromBoard(item);
   const canAssign = canMutate && canAssignFromBoard(item);
   const canStart = canMutate && canStartMaintenanceFromBoard(item);
-  const activeUserIds = new Set(users.map((user) => user.id));
+  // Rebuilt once per user-list change, not once per row per render.
+  const activeUserIds = useMemo(() => new Set(users.map((user) => user.id)), [users]);
   const selectedUserId =
     item.assignedToUserId && activeUserIds.has(item.assignedToUserId)
       ? item.assignedToUserId
@@ -1097,17 +1113,34 @@ function OperationsBoardContent() {
     }
   }, [handleLogout]);
 
+  const hasFreeTextFilter = FREE_TEXT_FILTER_KEYS.some(
+    (key) => filters[key].trim() !== "",
+  );
+  const hasIncompleteUuidFilter = UUID_FILTER_KEYS.some(
+    (key) => filters[key] !== "" && !UUID_PATTERN.test(filters[key]),
+  );
+
   useEffect(() => {
-    if (!session?.token || !isFilterStateReady) {
+    if (!session?.token || !isFilterStateReady || hasIncompleteUuidFilter) {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      void loadBoard(session.token, filters);
-    }, filters.q ? 300 : 0);
+    const timeoutId = window.setTimeout(
+      () => {
+        void loadBoard(session.token, filters);
+      },
+      hasFreeTextFilter ? 300 : 0,
+    );
 
     return () => window.clearTimeout(timeoutId);
-  }, [filters, isFilterStateReady, loadBoard, session?.token]);
+  }, [
+    filters,
+    hasFreeTextFilter,
+    hasIncompleteUuidFilter,
+    isFilterStateReady,
+    loadBoard,
+    session?.token,
+  ]);
 
   useEffect(() => {
     if (!openActionMenuId) {
