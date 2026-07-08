@@ -20,6 +20,11 @@ import {
   ResolutionOutcome as DefectResolutionOutcome,
   UserRole,
 } from '@prisma/client';
+import {
+  deriveDisplayStatus,
+  DISPLAY_STATUS_LABEL,
+  type DisplayStatus,
+} from '@ascure/shared-utils';
 import { isQaActor } from '../common/authorization/qa-actor';
 import {
   inspectorOwnsDefects,
@@ -644,7 +649,10 @@ export class DefectsService {
       queues: this.serializeOperationsBoardQueues(queues),
       mainheads: Array.from(mainheadQueueMap.values())
         .map((group) => {
-          const serializedQueues = this.serializeOperationsBoardQueues(group.queues);
+          const serializedQueues = this.serializeOperationsBoardQueues(
+            group.queues,
+            false,
+          );
 
           return {
             mainhead: group.mainhead,
@@ -879,6 +887,13 @@ export class DefectsService {
       MaintenanceCategory.SELENGGARAAN,
     ];
 
+    // The Pencawang's survey status (most recent visit) — the workspace groups its
+    // packages by this, and only a COMPLETED survey may be assigned out.
+    const displayStatusBySubstation = await this.resolveSubstationDisplayStatus(
+      user.tenantId,
+      Array.from(packages.keys()),
+    );
+
     const serializedPackages = Array.from(packages.values())
       .map((pkg) => {
         const lanes = categories.map((category) => {
@@ -897,11 +912,21 @@ export class DefectsService {
         });
         const totalCount = lanes.reduce((sum, lane) => sum + lane.count, 0);
 
+        const displayStatus =
+          displayStatusBySubstation.get(pkg.substation.id) ?? null;
+
         return {
           substation: pkg.substation,
           mainhead: pkg.mainhead,
           totalCount,
           emergencyCount: pkg.emergencyCount,
+          displayStatus,
+          displayStatusLabel: displayStatus
+            ? DISPLAY_STATUS_LABEL[displayStatus]
+            : null,
+          // Defects release to maintenance only once the report is compiled.
+          // Advisory for the UI; enforced server-side in assignMaintenanceLane.
+          assignable: displayStatus === 'COMPLETED',
           lanes,
         };
       })
@@ -979,6 +1004,25 @@ export class DefectsService {
 
     const ctx = await buildScopeContext(this.prisma, user);
     await this.ensureDefectsForAccessibleItems(user, ctx);
+
+    // Defects release to maintenance only once the survey's report is compiled
+    // (displayStatus COMPLETED = LAPORAN SELESAI). The workspace hides the picker
+    // for other statuses, but that is a UI affordance — enforce it here.
+    //
+    // UNASSIGNING (teamId null) stays allowed at any status: it is the escape hatch
+    // for an assignment made before this gate existed, which would otherwise be
+    // impossible to undo on a Pencawang whose survey is no longer Completed.
+    if (teamId) {
+      const assignStatus = (
+        await this.resolveSubstationDisplayStatus(user.tenantId, [dto.substationId])
+      ).get(dto.substationId);
+
+      if (assignStatus !== 'COMPLETED') {
+        throw new BadRequestException(
+          'Defects can only be assigned once the Pencawang survey is Completed (report generated).',
+        );
+      }
+    }
 
     const categoryWhere: Prisma.DefectWhereInput = !dto.category
       ? {}
@@ -2213,6 +2257,41 @@ export class DefectsService {
     return this.getDetail(user, defect.id);
   }
 
+  /**
+   * A Pencawang's survey status = the unified `displayStatus` of its MOST RECENT
+   * site visit. The maintenance workspace groups its packages by this, and only a
+   * COMPLETED survey (report generated / LAPORAN SELESAI) may have its defects
+   * assigned out to a maintenance team.
+   */
+  private async resolveSubstationDisplayStatus(
+    tenantId: string,
+    substationIds: string[],
+  ): Promise<Map<string, DisplayStatus>> {
+    if (substationIds.length === 0) {
+      return new Map();
+    }
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { tenantId, substationId: { in: substationIds } },
+      orderBy: { startedAt: 'desc' },
+      select: { substationId: true, status: true, lifecycleStatus: true },
+    });
+
+    const bySubstation = new Map<string, DisplayStatus>();
+
+    for (const visit of visits) {
+      // First seen per Pencawang = the most recent visit (ordered desc).
+      if (!bySubstation.has(visit.substationId)) {
+        bySubstation.set(
+          visit.substationId,
+          deriveDisplayStatus(visit.status, visit.lifecycleStatus),
+        );
+      }
+    }
+
+    return bySubstation;
+  }
+
   private async ensureDefectsForAccessibleItems(
     user: RequestUser,
     ctx?: ScopeContext,
@@ -2220,6 +2299,13 @@ export class DefectsService {
     const itemResults = await this.prisma.inspectionItemResult.findMany({
       where: {
         isDefect: true,
+        // Only items not yet materialized. Without this we re-select every flagged
+        // item forever and hand them all to createMany on EVERY read path
+        // (dashboard, defects list, operations board, maintenance workspace).
+        // skipDuplicates keeps that correct but not cheap — Postgres still plans
+        // and index-probes each row. With the guard, steady state selects zero
+        // rows and the early-return below skips the write entirely.
+        defect: { is: null },
         inspection: {
           tenantId: user.tenantId,
           // Live defects exist only for SUBMITTED inspections — never materialize
@@ -3188,6 +3274,11 @@ export class DefectsService {
 
   private serializeOperationsBoardQueues(
     queueMap: Map<OperationsBoardQueueKey, OperationsBoardQueue>,
+    // The per-mainhead rollup renders counts only, so it must NOT re-serialize
+    // every defect a second time — JSON has no reference sharing, so doing so
+    // doubled the board payload (and the client's normalization work) for rows
+    // nothing ever reads.
+    includeItems = true,
   ) {
     // Under RELEASE_ON_REPORT the first column holds DORMANT defects waiting for
     // the survey report, not QA review — relabel it for the inspection side.
@@ -3209,7 +3300,7 @@ export class DefectsService {
         ...queueDefinition,
         ...(relabel ?? {}),
         count: items.length,
-        items,
+        items: includeItems ? items : [],
       };
     });
   }
