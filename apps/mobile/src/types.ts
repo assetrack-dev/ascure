@@ -266,6 +266,10 @@ export interface SiteVisit {
   substationId: string;
   createdByUserId?: string;
   status: string;
+  lifecycleStatus?: string | null;
+  /** Unified user-facing status from the API (see @ascure/shared-utils). */
+  displayStatus?: string | null;
+  displayStatusLabel?: string | null;
   visitType?: SiteVisitType | null;
   operationMode?: OperationMode | null;
   operationalScope?: OperationalScope | null;

@@ -36,6 +36,11 @@ import {
   isAssetInspected,
 } from '../assetDisplay';
 import { Asset, SiteVisit, SiteVisitSummary, UserRole } from '../types';
+import {
+  deriveDisplayStatus,
+  DISPLAY_STATUS_LABEL,
+  type DisplayStatus,
+} from '@ascure/shared-utils';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -371,7 +376,7 @@ export function VisitDetailScreen() {
         <>
           <VisitProgressHero
             rollup={createVisitRollup(visit, assets)}
-            status={visit.status}
+            visit={visit}
           />
 
           <Card>
@@ -1065,19 +1070,20 @@ function DeleteVisitCard({
  */
 function VisitProgressHero({
   rollup,
-  status,
+  visit,
 }: {
   rollup: SiteVisitSummary;
-  status: string;
+  visit: SiteVisit;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const pct = Math.min(Math.max(rollup.completionPercentage, 0), 100);
+  const display = resolveVisitDisplay(visit);
   return (
     <View style={styles.hero}>
       <View style={styles.heroTopRow}>
         <Text style={styles.heroEyebrow}>VISIT PROGRESS</Text>
-        <StatusChip label={formatStatusLabel(status)} tone={getVisitStatusTone(status)} />
+        <StatusChip label={display.label} tone={display.tone} />
       </View>
 
       <View style={styles.heroCountRow}>
@@ -1457,16 +1463,36 @@ function formatOptionalCoordinate(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(6) : 'Not available';
 }
 
-function getVisitStatusTone(status: string) {
-  if (status === 'COMPLETED') {
-    return 'success';
-  }
+type ChipTone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 
-  if (status === 'CANCELLED') {
-    return 'warning';
+function displayStatusTone(status: DisplayStatus): ChipTone {
+  switch (status) {
+    case 'COMPLETED':
+      return 'success';
+    case 'NEEDS_AMENDMENT':
+      return 'danger';
+    case 'CANCELLED':
+      return 'warning';
+    case 'ARCHIVED':
+    case 'NOT_STARTED':
+      return 'neutral';
+    case 'IN_REVIEW':
+    case 'IN_PROGRESS':
+    default:
+      return 'info';
   }
+}
 
-  return 'success';
+// The unified visit status shown to the crew — prefer the API's displayStatus,
+// falling back to deriving it (older offline caches lack the field).
+function resolveVisitDisplay(visit: SiteVisit): { label: string; tone: ChipTone } {
+  const status =
+    (visit.displayStatus as DisplayStatus | null | undefined) ??
+    deriveDisplayStatus(visit.status, visit.lifecycleStatus ?? null);
+  return {
+    label: visit.displayStatusLabel ?? DISPLAY_STATUS_LABEL[status],
+    tone: displayStatusTone(status),
+  };
 }
 
 function isVisitTerminal(status: string) {
