@@ -1,3 +1,5 @@
+import type { DisplayStatus } from "@/types/site-visits";
+
 export type MaintenanceCategory = "RENTIS" | "CAT_TIANG" | "SELENGGARAAN";
 
 export type WorkspaceGovernanceMode =
@@ -29,6 +31,11 @@ export interface WorkspacePackage {
   mainhead: { id: string; name: string } | null;
   totalCount: number;
   emergencyCount: number;
+  /** The Pencawang's survey status (its most recent visit); null if never surveyed. */
+  displayStatus: DisplayStatus | null;
+  displayStatusLabel: string | null;
+  /** Only a COMPLETED survey (report generated) may have its defects assigned out. */
+  assignable: boolean;
   lanes: WorkspaceLane[];
 }
 
