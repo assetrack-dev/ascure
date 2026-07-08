@@ -1,0 +1,186 @@
+diff --git a/android/src/main/java/expo/modules/camera/CameraViewModule.kt b/android/src/main/java/expo/modules/camera/CameraViewModule.kt
+index 7e50b98..22a463b 100644
+--- a/android/src/main/java/expo/modules/camera/CameraViewModule.kt
++++ b/android/src/main/java/expo/modules/camera/CameraViewModule.kt
+@@ -450,6 +450,18 @@ class CameraViewModule : Module() {
+         return@AsyncFunction view.getAvailablePictureSizes()
+       }
+ 
++      AsyncFunction("focusOnPoint") { view: ExpoCameraView, x: Float, y: Float, lock: Boolean ->
++        view.focusOnPoint(x, y, lock)
++      }.runOnQueue(Queues.MAIN)
++
++      AsyncFunction("setExposureCompensation") { view: ExpoCameraView, index: Int ->
++        view.setExposureCompensation(index)
++      }.runOnQueue(Queues.MAIN)
++
++      AsyncFunction("getExposureRange") { view: ExpoCameraView ->
++        return@AsyncFunction view.getExposureRange()
++      }.runOnQueue(Queues.MAIN)
++
+       AsyncFunction("record") { view: ExpoCameraView, options: RecordingOptions, promise: Promise ->
+         if (!view.mute && !permissionsManager.hasGrantedPermissions(Manifest.permission.RECORD_AUDIO)) {
+           throw Exceptions.MissingPermissions(Manifest.permission.RECORD_AUDIO)
+diff --git a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+index 1ff8116..33367eb 100644
+--- a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
++++ b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+@@ -138,6 +138,10 @@ class ExpoCameraView(
+   private var shouldCreateCamera = false
+   private var previewPaused = false
+ 
++  // Last exposure-compensation index set from JS. Re-applied whenever the camera
++  // (re)opens, since a rebind resets 3A. 0 == no compensation (device default).
++  private var exposureCompensationIndex = 0
++
+   var lensFacing = CameraType.BACK
+     set(value) {
+       field = value
+@@ -639,12 +643,81 @@ class ExpoCameraView(
+     camera?.cameraControl?.setZoomRatio(targetZoomRatio)
+   }
+ 
++  /**
++   * Focus + meter (AF/AE/AWB) at a point expressed as a fraction (0..1) of the
++   * preview. When [lock] is true the metering is held (tap-to-lock) until the
++   * next focus request; otherwise CameraX auto-cancels back to continuous AF.
++   */
++  fun focusOnPoint(x: Float, y: Float, lock: Boolean) {
++    val cam = camera ?: return
++    val width = previewView.width.toFloat()
++    val height = previewView.height.toFloat()
++    if (width <= 0f || height <= 0f) {
++      return
++    }
++    try {
++      val factory = DisplayOrientedMeteringPointFactory(
++        previewView.display,
++        cam.cameraInfo,
++        width,
++        height
++      )
++      val point = factory.createPoint(x * width, y * height)
++      val action = FocusMeteringAction.Builder(
++        point,
++        FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
++      ).apply {
++        if (lock) {
++          disableAutoCancel()
++        }
++      }.build()
++      cam.cameraControl.startFocusAndMetering(action)
++    } catch (e: Exception) {
++      Log.e("ExpoCameraView", "focusOnPoint failed: ${e.message}")
++    }
++  }
++
++  /**
++   * Applies an exposure-compensation [index] (in the device's supported range,
++   * see [getExposureRange]). Stored so it survives camera rebinds.
++   */
++  fun setExposureCompensation(index: Int) {
++    val cam = camera ?: return
++    val state = cam.cameraInfo.exposureState
++    if (!state.isExposureCompensationSupported) {
++      return
++    }
++    val clamped = index.coerceIn(
++      state.exposureCompensationRange.lower,
++      state.exposureCompensationRange.upper
++    )
++    exposureCompensationIndex = clamped
++    cam.cameraControl.setExposureCompensationIndex(clamped)
++  }
++
++  /**
++   * The device's exposure-compensation capability: `min`/`max` index bounds,
++   * `step` (EV per index), and whether it's `supported` at all.
++   */
++  fun getExposureRange(): Map<String, Any> {
++    val state = camera?.cameraInfo?.exposureState
++      ?: return mapOf("supported" to false, "min" to 0, "max" to 0, "step" to 0.0)
++    return mapOf(
++      "supported" to state.isExposureCompensationSupported,
++      "min" to state.exposureCompensationRange.lower,
++      "max" to state.exposureCompensationRange.upper,
++      "step" to state.exposureCompensationStep.toDouble()
++    )
++  }
++
+   private fun observeCameraState(cameraInfo: CameraInfo) {
+     cameraInfo.cameraState.observe(currentActivity) {
+       when (it.type) {
+         CameraState.Type.OPEN -> {
+           onCameraReady(Unit)
+           setTorchEnabled(enableTorch)
++          // A rebind resets 3A, so restore the user's exposure choice.
++          setExposureCompensation(exposureCompensationIndex)
+         }
+ 
+         else -> {}
+diff --git a/build/CameraView.d.ts b/build/CameraView.d.ts
+index 8b68d2e..97dc0fa 100644
+--- a/build/CameraView.d.ts
++++ b/build/CameraView.d.ts
+@@ -26,6 +26,27 @@ export default class CameraView extends Component<CameraViewProps> {
+      * The list varies across Android devices but is the same for every iOS.
+      */
+     getAvailablePictureSizesAsync(): Promise<string[]>;
++    /**
++     * Focus and meter (AF/AE/AWB) at a point given as a fraction (0..1) of the preview.
++     * When `lock` is true the focus/exposure is held (tap-to-lock).
++     * @platform android
++     */
++    focusOnPointAsync(x: number, y: number, lock?: boolean): Promise<void>;
++    /**
++     * Sets the exposure compensation index (valid indices from `getExposureRangeAsync`).
++     * @platform android
++     */
++    setExposureAsync(index: number): Promise<void>;
++    /**
++     * Returns the device's exposure-compensation range `{ min, max, step, supported }`.
++     * @platform android
++     */
++    getExposureRangeAsync(): Promise<{
++        min: number;
++        max: number;
++        step: number;
++        supported: boolean;
++    }>;
+     /**
+      * Returns the available lenses for the currently selected camera.
+      *
+diff --git a/build/CameraView.js b/build/CameraView.js
+index 0da8747..6d28a30 100644
+--- a/build/CameraView.js
++++ b/build/CameraView.js
+@@ -79,6 +79,29 @@ export default class CameraView extends Component {
+     async getAvailablePictureSizesAsync() {
+         return (await this._cameraRef.current?.getAvailablePictureSizes()) ?? [];
+     }
++    /**
++     * Focus and meter (AF/AE/AWB) at a point given as a fraction (0..1) of the preview.
++     * When `lock` is true the focus/exposure is held (tap-to-lock) until the next focus request.
++     * @platform android
++     */
++    async focusOnPointAsync(x, y, lock = false) {
++        return this._cameraRef.current?.focusOnPoint(x, y, lock);
++    }
++    /**
++     * Sets the exposure compensation index. Valid indices come from `getExposureRangeAsync`.
++     * @platform android
++     */
++    async setExposureAsync(index) {
++        return this._cameraRef.current?.setExposureCompensation(index);
++    }
++    /**
++     * Returns the device's exposure-compensation range: `{ min, max, step, supported }`,
++     * where `min`/`max` are index bounds and `step` is EV per index.
++     * @platform android
++     */
++    async getExposureRangeAsync() {
++        return ((await this._cameraRef.current?.getExposureRange()) ?? { min: 0, max: 0, step: 0, supported: false });
++    }
+     /**
+      * Returns the available lenses for the currently selected camera.
+      *

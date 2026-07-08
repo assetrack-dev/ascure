@@ -8,5 +8,6 @@ onlyBuiltDependencies:
   - esbuild
   - prisma
 patchedDependencies:
+  expo-camera@55.0.20: patches/expo-camera@55.0.20.patch
   expo-modules-core@55.0.23: patches/expo-modules-core@55.0.23.patch
   react-native@0.83.6: patches/react-native@0.83.6.patch

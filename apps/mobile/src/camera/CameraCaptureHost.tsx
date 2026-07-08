@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Modal,
   Pressable,
@@ -43,6 +44,10 @@ const ZOOM_PRESETS = [
   { label: '4×', value: 0.66 },
 ];
 const LEVEL_TOLERANCE_DEG = 1.5;
+const RETICLE_SIZE = 72;
+const EV_TRACK = 168;
+
+type ExposureRange = { min: number; max: number; step: number; supported: boolean };
 
 function clamp01(v: number) {
   return Math.min(1, Math.max(0, v));
@@ -86,6 +91,15 @@ export function CameraCaptureHost() {
   const [deviceRoll, setDeviceRoll] = useState<number | null>(null);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
 
+  // Tap-to-focus + exposure (Android; via patched expo-camera)
+  const [reticle, setReticle] = useState<{ x: number; y: number; locked: boolean } | null>(
+    null,
+  );
+  const [exposureRange, setExposureRange] = useState<ExposureRange | null>(null);
+  const [exposureIndex, setExposureIndex] = useState(0);
+  const reticleAnim = useRef(new Animated.Value(0)).current;
+  const reticleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const requestRef = useRef<CaptureRequest | null>(null);
   requestRef.current = request;
   const zoomRef = useRef(0);
@@ -111,6 +125,57 @@ export function CameraCaptureHost() {
     setLineAngleDeg(deg);
   }
 
+  // Show the focus reticle at a frame coordinate; auto-fades unless locked.
+  function showReticle(x: number, y: number, locked: boolean) {
+    if (reticleTimer.current) {
+      clearTimeout(reticleTimer.current);
+      reticleTimer.current = null;
+    }
+    setReticle({ x, y, locked });
+    reticleAnim.stopAnimation();
+    reticleAnim.setValue(0);
+    Animated.spring(reticleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 18,
+      bounciness: 10,
+    }).start();
+    if (!locked) {
+      reticleTimer.current = setTimeout(() => {
+        Animated.timing(reticleAnim, {
+          toValue: 0,
+          duration: 250,
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          if (finished) setReticle(null);
+        });
+      }, 1400);
+    }
+  }
+
+  // Tap = focus + meter at the point; long-press = the same but held (lock).
+  function focusAtPoint(x: number, y: number, locked: boolean) {
+    const { w, h } = frameSizeRef.current;
+    if (!w || !h) return;
+    void cameraRef.current?.focusOnPointAsync(clamp01(x / w), clamp01(y / h), locked);
+    showReticle(x, y, locked);
+  }
+
+  function applyExposure(index: number) {
+    setExposureIndex(index);
+    void cameraRef.current?.setExposureAsync(index);
+  }
+
+  async function handleCameraReady() {
+    setIsCameraReady(true);
+    try {
+      const range = await cameraRef.current?.getExposureRangeAsync();
+      setExposureRange(range && range.supported && range.max > range.min ? range : null);
+    } catch {
+      setExposureRange(null);
+    }
+  }
+
   const pinchGesture = Gesture.Pinch()
     .runOnJS(true)
     .onStart(() => {
@@ -125,7 +190,25 @@ export function CameraCaptureHost() {
     .onBegin((event) => swingLine(event.x, event.y))
     .onUpdate((event) => swingLine(event.x, event.y));
 
-  const activeGesture = tiltMode ? linePanGesture : pinchGesture;
+  const tapGesture = Gesture.Tap()
+    .runOnJS(true)
+    .maxDuration(300)
+    .onEnd((event, success) => {
+      if (success) focusAtPoint(event.x, event.y, false);
+    });
+
+  const longPressGesture = Gesture.LongPress()
+    .runOnJS(true)
+    .minDuration(350)
+    .onStart((event) => focusAtPoint(event.x, event.y, true));
+
+  // Non-tilt: pinch-to-zoom alongside tap-to-focus / long-press-to-lock.
+  const frameGesture = Gesture.Simultaneous(
+    pinchGesture,
+    Gesture.Exclusive(longPressGesture, tapGesture),
+  );
+
+  const activeGesture = tiltMode ? linePanGesture : frameGesture;
 
   useEffect(() => {
     if (!visible) return;
@@ -139,7 +222,17 @@ export function CameraCaptureHost() {
     setTiltMode(false);
     setLineAngleDeg(0);
     setDeviceRoll(null);
+    setReticle(null);
+    setExposureRange(null);
+    setExposureIndex(0);
   }, [visible]);
+
+  useEffect(
+    () => () => {
+      if (reticleTimer.current) clearTimeout(reticleTimer.current);
+    },
+    [],
+  );
 
   // Live clock + GPS for the on-screen stamp.
   useEffect(() => {
@@ -355,7 +448,7 @@ export function CameraCaptureHost() {
                 animateShutter={false}
                 mode={mode === 'video' ? 'video' : 'picture'}
                 active={visible && !inReview}
-                onCameraReady={() => setIsCameraReady(true)}
+                onCameraReady={handleCameraReady}
                 onMountError={(event) => {
                   requestRef.current?.reject(
                     new Error(event?.message || 'The camera failed to start.'),
@@ -371,6 +464,37 @@ export function CameraCaptureHost() {
                 </View>
               ) : null}
               {tiltMode ? <TiltOverlay angleDeg={lineAngleDeg} showHint /> : null}
+              {reticle && !tiltMode ? (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.reticle,
+                    {
+                      left: reticle.x - RETICLE_SIZE / 2,
+                      top: reticle.y - RETICLE_SIZE / 2,
+                      opacity: reticleAnim,
+                      transform: [
+                        {
+                          scale: reticleAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1.3, 1],
+                          }),
+                        },
+                      ],
+                      borderColor: reticle.locked ? '#F59E0B' : '#FFFFFF',
+                    },
+                  ]}
+                >
+                  {reticle.locked ? (
+                    <Feather
+                      name="lock"
+                      size={12}
+                      color="#F59E0B"
+                      style={styles.reticleLock}
+                    />
+                  ) : null}
+                </Animated.View>
+              ) : null}
               <View pointerEvents="none" style={styles.liveStamp}>
                 <TimestampStamp
                   date={now}
@@ -486,6 +610,13 @@ export function CameraCaptureHost() {
               </View>
             ) : null}
 
+            {/* AE/AF lock (long-press) */}
+            {reticle?.locked && !tiltMode ? (
+              <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
+                <Text style={styles.lockPill}>🔒 AE/AF LOCK · tap to refocus</Text>
+              </View>
+            ) : null}
+
             {isRecording ? (
               <View style={[styles.recBadge, { top: insets.top + 90 }]}>
                 <View style={styles.recDot} />
@@ -511,6 +642,17 @@ export function CameraCaptureHost() {
                     </Pressable>
                   );
                 })}
+              </View>
+            ) : null}
+
+            {!tiltMode && !isRecording && exposureRange ? (
+              <View style={styles.evWrap} pointerEvents="box-none">
+                <ExposureSlider
+                  range={exposureRange}
+                  index={exposureIndex}
+                  onChange={applyExposure}
+                  onReset={() => applyExposure(0)}
+                />
               </View>
             ) : null}
 
@@ -727,4 +869,126 @@ const styles = StyleSheet.create({
   reviewButtonPrimary: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
   reviewButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
   reviewButtonTextPrimary: { color: '#ffffff' },
+  reticle: {
+    position: 'absolute',
+    width: RETICLE_SIZE,
+    height: RETICLE_SIZE,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reticleLock: { position: 'absolute', top: -18 },
+  lockPill: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(245,158,11,0.9)',
+  },
+  evWrap: {
+    position: 'absolute',
+    right: 14,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  evCol: { alignItems: 'center', gap: 8 },
+  evIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  evTrackWrap: {
+    height: EV_TRACK,
+    width: 34,
+    alignItems: 'center',
+    borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  evTrack: {
+    position: 'absolute',
+    top: 9,
+    bottom: 9,
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+  },
+  evThumb: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+  },
+  evLabel: {
+    minWidth: 52,
+    textAlign: 'center',
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
 });
+
+/**
+ * Vertical exposure-compensation slider (right edge). Maps the device's real
+ * EV index range (from getExposureRangeAsync) to a draggable thumb; the sun
+ * icon resets to 0. Android-only capability, rendered only when supported.
+ */
+function ExposureSlider({
+  range,
+  index,
+  onChange,
+  onReset,
+}: {
+  range: ExposureRange;
+  index: number;
+  onChange: (index: number) => void;
+  onReset: () => void;
+}) {
+  const span = range.max - range.min || 1;
+  const usable = EV_TRACK - 18;
+  const frac = clamp01((index - range.min) / span);
+  const thumbTop = (1 - frac) * usable;
+  const ev = index * range.step;
+  const label = `${ev > 0 ? '+' : ''}${ev.toFixed(1)} EV`;
+
+  function setFromY(y: number) {
+    const f = 1 - clamp01((y - 9) / usable);
+    onChange(Math.round(range.min + f * span));
+  }
+
+  const drag = Gesture.Pan()
+    .runOnJS(true)
+    .onBegin((event) => setFromY(event.y))
+    .onUpdate((event) => setFromY(event.y));
+
+  return (
+    <View style={styles.evCol} pointerEvents="box-none">
+      <Pressable onPress={onReset} hitSlop={10} style={styles.evIconBtn}>
+        <Feather name="sun" size={18} color="#ffffff" />
+      </Pressable>
+      <GestureDetector gesture={drag}>
+        <View style={styles.evTrackWrap}>
+          <View style={styles.evTrack} />
+          <View style={[styles.evThumb, { top: thumbTop }]} />
+        </View>
+      </GestureDetector>
+      <Text style={styles.evLabel}>{label}</Text>
+    </View>
+  );
+}
