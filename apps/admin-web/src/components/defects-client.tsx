@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  ChevronLeft,
   ChevronRight,
   MapPin,
   RefreshCw,
@@ -33,6 +34,12 @@ type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
 type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
 type PencawangFilter = "ALL" | string;
+
+// The list is grouped Pencawang -> pole. Groups collapse (and paginate) so the
+// page shows at most this many headers instead of every pole of every Pencawang.
+const PENCAWANG_PAGE_SIZE = 20;
+const paginationButtonClassName =
+  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 type CategoryFilter = "ALL" | MaintenanceCategory;
 
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -347,6 +354,8 @@ function DefectsContent() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [expandedPoles, setExpandedPoles] = useState<Set<string>>(new Set());
+  const [expandedPencawang, setExpandedPencawang] = useState<Set<string>>(new Set());
+  const [groupPage, setGroupPage] = useState(1);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -543,6 +552,43 @@ function DefectsContent() {
     0,
   );
   const isReadOnly = session?.user?.role !== "ADMIN";
+
+  const totalGroupPages = Math.max(
+    1,
+    Math.ceil(pencawangGroups.length / PENCAWANG_PAGE_SIZE),
+  );
+  // Clamp rather than trust state: a filter can shrink the list under our feet.
+  const currentGroupPage = Math.min(groupPage, totalGroupPages);
+  const visibleGroups = pencawangGroups.slice(
+    (currentGroupPage - 1) * PENCAWANG_PAGE_SIZE,
+    currentGroupPage * PENCAWANG_PAGE_SIZE,
+  );
+
+  // A search — or a filter that narrows to a single Pencawang — must reveal its
+  // hits immediately, otherwise matches hide behind a collapsed header.
+  const forceExpandGroups =
+    search.trim() !== "" ||
+    pencawangFilter !== "ALL" ||
+    pencawangGroups.length === 1;
+
+  // Any filter change rebuilds filteredDefects, so page 1 is the right landing.
+  useEffect(() => {
+    setGroupPage(1);
+  }, [filteredDefects]);
+
+  function toggleGroup(groupKey: string) {
+    setExpandedPencawang((current) => {
+      const next = new Set(current);
+
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+
+      return next;
+    });
+  }
 
   function togglePole(poleKey: string) {
     setExpandedPoles((current) => {
@@ -766,10 +812,25 @@ function DefectsContent() {
                 </div>
 
                 <div className="divide-y divide-slate-100">
-                  {pencawangGroups.map((group) => (
+                  {visibleGroups.map((group) => {
+                    const isGroupExpanded =
+                      forceExpandGroups || expandedPencawang.has(group.key);
+
+                    return (
                     <div key={group.key} className="px-5 py-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group.key)}
+                        aria-expanded={isGroupExpanded}
+                        className="flex w-full flex-wrap items-center justify-between gap-2 rounded-md text-left transition hover:bg-slate-50"
+                      >
                         <div className="flex min-w-0 items-center gap-2">
+                          <ChevronRight
+                            size={16}
+                            className={`shrink-0 text-slate-400 transition-transform ${
+                              isGroupExpanded ? "rotate-90" : ""
+                            }`}
+                          />
                           <MapPin size={16} className="shrink-0 text-slate-400" />
                           <span className="truncate text-sm font-bold uppercase tracking-wide text-slate-700">
                             {group.label}
@@ -780,8 +841,9 @@ function DefectsContent() {
                           {" · "}
                           {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
                         </span>
-                      </div>
+                      </button>
 
+                      {isGroupExpanded ? (
                       <div className="mt-3 space-y-2">
                         {group.poles.map((pole) => {
                           const poleKey = `${group.key}::${pole.assetCode}`;
@@ -863,8 +925,10 @@ function DefectsContent() {
                           );
                         })}
                       </div>
+                      ) : null}
                     </div>
-                  ))}
+                    );
+                  })}
 
                   {pencawangGroups.length === 0 ? (
                     <div className="px-5 py-12 text-center">
@@ -878,10 +942,40 @@ function DefectsContent() {
                   ) : null}
                 </div>
 
-                <div className="border-t border-slate-200 px-5 py-4 text-sm text-[var(--muted)]">
-                  {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects
-                  across {pencawangGroups.length} Pencawang · {filteredDefects.length}{" "}
-                  defect{filteredDefects.length === 1 ? "" : "s"} total
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-sm text-[var(--muted)]">
+                  <span>
+                    {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects
+                    across {pencawangGroups.length} Pencawang · {filteredDefects.length}{" "}
+                    defect{filteredDefects.length === 1 ? "" : "s"} total
+                  </span>
+
+                  {totalGroupPages > 1 ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-600">
+                        Page {currentGroupPage} of {totalGroupPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setGroupPage(Math.max(1, currentGroupPage - 1))}
+                        disabled={currentGroupPage === 1}
+                        className={paginationButtonClassName}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft size={17} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setGroupPage(Math.min(totalGroupPages, currentGroupPage + 1))
+                        }
+                        disabled={currentGroupPage === totalGroupPages}
+                        className={paginationButtonClassName}
+                        aria-label="Next page"
+                      >
+                        <ChevronRight size={17} />
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </section>
             )}
