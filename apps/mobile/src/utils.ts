@@ -15,6 +15,7 @@ import {
   canShowInInspectionMobileQueue,
   getInspectionQueueStatusGroup,
 } from './operationalWorkspace';
+import { normalizeReadingSentinel } from '@ascure/shared-utils';
 
 export function formatDateTime(value?: string | null) {
   if (!value) {
@@ -124,7 +125,9 @@ export function createInitialDraftValues(form: InspectionFormResponse): DraftVal
       if (inputType === 'NUMBER' || inputType === 'OCR') {
         values[item.id] =
           item.value?.valueNumber === null || item.value?.valueNumber === undefined
-            ? ''
+            ? // An OCR reading may hold a device sentinel ("LO" = below the
+              // meter's range) in valueText — round-trip it on amend/reopen.
+              item.value?.valueText ?? ''
             : String(item.value.valueNumber);
         continue;
       }
@@ -734,6 +737,19 @@ export function validateInspectionDraftForSave(
   return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
 }
 
+/**
+ * Parse a numeric field value, returning null for blank OR unparseable input.
+ * `Number('LO')` is NaN, which JSON-serialises to null and silently discards the
+ * reading — this makes that explicit instead.
+ */
+function parseFiniteNumber(normalized: string): number | null {
+  if (normalized === '') {
+    return null;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function buildResultsPayload(form: InspectionFormResponse, draftValues: DraftValues) {
   const supportedResults: SaveInspectionResultItemInput[] = [];
   const unsupportedLabels: string[] = [];
@@ -759,11 +775,33 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
         continue;
       }
 
-      if (inputType === 'NUMBER' || inputType === 'OCR') {
+      if (inputType === 'OCR') {
+        const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+
+        // The Smart Sensor shows "LO" instead of a number when the cable is
+        // below its measurable range (clearance under ~3 m). That's a HAZARD,
+        // not a missing reading — send it as text (valueNumber stays null) so
+        // the API stores it and every report surfaces it. Sending it as a
+        // number would coerce to NaN and silently drop the reading.
+        const sentinel = normalizeReadingSentinel(normalized);
+
+        if (sentinel) {
+          supportedResults.push({ templateItemId: item.id, valueText: sentinel });
+          continue;
+        }
+
+        supportedResults.push({
+          templateItemId: item.id,
+          valueNumber: parseFiniteNumber(normalized),
+        });
+        continue;
+      }
+
+      if (inputType === 'NUMBER') {
         const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
         supportedResults.push({
           templateItemId: item.id,
-          valueNumber: normalized === '' ? null : Number(normalized),
+          valueNumber: parseFiniteNumber(normalized),
         });
         continue;
       }

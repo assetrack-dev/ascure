@@ -67,7 +67,8 @@ import {
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { getPositionWithTimeout } from '../location';
-import { recognizeReadingFromImage } from '../ocr';
+import { scanReadingFromImage } from '../ocr';
+import { READING_SENTINEL_LO, isReadingSentinel } from '@ascure/shared-utils';
 import {
   DraftValues,
   InspectionFormResponse,
@@ -763,12 +764,25 @@ export function InspectionFormScreen() {
       ]);
       void uploadPhotoInBackground(itemPhoto);
 
-      const reading = await recognizeReadingFromImage(captured.originalUri);
+      // Target the reading spatially + validate against a plausible clearance
+      // band (see ocr.ts). Only auto-fill a confident value — never silently
+      // write the on-screen temperature or a stray glyph. Surface the raw OCR
+      // text on a miss so field validation shows us exactly what ML Kit saw.
+      const scan = await scanReadingFromImage(captured.originalUri);
 
-      if (reading) {
-        updateDraftValue(itemId, reading);
+      if (!scan.lowConfidence && scan.best) {
+        updateDraftValue(itemId, scan.best);
+      } else if (scan.best) {
+        setError(
+          `Reading looks off (OCR saw "${scan.best}"). Check the display and enter it manually.`,
+        );
       } else {
-        setError('No number detected in the photo — enter the reading manually.');
+        const saw = scan.rawText.trim();
+        setError(
+          saw
+            ? `Couldn't read a clear number (OCR saw "${saw}"). Enter the reading manually.`
+            : 'No number detected in the photo — enter the reading manually.',
+        );
       }
     } catch (scanError) {
       setError(
@@ -1590,6 +1604,11 @@ function ChecklistItemCard({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
+  // A Smart Sensor reading may hold the device sentinel "LO" (the meter shows it
+  // instead of a number when the cable is below its ~3 m minimum range) rather
+  // than a value. The numeric keypad can't type letters, so it's set by tapping.
+  const readingText = typeof value === 'string' ? value : '';
+  const isBelowRange = inputType === 'OCR' && isReadingSentinel(readingText);
 
   return (
     <View style={styles.itemCard}>
@@ -1639,11 +1658,16 @@ function ChecklistItemCard({
         <>
           <ReadingBox
             label="Reading"
-            value={typeof value === 'string' ? value : ''}
+            value={readingText}
             onChangeText={onChange}
             placeholder="Scan or enter"
             disabled={disabled}
           />
+          {isBelowRange ? (
+            <Text style={styles.sentinelHint}>
+              Below the meter&apos;s range — cable clearance under 3 m.
+            </Text>
+          ) : null}
           {scanPhotoUri ? (
             <Pressable
               accessibilityRole="imagebutton"
@@ -1680,6 +1704,33 @@ function ChecklistItemCard({
                 : scanPhotoUri
                   ? 'Retake with Smart Sensor'
                   : 'Scan with Smart Sensor'}
+            </Text>
+          </Pressable>
+          {/* The reading keypad is numeric, so "LO" can never be typed. When the
+              meter reads -LO- (cable under ~3 m) the crew taps this instead. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              isBelowRange
+                ? 'Clear the below-range reading'
+                : "Mark the reading as below the meter's range"
+            }
+            disabled={disabled || scanning}
+            onPress={() => onChange(isBelowRange ? '' : READING_SENTINEL_LO)}
+            style={({ pressed }) => [
+              styles.sentinelButton,
+              isBelowRange && styles.sentinelButtonActive,
+              (disabled || scanning) && styles.scanButtonDisabled,
+              pressed && !disabled && !scanning && styles.scanButtonPressed,
+            ]}
+          >
+            <Text
+              style={[
+                styles.sentinelButtonText,
+                isBelowRange && styles.sentinelButtonTextActive,
+              ]}
+            >
+              {isBelowRange ? 'Clear “LO” — enter a number' : 'Cable below range — mark “LO”'}
             </Text>
           </Pressable>
         </>
@@ -2877,6 +2928,39 @@ const createStyles = (t: Theme) =>
     fontWeight: '700',
     fontFamily: t.fonts.bodyBold,
     letterSpacing: 0.2,
+  },
+  // "LO" = the meter's below-range sentinel (cable under ~3 m). Warning-tinted
+  // because it records a HAZARD, not a value — and filled solid once it's set.
+  sentinelHint: {
+    marginTop: 6,
+    color: t.colors.warningText,
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: t.fonts.bodyBold,
+  },
+  sentinelButton: {
+    marginTop: 8,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: t.radius.control,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: t.colors.warningBorder,
+    backgroundColor: t.colors.warningSoft,
+  },
+  sentinelButtonActive: {
+    borderColor: t.colors.warning,
+    backgroundColor: t.colors.warning,
+  },
+  sentinelButtonText: {
+    color: t.colors.warningText,
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: t.fonts.bodyBold,
+  },
+  sentinelButtonTextActive: {
+    color: t.colors.onStatus,
   },
   scanPhotoThumbWrap: {
     marginTop: 8,
