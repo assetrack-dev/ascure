@@ -18,6 +18,7 @@ import {
   SiteVisitStatus,
   UserRole,
 } from '@prisma/client';
+import { normalizeReadingSentinel } from '@ascure/shared-utils';
 import {
   DEFAULT_OPERATION_MODE,
   DEFAULT_OPERATIONAL_SCOPE,
@@ -1539,15 +1540,38 @@ export class InspectionsService {
           valueJson: Prisma.DbNull,
         };
 
-      case InspectionItemInputType.OCR:
+      case InspectionItemInputType.OCR: {
         // Smart Sensor reading (#4): stores the OCR'd / manually-entered number.
         // Lenient on null so a missing reading never blocks submission — the
         // captured photo is the evidence and the value stays editable.
+        if (input.valueNumber != null) {
+          return {
+            ...baseValueData,
+            valueNumber: input.valueNumber,
+            valueJson: Prisma.DbNull,
+          };
+        }
+
+        // The meter shows a sentinel INSTEAD of a number when the target is out
+        // of its measurable range ("LO" = clearance under ~3 m). That's a hazard,
+        // not a missing reading, so persist it as text — every report/admin
+        // reader already prefers valueText over valueNumber. Whitelisted via
+        // shared-utils so free text can't pollute the reading column.
+        const sentinel = normalizeReadingSentinel(input.valueText);
+
+        if (sentinel) {
+          return {
+            ...baseValueData,
+            valueText: sentinel,
+            valueJson: Prisma.DbNull,
+          };
+        }
+
         return {
           ...baseValueData,
-          valueNumber: input.valueNumber ?? null,
           valueJson: Prisma.DbNull,
         };
+      }
 
       case InspectionItemInputType.BOOLEAN:
         if (input.valueBoolean === undefined) {
