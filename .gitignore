@@ -35,3 +35,6 @@ apps/api/uploads/
 # Claude assessment artifacts
 docs/*.pdf
 docs/*.py
+
+# Local APK archive — ~60MB per build, never belongs in git history
+apk-backups/
