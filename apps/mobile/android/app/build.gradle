@@ -92,7 +92,7 @@ android {
         applicationId 'local.ascure.field'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
+        versionCode 8
         versionName "1.1.0"
 
         // Launcher label via placeholder (AndroidManifest uses ${appLabel}) so the
