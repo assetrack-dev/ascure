@@ -357,3 +357,39 @@ select:focus-visible {
   background: var(--selection-bg);
   color: var(--foreground);
 }
+
+/* -------------------------------------------------------------------------
+   Map markers — shared by the Leaflet (divIcon) and Google (AdvancedMarker)
+   renderers. Fill colour is set inline per-asset (a functional hex, since the
+   marker paints on the map canvas outside the theme cascade).
+   ------------------------------------------------------------------------- */
+@keyframes ascure-map-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  70% { box-shadow: 0 0 0 11px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+.ascure-mk {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.ascure-mk.sel {
+  width: 22px;
+  height: 22px;
+  box-shadow: 0 0 0 4px var(--focus-ring), 0 1px 3px rgba(0, 0, 0, 0.32);
+  z-index: 400;
+}
+.ascure-mk.emg {
+  animation: ascure-map-pulse 1.6s infinite;
+}
+/* Leaflet wraps divIcon content in .leaflet-div-icon with its own border/bg —
+   strip it so only our .ascure-mk shows. */
+.leaflet-div-icon.ascure-mk-wrap {
+  background: transparent;
+  border: 0;
+}

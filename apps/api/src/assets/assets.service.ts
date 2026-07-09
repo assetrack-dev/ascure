@@ -166,6 +166,7 @@ export class AssetsService {
             },
             select: {
               severity: true,
+              status: true,
               maintenanceCategory: true,
               isEmergency: true,
               inspectionItemResult: {
@@ -180,6 +181,11 @@ export class AssetsService {
       categories: Set<MaintenanceCategory>;
       maxSeverityRank: number;
       hasEmergency: boolean;
+      // True once the pole carries a non-monitoring open defect (OPEN or
+      // IN_PROGRESS). Lets the map show a distinct "Monitoring" marker state for
+      // poles whose open defects are ALL MONITORING (OPEN_DEFECT_STATUSES folds
+      // the three together, so this is the only way to tell them apart).
+      hasActiveDefect: boolean;
     };
     const defectsByAsset = new Map<string, DefectSummary>();
     for (const defect of openDefects) {
@@ -191,10 +197,14 @@ export class AssetsService {
           categories: new Set<MaintenanceCategory>(),
           maxSeverityRank: 0,
           hasEmergency: false,
+          hasActiveDefect: false,
         };
         defectsByAsset.set(assetId, summary);
       }
       summary.openDefectCount += 1;
+      if (defect.status !== DefectStatus.MONITORING) {
+        summary.hasActiveDefect = true;
+      }
       // Null category = legacy/untagged → SELENGGARAAN, matching the defect
       // materialization default so the map buckets identically to the list.
       summary.categories.add(
@@ -236,6 +246,7 @@ export class AssetsService {
             ? DEFECT_SEVERITY_BY_RANK[defectSummary.maxSeverityRank - 1]
             : null,
         hasEmergencyDefect: defectSummary?.hasEmergency ?? false,
+        hasActiveDefect: defectSummary?.hasActiveDefect ?? false,
       };
     });
   }
