@@ -31,10 +31,16 @@ export interface MapAsset {
   defectCategories: MaintenanceCategory[];
   maxDefectSeverity: DefectSeverity | null;
   hasEmergencyDefect: boolean;
+  /** True when a non-monitoring open defect exists (OPEN/IN_PROGRESS). Poles
+   *  with open defects but no active one render as "monitoring". */
+  hasActiveDefect: boolean;
 }
 
 /** How to colour the map markers. */
 export type MapColorMode = "inspection" | "defect";
+
+/** How to render the marker layer. */
+export type MapViewMode = "pins" | "clusters" | "heat";
 
 // Inspection-mode marker colours mirror the mobile app
 // (apps/mobile/src/assetDisplay.ts) so the admin map and the field map read
@@ -44,14 +50,19 @@ export const NOT_INSPECTED_MARKER_COLOR = "#ef4444"; // red
 
 // Defect-mode palette. Red/amber read as "needs attention", so an un-inspected
 // pole (no defect data yet) drops to neutral slate rather than red here.
+// NB: markers render on the Google/Leaflet canvas, OUTSIDE the DOM theme
+// cascade, so these must be concrete hex — a CSS var would not resolve. The
+// legend dots reuse the same hex so the chart and the map read identically.
 export const EMERGENCY_DEFECT_MARKER_COLOR = "#dc2626"; // red-600
-export const OPEN_DEFECT_MARKER_COLOR = "#f59e0b"; // amber-500
-export const NO_DEFECT_MARKER_COLOR = "#84cc16"; // lime (inspected, clean)
+export const OPEN_DEFECT_MARKER_COLOR = "#ea580c"; // orange-600 (active defect)
+export const MONITORING_DEFECT_MARKER_COLOR = "#d97706"; // amber-600 (monitoring only)
+export const NO_DEFECT_MARKER_COLOR = "#16a34a"; // green-600 (inspected, clean)
 export const UNINSPECTED_DEFECT_MARKER_COLOR = "#94a3b8"; // slate-400
 
 export type MapAssetDefectState =
   | "emergency"
   | "defect"
+  | "monitoring"
   | "clean"
   | "uninspected";
 
@@ -76,16 +87,32 @@ export function formatMaintenanceCategory(category: MaintenanceCategory): string
 
 /**
  * The pole's defect state for map colouring, worst-first: an emergency wins,
- * then any open defect, then a clean inspected pole, else not-yet-inspected.
+ * then an active open defect, then monitoring-only, then a clean inspected pole,
+ * else not-yet-inspected.
  */
 export function mapAssetDefectState(asset: MapAsset): MapAssetDefectState {
   if (asset.hasEmergencyDefect) {
     return "emergency";
   }
   if (asset.openDefectCount > 0) {
-    return "defect";
+    return asset.hasActiveDefect ? "defect" : "monitoring";
   }
   return isMapAssetInspected(asset) ? "clean" : "uninspected";
+}
+
+/** Descending triage priority (emergency first) — for the "in view" list sort. */
+const DEFECT_STATE_PRIORITY: Record<MapAssetDefectState, number> = {
+  emergency: 5,
+  defect: 4,
+  monitoring: 3,
+  clean: 1,
+  uninspected: 2,
+};
+
+export function mapAssetPriority(asset: MapAsset): number {
+  const base = DEFECT_STATE_PRIORITY[mapAssetDefectState(asset)] * 1000;
+  // Break ties by open-defect count so the busiest poles rise within a state.
+  return base + Math.min(asset.openDefectCount, 999);
 }
 
 /** Marker fill colour for an asset under the given colour mode. */
@@ -104,6 +131,8 @@ export function mapAssetMarkerColor(
       return EMERGENCY_DEFECT_MARKER_COLOR;
     case "defect":
       return OPEN_DEFECT_MARKER_COLOR;
+    case "monitoring":
+      return MONITORING_DEFECT_MARKER_COLOR;
     case "clean":
       return NO_DEFECT_MARKER_COLOR;
     default:
@@ -240,6 +269,7 @@ function normalizeMapAsset(raw: unknown): MapAsset | null {
     defectCategories: normalizeDefectCategories(record.defectCategories),
     maxDefectSeverity: normalizeSeverity(record.maxDefectSeverity),
     hasEmergencyDefect: record.hasEmergencyDefect === true,
+    hasActiveDefect: record.hasActiveDefect === true,
   };
 }
 
