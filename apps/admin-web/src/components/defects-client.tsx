@@ -4,17 +4,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ChevronLeft,
   ChevronRight,
   MapPin,
   RefreshCw,
-  Search,
   ShieldCheck,
   SlidersHorizontal,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  Chip,
+  FilterBar,
+  PageHeader,
+  SearchField,
+  TableFooter,
+  Tag,
+  Tbtn,
+  filterSelectClass,
+  type Tone,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchDefects } from "@/lib/defects";
@@ -38,8 +48,6 @@ type PencawangFilter = "ALL" | string;
 // The list is grouped Pencawang -> pole. Groups collapse (and paginate) so the
 // page shows at most this many headers instead of every pole of every Pencawang.
 const PENCAWANG_PAGE_SIZE = 20;
-const paginationButtonClassName =
-  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 type CategoryFilter = "ALL" | MaintenanceCategory;
 
 const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
@@ -63,23 +71,17 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
-const filterControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const searchControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const secondaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
 
 function DefectsLoading() {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="h-10 w-full animate-pulse rounded-md bg-slate-100" />
+    <Card>
+      <div className="h-[38px] w-full animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
       <div className="mt-5 space-y-3">
         {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="h-12 animate-pulse rounded-md bg-slate-100" />
+          <div key={index} className="h-12 animate-pulse rounded-[9px] bg-[var(--panel-muted)]" />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -223,77 +225,67 @@ function orderedCategories(defects: DefectListItem[]): MaintenanceCategory[] {
   return MAINTENANCE_CATEGORIES.filter((category) => present.has(category));
 }
 
+function severityTone(severity: DefectSeverity | null): Tone {
+  if (severity === "CRITICAL") return "critical";
+  if (severity === "HIGH") return "high";
+  if (severity === "MEDIUM") return "warning";
+  if (severity === "LOW") return "success";
+  return "neutral";
+}
+
+function statusTone(status: DefectStatus): Tone {
+  if (status === "OPEN") return "critical";
+  if (status === "CLOSED" || status === "RESOLVED") return "success";
+  if (status === "MONITORING") return "monitor";
+  if (status === "IN_PROGRESS") return "info";
+  return "neutral";
+}
+
+function lifecycleTone(status: DefectLifecycleStatus | null | undefined): Tone {
+  if (status === "VERIFIED" || status === "CLOSED") return "success";
+  if (status === "REJECTED") return "critical";
+  if (status === "COMPLETED" || status === "VERIFICATION_PENDING") return "brand";
+  if (status === "ASSIGNED" || status === "IN_PROGRESS") return "info";
+  if (status === "UNDER_REVIEW") return "warning";
+  return "neutral";
+}
+
+function outcomeTone(outcome: DefectResolutionOutcome): Tone {
+  if (outcome === "RESOLVED" || outcome === "REPAIRED") return "success";
+  if (outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED") return "high";
+  if (
+    outcome === "TEMPORARY_FIX" ||
+    outcome === "MONITORING_REQUIRED" ||
+    outcome === "PARTIAL" ||
+    outcome === "DEFERRED" ||
+    outcome === "MONITOR_ONLY"
+  ) {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function slaTone(defect: DefectListItem): Tone {
+  if (defect.isOverdue) return "critical";
+  if (defect.slaState === "ON_TRACK") return "success";
+  if (defect.slaState === "STOPPED") return "neutral";
+  return "warning";
+}
+
 function CategoryChip({ category }: { category: MaintenanceCategory }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">
-      {formatCategory(category)}
-    </span>
-  );
+  return <Chip tone="info">{formatCategory(category)}</Chip>;
 }
 
 function SeverityBadge({ severity }: { severity: DefectSeverity | null }) {
-  const className =
-    severity === "CRITICAL"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : severity === "HIGH"
-        ? "border-orange-200 bg-orange-50 text-orange-700"
-        : severity === "MEDIUM"
-          ? "border-yellow-200 bg-yellow-50 text-yellow-800"
-          : severity === "LOW"
-            ? "border-green-200 bg-green-50 text-green-700"
-            : "border-slate-200 bg-slate-50 text-slate-600";
-
-  return (
-    <span className={`inline-flex min-w-20 justify-center rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${className}`}>
-      {severity ?? "UNSPECIFIED"}
-    </span>
-  );
+  return <Chip tone={severityTone(severity)}>{formatSeverity(severity)}</Chip>;
 }
 
 function StatusBadge({ status }: { status: DefectStatus }) {
-  const className =
-    status === "OPEN"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : status === "CLOSED"
-        ? "border-green-200 bg-green-50 text-green-700"
-        : status === "RESOLVED"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : status === "MONITORING"
-            ? "border-violet-200 bg-violet-50 text-violet-700"
-        : status === "IN_PROGRESS"
-          ? "border-blue-200 bg-blue-50 text-blue-700"
-          : "border-slate-200 bg-slate-50 text-slate-600";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatStatus(status)}
-    </span>
-  );
+  return <Chip tone={statusTone(status)}>{formatStatus(status)}</Chip>;
 }
 
 function LifecycleBadge({ status }: { status: DefectLifecycleStatus | null | undefined }) {
-  const className =
-    status === "VERIFIED"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : status === "REJECTED"
-        ? "border-red-200 bg-red-50 text-red-700"
-        : status === "CLOSED"
-          ? "border-green-200 bg-green-50 text-green-700"
-          : status === "COMPLETED" || status === "VERIFICATION_PENDING"
-            ? "border-teal-200 bg-teal-50 text-teal-700"
-            : status === "ASSIGNED" || status === "IN_PROGRESS"
-              ? "border-blue-200 bg-blue-50 text-blue-700"
-              : status === "UNDER_REVIEW"
-                ? "border-amber-200 bg-amber-50 text-amber-700"
-                : status === "DETECTED"
-                  ? "border-slate-200 bg-slate-50 text-slate-700"
-                  : "border-slate-200 bg-slate-50 text-slate-500";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatEnumLabel(status)}
-    </span>
-  );
+  return <Chip tone={lifecycleTone(status)}>{formatEnumLabel(status)}</Chip>;
 }
 
 function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | undefined }) {
@@ -301,41 +293,11 @@ function OutcomeBadge({ outcome }: { outcome: DefectResolutionOutcome | null | u
     return null;
   }
 
-  const className =
-    outcome === "RESOLVED" || outcome === "REPAIRED"
-      ? "border-green-200 bg-green-50 text-green-700"
-      : outcome === "EXTERNAL_CONSTRAINT" || outcome === "ESCALATED"
-        ? "border-orange-200 bg-orange-50 text-orange-700"
-        : outcome === "TEMPORARY_FIX" ||
-            outcome === "MONITORING_REQUIRED" ||
-            outcome === "PARTIAL" ||
-            outcome === "DEFERRED" ||
-            outcome === "MONITOR_ONLY"
-          ? "border-amber-200 bg-amber-50 text-amber-700"
-          : "border-slate-200 bg-slate-50 text-slate-700";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatEnumLabel(outcome)}
-    </span>
-  );
+  return <Chip tone={outcomeTone(outcome)}>{formatEnumLabel(outcome)}</Chip>;
 }
 
 function SlaBadge({ defect }: { defect: DefectListItem }) {
-  const className = defect.isOverdue
-    ? "border-red-200 bg-red-50 text-red-700"
-    : defect.slaState === "ON_TRACK"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : defect.slaState === "STOPPED"
-        ? "border-slate-200 bg-slate-50 text-slate-600"
-        : "border-amber-200 bg-amber-50 text-amber-700";
-
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {defect.isOverdue ? <AlertTriangle size={13} /> : null}
-      {formatSlaState(defect.slaState)}
-    </span>
-  );
+  return <Tag tone={slaTone(defect)}>{formatSlaState(defect.slaState)}</Tag>;
 }
 
 function DefectsContent() {
@@ -552,6 +514,7 @@ function DefectsContent() {
     0,
   );
   const isReadOnly = session?.user?.role !== "ADMIN";
+  const overdueCount = defects.filter((defect) => defect.isOverdue).length;
 
   const totalGroupPages = Math.max(
     1,
@@ -622,362 +585,297 @@ function DefectsContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                Defect Table
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                Defects
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
+          <PageHeader
+            eyebrow="Defect Register"
+            title="Defects"
+            chips={
+              <>
+                <Chip tone="neutral">
+                  <ShieldCheck size={13} />
                   {isReadOnly ? "Read-only" : "Full access"}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {defects.length} total
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 shadow-[var(--shadow-soft)]">
-                  <AlertTriangle size={13} />
-                  {defects.filter((defect) => defect.isOverdue).length} overdue
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadDefects(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
+                </Chip>
+                <Chip tone="neutral">{defects.length} open</Chip>
+                {overdueCount > 0 ? (
+                  <Chip tone="critical">
+                    <AlertTriangle size={12} />
+                    {overdueCount} overdue
+                  </Chip>
+                ) : null}
+              </>
+            }
+            actions={
+              <Tbtn
+                onClick={() => (session?.token ? loadDefects(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </Tbtn>
+            }
+          />
 
           <div className="mt-6">
             {isLoading && defects.length === 0 ? (
               <DefectsLoading />
             ) : error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : (
-              <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
-                <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    <label className="relative block">
-                      <span className="sr-only">Search defects</span>
-                      <Search
-                        size={17}
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-                      <input
-                        type="search"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Search defects"
-                        className={searchControlClassName}
-                      />
-                    </label>
+              <Card padded={false}>
+                <div className="border-b border-[var(--line2)] p-[18px]">
+                  <FilterBar>
+                    <SearchField
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search defects"
+                      aria-label="Search defects"
+                    />
 
-                    <label className="block">
-                      <span className="sr-only">Severity</span>
-                      <select
-                        value={severityFilter}
-                        onChange={(event) =>
-                          setSeverityFilter(event.target.value as SeverityFilter)
-                        }
-                        className={filterControlClassName}
-                      >
-                        {SEVERITY_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Severity"
+                      value={severityFilter}
+                      onChange={(event) => setSeverityFilter(event.target.value as SeverityFilter)}
+                      className={filterSelectClass}
+                    >
+                      {SEVERITY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Status</span>
-                      <select
-                        value={statusFilter}
-                        onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                        className={filterControlClassName}
-                      >
-                        {STATUS_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Status"
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                      className={filterSelectClass}
+                    >
+                      {STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Pencawang</span>
-                      <select
-                        value={pencawangFilter}
-                        onChange={(event) =>
-                          setPencawangFilter(event.target.value as PencawangFilter)
-                        }
-                        className={filterControlClassName}
-                      >
-                        <option value="ALL">All Pencawang</option>
-                        {pencawangOptions.map(([key, label]) => (
-                          <option key={key} value={key}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Pencawang"
+                      value={pencawangFilter}
+                      onChange={(event) => setPencawangFilter(event.target.value as PencawangFilter)}
+                      className={filterSelectClass}
+                    >
+                      <option value="ALL">All Pencawang</option>
+                      {pencawangOptions.map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Maintenance category</span>
-                      <select
-                        value={categoryFilter}
-                        onChange={(event) =>
-                          setCategoryFilter(event.target.value as CategoryFilter)
-                        }
-                        className={filterControlClassName}
-                      >
-                        {MAINTENANCE_CATEGORY_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Maintenance category"
+                      value={categoryFilter}
+                      onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}
+                      className={filterSelectClass}
+                    >
+                      {MAINTENANCE_CATEGORY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Assigned user</span>
-                      <select
-                        value={assignedUserFilter}
-                        onChange={(event) =>
-                          setAssignedUserFilter(event.target.value as AssignedUserFilter)
-                        }
-                        className={filterControlClassName}
-                      >
-                        <option value="ALL">All assignees</option>
-                        <option value="UNASSIGNED">Unassigned</option>
-                        {assignedUserOptions.map(([id, label]) => (
-                          <option key={id} value={id}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Assigned user"
+                      value={assignedUserFilter}
+                      onChange={(event) =>
+                        setAssignedUserFilter(event.target.value as AssignedUserFilter)
+                      }
+                      className={filterSelectClass}
+                    >
+                      <option value="ALL">All assignees</option>
+                      <option value="UNASSIGNED">Unassigned</option>
+                      {assignedUserOptions.map(([id, label]) => (
+                        <option key={id} value={id}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Start date</span>
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={(event) => setStartDate(event.target.value)}
-                        className={filterControlClassName}
-                      />
-                    </label>
+                    <input
+                      type="date"
+                      aria-label="Start date"
+                      value={startDate}
+                      onChange={(event) => setStartDate(event.target.value)}
+                      className={filterSelectClass}
+                    />
 
-                    <label className="block">
-                      <span className="sr-only">End date</span>
-                      <input
-                        type="date"
-                        value={endDate}
-                        onChange={(event) => setEndDate(event.target.value)}
-                        className={filterControlClassName}
-                      />
-                    </label>
+                    <input
+                      type="date"
+                      aria-label="End date"
+                      value={endDate}
+                      onChange={(event) => setEndDate(event.target.value)}
+                      className={filterSelectClass}
+                    />
 
-                    <label className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                    <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--foreground-soft)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--panel-muted)]">
                       <input
                         type="checkbox"
                         checked={overdueOnly}
                         onChange={(event) => setOverdueOnly(event.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                        className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                       />
                       Overdue only
                     </label>
 
-                    <button
-                      type="button"
-                      onClick={resetFilters}
-                      className={secondaryButtonClassName}
-                    >
+                    <Tbtn variant="ghost" onClick={resetFilters}>
                       <X size={16} />
                       Reset
-                    </button>
-                  </div>
+                    </Tbtn>
+                  </FilterBar>
                 </div>
 
-                <div className="divide-y divide-slate-100">
+                <div>
                   {visibleGroups.map((group) => {
                     const isGroupExpanded =
                       forceExpandGroups || expandedPencawang.has(group.key);
 
                     return (
-                    <div key={group.key} className="px-5 py-4">
-                      <button
-                        type="button"
-                        onClick={() => toggleGroup(group.key)}
-                        aria-expanded={isGroupExpanded}
-                        className="flex w-full flex-wrap items-center justify-between gap-2 rounded-md text-left transition hover:bg-slate-50"
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <ChevronRight
-                            size={16}
-                            className={`shrink-0 text-slate-400 transition-transform ${
-                              isGroupExpanded ? "rotate-90" : ""
-                            }`}
-                          />
-                          <MapPin size={16} className="shrink-0 text-slate-400" />
-                          <span className="truncate text-sm font-bold uppercase tracking-wide text-slate-700">
-                            {group.label}
+                      <div key={group.key} className="border-b border-[var(--line2)] last:border-b-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(group.key)}
+                          aria-expanded={isGroupExpanded}
+                          className="flex w-full flex-wrap items-center justify-between gap-2 bg-[var(--panel-muted)] px-[18px] py-3 text-left transition hover:bg-[var(--surface-pressed)]"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <ChevronRight
+                              size={16}
+                              className={`shrink-0 text-[var(--muted-2)] transition-transform ${
+                                isGroupExpanded ? "rotate-90" : ""
+                              }`}
+                            />
+                            <MapPin size={15} className="shrink-0 text-[var(--muted-2)]" />
+                            <span className="truncate font-mono text-[12px] font-bold uppercase tracking-[0.05em] text-[var(--foreground-soft)]">
+                              {group.label}
+                            </span>
+                          </div>
+                          <span className="shrink-0 text-[12px] font-medium text-[var(--muted)]">
+                            {group.poles.length} pole{group.poles.length === 1 ? "" : "s"}
+                            {" · "}
+                            {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
                           </span>
-                        </div>
-                        <span className="shrink-0 text-xs font-medium text-[var(--muted)]">
-                          {group.poles.length} pole{group.poles.length === 1 ? "" : "s"}
-                          {" · "}
-                          {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
-                        </span>
-                      </button>
+                        </button>
 
-                      {isGroupExpanded ? (
-                      <div className="mt-3 space-y-2">
-                        {group.poles.map((pole) => {
-                          const poleKey = `${group.key}::${pole.assetCode}`;
-                          const isExpanded = expandedPoles.has(poleKey);
-                          const severities = orderedSeverities(pole.defects);
-                          const categories = orderedCategories(pole.defects);
-                          const poleOverdue = pole.defects.some(
-                            (defect) => defect.isOverdue,
-                          );
+                        {isGroupExpanded ? (
+                          <div>
+                            {group.poles.map((pole) => {
+                              const poleKey = `${group.key}::${pole.assetCode}`;
+                              const isExpanded = expandedPoles.has(poleKey);
+                              const severities = orderedSeverities(pole.defects);
+                              const categories = orderedCategories(pole.defects);
+                              const poleOverdue = pole.defects.some(
+                                (defect) => defect.isOverdue,
+                              );
 
-                          return (
-                            <div
-                              key={poleKey}
-                              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => togglePole(poleKey)}
-                                aria-expanded={isExpanded}
-                                className="flex w-full flex-wrap items-center gap-2.5 px-4 py-3 text-left transition hover:bg-slate-50"
-                              >
-                                <ChevronRight
-                                  size={16}
-                                  className={`shrink-0 text-slate-400 transition-transform ${
-                                    isExpanded ? "rotate-90" : ""
-                                  }`}
-                                />
-                                <span className="font-semibold text-slate-900">
-                                  {pole.assetCode}
-                                </span>
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                                  {pole.defects.length} defect
-                                  {pole.defects.length === 1 ? "" : "s"}
-                                </span>
-                                {severities.map((severity) => (
-                                  <SeverityBadge key={severity} severity={severity} />
-                                ))}
-                                {categories.map((category) => (
-                                  <CategoryChip key={category} category={category} />
-                                ))}
-                                {poleOverdue ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
-                                    <AlertTriangle size={12} />
-                                    Overdue
-                                  </span>
-                                ) : null}
-                              </button>
+                              return (
+                                <div key={poleKey} className="border-t border-[var(--line2)]">
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePole(poleKey)}
+                                    aria-expanded={isExpanded}
+                                    className="flex w-full flex-wrap items-center gap-2 px-[18px] py-2.5 text-left transition hover:bg-[var(--panel-muted)]"
+                                  >
+                                    <ChevronRight
+                                      size={15}
+                                      className={`shrink-0 text-[var(--muted-2)] transition-transform ${
+                                        isExpanded ? "rotate-90" : ""
+                                      }`}
+                                    />
+                                    <span className="text-[13px] font-semibold text-[var(--foreground)]">
+                                      {pole.assetCode}
+                                    </span>
+                                    <Chip tone="neutral">
+                                      {pole.defects.length} defect
+                                      {pole.defects.length === 1 ? "" : "s"}
+                                    </Chip>
+                                    {severities.map((severity) => (
+                                      <SeverityBadge key={severity} severity={severity} />
+                                    ))}
+                                    {categories.map((category) => (
+                                      <CategoryChip key={category} category={category} />
+                                    ))}
+                                    {poleOverdue ? (
+                                      <Chip tone="critical">
+                                        <AlertTriangle size={12} />
+                                        Overdue
+                                      </Chip>
+                                    ) : null}
+                                  </button>
 
-                              {isExpanded ? (
-                                <div className="divide-y divide-slate-100 border-t border-slate-100">
-                                  {pole.defects.map((defect) => (
-                                    <button
-                                      key={defect.id}
-                                      type="button"
-                                      onClick={() => openDefect(defect.id)}
-                                      className="flex w-full flex-wrap items-center gap-2.5 py-2.5 pl-9 pr-4 text-left text-sm transition hover:bg-teal-50/40"
-                                    >
-                                      <span className="min-w-0 flex-1 truncate font-medium text-slate-900">
-                                        {defect.defectType}
-                                      </span>
-                                      <SeverityBadge severity={defect.severity} />
-                                      {defect.maintenanceCategory ? (
-                                        <CategoryChip
-                                          category={defect.maintenanceCategory}
-                                        />
-                                      ) : null}
-                                      <StatusBadge status={defect.status} />
-                                      <LifecycleBadge status={defect.lifecycleStatus} />
-                                      <OutcomeBadge outcome={defect.resolutionOutcome} />
-                                      <SlaBadge defect={defect} />
-                                      <span className="shrink-0 text-xs text-[var(--muted)]">
-                                        {formatDate(defect.date)}
-                                      </span>
-                                    </button>
-                                  ))}
+                                  {isExpanded ? (
+                                    <div className="bg-[var(--panel-muted)]">
+                                      {pole.defects.map((defect) => (
+                                        <button
+                                          key={defect.id}
+                                          type="button"
+                                          onClick={() => openDefect(defect.id)}
+                                          className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--line2)] py-2.5 pl-[44px] pr-[18px] text-left transition hover:bg-[var(--brand-tint)]"
+                                        >
+                                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--foreground)]">
+                                            {defect.defectType}
+                                          </span>
+                                          <SeverityBadge severity={defect.severity} />
+                                          {defect.maintenanceCategory ? (
+                                            <CategoryChip category={defect.maintenanceCategory} />
+                                          ) : null}
+                                          <StatusBadge status={defect.status} />
+                                          <LifecycleBadge status={defect.lifecycleStatus} />
+                                          <OutcomeBadge outcome={defect.resolutionOutcome} />
+                                          <SlaBadge defect={defect} />
+                                          <span className="shrink-0 font-mono text-[12px] text-[var(--muted)]">
+                                            {formatDate(defect.date)}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                 </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
-                      ) : null}
-                    </div>
                     );
                   })}
 
                   {pencawangGroups.length === 0 ? (
                     <div className="px-5 py-12 text-center">
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
                         <SlidersHorizontal size={20} />
                       </div>
-                      <p className="mt-4 text-sm font-semibold text-slate-900">
+                      <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
                         No defects found
                       </p>
                     </div>
                   ) : null}
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-sm text-[var(--muted)]">
-                  <span>
-                    {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects
-                    across {pencawangGroups.length} Pencawang · {filteredDefects.length}{" "}
-                    defect{filteredDefects.length === 1 ? "" : "s"} total
-                  </span>
-
-                  {totalGroupPages > 1 ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-slate-600">
-                        Page {currentGroupPage} of {totalGroupPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setGroupPage(Math.max(1, currentGroupPage - 1))}
-                        disabled={currentGroupPage === 1}
-                        className={paginationButtonClassName}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft size={17} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setGroupPage(Math.min(totalGroupPages, currentGroupPage + 1))
-                        }
-                        disabled={currentGroupPage === totalGroupPages}
-                        className={paginationButtonClassName}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight size={17} />
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </section>
+                <TableFooter
+                  summary={
+                    <>
+                      {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects across{" "}
+                      {pencawangGroups.length} Pencawang · {filteredDefects.length} defect
+                      {filteredDefects.length === 1 ? "" : "s"} total
+                    </>
+                  }
+                  page={currentGroupPage}
+                  pageCount={totalGroupPages}
+                  onPageChange={setGroupPage}
+                />
+              </Card>
             )}
           </div>
         </div>

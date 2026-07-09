@@ -7,19 +7,37 @@ import {
   Activity,
   AlertTriangle,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   ChevronsUpDown,
   CheckCircle2,
   Plus,
   RefreshCw,
-  Search,
   ShieldCheck,
   SlidersHorizontal,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  Chip,
+  Dot,
+  Eyebrow,
+  FilterBar,
+  IconBtn,
+  KpiCard,
+  PageHeader,
+  ProgressBar,
+  SearchField,
+  TableFooter,
+  Tbtn,
+  filterControlClass,
+  filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableRowClass,
+  type Tone,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
@@ -121,34 +139,32 @@ const STATUS_RANK: Record<SiteVisitStatus, number> = {
   CANCELLED: 4,
   UNKNOWN: 5,
 };
-const filterControlClassName =
-  "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const searchControlClassName =
-  "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const secondaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
-const primaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
-const paginationButtonClassName =
-  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
-const filterLabelClassName =
-  "mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500";
-const filterFieldClassName = "block min-w-0";
+
+/** Modal fields are stacked, so they take the control pill at full width. */
+const modalInputClass = `${filterControlClass} mt-1.5 w-full`;
+const modalSelectClass = `${filterSelectClass} mt-1.5 w-full`;
+const modalLabelClass = "text-[12.5px] font-semibold text-[var(--foreground-soft)]";
+const tableSublineClass = "mt-1 truncate text-[11.5px] text-[var(--muted-2)]";
 
 function SiteVisitsLoading() {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="grid gap-3 md:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-24 animate-pulse rounded-md bg-slate-100" />
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-[110px] animate-pulse rounded-[var(--radius-card)] bg-[var(--panel-muted)]"
+          />
         ))}
       </div>
-      <div className="mt-5 h-10 w-full animate-pulse rounded-md bg-slate-100" />
-      <div className="mt-5 space-y-3">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="h-12 animate-pulse rounded-md bg-slate-100" />
-        ))}
-      </div>
+      <Card>
+        <div className="h-[38px] w-full animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
+        <div className="mt-5 space-y-3">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="h-12 animate-pulse rounded-[9px] bg-[var(--panel-muted)]" />
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -283,24 +299,25 @@ function formatRelativeActivity(date: string | null | undefined) {
   return formatDateTime(date);
 }
 
-function activityIndicatorClassName(date: string | null | undefined) {
+/** Freshness of the last field write: green under an hour, amber under a day. */
+function activityTone(date: string | null | undefined): Tone {
   const timestamp = parseTimestamp(date);
 
   if (!timestamp) {
-    return "bg-slate-300";
+    return "neutral";
   }
 
   const diffHours = (Date.now() - timestamp) / 3600000;
 
   if (diffHours <= 1) {
-    return "bg-emerald-500";
+    return "success";
   }
 
   if (diffHours <= 24) {
-    return "bg-amber-500";
+    return "warning";
   }
 
-  return "bg-slate-400";
+  return "neutral";
 }
 
 function formatRefreshTime(date: Date | null) {
@@ -379,15 +396,14 @@ function uniqueTeams(visits: SiteVisitListItem[]) {
   );
 }
 
-const DISPLAY_STATUS_TONE: Record<DisplayStatus, { badge: string; dot: string }> = {
-  NOT_STARTED: { badge: "border-slate-200 bg-slate-50 text-slate-600", dot: "bg-slate-400" },
-  IN_PROGRESS: { badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500" },
-  NEEDS_AMENDMENT: { badge: "border-amber-200 bg-amber-50 text-amber-800", dot: "bg-amber-500" },
-  IN_REVIEW: { badge: "border-sky-200 bg-sky-50 text-sky-700", dot: "bg-sky-500" },
-  COMPLETED: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
-  ARCHIVED: { badge: "border-slate-200 bg-slate-100 text-slate-600", dot: "bg-slate-500" },
-  CANCELLED: { badge: "border-slate-200 bg-slate-50 text-slate-500", dot: "bg-slate-400" },
-};
+/** In Review is the DC's queue — brand, not info, so it reads apart from In Progress. */
+function displayStatusTone(displayStatus: DisplayStatus): Tone {
+  if (displayStatus === "IN_PROGRESS") return "info";
+  if (displayStatus === "NEEDS_AMENDMENT") return "warning";
+  if (displayStatus === "IN_REVIEW") return "brand";
+  if (displayStatus === "COMPLETED") return "success";
+  return "neutral";
+}
 
 function StatusBadge({
   displayStatus,
@@ -396,33 +412,10 @@ function StatusBadge({
   displayStatus: DisplayStatus;
   label: string;
 }) {
-  const tone = DISPLAY_STATUS_TONE[displayStatus] ?? DISPLAY_STATUS_TONE.IN_PROGRESS;
-
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${tone.badge}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+    <Chip tone={displayStatusTone(displayStatus)} dot title={label}>
       {label}
-    </span>
-  );
-}
-
-function ProgressBar({ percentage }: { percentage: number }) {
-  const boundedPercentage = Math.min(Math.max(percentage, 0), 100);
-
-  return (
-    <div className="w-full min-w-0">
-      <div className="mb-1 flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
-        <span>{boundedPercentage}%</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-[var(--brand)]"
-          style={{ width: `${boundedPercentage}%` }}
-        />
-      </div>
-    </div>
+    </Chip>
   );
 }
 
@@ -430,111 +423,23 @@ function DefectChip({ count }: { count: number }) {
   const hasDefects = count > 0;
 
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
-        hasDefects
-          ? "border-red-200 bg-red-50 text-red-700"
-          : "border-slate-200 bg-slate-50 text-slate-600"
-      }`}
-    >
-      {hasDefects ? <AlertTriangle size={13} /> : null}
+    <Chip tone={hasDefects ? "critical" : "neutral"}>
+      {hasDefects ? <AlertTriangle size={12} /> : null}
       {hasDefects ? `${count.toLocaleString()} defect${count === 1 ? "" : "s"}` : "0 defects"}
-    </span>
+    </Chip>
   );
 }
 
 function ActivityStatus({ date }: { date: string | null | undefined }) {
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${activityIndicatorClassName(date)}`}
-        />
+      <div className="flex items-center gap-2 text-[12.5px] font-medium text-[var(--foreground)]">
+        <Dot tone={activityTone(date)} />
         <span className="truncate">{formatRelativeActivity(date)}</span>
       </div>
       {date ? (
-        <div className="mt-1 truncate text-xs text-[var(--muted)]">{formatDateTime(date)}</div>
-      ) : null}
-    </div>
-  );
-}
-
-function OperationalStat({
-  label,
-  value,
-  icon: Icon,
-  tone = "neutral",
-  progress,
-}: {
-  label: string;
-  value: number | string;
-  icon: typeof Activity;
-  tone?: "neutral" | "success" | "warning" | "danger" | "live" | "progress";
-  progress?: number;
-}) {
-  const styles =
-    tone === "danger"
-      ? {
-          card: "border-red-200 bg-red-50/50 shadow-red-100/60",
-          icon: "border-red-200 bg-white text-red-700",
-          signal: "bg-red-500",
-          bar: "bg-red-600",
-        }
-      : tone === "warning"
-        ? {
-            card: "border-amber-200 bg-amber-50/60 shadow-amber-100/60",
-            icon: "border-amber-200 bg-white text-amber-800",
-            signal: "bg-amber-500",
-            bar: "bg-amber-500",
-          }
-        : tone === "success"
-          ? {
-              card: "border-emerald-200 bg-emerald-50/50 shadow-emerald-100/60",
-              icon: "border-emerald-200 bg-white text-emerald-700",
-              signal: "bg-emerald-500",
-              bar: "bg-emerald-600",
-            }
-          : tone === "live"
-            ? {
-                card: "border-teal-200 bg-teal-50/50 shadow-teal-100/60",
-                icon: "border-teal-200 bg-white text-teal-700",
-                signal: "bg-emerald-500",
-                bar: "bg-[var(--brand)]",
-              }
-            : tone === "progress"
-              ? {
-                  card: "border-slate-200 bg-white",
-                  icon: "border-teal-200 bg-teal-50 text-teal-700",
-                  signal: "bg-[var(--brand)]",
-                  bar: "bg-[var(--brand)]",
-                }
-              : {
-                  card: "border-[var(--line)] bg-white",
-                  icon: "border-slate-200 bg-slate-50 text-slate-700",
-                  signal: "bg-slate-400",
-                  bar: "bg-slate-500",
-                };
-  const boundedProgress =
-    typeof progress === "number" ? Math.min(Math.max(progress, 0), 100) : null;
-
-  return (
-    <div className={`rounded-xl border p-4 shadow-[var(--shadow-soft)] ${styles.card}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${styles.signal}`} />
-          <p className="text-xs font-bold uppercase text-[var(--muted)]">{label}</p>
-        </div>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${styles.icon}`}>
-          <Icon size={17} />
-        </div>
-      </div>
-      <p className="mt-3 text-2xl font-bold text-slate-950">{value}</p>
-      {boundedProgress !== null ? (
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
-          <div
-            className={`h-full rounded-full ${styles.bar}`}
-            style={{ width: `${boundedProgress}%` }}
-          />
+        <div className="mt-1 truncate font-mono text-[11.5px] text-[var(--muted-2)]">
+          {formatDateTime(date)}
         </div>
       ) : null}
     </div>
@@ -560,10 +465,15 @@ function SortButton({
     <button
       type="button"
       onClick={() => onSort(sortKey)}
-      className="inline-flex items-center gap-1 text-left font-semibold text-slate-600 transition hover:text-[var(--brand)]"
+      className={`inline-flex items-center gap-1 text-left transition hover:text-[var(--foreground)] ${
+        isActive ? "text-[var(--foreground)]" : ""
+      }`}
     >
       {label}
-      <ChevronsUpDown size={14} className={isActive ? "text-[var(--brand)]" : "text-slate-400"} />
+      <ChevronsUpDown
+        size={12}
+        className={`shrink-0 ${isActive ? "text-[var(--brand)]" : "text-[var(--muted-2)]"}`}
+      />
       {isActive ? <span className="sr-only">sorted {direction}</span> : null}
     </button>
   );
@@ -595,41 +505,37 @@ function SiteVisitCreateModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--line2)] px-[18px] py-4">
           <div>
-            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-              Site Visit
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">
+            <Eyebrow>Site Visit</Eyebrow>
+            <h2
+              className="mt-1 text-[18px] font-bold leading-tight text-[var(--foreground)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
               Create Site Visit
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            aria-label="Close site visit modal"
-          >
-            <X size={17} />
-          </button>
+          <IconBtn onClick={onClose} aria-label="Close site visit modal">
+            <X size={16} />
+          </IconBtn>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
+        <form onSubmit={onSubmit} className="space-y-4 px-[18px] py-5">
           {error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] text-[var(--critical-text)]">
               {error}
             </div>
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Team</span>
+              <span className={modalLabelClass}>Team</span>
               <select
                 value={values.teamId}
                 onChange={(event) => onChange("teamId", event.target.value)}
                 required
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">Select team</option>
                 {teams.map((team) => (
@@ -640,13 +546,13 @@ function SiteVisitCreateModal({
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Visit Type</span>
+              <span className={modalLabelClass}>Visit Type</span>
               <select
                 value={values.visitType}
                 onChange={(event) =>
                   onChange("visitType", event.target.value as SiteVisitCreateForm["visitType"])
                 }
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 {VISIT_TYPE_OPTIONS.filter((option) => option.value !== "UNSPECIFIED").map(
                   (option) => (
@@ -661,11 +567,11 @@ function SiteVisitCreateModal({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Existing Pencawang</span>
+              <span className={modalLabelClass}>Existing Pencawang</span>
               <select
                 value={values.substationId}
                 onChange={(event) => onChange("substationId", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">Create from fields below</option>
                 {substations.map((substation) => (
@@ -676,11 +582,11 @@ function SiteVisitCreateModal({
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Domain</span>
+              <span className={modalLabelClass}>Domain</span>
               <select
                 value={values.operationalDomain}
                 onChange={(event) => onChange("operationalDomain", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">Not recorded</option>
                 {enterpriseOptions?.operationalDomains.map((domain) => (
@@ -694,41 +600,41 @@ function SiteVisitCreateModal({
 
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Kod Pencawang</span>
+              <span className={modalLabelClass}>Kod Pencawang</span>
               <input
                 type="text"
                 value={values.pencawangCode}
                 onChange={(event) => onChange("pencawangCode", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalInputClass}
               />
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Nama Pencawang</span>
+              <span className={modalLabelClass}>Nama Pencawang</span>
               <input
                 type="text"
                 value={values.pencawangName}
                 onChange={(event) => onChange("pencawangName", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalInputClass}
               />
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Functional Location</span>
+              <span className={modalLabelClass}>Functional Location</span>
               <input
                 type="text"
                 value={values.functionalLocation}
                 onChange={(event) => onChange("functionalLocation", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalInputClass}
               />
             </label>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">MAINHEAD</span>
+              <span className={modalLabelClass}>MAINHEAD</span>
               <select
                 value={values.mainheadId}
                 onChange={(event) => onChange("mainheadId", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
                 required
               >
                 <option value="">Select MAINHEAD</option>
@@ -740,11 +646,11 @@ function SiteVisitCreateModal({
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Project</span>
+              <span className={modalLabelClass}>Project</span>
               <select
                 value={values.projectId}
                 onChange={(event) => onChange("projectId", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">No project</option>
                 {enterpriseOptions?.projects.map((project) => (
@@ -755,11 +661,11 @@ function SiteVisitCreateModal({
               </select>
             </label>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Work Package</span>
+              <span className={modalLabelClass}>Work Package</span>
               <select
                 value={values.workPackageId}
                 onChange={(event) => onChange("workPackageId", event.target.value)}
-                className={`${filterControlClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">No work package</option>
                 {enterpriseOptions?.workPackages.map((workPackage) => (
@@ -772,23 +678,21 @@ function SiteVisitCreateModal({
           </div>
 
           <label className="block">
-            <span className="text-sm font-semibold text-slate-700">Notes</span>
+            <span className={modalLabelClass}>Notes</span>
             <textarea
               value={values.notes}
               onChange={(event) => onChange("notes", event.target.value)}
               rows={3}
-              className={`${filterControlClassName} mt-1.5 h-auto resize-none py-2`}
+              className={`${modalInputClass} !h-auto resize-none py-2`}
             />
           </label>
 
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
-              Cancel
-            </button>
-            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+          <div className="flex flex-col-reverse gap-3 border-t border-[var(--line2)] pt-4 sm:flex-row sm:justify-end">
+            <Tbtn onClick={onClose}>Cancel</Tbtn>
+            <Tbtn type="submit" variant="primary" disabled={isSaving}>
               <CheckCircle2 size={16} />
               {isSaving ? "Saving" : "Create Site Visit"}
-            </button>
+            </Tbtn>
           </div>
         </form>
       </div>
@@ -1188,282 +1092,227 @@ function SiteVisitsContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
-        <div className="mx-auto max-w-[92rem]">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                Operations Control
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                Site Visits
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
+        <div className="mx-auto max-w-7xl">
+          <PageHeader
+            eyebrow="Operations Control"
+            title="Site Visits"
+            subtitle={
+              <>
                 Live visit monitoring across teams, assets, progress, defects, and validation.
                 {isReadOnly ? " Read-only session." : " Admin session."}
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-700 shadow-[var(--shadow-soft)]">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              </>
+            }
+            chips={
+              <>
+                <Chip tone="success" dot>
                   Operations Live
-                </span>
-                <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                </Chip>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--panel)] px-[9px] py-[3px] text-[11px] font-semibold leading-tight text-[var(--foreground-soft)] transition hover:bg-[var(--panel-muted)]">
                   <input
                     type="checkbox"
                     checked={autoRefresh}
                     onChange={(event) => setAutoRefresh(event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                    className="h-3 w-3 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                   />
                   Auto-refresh 60s
                 </label>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {formatRefreshTime(lastRefreshedAt)}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {visits.length} visits
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => (session?.token ? loadVisits(session.token, false) : undefined)}
-                disabled={(isLoading && visits.length === 0) || isRefreshing || !session?.token}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-              >
-                <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={openCreateModal}
-                disabled={isReadOnly}
-                className={primaryButtonClassName}
-              >
-                <Plus size={16} />
-                Create Visit
-              </button>
-            </div>
-          </div>
+                <Chip tone="neutral">{formatRefreshTime(lastRefreshedAt)}</Chip>
+                <Chip tone="neutral">{visits.length} visits</Chip>
+              </>
+            }
+            actions={
+              <>
+                <Tbtn
+                  onClick={() => (session?.token ? loadVisits(session.token, false) : undefined)}
+                  disabled={(isLoading && visits.length === 0) || isRefreshing || !session?.token}
+                >
+                  <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+                  Refresh
+                </Tbtn>
+                <Tbtn variant="primary" onClick={openCreateModal} disabled={isReadOnly}>
+                  <Plus size={16} />
+                  Create Visit
+                </Tbtn>
+              </>
+            }
+          />
 
           <div className="mt-6">
             {isLoading && visits.length === 0 ? (
               <SiteVisitsLoading />
             ) : error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : (
               <div className="space-y-6">
                 <div className="grid gap-4 sm:grid-cols-3">
-                  <OperationalStat
+                  <KpiCard
                     label="Active"
                     value={activeVisitCount}
                     icon={Activity}
-                    tone="live"
+                    tone="brand"
+                    context={`of ${visits.length} tracked`}
                   />
-                  <OperationalStat
+                  <KpiCard
                     label="Completion"
                     value={`${averageCompletion}%`}
                     icon={CalendarDays}
-                    tone="progress"
-                    progress={averageCompletion}
+                    context={<ProgressBar value={averageCompletion} showLabel={false} />}
                   />
-                  <OperationalStat
+                  <KpiCard
                     label="Completed"
                     value={completedVisitCount}
                     icon={ShieldCheck}
                     tone="success"
+                    context={`of ${visits.length} tracked`}
                   />
                 </div>
 
-                <div>
-                  <section className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
-                  <div className="border-b border-slate-200 p-5">
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Search</span>
-                          <span className="relative block">
-                            <Search
-                              size={17}
-                              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
-                            <input
-                              type="search"
-                              value={search}
-                              onChange={(event) => setSearch(event.target.value)}
-                              placeholder="Search visits, teams, users"
-                              className={searchControlClassName}
-                            />
-                          </span>
-                        </label>
+                <Card padded={false}>
+                  <div className="border-b border-[var(--line2)] p-[18px]">
+                    <FilterBar>
+                      <SearchField
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search visits, teams, users"
+                        aria-label="Search site visits"
+                      />
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Status</span>
-                          <select
-                            value={statusFilter}
-                            onChange={(event) =>
-                              setStatusFilter(event.target.value as StatusFilter)
-                            }
-                            className={filterControlClassName}
-                          >
-                            {STATUS_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                      <select
+                        aria-label="Status"
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                        className={filterSelectClass}
+                      >
+                        {STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Visit Type</span>
-                          <select
-                            value={visitTypeFilter}
-                            onChange={(event) =>
-                              setVisitTypeFilter(event.target.value as VisitTypeFilter)
-                            }
-                            className={filterControlClassName}
-                          >
-                            {VISIT_TYPE_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                      <select
+                        aria-label="Visit type"
+                        value={visitTypeFilter}
+                        onChange={(event) =>
+                          setVisitTypeFilter(event.target.value as VisitTypeFilter)
+                        }
+                        className={filterSelectClass}
+                      >
+                        {VISIT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Domain</span>
-                          <select
-                            value={operationalDomainFilter}
-                            onChange={(event) =>
-                              setOperationalDomainFilter(
-                                event.target.value as OperationalDomainFilter,
-                              )
-                            }
-                            className={filterControlClassName}
-                          >
-                            {OPERATIONAL_DOMAIN_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
+                      <select
+                        aria-label="Operational domain"
+                        value={operationalDomainFilter}
+                        onChange={(event) =>
+                          setOperationalDomainFilter(
+                            event.target.value as OperationalDomainFilter,
+                          )
+                        }
+                        className={filterSelectClass}
+                      >
+                        {OPERATIONAL_DOMAIN_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
 
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,1.7fr)_repeat(5,minmax(0,1fr))]">
-                        <div className="min-w-0">
-                          <span className={filterLabelClassName}>Team/User</span>
-                          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-                            <label className={filterFieldClassName}>
-                              <span className="sr-only">Team</span>
-                              <select
-                                value={teamFilter}
-                                onChange={(event) => setTeamFilter(event.target.value)}
-                                className={filterControlClassName}
-                              >
-                                <option value="ALL">All teams</option>
-                                {teamOptions.map(([id, label]) => (
-                                  <option key={id} value={id}>
-                                    {label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className={filterFieldClassName}>
-                              <span className="sr-only">Team member</span>
-                              <input
-                                type="text"
-                                value={memberFilter}
-                                onChange={(event) => setMemberFilter(event.target.value)}
-                                placeholder="User"
-                                className={filterControlClassName}
-                              />
-                            </label>
-                          </div>
-                        </div>
+                      <select
+                        aria-label="Team"
+                        value={teamFilter}
+                        onChange={(event) => setTeamFilter(event.target.value)}
+                        className={filterSelectClass}
+                      >
+                        <option value="ALL">All teams</option>
+                        {teamOptions.map(([id, label]) => (
+                          <option key={id} value={id}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>MAINHEAD</span>
-                          <select
-                            value={mainheadFilter}
-                            onChange={(event) => setMainheadFilter(event.target.value)}
-                            className={filterControlClassName}
-                          >
-                            <option value="ALL">All MAINHEAD</option>
-                            {mainheadOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                      <input
+                        type="text"
+                        aria-label="Team member"
+                        value={memberFilter}
+                        onChange={(event) => setMemberFilter(event.target.value)}
+                        placeholder="Team member"
+                        className={`${filterControlClass} w-[150px]`}
+                      />
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Pencawang</span>
-                          <select
-                            value={pencawangFilter}
-                            onChange={(event) => setPencawangFilter(event.target.value)}
-                            className={filterControlClassName}
-                          >
-                            <option value="ALL">All Pencawang</option>
-                            {pencawangOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                      <select
+                        aria-label="MAINHEAD"
+                        value={mainheadFilter}
+                        onChange={(event) => setMainheadFilter(event.target.value)}
+                        className={filterSelectClass}
+                      >
+                        <option value="ALL">All MAINHEAD</option>
+                        {mainheadOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Date From</span>
-                          <input
-                            type="date"
-                            value={startDate}
-                            onChange={(event) => setStartDate(event.target.value)}
-                            className={filterControlClassName}
-                          />
-                        </label>
+                      <select
+                        aria-label="Pencawang"
+                        value={pencawangFilter}
+                        onChange={(event) => setPencawangFilter(event.target.value)}
+                        className={filterSelectClass}
+                      >
+                        <option value="ALL">All Pencawang</option>
+                        {pencawangOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
 
-                        <label className={filterFieldClassName}>
-                          <span className={filterLabelClassName}>Date To</span>
-                          <input
-                            type="date"
-                            value={endDate}
-                            onChange={(event) => setEndDate(event.target.value)}
-                            className={filterControlClassName}
-                          />
-                        </label>
+                      <input
+                        type="date"
+                        aria-label="Start date"
+                        value={startDate}
+                        onChange={(event) => setStartDate(event.target.value)}
+                        className={filterSelectClass}
+                      />
 
-                        <button
-                          type="button"
-                          onClick={resetFilters}
-                          className={`${secondaryButtonClassName} w-full self-end xl:w-auto`}
-                        >
-                          <X size={16} />
-                          Reset
-                        </button>
-                      </div>
-                    </div>
+                      <input
+                        type="date"
+                        aria-label="End date"
+                        value={endDate}
+                        onChange={(event) => setEndDate(event.target.value)}
+                        className={filterSelectClass}
+                      />
+
+                      <Tbtn variant="ghost" onClick={resetFilters}>
+                        <X size={16} />
+                        Reset
+                      </Tbtn>
+                    </FilterBar>
                   </div>
 
-                  <div className="overflow-x-auto xl:overflow-visible">
-                    <table className="w-full min-w-[920px] table-fixed text-left text-sm xl:min-w-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1120px] table-fixed text-left">
                       <colgroup>
-                        <col className="w-[9%]" />
-                        <col className="w-[22%]" />
-                        <col className="w-[13%]" />
-                        <col className="w-[13%]" />
-                        <col className="w-[9%]" />
                         <col className="w-[12%]" />
+                        <col className="w-[20%]" />
                         <col className="w-[13%]" />
+                        <col className="w-[11%]" />
+                        <col className="w-[18%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[14%]" />
                       </colgroup>
                       <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                          <th className="px-3 py-3.5">
+                        <tr className={`border-b border-[var(--line)] ${tableHeadClass}`}>
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Status"
                               sortKey="status"
@@ -1472,7 +1321,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Pencawang"
                               sortKey="pencawang"
@@ -1481,7 +1330,16 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">
+                          <th className={tableHeadCellClass}>
+                            <SortButton
+                              label="Mainhead"
+                              sortKey="mainhead"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Team"
                               sortKey="team"
@@ -1490,7 +1348,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Progress"
                               sortKey="progress"
@@ -1499,7 +1357,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Defects"
                               sortKey="defects"
@@ -1508,7 +1366,7 @@ function SiteVisitsContent() {
                               onSort={handleSort}
                             />
                           </th>
-                          <th className="px-3 py-3.5">
+                          <th className={tableHeadCellClass}>
                             <SortButton
                               label="Last Activity"
                               sortKey="lastActivity"
@@ -1519,7 +1377,7 @@ function SiteVisitsContent() {
                           </th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody>
                         {paginatedVisits.map((visit) => (
                           <tr
                             key={visit.id}
@@ -1531,22 +1389,24 @@ function SiteVisitsContent() {
                                 openVisit(visit.id);
                               }
                             }}
-                            className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
+                            className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--brand-tint)]`}
                             aria-label={`Open site visit ${displayPencawang(visit)}`}
                           >
-                            <td className="px-3 py-4 align-top">
+                            <td className={tableCellClass}>
                               <StatusBadge
                                 displayStatus={visit.displayStatus}
                                 label={visit.displayStatusLabel}
                               />
                             </td>
-                            <td className="px-3 py-4 align-top">
+                            <td className={tableCellClass}>
                               <div className="min-w-0">
-                                <div className="truncate font-semibold text-slate-900">
+                                <div
+                                  className="truncate font-semibold text-[var(--foreground)]"
+                                  title={displayPencawang(visit)}
+                                >
                                   {displayPencawang(visit)}
                                 </div>
-                                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
-                                  <span>{displayMainhead(visit)}</span>
+                                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11.5px] text-[var(--muted-2)]">
                                   <span>
                                     {formatEnum(visit.visitType)} / Cycle{" "}
                                     {visit.cycleNumber ?? "N/A"}
@@ -1557,100 +1417,74 @@ function SiteVisitsContent() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-slate-700">
-                              <div className="truncate font-medium text-slate-900">
+                            <td className={tableCellClass}>
+                              <div className="truncate" title={displayMainhead(visit)}>
+                                {displayMainhead(visit)}
+                              </div>
+                            </td>
+                            <td className={tableCellClass}>
+                              <div
+                                className="truncate font-medium text-[var(--foreground)]"
+                                title={displayTeam(visit)}
+                              >
                                 {displayTeam(visit)}
                               </div>
-                              <div className="mt-1 truncate text-xs text-[var(--muted)]">
+                              <div className={tableSublineClass}>
                                 {visit.teamMembers.length} members
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top">
-                              <ProgressBar percentage={visit.completionPercentage} />
-                              <div className="mt-1 truncate text-xs text-slate-500">
+                            <td className={tableCellClass}>
+                              <ProgressBar value={visit.completionPercentage} width={130} />
+                              <div className={`${tableSublineClass} font-mono`}>
                                 {visit.inspectedAssets}/{visit.totalAssets} assets
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top">
+                            <td className={tableCellClass}>
                               <DefectChip count={visit.defectsFound} />
                             </td>
-                            <td className="px-3 py-4 align-top text-slate-600">
+                            <td className={tableCellClass}>
                               <ActivityStatus date={visit.lastActivityAt} />
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-
-                    {paginatedVisits.length === 0 ? (
-                      <div className="border-t border-slate-100 px-5 py-12 text-center">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
-                          <SlidersHorizontal size={20} />
-                        </div>
-                        <p className="mt-4 text-sm font-semibold text-slate-900">
-                          No site visits found
-                        </p>
-                      </div>
-                    ) : null}
                   </div>
 
-                  <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-sm text-[var(--muted)]">
-                      Showing {firstItemIndex}-{lastItemIndex} of {sortedVisits.length}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        Rows
-                        <select
-                          value={pageSize}
-                          onChange={(event) => setPageSize(Number(event.target.value))}
-                          className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
-                        >
-                          {PAGE_SIZE_OPTIONS.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPage((currentPageNumber) =>
-                              Math.max(1, currentPageNumber - 1),
-                            )
-                          }
-                          disabled={currentPage === 1}
-                          className={paginationButtonClassName}
-                          aria-label="Previous page"
-                        >
-                          <ChevronLeft size={17} />
-                        </button>
-                        <span className="min-w-20 text-center text-sm font-semibold text-slate-700">
-                          {currentPage} / {totalPages}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPage((currentPageNumber) =>
-                              Math.min(totalPages, currentPageNumber + 1),
-                            )
-                          }
-                          disabled={currentPage === totalPages}
-                          className={paginationButtonClassName}
-                          aria-label="Next page"
-                        >
-                          <ChevronRight size={17} />
-                        </button>
+                  {paginatedVisits.length === 0 ? (
+                    <div className="border-t border-[var(--line2)] px-5 py-12 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
+                        <SlidersHorizontal size={20} />
                       </div>
+                      <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
+                        No site visits found
+                      </p>
                     </div>
-                  </div>
-                  </section>
+                  ) : null}
 
-                </div>
+                  <TableFooter
+                    summary={`Showing ${firstItemIndex}-${lastItemIndex} of ${sortedVisits.length}`}
+                    page={currentPage}
+                    pageCount={totalPages}
+                    onPageChange={setPage}
+                  >
+                    <label className="inline-flex items-center gap-2 text-[12.5px] text-[var(--muted)]">
+                      Rows
+                      <select
+                        aria-label="Rows per page"
+                        value={pageSize}
+                        onChange={(event) => setPageSize(Number(event.target.value))}
+                        className={`${filterSelectClass} !h-[34px]`}
+                      >
+                        {PAGE_SIZE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </TableFooter>
+                </Card>
               </div>
             )}
           </div>
