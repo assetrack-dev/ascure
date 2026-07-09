@@ -34,6 +34,9 @@
   --brand-strong: #1D4ED8;
   --brand-bright: #3B82F6;
   --brand-soft: #DBEAFE;
+  /* A tint softer than --brand-soft: active nav, icon tiles. Reads as "barely
+     blue" against --panel, where --brand-soft would read as a filled chip. */
+  --brand-tint: #EEF2FE;
   --on-brand: #FFFFFF;
   --accent: #2563EB;
   --accent-bright: #3B82F6;
@@ -50,6 +53,8 @@
   --muted-2: #828E9C;
   --line: #D7DCE2;
   --line-strong: #C5CCD4;
+  /* Inner divider — one step lighter than --line, for rules *inside* a card. */
+  --line2: #E7EAEE;
 
   /* "Chrome" surfaces — sidebar, drawer, login panels. Follow the theme:
      light rail in light mode, dark rail in dark mode. */
@@ -62,6 +67,8 @@
   --on-chrome-muted: #566373;
   --on-chrome-faint: #828E9C;
   --chrome-accent: #2563EB;
+  /* Top bar: chrome behind a backdrop-blur, so content scrolls under it. */
+  --chrome-translucent: rgba(255, 255, 255, 0.72);
 
   /* Legacy ink aliases (still referenced by some components) */
   --on-ink: var(--on-chrome);
@@ -86,6 +93,14 @@
   --danger: #DC2626; --danger-bg: #FCEBEB; --danger-border: #F2C7C7; --danger-text: #791F1F;
   --monitor: #7C5CD6; --monitor-bg: #EEEAFB; --monitor-border: #D6CCF3; --monitor-text: #3C3489;
   --neutral: #566373; --neutral-bg: #EEF0F2; --neutral-border: #D7DCE2; --neutral-text: #3A434F;
+  /* Faintest danger wash — the emergency alert bar / KPI card gradient. */
+  --danger-tint: #FDF3F3;
+
+  /* Two hues the status ramp doesn't cover, needed by the maintenance category
+     lanes. NB: Tailwind's `amber-500` is remapped to --medium (#B45309) by the
+     @theme block below, so a true amber needs its own token. */
+  --amber: #F59E0B;
+  --slate: #94A3B8;
 
   /* Typography */
   --font-display: var(--font-display, 'Space Grotesk'), 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -113,6 +128,9 @@
   --brand-strong: #60A5FA;
   --brand-bright: #60A5FA;
   --brand-soft: #18233A;
+  /* Sits *under* --brand-soft in dark: a blue lift off --chrome (#0B0E12),
+     not a fill. Mirrors the light-mode relationship, inverted. */
+  --brand-tint: #172136;
   --on-brand: #FFFFFF;
   --accent: #3B82F6;
   --accent-bright: #60A5FA;
@@ -128,6 +146,7 @@
   --muted-2: #66717F;
   --line: #262D36;
   --line-strong: #3A434F;
+  --line2: #212730;
 
   /* Chrome goes dark in dark mode */
   --chrome: #0B0E12;
@@ -139,6 +158,7 @@
   --on-chrome-muted: #9AA4B0;
   --on-chrome-faint: #66717F;
   --chrome-accent: #60A5FA;
+  --chrome-translucent: rgba(11, 14, 18, 0.72);
 
   --focus-ring: rgba(96, 165, 250, 0.40);
   --selection-bg: rgba(96, 165, 250, 0.20);
@@ -154,6 +174,10 @@
   --danger: #F87171; --danger-bg: #3A1D20; --danger-border: #5A2A2D; --danger-text: #FCA5A5;
   --monitor: #A99BE8; --monitor-bg: #221C3A; --monitor-border: #382E5C; --monitor-text: #CFC6F2;
   --neutral: #9AA4B0; --neutral-bg: #1B212A; --neutral-border: #2A313B; --neutral-text: #CDD4DB;
+  --danger-tint: #2A1618;
+
+  --amber: #FBBF24;
+  --slate: #8B96A5;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.40);

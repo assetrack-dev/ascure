@@ -4,19 +4,36 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
+  Boxes,
   ChevronsUpDown,
+  CircleCheckBig,
+  Clock,
   Loader2,
   RefreshCw,
-  Search,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  Chip,
+  FilterBar,
+  KpiCard,
+  PageHeader,
+  SearchField,
+  TableFooter,
+  Tbtn,
+  filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableMonoCellClass,
+  tableRowClass,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import {
   bulkDeleteAssets,
@@ -53,27 +70,17 @@ const STATUS_RANK: Record<AssetInspectionStatus, number> = {
   COMPLETED: 0,
   PENDING: 1,
 };
-const filterControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const searchControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const secondaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]";
-const paginationButtonClassName =
-  "inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
-const dangerButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 text-sm font-semibold text-red-600 shadow-[var(--shadow-soft)] transition hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400";
 
 function AssetsLoading() {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="h-10 w-full animate-pulse rounded-md bg-slate-100" />
+    <Card>
+      <div className="h-[38px] w-full animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
       <div className="mt-5 space-y-3">
         {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="h-12 animate-pulse rounded-md bg-slate-100" />
+          <div key={index} className="h-12 animate-pulse rounded-[9px] bg-[var(--panel-muted)]" />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -125,6 +132,11 @@ function formatNullable(value: string | null) {
   return value?.trim() || "Not recorded";
 }
 
+/** Whole-percent share of `total`, safe at zero. */
+function percentOf(part: number, total: number) {
+  return total === 0 ? 0 : Math.round((part / total) * 100);
+}
+
 function getSortValue(asset: AssetListItem, sortKey: SortKey) {
   if (sortKey === "inspectionStatus") {
     return STATUS_RANK[asset.inspectionStatus];
@@ -160,15 +172,10 @@ function uniqueOptions(assets: AssetListItem[], key: "assetType" | "feeder" | "p
 }
 
 function StatusBadge({ status }: { status: AssetInspectionStatus }) {
-  const className =
-    status === "COMPLETED"
-      ? "border-green-200 bg-green-50 text-green-700"
-      : "border-yellow-200 bg-yellow-50 text-yellow-800";
-
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+    <Chip tone={status === "COMPLETED" ? "success" : "neutral"}>
       {formatInspectionStatus(status)}
-    </span>
+    </Chip>
   );
 }
 
@@ -191,10 +198,15 @@ function SortButton({
     <button
       type="button"
       onClick={() => onSort(sortKey)}
-      className="inline-flex items-center gap-1 text-left font-semibold text-slate-600 transition hover:text-[var(--brand)]"
+      className={`inline-flex items-center gap-1 text-left transition ${
+        isActive ? "text-[var(--foreground)]" : "hover:text-[var(--foreground-soft)]"
+      }`}
     >
       {label}
-      <ChevronsUpDown size={14} className={isActive ? "text-[var(--brand)]" : "text-slate-400"} />
+      <ChevronsUpDown
+        size={13}
+        className={isActive ? "text-[var(--brand)]" : "text-[var(--muted-2)]"}
+      />
       {isActive ? <span className="sr-only">sorted {direction}</span> : null}
     </button>
   );
@@ -284,6 +296,16 @@ function AssetsContent() {
         ? []
         : assets.filter((asset) => asset.pencawangName === pencawangFilter),
     [assets, pencawangFilter],
+  );
+
+  // KPI strip — derived from the assets already in memory, no extra request.
+  const inspectedCount = useMemo(
+    () => assets.filter((asset) => asset.inspectionStatus === "COMPLETED").length,
+    [assets],
+  );
+  const pendingCount = useMemo(
+    () => assets.filter((asset) => asset.inspectionStatus === "PENDING").length,
+    [assets],
   );
 
   const filteredAssets = useMemo(() => {
@@ -437,70 +459,86 @@ function AssetsContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                Asset Table
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                Assets
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
+          <PageHeader
+            eyebrow="Asset Registry"
+            title="Assets"
+            subtitle="Every pole and structure in your scope, with the feeder it hangs off and the state of its latest inspection."
+            chips={
+              <>
+                <Chip tone="neutral">
+                  <ShieldCheck size={13} />
                   {isReadOnly ? "Read-only" : "Full access"}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {assets.length} total
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadAssets(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
+                </Chip>
+                <Chip tone="neutral">{assets.length} total</Chip>
+              </>
+            }
+            actions={
+              <Tbtn
+                onClick={() => (session?.token ? loadAssets(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </Tbtn>
+            }
+          />
 
           <div className="mt-6">
             {isLoading && assets.length === 0 ? (
               <AssetsLoading />
             ) : error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : (
-              <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
-                <div className="border-b border-slate-200 p-5">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(5,minmax(140px,auto))_auto]">
-                    <label className="relative block">
-                      <span className="sr-only">Search assets</span>
-                      <Search
-                        size={17}
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-                      <input
-                        type="search"
+              <>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard
+                    label="Assets in scope"
+                    value={assets.length}
+                    icon={Boxes}
+                    context={`Across ${pencawangOptions.length} Pencawang`}
+                  />
+                  <KpiCard
+                    label="Inspected"
+                    value={inspectedCount}
+                    icon={CircleCheckBig}
+                    tone="success"
+                    context={`${percentOf(inspectedCount, assets.length)}% of assets in scope`}
+                  />
+                  <KpiCard
+                    label="Pending"
+                    value={pendingCount}
+                    icon={Clock}
+                    context={`${percentOf(pendingCount, assets.length)}% awaiting inspection`}
+                  />
+                  <KpiCard
+                    label="Feeders"
+                    value={feederOptions.length}
+                    icon={Zap}
+                    context={`${assetTypeOptions.length} asset type${
+                      assetTypeOptions.length === 1 ? "" : "s"
+                    }`}
+                  />
+                </div>
+
+                <Card padded={false} className="mt-4">
+                  <div className="border-b border-[var(--line2)] p-[18px]">
+                    <FilterBar>
+                      <SearchField
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         placeholder="Search assets"
-                        className={searchControlClassName}
+                        aria-label="Search assets"
                       />
-                    </label>
 
-                    <label className="block">
-                      <span className="sr-only">Asset Type</span>
                       <select
+                        aria-label="Asset type"
                         value={assetTypeFilter}
                         onChange={(event) => setAssetTypeFilter(event.target.value)}
-                        className={filterControlClassName}
+                        className={filterSelectClass}
                       >
                         <option value="ALL">All asset types</option>
                         {assetTypeOptions.map((option) => (
@@ -509,14 +547,12 @@ function AssetsContent() {
                           </option>
                         ))}
                       </select>
-                    </label>
 
-                    <label className="block">
-                      <span className="sr-only">Feeder</span>
                       <select
+                        aria-label="Feeder"
                         value={feederFilter}
                         onChange={(event) => setFeederFilter(event.target.value)}
-                        className={filterControlClassName}
+                        className={filterSelectClass}
                       >
                         <option value="ALL">All feeders</option>
                         {feederOptions.map((option) => (
@@ -525,14 +561,12 @@ function AssetsContent() {
                           </option>
                         ))}
                       </select>
-                    </label>
 
-                    <label className="block">
-                      <span className="sr-only">Pencawang</span>
                       <select
+                        aria-label="Pencawang"
                         value={pencawangFilter}
                         onChange={(event) => setPencawangFilter(event.target.value)}
-                        className={filterControlClassName}
+                        className={filterSelectClass}
                       >
                         <option value="ALL">All pencawang</option>
                         {pencawangOptions.map((option) => (
@@ -541,47 +575,43 @@ function AssetsContent() {
                           </option>
                         ))}
                       </select>
-                    </label>
 
-                    <label className="block">
-                      <span className="sr-only">Start date</span>
                       <input
                         type="date"
+                        aria-label="Start date"
                         value={startDate}
                         onChange={(event) => setStartDate(event.target.value)}
-                        className={filterControlClassName}
+                        className={filterSelectClass}
                       />
-                    </label>
 
-                    <label className="block">
-                      <span className="sr-only">End date</span>
                       <input
                         type="date"
+                        aria-label="End date"
                         value={endDate}
                         onChange={(event) => setEndDate(event.target.value)}
-                        className={filterControlClassName}
+                        className={filterSelectClass}
                       />
-                    </label>
 
-                    <button
-                      type="button"
-                      onClick={resetFilters}
-                      className={secondaryButtonClassName}
-                    >
-                      <X size={16} />
-                      Reset
-                    </button>
+                      <Tbtn variant="ghost" onClick={resetFilters}>
+                        <X size={16} />
+                        Reset
+                      </Tbtn>
+                    </FilterBar>
                   </div>
-                </div>
 
-                {!isReadOnly ? (
-                  <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 p-5 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold uppercase text-slate-500">
-                        Delete
+                  {/* Destructive actions keep their own strip *below* the filter bar:
+                      "Delete all in {Pencawang}" reads the Pencawang filter, so it has to
+                      sit under it. The design puts a single "Bulk delete" in the page
+                      header — but there are three flows here, and parking three red
+                      buttons next to Refresh invites a misclick. */}
+                  {!isReadOnly ? (
+                    <div className="flex flex-wrap items-center gap-2.5 border-b border-[var(--line2)] bg-[var(--danger-tint)] px-[18px] py-3">
+                      <span className="mr-1 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--critical-text)]">
+                        Danger zone
                       </span>
-                      <button
-                        type="button"
+
+                      <Tbtn
+                        variant="danger"
                         disabled={selectedIds.size === 0}
                         onClick={() =>
                           setPendingDelete({
@@ -592,13 +622,13 @@ function AssetsContent() {
                             run: (token) => bulkDeleteAssets(token, Array.from(selectedIds)),
                           })
                         }
-                        className={dangerButtonClassName}
                       >
                         <Trash2 size={15} />
                         Delete selected{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
-                      </button>
-                      <button
-                        type="button"
+                      </Tbtn>
+
+                      <Tbtn
+                        variant="danger"
                         disabled={pencawangFilter === "ALL" || pencawangAssets.length === 0}
                         onClick={() => {
                           // Substation.name isn't unique (@@unique is [tenantId, code]),
@@ -628,7 +658,6 @@ function AssetsContent() {
                                   ),
                           });
                         }}
-                        className={dangerButtonClassName}
                         title={
                           pencawangFilter === "ALL"
                             ? "Choose a Pencawang in the filter above first"
@@ -639,13 +668,13 @@ function AssetsContent() {
                         {pencawangFilter === "ALL"
                           ? "Delete all in Pencawang"
                           : `Delete all in ${pencawangFilter}`}
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                      </Tbtn>
+
                       <select
+                        aria-label="Operational session to delete assets from"
                         value={sessionToDelete}
                         onChange={(event) => setSessionToDelete(event.target.value)}
-                        className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)]"
+                        className={filterSelectClass}
                       >
                         <option value="">Select a session…</option>
                         {sessions.map((sessionOption) => (
@@ -654,8 +683,9 @@ function AssetsContent() {
                           </option>
                         ))}
                       </select>
-                      <button
-                        type="button"
+
+                      <Tbtn
+                        variant="danger"
                         disabled={!sessionToDelete}
                         onClick={() => {
                           const sess = sessions.find((item) => item.id === sessionToDelete);
@@ -667,184 +697,182 @@ function AssetsContent() {
                             run: (token) => deleteAssetsBySession(token, sessionToDelete),
                           });
                         }}
-                        className={dangerButtonClassName}
                       >
                         <Trash2 size={15} />
                         Delete session assets
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {actionMessage ? (
-                  <div className="border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-medium text-emerald-700">
-                    {actionMessage}
-                  </div>
-                ) : null}
-
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                        {!isReadOnly ? (
-                          <th className="w-10 px-4 py-3.5">
-                            <input
-                              type="checkbox"
-                              aria-label="Select all on this page"
-                              checked={allVisibleSelected}
-                              onChange={toggleSelectAllVisible}
-                              className="h-4 w-4 cursor-pointer"
-                            />
-                          </th>
-                        ) : null}
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Asset Code"
-                            sortKey="assetCode"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                          <div className="mt-1 text-[10px] font-semibold normal-case tracking-normal text-slate-400">
-                            No Tiang Rondaan
-                          </div>
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Asset Type"
-                            sortKey="assetType"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Feeder"
-                            sortKey="feeder"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="min-w-56 px-5 py-3.5">
-                          <SortButton
-                            label="Location"
-                            sortKey="location"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="min-w-52 px-5 py-3.5">
-                          <SortButton
-                            label="Pencawang Name"
-                            sortKey="pencawangName"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Inspection Status"
-                            sortKey="inspectionStatus"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                        <th className="whitespace-nowrap px-5 py-3.5">
-                          <SortButton
-                            label="Date"
-                            sortKey="date"
-                            activeSortKey={sortKey}
-                            direction={sortDirection}
-                            onSort={handleSort}
-                          />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {paginatedAssets.map((asset) => (
-                        <tr
-                          key={asset.id}
-                          tabIndex={0}
-                          onClick={() => openAsset(asset.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              openAsset(asset.id);
-                            }
-                          }}
-                          className="cursor-pointer outline-none transition hover:bg-teal-50/40 focus-visible:bg-teal-50/40"
-                          aria-label={`Open asset ${asset.assetCode}`}
-                        >
-                          {!isReadOnly ? (
-                            <td
-                              className="px-4 py-4"
-                              onClick={(event) => event.stopPropagation()}
-                              onKeyDown={(event) => event.stopPropagation()}
-                            >
-                              <input
-                                type="checkbox"
-                                aria-label={`Select ${asset.assetCode}`}
-                                checked={selectedIds.has(asset.id)}
-                                onChange={() => toggleRow(asset.id)}
-                                className="h-4 w-4 cursor-pointer"
-                              />
-                            </td>
-                          ) : null}
-                          <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-900">
-                            {asset.assetCode}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                            {formatNullable(asset.assetType)}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                            {formatNullable(asset.feeder)}
-                          </td>
-                          <td className="px-5 py-4 text-slate-600">
-                            {formatNullable(asset.location)}
-                          </td>
-                          <td className="px-5 py-4 text-slate-700">
-                            {formatNullable(asset.pencawangName)}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <StatusBadge status={asset.inspectionStatus} />
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            {formatDate(asset.date)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {paginatedAssets.length === 0 ? (
-                    <div className="border-t border-slate-100 px-5 py-12 text-center">
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
-                        <SlidersHorizontal size={20} />
-                      </div>
-                      <p className="mt-4 text-sm font-semibold text-slate-900">
-                        No assets found
-                      </p>
+                      </Tbtn>
                     </div>
                   ) : null}
-                </div>
 
-                <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-[var(--muted)]">
-                    Showing {firstItemIndex}-{lastItemIndex} of {sortedAssets.length}
+                  {actionMessage ? (
+                    <div className="border-b border-[var(--success-border)] bg-[var(--success-bg)] px-[18px] py-2.5 text-[12.5px] font-semibold text-[var(--success-text)]">
+                      {actionMessage}
+                    </div>
+                  ) : null}
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left">
+                      <thead>
+                        <tr className={`${tableHeadClass} border-b border-[var(--line2)]`}>
+                          {!isReadOnly ? (
+                            <th className="w-10 px-3.5 py-2.5">
+                              <input
+                                type="checkbox"
+                                aria-label="Select all on this page"
+                                checked={allVisibleSelected}
+                                onChange={toggleSelectAllVisible}
+                                className="h-4 w-4 cursor-pointer rounded border-[var(--line-strong)] accent-[var(--brand)]"
+                              />
+                            </th>
+                          ) : null}
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                            <SortButton
+                              label="Asset Code"
+                              sortKey="assetCode"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                            <div className="mt-1 text-[9.5px] font-medium normal-case tracking-normal text-[var(--muted-2)]">
+                              No Tiang Rondaan
+                            </div>
+                          </th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                            <SortButton
+                              label="Asset Type"
+                              sortKey="assetType"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                            <SortButton
+                              label="Feeder"
+                              sortKey="feeder"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={`${tableHeadCellClass} min-w-56`}>
+                            <SortButton
+                              label="Location"
+                              sortKey="location"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={`${tableHeadCellClass} min-w-52`}>
+                            <SortButton
+                              label="Pencawang Name"
+                              sortKey="pencawangName"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                            <SortButton
+                              label="Inspection Status"
+                              sortKey="inspectionStatus"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                            <SortButton
+                              label="Date"
+                              sortKey="date"
+                              activeSortKey={sortKey}
+                              direction={sortDirection}
+                              onSort={handleSort}
+                            />
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedAssets.map((asset) => (
+                          <tr
+                            key={asset.id}
+                            tabIndex={0}
+                            onClick={() => openAsset(asset.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openAsset(asset.id);
+                              }
+                            }}
+                            className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--panel-muted)]`}
+                            aria-label={`Open asset ${asset.assetCode}`}
+                          >
+                            {!isReadOnly ? (
+                              <td
+                                className="px-3.5 py-3 align-middle"
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Select ${asset.assetCode}`}
+                                  checked={selectedIds.has(asset.id)}
+                                  onChange={() => toggleRow(asset.id)}
+                                  className="h-4 w-4 cursor-pointer rounded border-[var(--line-strong)] accent-[var(--brand)]"
+                                />
+                              </td>
+                            ) : null}
+                            <td className={`${tableMonoCellClass} whitespace-nowrap font-semibold`}>
+                              {asset.assetCode}
+                            </td>
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
+                              {formatNullable(asset.assetType)}
+                            </td>
+                            <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                              {formatNullable(asset.feeder)}
+                            </td>
+                            <td className={tableCellClass}>
+                              {formatNullable(asset.location)}
+                            </td>
+                            <td className={tableCellClass}>
+                              {formatNullable(asset.pencawangName)}
+                            </td>
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
+                              <StatusBadge status={asset.inspectionStatus} />
+                            </td>
+                            <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                              {formatDate(asset.date)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {paginatedAssets.length === 0 ? (
+                      <div className="border-t border-[var(--line2)] px-5 py-12 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
+                          <SlidersHorizontal size={20} />
+                        </div>
+                        <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
+                          No assets found
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <TableFooter
+                    summary={`Showing ${firstItemIndex}-${lastItemIndex} of ${sortedAssets.length}`}
+                    page={currentPage}
+                    pageCount={totalPages}
+                    onPageChange={setPage}
+                  >
+                    <label className="inline-flex items-center gap-2 text-[12.5px] text-[var(--muted)]">
                       Rows
                       <select
                         value={pageSize}
                         onChange={(event) => setPageSize(Number(event.target.value))}
-                        className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
+                        className={`${filterSelectClass} !h-[34px]`}
                       >
                         {PAGE_SIZE_OPTIONS.map((option) => (
                           <option key={option} value={option}>
@@ -853,86 +881,51 @@ function AssetsContent() {
                         ))}
                       </select>
                     </label>
-
-                    <div className="inline-flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPage((currentPageNumber) =>
-                            Math.max(1, currentPageNumber - 1),
-                          )
-                        }
-                        disabled={currentPage === 1}
-                        className={paginationButtonClassName}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft size={17} />
-                      </button>
-                      <span className="min-w-20 text-center text-sm font-semibold text-slate-700">
-                        {currentPage} / {totalPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPage((currentPageNumber) =>
-                            Math.min(totalPages, currentPageNumber + 1),
-                          )
-                        }
-                        disabled={currentPage === totalPages}
-                        className={paginationButtonClassName}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight size={17} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </section>
+                  </TableFooter>
+                </Card>
+              </>
             )}
           </div>
         </div>
       </main>
       {pendingDelete ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] p-4"
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md rounded-xl border border-[var(--line)] bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] p-6 shadow-[var(--shadow-card)]">
             <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--critical-bg)] text-[var(--critical)]">
                 <AlertTriangle size={20} />
               </span>
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">{pendingDelete.title}</h2>
-                <p className="mt-1 text-sm font-semibold text-red-600">
+              <div className="min-w-0">
+                <h2
+                  className="text-[17px] font-bold leading-tight text-[var(--foreground)]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {pendingDelete.title}
+                </h2>
+                <p className="mt-1.5 text-[12.5px] font-semibold text-[var(--critical-text)]">
                   {pendingDelete.countLabel}
                 </p>
-                <p className="mt-2 text-sm text-slate-600">{pendingDelete.description}</p>
+                <p className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
+                  {pendingDelete.description}
+                </p>
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={isDeleting}
-                className={secondaryButtonClassName}
-              >
+              <Tbtn onClick={() => setPendingDelete(null)} disabled={isDeleting}>
                 Cancel
-              </button>
-              <button
-                type="button"
-                onClick={runPendingDelete}
-                disabled={isDeleting}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
-              >
+              </Tbtn>
+              <Tbtn variant="danger" onClick={runPendingDelete} disabled={isDeleting}>
                 {isDeleting ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Trash2 size={16} />
                 )}
                 Delete
-              </button>
+              </Tbtn>
             </div>
           </div>
         </div>

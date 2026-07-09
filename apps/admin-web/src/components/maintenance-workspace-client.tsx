@@ -2,9 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Building2, Info, MapPin, RefreshCw, Wrench } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Building2,
+  Check,
+  ChevronDown,
+  Info,
+  Layers,
+  MapPin,
+  Plus,
+  RefreshCw,
+  UserPlus,
+  Wrench,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { Card, Chip, KpiCard, PageHeader, Tbtn, type Tone } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
@@ -17,6 +31,7 @@ import type {
   MaintenanceCategory,
   MaintenanceWorkspace,
   WorkspaceAssignableTeam,
+  WorkspaceEmergency,
   WorkspaceLane,
   WorkspacePackage,
 } from "@/types/maintenance-workspace";
@@ -42,124 +57,226 @@ const STATUS_GROUP_ORDER: DisplayStatus[] = [
   "CANCELLED",
 ];
 
+/**
+ * Lane dots. `--amber` / `--slate` exist because Tailwind's `amber-500` and
+ * `slate-400` are remapped to `--medium` / `--muted-2` by the `@theme inline`
+ * block in globals.css — neither is the hue this legend needs.
+ */
 const CATEGORY_META: Record<MaintenanceCategory, { label: string; dot: string }> = {
-  RENTIS: { label: "Rentis", dot: "bg-green-500" },
-  CAT_TIANG: { label: "Cat tiang", dot: "bg-amber-500" },
-  SELENGGARAAN: { label: "Selenggaraan", dot: "bg-slate-400" },
+  RENTIS: { label: "Rentis", dot: "bg-[var(--success)]" },
+  CAT_TIANG: { label: "Cat tiang", dot: "bg-[var(--amber)]" },
+  SELENGGARAAN: { label: "Selenggaraan", dot: "bg-[var(--slate)]" },
 };
 
-function severityClassName(severity: string) {
+const CATEGORY_ORDER: MaintenanceCategory[] = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"];
+
+function severityTone(severity: string): Tone {
   const normalized = severity.toUpperCase();
-  if (normalized === "CRITICAL") return "border-red-200 bg-red-50 text-red-700";
-  if (normalized === "HIGH") return "border-orange-200 bg-orange-50 text-orange-700";
-  if (normalized === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-800";
-  return "border-slate-200 bg-slate-50 text-slate-600";
+  if (normalized === "CRITICAL") return "critical";
+  if (normalized === "HIGH") return "high";
+  if (normalized === "MEDIUM") return "warning";
+  return "neutral";
 }
 
-function laneStatus(lane: WorkspaceLane): { text: string; className: string } {
-  if (lane.count === 0) {
-    return { text: "—", className: "border-transparent text-slate-300" };
+function surveyStatusTone(key: string): Tone {
+  if (key === "COMPLETED") return "success";
+  if (key === "IN_REVIEW") return "brand";
+  if (key === "NEEDS_AMENDMENT") return "high";
+  if (key === "IN_PROGRESS") return "info";
+  if (key === "CANCELLED") return "critical";
+  return "neutral";
+}
+
+function statusGroupLabel(key: string) {
+  return key === NO_SURVEY_GROUP ? "No survey yet" : DISPLAY_STATUS_LABELS[key as DisplayStatus];
+}
+
+function formatDate(date: string | null | undefined) {
+  if (!date) {
+    return "No date";
   }
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return date;
+  }
+
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+/**
+ * The lane's assignment state, as one sentence. `assigned` drives the control's
+ * two looks: a dashed "add" affordance vs. a filled brand pill.
+ */
+function laneStatus(lane: WorkspaceLane): { text: string; tone: Tone; assigned: boolean } {
   if (lane.unassignedCount === lane.count) {
-    return { text: "Unassigned", className: "border-amber-200 bg-amber-50 text-amber-700" };
+    return { text: "Unassigned", tone: "warning", assigned: false };
   }
-  if (lane.inProgressCount > 0) {
-    return { text: "In progress", className: "border-blue-200 bg-blue-50 text-blue-700" };
+
+  if (lane.unassignedCount === 0) {
+    if (lane.teams.length === 1) {
+      return { text: lane.teams[0].name, tone: "brand", assigned: true };
+    }
+
+    if (lane.teams.length > 1) {
+      return { text: `${lane.teams.length} teams`, tone: "brand", assigned: true };
+    }
   }
-  if (lane.teams.length === 1 && lane.unassignedCount === 0) {
-    return { text: lane.teams[0].name, className: "border-blue-200 bg-blue-50 text-blue-700" };
-  }
-  const assigned = lane.count - lane.unassignedCount;
+
+  const assignedCount = lane.count - lane.unassignedCount;
+
   return {
-    text: `${assigned}/${lane.count} assigned`,
-    className: "border-slate-200 bg-slate-50 text-slate-600",
+    text: `${assignedCount}/${lane.count} assigned`,
+    tone: assignedCount > 0 ? "brand" : "warning",
+    assigned: assignedCount > 0,
   };
 }
 
-function SummaryChip({ label, value, tone }: { label: string; value: number; tone?: "danger" }) {
-  return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-3 shadow-[var(--shadow-soft)]">
-      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</div>
-      <div
-        className={`mt-1 text-2xl font-bold ${tone === "danger" && value > 0 ? "text-red-600" : "text-[var(--foreground)]"}`}
-      >
-        {value.toLocaleString()}
-      </div>
-    </div>
-  );
-}
-
-function EmergencyLane({ workspace }: { workspace: MaintenanceWorkspace }) {
-  if (workspace.emergencies.length === 0) {
+function oldestEmergency(emergencies: WorkspaceEmergency[]): WorkspaceEmergency | null {
+  if (emergencies.length === 0) {
     return null;
   }
 
+  return emergencies.reduce((oldest, emergency) => {
+    const left = new Date(emergency.createdAt).getTime();
+    const right = new Date(oldest.createdAt).getTime();
+    return Number.isFinite(left) && left < right ? emergency : oldest;
+  }, emergencies[0]);
+}
+
+function EmergencyLane({ workspace }: { workspace: MaintenanceWorkspace }) {
+  // Rows are open by default: the previous page always showed them, and an
+  // emergency is not something to hide behind a disclosure.
+  const [isOpen, setIsOpen] = useState(true);
+
+  if (workspace.emergencyCount === 0 || workspace.emergencies.length === 0) {
+    return null;
+  }
+
+  const oldest = oldestEmergency(workspace.emergencies);
+
   return (
-    <section className="rounded-xl border border-red-200 bg-red-50/60 p-5 shadow-[var(--shadow-card)]">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="inline-flex items-center gap-2 text-base font-semibold text-red-900">
-          <AlertTriangle size={17} />
-          Emergencies — respond now
-        </h2>
-        <span className="text-sm font-semibold text-red-700">
-          {workspace.emergencyCount} active · all Pencawang
+    <section className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-gradient-to-r from-[var(--danger-tint)] to-[var(--panel)] shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center gap-4 p-[18px]">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-[var(--critical-border)] bg-[var(--panel)] text-[var(--critical)] shadow-[var(--shadow-soft)]">
+          <AlertTriangle size={18} />
         </span>
-      </div>
-      <div className="mt-4 divide-y divide-red-100">
-        {workspace.emergencies.map((emergency) => (
-          <div
-            key={emergency.id}
-            className="flex flex-wrap items-center justify-between gap-3 py-3"
+
+        <div className="min-w-0 flex-1">
+          <h2
+            className="text-[14.5px] font-semibold leading-tight text-[var(--critical-text)]"
+            style={{ fontFamily: "var(--font-display)" }}
           >
-            <div className="min-w-0">
-              <span className="font-semibold text-red-950">{emergency.assetCode}</span>
-              <span className="text-sm text-red-800"> · {emergency.label}</span>
-              <span className="text-sm text-red-700/80"> · {emergency.substationName}</span>
-            </div>
-            <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${severityClassName(emergency.severity)}`}
-            >
-              {emergency.severity}
-            </span>
-          </div>
-        ))}
+            {workspace.emergencyCount} emergenc{workspace.emergencyCount === 1 ? "y" : "ies"} —
+            respond now
+          </h2>
+          <p className="mt-1 truncate text-[12px] text-[var(--muted)]">
+            {oldest ? (
+              <>
+                Oldest: <span className="font-mono">{oldest.assetCode}</span> ·{" "}
+                {oldest.substationName} · {formatDate(oldest.createdAt)}
+              </>
+            ) : (
+              "Across all Pencawang"
+            )}
+          </p>
+        </div>
+
+        <Tbtn
+          variant="danger"
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((current) => !current)}
+        >
+          <ChevronDown size={15} className={isOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+          {isOpen ? "Hide details" : `Review ${workspace.emergencyCount}`}
+        </Tbtn>
       </div>
+
+      {isOpen ? (
+        <div className="border-t border-[var(--critical-border)] bg-[var(--panel)]">
+          {workspace.emergencies.map((emergency) => (
+            <div
+              key={emergency.id}
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line2)] px-[18px] py-2.5 last:border-b-0"
+            >
+              <div className="min-w-0 text-[13px]">
+                <span className="font-mono font-semibold text-[var(--foreground)]">
+                  {emergency.assetCode}
+                </span>
+                <span className="text-[var(--foreground-soft)]"> · {emergency.label}</span>
+                <span className="text-[var(--muted)]"> · {emergency.substationName}</span>
+              </div>
+              <Chip tone={severityTone(emergency.severity)}>{emergency.severity}</Chip>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
 
+/**
+ * A native `<select>` under a pill. The select keeps every behaviour it had —
+ * value reset, disabled state, the `__none__` unassign option — while the pill
+ * carries the two looks the design asks for. `peer-focus-visible` restores the
+ * focus ring the transparent select can no longer draw.
+ */
 function AssignSelect({
   teams,
   busy,
   label,
+  assignedName,
   onPick,
 }: {
   teams: WorkspaceAssignableTeam[];
   busy: boolean;
   label: string;
+  assignedName?: string | null;
   onPick: (teamId: string | null) => void;
 }) {
+  const isDisabled = busy || teams.length === 0;
+  const isAssigned = Boolean(assignedName);
+
   return (
-    <select
-      disabled={busy || teams.length === 0}
-      value=""
-      onChange={(event) => {
-        const value = event.target.value;
-        event.currentTarget.value = "";
-        if (!value) return;
-        onPick(value === "__none__" ? null : value);
-      }}
-      aria-label={label}
-      className="h-8 max-w-40 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] outline-none transition hover:border-[var(--brand)] focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-    >
-      <option value="">{label}</option>
-      {teams.map((team) => (
-        <option key={team.id} value={team.id}>
-          {team.name}
-        </option>
-      ))}
-      <option value="__none__">Unassign</option>
-    </select>
+    <div className={`relative inline-flex shrink-0 ${isDisabled ? "opacity-50" : ""}`}>
+      <select
+        disabled={isDisabled}
+        value=""
+        onChange={(event) => {
+          const value = event.target.value;
+          event.currentTarget.value = "";
+          if (!value) return;
+          onPick(value === "__none__" ? null : value);
+        }}
+        aria-label={label}
+        className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+      >
+        <option value="">{label}</option>
+        {teams.map((team) => (
+          <option key={team.id} value={team.id}>
+            {team.name}
+          </option>
+        ))}
+        <option value="__none__">Unassign</option>
+      </select>
+
+      <span
+        className={`pointer-events-none inline-flex h-8 max-w-[180px] items-center gap-1.5 rounded-full border px-3 text-[12px] font-semibold transition peer-focus-visible:ring-[3px] peer-focus-visible:ring-[var(--focus-ring)] ${
+          isAssigned
+            ? "border-[var(--brand-soft)] bg-[var(--brand-tint)] text-[var(--brand-strong)]"
+            : "border-dashed border-[var(--line-strong)] bg-[var(--panel)] text-[var(--muted)] peer-hover:border-[var(--brand)] peer-hover:text-[var(--brand)]"
+        }`}
+      >
+        {isAssigned ? <Check size={13} className="shrink-0" /> : <Plus size={13} className="shrink-0" />}
+        <span className="truncate">{isAssigned ? assignedName : label}</span>
+        <ChevronDown size={12} className="shrink-0 opacity-60" />
+      </span>
+    </div>
   );
 }
 
@@ -178,35 +295,45 @@ function PackageCard({
   onAssign: AssignHandler;
   onOpenMap: OpenMapHandler;
 }) {
-  const categories: MaintenanceCategory[] = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"];
   const laneByCategory = new Map(pkg.lanes.map((lane) => [lane.category, lane]));
   // Role permits assigning AND the survey is Completed (report generated). The
   // server enforces the second half independently — this only hides the picker.
   const canAssignHere = canAssign && pkg.assignable;
+  const isAwaitingReview = pkg.displayStatus === "IN_REVIEW";
+  const statusKey = pkg.displayStatus ?? NO_SURVEY_GROUP;
 
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
+    <Card className={isAwaitingReview ? "opacity-60 transition-opacity hover:opacity-100" : ""}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <button
-            type="button"
-            onClick={() => onOpenMap(pkg.substation.id)}
-            title="Open the defect map for this Pencawang"
-            className="group flex min-w-0 items-center gap-1.5 text-left"
-          >
-            <h3 className="truncate text-base font-semibold text-[var(--foreground)] group-hover:text-[var(--brand)] group-hover:underline">
-              {pkg.substation.name}
-            </h3>
-            <MapPin
-              size={14}
-              className="shrink-0 text-slate-400 group-hover:text-[var(--brand)]"
-            />
-          </button>
-          <p className="mt-0.5 text-xs text-[var(--muted)]">
-            {pkg.substation.code}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Chip tone={surveyStatusTone(statusKey)} dot>
+              {pkg.displayStatusLabel ?? statusGroupLabel(statusKey)}
+            </Chip>
+            <button
+              type="button"
+              onClick={() => onOpenMap(pkg.substation.id)}
+              title="Open the defect map for this Pencawang"
+              className="group flex min-w-0 items-center gap-1.5 text-left"
+            >
+              <h3
+                className="truncate text-[14.5px] font-semibold leading-tight text-[var(--foreground)] group-hover:text-[var(--brand)] group-hover:underline"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                {pkg.substation.name}
+              </h3>
+              <MapPin
+                size={14}
+                className="shrink-0 text-[var(--muted-2)] group-hover:text-[var(--brand)]"
+              />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">
+            <span className="font-mono">{pkg.substation.code}</span>
             {pkg.mainhead ? ` · ${pkg.mainhead.name}` : ""} · {pkg.totalCount} defects
           </p>
         </div>
+
         {canAssignHere && pkg.totalCount > 0 ? (
           <AssignSelect
             teams={teams}
@@ -217,30 +344,34 @@ function PackageCard({
             }
           />
         ) : canAssign && !pkg.assignable ? (
-          <span
-            title="Defects release to maintenance once the survey report is generated"
-            className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]"
-          >
-            <Info size={13} />
-            Assign after report
-          </span>
+          <Chip tone="warning" title="Defects release to maintenance once the survey report is generated">
+            <Info size={12} className="shrink-0" />
+              Assign after report
+          </Chip>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[var(--shadow-soft)]">
-            <Building2 size={13} />
-            Pencawang
-          </span>
+          <Chip tone="neutral">
+            <Building2 size={12} className="shrink-0" />
+              Pencawang
+          </Chip>
         )}
       </div>
 
-      {pkg.emergencyCount > 0 ? (
-        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
-          <AlertTriangle size={13} />
-          {pkg.emergencyCount} emergency{pkg.emergencyCount > 1 ? " items" : ""} — handled in priority lane
-        </div>
+      {isAwaitingReview ? (
+        <p className="mt-3 text-[12px] font-medium text-[var(--muted)]">
+          Awaiting review — assignment unlocks once the survey completes.
+        </p>
       ) : null}
 
-      <div className="mt-3 divide-y divide-slate-100">
-        {categories.map((category) => {
+      {pkg.emergencyCount > 0 ? (
+        <p className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--critical)]">
+          <AlertTriangle size={13} className="shrink-0" />
+          {pkg.emergencyCount} emergency{pkg.emergencyCount > 1 ? " items" : ""} — handled in priority
+          lane
+        </p>
+      ) : null}
+
+      <div className="mt-3 divide-y divide-[var(--line2)]">
+        {CATEGORY_ORDER.map((category) => {
           const lane = laneByCategory.get(category) ?? {
             category,
             count: 0,
@@ -254,24 +385,33 @@ function PackageCard({
           return (
             <div
               key={category}
-              className="flex items-center justify-between gap-3 py-3"
+              className="grid grid-cols-[150px_1fr_auto] items-center gap-3 py-2.5"
             >
               <div className="flex min-w-0 items-center gap-2.5">
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} />
-                <span className="font-medium text-slate-800">{meta.label}</span>
-                <span className="text-sm text-[var(--muted)]">{lane.count}</span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`inline-flex shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}
-                >
-                  {status.text}
+                <span className={`h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
+                <span className="truncate text-[13px] font-medium text-[var(--foreground-soft)]">
+                  {meta.label}
                 </span>
-                {canAssignHere && lane.count > 0 ? (
+              </div>
+
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
+                  {lane.count}
+                </span>
+                {lane.inProgressCount > 0 ? (
+                  <Chip tone="info">{lane.inProgressCount} in progress</Chip>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 items-center justify-end">
+                {lane.count === 0 ? (
+                  <span className="text-[12px] text-[var(--muted-2)]">—</span>
+                ) : canAssignHere ? (
                   <AssignSelect
                     teams={teams}
                     busy={busy}
-                    label="Assign"
+                    label="Assign team"
+                    assignedName={status.assigned ? status.text : null}
                     onPick={(teamId) =>
                       onAssign({
                         substationId: pkg.substation.id,
@@ -280,13 +420,38 @@ function PackageCard({
                       })
                     }
                   />
-                ) : null}
+                ) : (
+                  <Chip tone={status.tone}>{status.text}</Chip>
+                )}
               </div>
             </div>
           );
         })}
       </div>
-    </section>
+    </Card>
+  );
+}
+
+function WorkspaceLoading() {
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-[112px] animate-pulse rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel-muted)]"
+          />
+        ))}
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-44 animate-pulse rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel-muted)]"
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -371,14 +536,30 @@ function MaintenanceWorkspaceContent() {
 
         return {
           key,
-          label:
-            key === NO_SURVEY_GROUP
-              ? "No survey yet"
-              : DISPLAY_STATUS_LABELS[key as DisplayStatus],
+          label: statusGroupLabel(key),
           packages,
           defectCount: packages.reduce((total, pkg) => total + pkg.totalCount, 0),
         };
       });
+  }, [workspace]);
+
+  /** Rolled up from the lanes already on the page — no extra request. */
+  const laneTotals = useMemo(() => {
+    if (!workspace) {
+      return { unassigned: 0, inProgress: 0 };
+    }
+
+    let unassigned = 0;
+    let inProgress = 0;
+
+    for (const pkg of workspace.packages) {
+      for (const lane of pkg.lanes) {
+        unassigned += lane.unassignedCount;
+        inProgress += lane.inProgressCount;
+      }
+    }
+
+    return { unassigned, inProgress };
   }, [workspace]);
 
   const handleAssign = useCallback<AssignHandler>(
@@ -424,79 +605,105 @@ function MaintenanceWorkspaceContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="inline-flex items-center gap-2 text-sm font-semibold uppercase text-[var(--brand)]">
-                <Wrench size={15} />
-                Maintenance
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                Maintenance Workspace
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Open defects packaged by Pencawang, split into Rentis / Cat tiang / Selenggaraan
-                lanes. Emergencies stay in the priority lane above.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadWorkspace(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Maintenance Workspace"
+            title="Assign & dispatch"
+            subtitle="Open defects packaged by Pencawang, split into Rentis / Cat tiang / Selenggaraan lanes. Emergencies stay in the priority lane above."
+            chips={
+              workspace ? (
+                <>
+                  <Chip tone="neutral">
+                    <Wrench size={12} className="shrink-0" />
+                      {workspace.totalRouted.toLocaleString()} routed
+                  </Chip>
+                  {workspace.emergencyCount > 0 ? (
+                    <Chip tone="critical">
+                      <AlertTriangle size={12} className="shrink-0" />
+                        {workspace.emergencyCount} emergenc
+                        {workspace.emergencyCount === 1 ? "y" : "ies"}
+                    </Chip>
+                  ) : null}
+                </>
+              ) : null
+            }
+            actions={
+              <Tbtn
+                onClick={() => (session?.token ? loadWorkspace(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </Tbtn>
+            }
+          />
 
           <div className="mt-6 space-y-6">
             {isLoading && !workspace ? (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="h-44 animate-pulse rounded-xl border border-[var(--line)] bg-white shadow-[var(--shadow-soft)]"
-                  />
-                ))}
-              </div>
+              <WorkspaceLoading />
             ) : error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : workspace ? (
               <>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <SummaryChip label="Routed defects" value={workspace.totalRouted} />
-                  <SummaryChip label="Pencawang packages" value={workspace.packages.length} />
-                  <SummaryChip label="Emergencies" value={workspace.emergencyCount} tone="danger" />
+                <EmergencyLane workspace={workspace} />
+
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard
+                    label="Packages"
+                    value={workspace.packages.length.toLocaleString()}
+                    icon={Layers}
+                    context="Pencawang with open defects"
+                  />
+                  <KpiCard
+                    label="Unassigned defects"
+                    value={laneTotals.unassigned.toLocaleString()}
+                    icon={UserPlus}
+                    tone="high"
+                    context="Waiting on a maintenance team"
+                  />
+                  <KpiCard
+                    label="In progress"
+                    value={laneTotals.inProgress.toLocaleString()}
+                    icon={Activity}
+                    tone="info"
+                    context="Work started in the field"
+                  />
+                  <KpiCard
+                    label="Routed defects"
+                    value={workspace.totalRouted.toLocaleString()}
+                    icon={Wrench}
+                    context="Total in the maintenance pool"
+                  />
                 </div>
 
                 {workspace.governanceMode === "INSPECTOR_OWNS" ? (
-                  <div className="inline-flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    <Info size={16} className="mt-0.5 shrink-0 text-slate-400" />
+                  <div className="flex items-start gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-4 py-3 text-[12.5px] text-[var(--muted)]">
+                    <Info size={15} className="mt-0.5 shrink-0 text-[var(--muted-2)]" />
                     <span>
                       Inspector-owns mode: these are your team&apos;s open defects. Cross-company
                       routing to a maintenance company activates when{" "}
-                      <code className="rounded bg-slate-200 px-1 py-0.5 text-xs">RELEASE_ON_REPORT</code>{" "}
+                      <code className="rounded bg-[var(--surface-pressed)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground-soft)]">
+                        RELEASE_ON_REPORT
+                      </code>{" "}
                       is enabled.
                     </span>
                   </div>
                 ) : null}
 
-                <EmergencyLane workspace={workspace} />
-
                 {workspace.packages.length > 0 ? (
                   <div className="space-y-8">
                     {groupedPackages.map((group) => (
                       <section key={group.key}>
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
-                          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-700">
-                            {group.label}
-                          </h2>
-                          <span className="text-xs font-medium text-[var(--muted)]">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] pb-2">
+                          <div className="flex items-center gap-2">
+                            <Chip tone={surveyStatusTone(group.key)} dot>
+                              {group.label}
+                            </Chip>
+                          </div>
+                          <span className="text-[12px] font-medium text-[var(--muted)]">
                             {group.packages.length} Pencawang
                             {group.packages.length === 1 ? "" : "s"} · {group.defectCount}{" "}
                             defect{group.defectCount === 1 ? "" : "s"}
@@ -519,13 +726,17 @@ function MaintenanceWorkspaceContent() {
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center">
-                    <Wrench size={22} className="mx-auto text-slate-400" />
-                    <p className="mt-3 text-sm font-semibold text-slate-900">No routed defects</p>
-                    <p className="mt-1 text-sm text-[var(--muted)]">
+                  <Card className="px-5 py-12 text-center">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
+                      <Wrench size={20} />
+                    </div>
+                    <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
+                      No routed defects
+                    </p>
+                    <p className="mt-1 text-[12.5px] text-[var(--muted)]">
                       Packages appear here as open defects are routed to the maintenance pool.
                     </p>
-                  </div>
+                  </Card>
                 )}
               </>
             ) : null}
