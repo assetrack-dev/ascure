@@ -25,6 +25,17 @@ import {
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  DashboardRangeKey,
+  GetDashboardQueryDto,
+} from './dto/get-dashboard-query.dto';
+
+const RANGE_LABELS: Record<DashboardRangeKey, string> = {
+  '7d': 'last 7 days',
+  '30d': 'last 30 days',
+  '90d': 'last 90 days',
+  ytd: 'year to date',
+};
 
 const ACTIVE_SLA_STATUSES = [
   DefectStatus.OPEN,
@@ -41,7 +52,7 @@ export class DashboardService {
     private readonly configService: ConfigService,
   ) {}
 
-  async getDashboard(user: RequestUser) {
+  async getDashboard(user: RequestUser, query?: GetDashboardQueryDto) {
     const ctx = await buildScopeContext(this.prisma, user);
     await this.ensureDefectsForAccessibleItems(user, ctx);
 
@@ -51,14 +62,30 @@ export class DashboardService {
     const activeVisitCutoff = new Date(
       now.getTime() - overdueThresholdHours * 60 * 60 * 1000,
     );
-    // Rolling window for the daily inspection-throughput trend (distinct assets
-    // submitted per reporting-day). reportingDayBounds gives today's start in the
-    // tenant reporting TZ; step back TREND_DAYS-1 whole days for the window start.
-    const TREND_DAYS = 7;
-    const { start: reportingTodayStart } = this.reportingDayBounds(now);
-    const trendWindowStart = new Date(
-      reportingTodayStart.getTime() - (TREND_DAYS - 1) * 24 * 60 * 60 * 1000,
+    const { start: reportingTodayStart, end: reportingTodayEnd } =
+      this.reportingDayBounds(now);
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    // Additive time-range windowing. All EXISTING response fields stay unwindowed
+    // (mobile + admin read them as all-time). The `range`, `*ThisPeriod`,
+    // `defectFlow`, and delta fields are the only range-scoped additions. When no
+    // `range` is supplied the new fields default to 30d, and the trend keeps its
+    // historical 7-day length so the no-param response is byte-compatible.
+    const rangeKey = query?.range ?? '30d';
+    const rangeDays = this.rangeDaysFor(rangeKey, reportingTodayStart, now);
+    const rangeStart = new Date(
+      reportingTodayStart.getTime() - (rangeDays - 1) * DAY_MS,
     );
+    const rangeEnd = reportingTodayEnd;
+    const prevStart = new Date(rangeStart.getTime() - rangeDays * DAY_MS);
+    const prevEnd = rangeStart;
+
+    // The trend follows the range only when the caller asked for one.
+    const trendDays = query?.range ? rangeDays : 7;
+    const trendWindowStart = new Date(
+      reportingTodayStart.getTime() - (trendDays - 1) * DAY_MS,
+    );
+
     const overdueDefectWhere: Prisma.DefectWhereInput = {
       ...defectWhere,
       status: {
@@ -71,6 +98,26 @@ export class DashboardService {
     const criticalOverdueDefectWhere: Prisma.DefectWhereInput = {
       ...overdueDefectWhere,
       severity: DefectSeverity.CRITICAL,
+    };
+    // Emergency predicates — share the scoped defectWhere so tenant + routed-pool
+    // scoping is preserved. "Unassigned" uses assignedUserId/assignedTeamId (the
+    // pair the dashboard already groups on; defects.service writes both pairs in
+    // lockstep).
+    const emergencyOpenWhere: Prisma.DefectWhereInput = {
+      ...defectWhere,
+      isEmergency: true,
+      status: { not: DefectStatus.CLOSED },
+    };
+    const emergencyUnassignedWhere: Prisma.DefectWhereInput = {
+      ...emergencyOpenWhere,
+      assignedUserId: null,
+      assignedTeamId: null,
+    };
+    const emergencyOverdueWhere: Prisma.DefectWhereInput = {
+      ...defectWhere,
+      isEmergency: true,
+      status: { in: [...ACTIVE_SLA_STATUSES] },
+      dueDate: { lt: now },
     };
 
     const [
@@ -100,6 +147,15 @@ export class DashboardService {
       orgForPersona,
       defectCategoryCounts,
       trendInspections,
+      periodInspections,
+      prevPeriodInspections,
+      emergencyOpenCount,
+      emergencyUnassignedCount,
+      emergencyOverdueCount,
+      defectFlowRows,
+      assetSubstationCounts,
+      assetsInScopePrevCount,
+      emergencyOverduePrevCount,
     ] = await Promise.all([
       this.prisma.asset.count({
         where: this.accessibleAssetWhere(user, ctx),
@@ -189,6 +245,9 @@ export class DashboardService {
         select: {
           status: true,
           dueDate: true,
+          createdAt: true,
+          resolvedAt: true,
+          closedAt: true,
         },
       }),
       this.prisma.defect.findMany({
@@ -392,9 +451,70 @@ export class DashboardService {
         },
         select: { assetId: true, submittedAt: true },
       }),
+      // --- Additive range-scoped queries (see the range setup above) ---
+      // Distinct assets inspected in the current window (period-scoped).
+      this.prisma.inspection.findMany({
+        where: {
+          ...this.accessibleInspectionWhere(user, ctx),
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
+          submittedAt: { gte: rangeStart, lt: rangeEnd },
+        },
+        select: { assetId: true },
+      }),
+      // …and the previous equal-length window, for the delta.
+      this.prisma.inspection.findMany({
+        where: {
+          ...this.accessibleInspectionWhere(user, ctx),
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
+          submittedAt: { gte: prevStart, lt: prevEnd },
+        },
+        select: { assetId: true },
+      }),
+      this.prisma.defect.count({ where: emergencyOpenWhere }),
+      this.prisma.defect.count({ where: emergencyUnassignedWhere }),
+      this.prisma.defect.count({ where: emergencyOverdueWhere }),
+      // Defect intake vs. closure — every defect opened OR closed in the window.
+      this.prisma.defect.findMany({
+        where: {
+          ...defectWhere,
+          OR: [
+            { createdAt: { gte: rangeStart, lt: rangeEnd } },
+            { closedAt: { gte: rangeStart, lt: rangeEnd } },
+            { resolvedAt: { gte: rangeStart, lt: rangeEnd } },
+          ],
+        },
+        select: { createdAt: true, resolvedAt: true, closedAt: true },
+      }),
+      // Assets per substation (all-time, matching assetsByMainhead semantics).
+      this.prisma.asset.groupBy({
+        by: ['substationId'],
+        where: this.accessibleAssetWhere(user, ctx),
+        _count: { _all: true },
+      }),
+      // Assets in scope as-of the previous window end (delta baseline).
+      this.prisma.asset.count({
+        where: {
+          ...this.accessibleAssetWhere(user, ctx),
+          createdAt: { lt: prevEnd },
+        },
+      }),
+      // Emergency+overdue as-of prevEnd — a timestamp reconstruction (no status
+      // history exists), so it's "active as of date", not an audited snapshot.
+      this.prisma.defect.count({
+        where: {
+          ...defectWhere,
+          isEmergency: true,
+          createdAt: { lt: prevEnd },
+          dueDate: { lt: prevEnd },
+          AND: [
+            { OR: [{ closedAt: null }, { closedAt: { gte: prevEnd } }] },
+            { OR: [{ resolvedAt: null }, { resolvedAt: { gte: prevEnd } }] },
+          ],
+        },
+      }),
     ]);
 
-    const [assignedUsers, assignedTeams] = await Promise.all([
+    const [assignedUsers, assignedTeams, substationNames] = await Promise.all([
       this.prisma.user.findMany({
         where: {
           tenantId: user.tenantId,
@@ -424,6 +544,17 @@ export class DashboardService {
           code: true,
           name: true,
         },
+      }),
+      this.prisma.substation.findMany({
+        where: {
+          tenantId: user.tenantId,
+          id: {
+            in: assetSubstationCounts
+              .map((entry) => entry.substationId)
+              .filter((id): id is string => Boolean(id)),
+          },
+        },
+        select: { id: true, name: true, code: true },
       }),
     ]);
 
@@ -658,10 +789,10 @@ export class DashboardService {
       );
     };
     const trendBuckets = new Map<number, Set<string>>();
-    for (let dayIndex = 0; dayIndex < TREND_DAYS; dayIndex += 1) {
+    for (let dayIndex = 0; dayIndex < trendDays; dayIndex += 1) {
       const dayStartMs =
         reportingTodayStart.getTime() -
-        (TREND_DAYS - 1 - dayIndex) * 24 * 60 * 60 * 1000;
+        (trendDays - 1 - dayIndex) * 24 * 60 * 60 * 1000;
       trendBuckets.set(dayStartMs, new Set<string>());
     }
     for (const inspection of trendInspections) {
@@ -683,7 +814,125 @@ export class DashboardService {
         value: assets.size,
       }));
 
+    // --- Additive range-scoped derivations ---
+    const inspectedThisPeriod = new Set(
+      periodInspections.map((row) => row.assetId),
+    ).size;
+    const inspectedPrevPeriod = new Set(
+      prevPeriodInspections.map((row) => row.assetId),
+    ).size;
+
+    // Defect intake vs. closure, bucketed per reporting-day across the range.
+    const flowBuckets = new Map<number, { opened: number; closed: number }>();
+    for (let dayIndex = 0; dayIndex < rangeDays; dayIndex += 1) {
+      const dayStartMs =
+        reportingTodayStart.getTime() - (rangeDays - 1 - dayIndex) * DAY_MS;
+      flowBuckets.set(dayStartMs, { opened: 0, closed: 0 });
+    }
+    let closedInRange = 0;
+    let closeMsTotal = 0;
+    for (const defect of defectFlowRows) {
+      if (defect.createdAt) {
+        const bucket = flowBuckets.get(reportingDayStartMs(defect.createdAt));
+        if (bucket) bucket.opened += 1;
+      }
+      const closeAt = defect.closedAt ?? defect.resolvedAt;
+      if (closeAt) {
+        const bucket = flowBuckets.get(reportingDayStartMs(closeAt));
+        if (bucket) {
+          bucket.closed += 1;
+          if (defect.createdAt) {
+            closeMsTotal += closeAt.getTime() - defect.createdAt.getTime();
+            closedInRange += 1;
+          }
+        }
+      }
+    }
+    const defectFlow = Array.from(flowBuckets.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([dayStartMs, counts]) => ({
+        date: this.reportingDateLabel(dayStartMs),
+        opened: counts.opened,
+        closed: counts.closed,
+      }));
+    const totalOpenedInRange = defectFlow.reduce((sum, d) => sum + d.opened, 0);
+    const totalClosedInRange = defectFlow.reduce((sum, d) => sum + d.closed, 0);
+    const netBacklogChange = totalOpenedInRange - totalClosedInRange;
+    const avgCloseHours =
+      closedInRange > 0
+        ? Math.round((closeMsTotal / closedInRange / 3_600_000) * 10) / 10
+        : 0;
+    // Honest, cheap delta baseline: openDefects one window ago = today's open
+    // minus the net change over the window.
+    const openDefectsPrev = openDefects - netBacklogChange;
+
+    // Assets per substation.
+    const substationNameById = new Map(
+      substationNames.map((s) => [s.id, s.name?.trim() || s.code]),
+    );
+    const assetsBySubstation = assetSubstationCounts
+      .map((entry) => ({
+        label: entry.substationId
+          ? substationNameById.get(entry.substationId) ?? 'Unknown substation'
+          : 'Unassigned',
+        value: entry._count._all,
+      }))
+      .sort(
+        (left, right) =>
+          right.value - left.value || left.label.localeCompare(right.label),
+      );
+
+    // SLA on-time % — on-track share among due-dated active defects, now and
+    // as-of prevEnd (reconstructed from the same widened rows).
+    const slaOnTimePctFor = (asOf: Date | null): number | null => {
+      let onTrack = 0;
+      let overdue = 0;
+      for (const defect of defectsForSlaState) {
+        if (!defect.dueDate) continue;
+        if (asOf) {
+          // "Active as of asOf": created before, not yet closed/resolved then.
+          if (defect.createdAt >= asOf) continue;
+          const closed = defect.closedAt && defect.closedAt < asOf;
+          const resolved = defect.resolvedAt && defect.resolvedAt < asOf;
+          if (closed || resolved) continue;
+          if (defect.dueDate < asOf) overdue += 1;
+          else onTrack += 1;
+        } else {
+          const state = this.calculateSlaState(defect.status, defect.dueDate, now);
+          if (state === 'OVERDUE') overdue += 1;
+          else if (state === 'ON_TRACK') onTrack += 1;
+        }
+      }
+      const denominator = onTrack + overdue;
+      return denominator === 0 ? null : Math.round((onTrack / denominator) * 100);
+    };
+    const slaOnTimePct = slaOnTimePctFor(null);
+    const slaOnTimePctPrev = slaOnTimePctFor(prevEnd);
+
     return {
+      range: {
+        key: rangeKey,
+        label: RANGE_LABELS[rangeKey],
+        from: this.reportingDateLabel(rangeStart.getTime()),
+        to: this.reportingDateLabel(
+          reportingTodayStart.getTime(),
+        ),
+      },
+      inspectedThisPeriod,
+      inspectedPrevPeriod,
+      assetsInScope: totalAssets,
+      assetsInScopePrev: assetsInScopePrevCount,
+      openDefectsPrev,
+      emergencyOpen: emergencyOpenCount,
+      emergencyUnassigned: emergencyUnassignedCount,
+      emergencyOverdue: emergencyOverdueCount,
+      emergencyOverduePrev: emergencyOverduePrevCount,
+      defectFlow,
+      avgCloseHours,
+      netBacklogChange,
+      assetsBySubstation,
+      slaOnTimePct,
+      slaOnTimePctPrev,
       persona,
       defectsByCategory,
       defectsByStatus,
@@ -1006,6 +1255,31 @@ export class DashboardService {
     const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
 
     return Number.isFinite(parsed) ? parsed : 8 * 60;
+  }
+
+  /** Number of reporting-days the range spans (inclusive of today). */
+  private rangeDaysFor(
+    rangeKey: DashboardRangeKey,
+    reportingTodayStart: Date,
+    now: Date,
+  ): number {
+    if (rangeKey === '7d') return 7;
+    if (rangeKey === '30d') return 30;
+    if (rangeKey === '90d') return 90;
+    // ytd — whole reporting-days from Jan 1 (reporting TZ) to today, inclusive.
+    const offsetMs = this.getReportingOffsetMinutes() * 60 * 1000;
+    const shifted = new Date(now.getTime() + offsetMs);
+    const jan1StartMs = Date.UTC(shifted.getUTCFullYear(), 0, 1) - offsetMs;
+    const days =
+      Math.floor(
+        (reportingTodayStart.getTime() - jan1StartMs) / (24 * 60 * 60 * 1000),
+      ) + 1;
+    return Math.max(1, days);
+  }
+
+  private reportingDateLabel(dayStartMs: number): string {
+    const offsetMs = this.getReportingOffsetMinutes() * 60 * 1000;
+    return new Date(dayStartMs + offsetMs).toISOString().slice(0, 10);
   }
 
   private async ensureDefectsForAccessibleItems(

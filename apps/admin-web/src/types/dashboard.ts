@@ -14,6 +14,22 @@ export interface DailyTrendPoint {
   value: number;
 }
 
+/** One reporting-day of defect intake vs. closure. */
+export interface DefectFlowPoint {
+  date: string; // YYYY-MM-DD
+  opened: number;
+  closed: number;
+}
+
+export type DashboardRangeKey = "7d" | "30d" | "90d" | "ytd";
+
+export interface DashboardRange {
+  key: DashboardRangeKey;
+  label: string;
+  from: string; // YYYY-MM-DD
+  to: string; // YYYY-MM-DD
+}
+
 /** Which company-type / role the dashboard is tailored for. */
 export type DashboardPersonaKind = "OVERVIEW" | "INSPECTION" | "MAINTENANCE";
 
@@ -65,6 +81,23 @@ export interface DashboardMetrics {
   completionRate: number;
   operationalOverdueThresholdHours: number;
   latestVisitActivityAt?: string | null;
+  // --- Range-aware additions (all optional; a pre-range API omits them) ---
+  range: DashboardRange | null;
+  inspectedThisPeriod: number;
+  inspectedPrevPeriod: number;
+  assetsInScope: number;
+  assetsInScopePrev: number;
+  openDefectsPrev: number;
+  emergencyOpen: number;
+  emergencyUnassigned: number;
+  emergencyOverdue: number;
+  emergencyOverduePrev: number;
+  defectFlow: DefectFlowPoint[];
+  avgCloseHours: number;
+  netBacklogChange: number;
+  assetsBySubstation: ChartDatum[];
+  slaOnTimePct: number | null;
+  slaOnTimePctPrev: number | null;
   defectsBySeverity: ChartDatum[];
   defectsByCategory: ChartDatum[];
   defectsByStatus: ChartDatum[];
@@ -95,6 +128,22 @@ export interface DashboardApiResponse {
   completionRate?: number;
   operationalOverdueThresholdHours?: number;
   latestVisitActivityAt?: string | null;
+  range?: unknown;
+  inspectedThisPeriod?: number;
+  inspectedPrevPeriod?: number;
+  assetsInScope?: number;
+  assetsInScopePrev?: number;
+  openDefectsPrev?: number;
+  emergencyOpen?: number;
+  emergencyUnassigned?: number;
+  emergencyOverdue?: number;
+  emergencyOverduePrev?: number;
+  defectFlow?: unknown;
+  avgCloseHours?: number;
+  netBacklogChange?: number;
+  assetsBySubstation?: unknown;
+  slaOnTimePct?: number | null;
+  slaOnTimePctPrev?: number | null;
   defectsBySeverity?: unknown;
   defectsByCategory?: unknown;
   defectsByStatus?: unknown;
