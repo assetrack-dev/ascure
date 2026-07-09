@@ -2,23 +2,29 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
+// next/font owns the `*-raw` vars; globals.css layers named fallbacks on top as
+// --font-display / --font-body / --font-mono. Keeping the names distinct avoids
+// a self-referential `--font-x: var(--font-x, …)` cycle, which resolves to empty
+// and silently drops every font back to system sans.
 const display = Space_Grotesk({
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--font-display",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-display-raw",
   display: "swap",
 });
 
 const body = Inter({
   subsets: ["latin"],
-  variable: "--font-body",
+  variable: "--font-body-raw",
   display: "swap",
 });
 
+// Load 400/600 too — the design (and the ui primitives) set mono eyebrows and
+// table headers at 600; with only 500/700 the browser rounds to the nearest.
 const mono = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["500", "700"],
-  variable: "--font-mono",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-mono-raw",
   display: "swap",
 });
 
