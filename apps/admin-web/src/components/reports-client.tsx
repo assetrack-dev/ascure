@@ -5,6 +5,19 @@ import { useRouter } from "next/navigation";
 import { Download, FileText, MapPin, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  Chip,
+  FilterBar,
+  PageHeader,
+  Tbtn,
+  filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableRowClass,
+  type Tone,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import {
   clearStoredSession,
@@ -23,14 +36,11 @@ import type { AuthSession } from "@/types/auth";
 import type { ReportSavtRoute, ReportSubstation } from "@/types/reports";
 import { DISPLAY_STATUS_LABELS, type DisplayStatus } from "@/types/site-visits";
 
-const primaryButtonClassName =
-  "inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-5 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
-const secondaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+// Compact 32px row button — the table's per-row actions. Tbtn is 38px, too tall
+// for a dense row, so this is the one token-styled control the primitives don't
+// cover.
 const rowButtonClassName =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-50";
-const selectClassName =
-  "h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
+  "inline-flex h-8 items-center justify-center gap-1.5 rounded-[7px] border border-[var(--line)] bg-[var(--panel)] px-2.5 text-[12px] font-semibold text-[var(--foreground-soft)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--panel-muted)] disabled:cursor-not-allowed disabled:opacity-50";
 
 // Status filter follows the unified display-status vocabulary (matches Site Visits).
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -44,14 +54,15 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "CANCELLED", label: "Cancelled" },
 ];
 
-const DISPLAY_STATUS_TONE: Record<DisplayStatus, string> = {
-  NOT_STARTED: "border-slate-200 bg-slate-50 text-slate-600",
-  IN_PROGRESS: "border-blue-200 bg-blue-50 text-blue-700",
-  NEEDS_AMENDMENT: "border-amber-200 bg-amber-50 text-amber-800",
-  IN_REVIEW: "border-sky-200 bg-sky-50 text-sky-700",
-  COMPLETED: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  ARCHIVED: "border-slate-200 bg-slate-100 text-slate-600",
-  CANCELLED: "border-slate-200 bg-slate-50 text-slate-500",
+// Same mapping as Site Visits, so a survey reads identically on both pages.
+const DISPLAY_STATUS_TONE: Record<DisplayStatus, Tone> = {
+  NOT_STARTED: "neutral",
+  IN_PROGRESS: "info",
+  NEEDS_AMENDMENT: "warning",
+  IN_REVIEW: "brand",
+  COMPLETED: "success",
+  ARCHIVED: "neutral",
+  CANCELLED: "neutral",
 };
 
 function requestErrorMessage(error: unknown, fallback: string) {
@@ -66,15 +77,9 @@ function StatusPill({
   label: string | null;
 }) {
   if (!status) {
-    return <span className="text-xs text-slate-400">No survey</span>;
+    return <span className="text-[12px] text-[var(--muted-2)]">No survey</span>;
   }
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${DISPLAY_STATUS_TONE[status]}`}
-    >
-      {label ?? DISPLAY_STATUS_LABELS[status]}
-    </span>
-  );
+  return <Chip tone={DISPLAY_STATUS_TONE[status]}>{label ?? DISPLAY_STATUS_LABELS[status]}</Chip>;
 }
 
 function CoordCell({
@@ -85,7 +90,7 @@ function CoordCell({
   longitude: number | null;
 }) {
   if (latitude == null || longitude == null) {
-    return <span className="text-xs text-slate-400">—</span>;
+    return <span className="text-[12px] text-[var(--muted-2)]">—</span>;
   }
   const text = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
   return (
@@ -93,10 +98,10 @@ function CoordCell({
       href={`https://www.google.com/maps?q=${latitude},${longitude}`}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-[var(--brand)]"
+      className="inline-flex items-center gap-1 font-mono text-[12px] font-medium text-[var(--foreground-soft)] transition hover:text-[var(--brand)]"
       title="Open in Google Maps"
     >
-      <MapPin size={13} className="shrink-0 text-slate-400" />
+      <MapPin size={13} className="shrink-0 text-[var(--muted-2)]" />
       {text}
     </a>
   );
@@ -220,9 +225,7 @@ function ReportsContent() {
     visibleKeys.length > 0 && visibleKeys.every((key) => selectedKeys.has(key));
 
   function toggleSelectAll() {
-    setSelectedKeys((previous) =>
-      allVisibleSelected ? new Set() : new Set(visibleKeys),
-    );
+    setSelectedKeys(() => (allVisibleSelected ? new Set() : new Set(visibleKeys)));
   }
 
   function toggleOne(key: string) {
@@ -355,147 +358,135 @@ function ReportsContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
-        <div className="mx-auto max-w-6xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                Operational Reporting
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">Reports</h1>
-              <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-                Every surveyed {isSavt ? "route (From → To)" : "Pencawang"} in one list —
-                download the checklist (.xlsx, one pole per row, live checklist columns) per
-                row, or tick several and download them as one merged sheet.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadData(session.token) : undefined)}
-              disabled={isLoading || !session?.token}
-              className={secondaryButtonClassName}
-            >
-              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
+        <div className="mx-auto max-w-7xl">
+          <PageHeader
+            eyebrow="Operational Reporting"
+            title="Reports"
+            subtitle={`Every surveyed ${
+              isSavt ? "route (From → To)" : "Pencawang"
+            } in one list — download the checklist (.xlsx, one pole per row, live checklist columns) per row, or tick several and download them as one merged sheet.`}
+            actions={
+              <Tbtn
+                onClick={() => (session?.token ? loadData(session.token) : undefined)}
+                disabled={isLoading || !session?.token}
+              >
+                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                Refresh
+              </Tbtn>
+            }
+          />
 
           {error ? (
-            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--critical-text)]">
               {error}
             </div>
           ) : null}
           {notice ? (
-            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+            <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--success-border)] bg-[var(--success-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--success-text)]">
               {notice}
             </div>
           ) : null}
 
-          {/* Filters */}
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Survey type</span>
-              <select
-                value={scope}
-                onChange={(event) => setScope(event.target.value as "SAVR" | "SAVT")}
-                className={`${selectClassName} mt-1.5`}
-              >
-                <option value="SAVR">SAVR (by Pencawang)</option>
-                <option value="SAVT">SAVT (by route)</option>
-              </select>
-            </label>
-
-            {!isSavt ? (
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Mainhead</span>
+          <Card padded={false} className="mt-6">
+            {/* Filters */}
+            <div className="border-b border-[var(--line2)] p-[18px]">
+              <FilterBar>
                 <select
-                  value={mainhead}
-                  onChange={(event) => setMainhead(event.target.value)}
-                  disabled={isLoading || mainheadOptions.length === 0}
-                  className={`${selectClassName} mt-1.5`}
+                  aria-label="Survey type"
+                  value={scope}
+                  onChange={(event) => setScope(event.target.value as "SAVR" | "SAVT")}
+                  className={filterSelectClass}
                 >
-                  <option value="ALL">All mainheads</option>
-                  {mainheadOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
+                  <option value="SAVR">SAVR (by Pencawang)</option>
+                  <option value="SAVT">SAVT (by route)</option>
+                </select>
+
+                {!isSavt ? (
+                  <select
+                    aria-label="Mainhead"
+                    value={mainhead}
+                    onChange={(event) => setMainhead(event.target.value)}
+                    disabled={isLoading || mainheadOptions.length === 0}
+                    className={filterSelectClass}
+                  >
+                    <option value="ALL">All mainheads</option>
+                    {mainheadOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+
+                <select
+                  aria-label="Status"
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value)}
+                  className={filterSelectClass}
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
-              </label>
-            ) : null}
 
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Status</span>
-              <select
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-                className={`${selectClassName} mt-1.5`}
-              >
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+                <div className="ml-auto flex items-center gap-3">
+                  <span className="text-[12.5px] text-[var(--muted)]">
+                    {isLoading
+                      ? "Loading…"
+                      : `${rowCount} ${isSavt ? "route" : "Pencawang"}${
+                          rowCount === 1 ? "" : "s"
+                        }${selectedKeys.size > 0 ? ` · ${selectedKeys.size} selected` : ""}`}
+                  </span>
+                  <Tbtn
+                    variant="primary"
+                    onClick={handleBulkDownload}
+                    disabled={selectedKeys.size === 0 || isBulkDownloading || !!downloadingKey}
+                  >
+                    <Download size={16} />
+                    {isBulkDownloading
+                      ? "Generating…"
+                      : `Download selected${selectedKeys.size > 0 ? ` (${selectedKeys.size})` : ""}`}
+                  </Tbtn>
+                </div>
+              </FilterBar>
+            </div>
 
-          {/* Bulk action bar */}
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-[var(--muted)]">
-              {isLoading
-                ? "Loading…"
-                : `${rowCount} ${isSavt ? "route" : "Pencawang"}${
-                    rowCount === 1 ? "" : "s"
-                  }${selectedKeys.size > 0 ? ` · ${selectedKeys.size} selected` : ""}`}
-            </p>
-            <button
-              type="button"
-              onClick={handleBulkDownload}
-              disabled={selectedKeys.size === 0 || isBulkDownloading || !!downloadingKey}
-              className={primaryButtonClassName}
-            >
-              <Download size={16} />
-              {isBulkDownloading
-                ? "Generating…"
-                : `Download selected${selectedKeys.size > 0 ? ` (${selectedKeys.size})` : ""}`}
-            </button>
-          </div>
-
-          {/* List */}
-          <section className="mt-4 overflow-hidden rounded-xl border border-[var(--line)] bg-white shadow-[var(--shadow-card)]">
+            {/* List */}
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="w-10 px-3 py-3">
+              <table className="w-full min-w-[720px] text-left">
+                <thead>
+                  <tr className={`${tableHeadClass} border-b border-[var(--line2)]`}>
+                    <th className="w-10 px-3.5 py-2.5">
                       <input
                         type="checkbox"
                         checked={allVisibleSelected}
                         onChange={toggleSelectAll}
                         disabled={visibleKeys.length === 0}
                         aria-label="Select all"
-                        className="h-4 w-4 rounded border-slate-300"
+                        className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                       />
                     </th>
-                    <th className="px-3 py-3 font-semibold">
+                    <th className={tableHeadCellClass}>
                       {isSavt ? "Route (From → To)" : "Nama Pencawang"}
                     </th>
-                    <th className="px-3 py-3 font-semibold">Lokasi Pencawang</th>
-                    <th className="px-3 py-3 font-semibold">Status</th>
-                    <th className="px-3 py-3 text-right font-semibold">Download</th>
+                    <th className={tableHeadCellClass}>Lokasi Pencawang</th>
+                    <th className={tableHeadCellClass}>Status</th>
+                    <th className={`${tableHeadCellClass} text-right`}>Download</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody>
                   {isLoading ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-10 text-center text-slate-400">
+                      <td colSpan={5} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
                         Loading…
                       </td>
                     </tr>
                   ) : rowCount === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-10 text-center text-slate-400">
+                      <td colSpan={5} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
                         No {isSavt ? "routes" : "Pencawang"} for this filter.
                       </td>
                     </tr>
@@ -506,35 +497,38 @@ function ReportsContent() {
                       const downloadingReport =
                         downloadingKey === `pdf:${route.routeCode}`;
                       return (
-                        <tr key={route.routeCode} className={selected ? "bg-teal-50/40" : ""}>
-                          <td className="px-3 py-2.5">
+                        <tr
+                          key={route.routeCode}
+                          className={`${tableRowClass} ${selected ? "bg-[var(--brand-tint)]" : ""}`}
+                        >
+                          <td className="px-3.5 py-2.5">
                             <input
                               type="checkbox"
                               checked={selected}
                               onChange={() => toggleOne(route.routeCode)}
                               aria-label={`Select ${route.routeCode}`}
-                              className="h-4 w-4 rounded border-slate-300"
+                              className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                             />
                           </td>
-                          <td className="px-3 py-2.5">
-                            <div className="font-semibold text-slate-900">
+                          <td className={tableCellClass}>
+                            <div className="font-semibold text-[var(--foreground)]">
                               {route.routeCode}
                             </div>
-                            <div className="text-xs text-slate-500">
+                            <div className="text-[12px] text-[var(--muted)]">
                               {(route.fromName || "?") + " → " + (route.toName || "?")} ·{" "}
                               {route.poleCount} pole{route.poleCount === 1 ? "" : "s"}
                             </div>
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className={tableCellClass}>
                             <CoordCell latitude={route.latitude} longitude={route.longitude} />
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className={tableCellClass}>
                             <StatusPill
                               status={route.displayStatus}
                               label={route.displayStatusLabel}
                             />
                           </td>
-                          <td className="px-3 py-2.5 text-right">
+                          <td className={`${tableCellClass} text-right`}>
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 type="button"
@@ -586,38 +580,41 @@ function ReportsContent() {
                       const downloading = downloadingKey === `xlsx:${substation.id}`;
                       const downloadingReport = downloadingKey === `pdf:${substation.id}`;
                       return (
-                        <tr key={substation.id} className={selected ? "bg-teal-50/40" : ""}>
-                          <td className="px-3 py-2.5">
+                        <tr
+                          key={substation.id}
+                          className={`${tableRowClass} ${selected ? "bg-[var(--brand-tint)]" : ""}`}
+                        >
+                          <td className="px-3.5 py-2.5">
                             <input
                               type="checkbox"
                               checked={selected}
                               onChange={() => toggleOne(substation.id)}
                               aria-label={`Select ${substation.name}`}
-                              className="h-4 w-4 rounded border-slate-300"
+                              className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                             />
                           </td>
-                          <td className="px-3 py-2.5">
-                            <div className="font-semibold text-slate-900">
+                          <td className={tableCellClass}>
+                            <div className="font-semibold text-[var(--foreground)]">
                               {substation.name}
                             </div>
-                            <div className="text-xs text-slate-500">
+                            <div className="font-mono text-[12px] text-[var(--muted)]">
                               {substation.code}
                               {substation.mainhead ? ` · ${substation.mainhead}` : ""}
                             </div>
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className={tableCellClass}>
                             <CoordCell
                               latitude={substation.latitude}
                               longitude={substation.longitude}
                             />
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className={tableCellClass}>
                             <StatusPill
                               status={substation.displayStatus}
                               label={substation.displayStatusLabel}
                             />
                           </td>
-                          <td className="px-3 py-2.5 text-right">
+                          <td className={`${tableCellClass} text-right`}>
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 type="button"
@@ -669,7 +666,7 @@ function ReportsContent() {
                 </tbody>
               </table>
             </div>
-          </section>
+          </Card>
         </div>
       </main>
     </AppShell>
