@@ -9,6 +9,7 @@ import {
   ArrowLeftRight,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Download,
   Radio,
@@ -20,6 +21,24 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  CardHead,
+  Chip,
+  KpiCard,
+  PageHeader,
+  ProgressBar,
+  Tbtn,
+  filterControlClass,
+  filterLabelClass,
+  filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableMonoCellClass,
+  tableRowClass,
+  type Tone,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
@@ -96,8 +115,6 @@ function lifecycleLabel(status: SurveyLifecycleStatus) {
 }
 
 const AUTO_REFRESH_MS = 60000;
-const fieldClassName =
-  "rounded-lg border border-slate-200 bg-white p-4 shadow-[var(--shadow-soft)]";
 
 function formatEnum(value: string | null | undefined) {
   if (!value) {
@@ -150,19 +167,13 @@ function DueBadge({ status }: { status: SurveyDueStatus }) {
   if (status === "UNKNOWN") {
     return null;
   }
-  const { className, label } =
+  const { tone, label } =
     status === "OVERDUE"
-      ? { className: "border-red-200 bg-red-50 text-red-700", label: "Overdue" }
+      ? { tone: "critical" as Tone, label: "Overdue" }
       : status === "DUE_SOON"
-        ? { className: "border-amber-200 bg-amber-50 text-amber-800", label: "Due soon" }
-        : { className: "border-emerald-200 bg-emerald-50 text-emerald-700", label: "On time" };
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase ${className}`}
-    >
-      {label}
-    </span>
-  );
+        ? { tone: "warning" as Tone, label: "Due soon" }
+        : { tone: "success" as Tone, label: "On time" };
+  return <Chip tone={tone}>{label}</Chip>;
 }
 
 function displayPencawang(visit: SiteVisitDetail) {
@@ -188,57 +199,39 @@ function displayMainhead(visit: SiteVisitDetail) {
 }
 
 function HealthBadge({ status }: { status: OperationalHealthStatus }) {
-  const className =
-    status === "CRITICAL"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : status === "WARNING"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  const tone: Tone =
+    status === "CRITICAL" ? "critical" : status === "WARNING" ? "warning" : "success";
 
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${className}`}>
-      {status}
-    </span>
-  );
+  return <Chip tone={tone}>{status}</Chip>;
 }
 
 function StatusBadge({ status }: { status: SiteVisitStatus }) {
-  const className =
-    status === "COMPLETED"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : status === "CANCELLED"
-        ? "border-slate-200 bg-slate-50 text-slate-600"
-        : "border-blue-200 bg-blue-50 text-blue-700";
+  const tone: Tone =
+    status === "COMPLETED" ? "success" : status === "CANCELLED" ? "neutral" : "info";
 
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatEnum(status)}
-    </span>
-  );
+  return <Chip tone={tone}>{formatEnum(status)}</Chip>;
 }
 
 function ValidationBadge({ status }: { status: SiteVisitValidationStatus }) {
-  const className =
+  const tone: Tone =
     status === "FAILED"
-      ? "border-red-200 bg-red-50 text-red-700"
+      ? "critical"
       : status === "WARNING"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
+        ? "warning"
         : status === "VALIDATED"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-600";
+          ? "success"
+          : "neutral";
 
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {formatEnum(status)}
-    </span>
-  );
+  return <Chip tone={tone}>{formatEnum(status)}</Chip>;
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
-    <div className={fieldClassName}>
-      <dt className="text-xs font-semibold uppercase text-[var(--muted)]">{label}</dt>
-      <dd className="mt-2 text-sm font-semibold text-slate-900">{value}</dd>
+    <div>
+      <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--muted-2)]">
+        {label}
+      </dt>
+      <dd className="mt-1 text-[13px] font-semibold text-[var(--foreground)]">{value}</dd>
     </div>
   );
 }
@@ -247,17 +240,19 @@ function MainheadDetailField({ visit }: { visit: SiteVisitDetail }) {
   const isLegacy = !visit.mainheadRecord && Boolean(visit.mainhead?.trim());
 
   return (
-    <div className={fieldClassName}>
-      <dt className="text-xs font-semibold uppercase text-[var(--muted)]">MAINHEAD</dt>
-      <dd className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+    <div>
+      <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--muted-2)]">
+        MAINHEAD
+      </dt>
+      <dd className="mt-1 flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[var(--foreground)]">
         <span>{displayMainhead(visit)}</span>
         {isLegacy ? (
-          <span
-            className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800"
+          <Chip
+            tone="warning"
             title="Free-text MAINHEAD captured before Governance G1. Not linked to a MAINHEAD record."
           >
             Legacy MAINHEAD
-          </span>
+          </Chip>
         ) : null}
       </dd>
     </div>
@@ -275,49 +270,39 @@ function MetricTile({
   icon: typeof Activity;
   tone?: "neutral" | "success" | "warning" | "danger";
 }) {
-  const toneClassName =
-    tone === "danger"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : tone === "warning"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : tone === "success"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-700";
+  // MetricTile's local tone union predates the shared Tone scale; "danger" is
+  // the console's "critical". Everything else maps 1:1.
+  const kpiTone: Tone = tone === "danger" ? "critical" : tone;
 
-  return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-4 shadow-[var(--shadow-soft)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase text-[var(--muted)]">{label}</p>
-          <p className="mt-2 text-2xl font-bold text-slate-950">{value}</p>
-        </div>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${toneClassName}`}>
-          <Icon size={17} />
-        </div>
-      </div>
-    </div>
-  );
+  return <KpiCard label={label} value={value} icon={Icon} tone={kpiTone} />;
 }
 
 function ProgressPanel({ visit }: { visit: SiteVisitDetail }) {
   const boundedPercentage = Math.min(Math.max(visit.completionPercentage, 0), 100);
 
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+    <Card>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-slate-950">Inspection Progress</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
+        <div className="min-w-0">
+          <h2
+            className="text-[14.5px] font-semibold leading-tight text-[var(--foreground)]"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Inspection Progress
+          </h2>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
             {visit.inspectedAssets} of {visit.totalAssets} linked assets submitted
           </p>
         </div>
-        <div className="text-3xl font-bold text-slate-950">{boundedPercentage}%</div>
-      </div>
-      <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
         <div
-          className="h-full rounded-full bg-[var(--brand)]"
-          style={{ width: `${boundedPercentage}%` }}
-        />
+          className="text-[28px] font-bold leading-none tracking-[-0.02em] tabular-nums text-[var(--foreground)]"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          {boundedPercentage}%
+        </div>
+      </div>
+      <div className="mt-5">
+        <ProgressBar value={boundedPercentage} showLabel={false} />
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <MetricTile label="Pending" value={visit.pendingAssets} icon={Clock3} />
@@ -329,7 +314,7 @@ function ProgressPanel({ visit }: { visit: SiteVisitDetail }) {
         />
         <MetricTile label="Images" value={visit.images.length} icon={Radio} />
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -392,22 +377,22 @@ function SurveyLifecyclePanel({
     (status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") && canGovern;
   const amendmentVisible = canManagerAmend || canDcAmend;
 
-  const primaryBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
-  const amberBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50";
-  const subtleBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-50";
+  // The console has no warning-toned button variant, so a secondary Tbtn is
+  // repainted with the `medium` (amber) status tokens for the amendment actions.
+  const amberBtnClass =
+    "!border-[var(--medium-border)] !bg-[var(--medium-bg)] !text-[var(--medium-text)] hover:!opacity-90";
 
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-        <Activity size={17} className="text-[var(--brand)]" />
-        Survey Lifecycle
-      </div>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        The annual cycle survey for this Pencawang — inspect, review, report, archive.
-      </p>
+    <Card>
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Activity size={16} className="text-[var(--brand)]" />
+            Survey Lifecycle
+          </span>
+        }
+        hint="The annual cycle survey for this Pencawang — inspect, review, report, archive."
+      />
 
       <ol className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         {LIFECYCLE_MAIN_STEPS.map((step, index) => {
@@ -415,12 +400,12 @@ function SurveyLifecyclePanel({
           const active = index === currentIndex;
           const attention = active && isPerluPindaan;
           const circle = completed
-            ? "border-emerald-500 bg-emerald-500 text-white"
+            ? "border-[var(--success)] bg-[var(--success)] text-[var(--on-brand)]"
             : attention
-              ? "border-amber-400 bg-amber-100 text-amber-700"
+              ? "border-[var(--medium-border)] bg-[var(--medium-bg)] text-[var(--medium-text)]"
               : active
                 ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
-                : "border-slate-300 bg-white text-slate-400";
+                : "border-[var(--line-strong)] bg-[var(--panel)] text-[var(--muted-2)]";
           return (
             <li key={step.key} className="flex flex-1 items-center gap-3">
               <span
@@ -430,14 +415,14 @@ function SurveyLifecyclePanel({
               </span>
               <div className="min-w-0">
                 <p
-                  className={`text-sm font-semibold ${active ? "text-slate-900" : "text-slate-500"}`}
+                  className={`text-sm font-semibold ${active ? "text-[var(--foreground)]" : "text-[var(--muted)]"}`}
                 >
                   {step.label}
                 </p>
                 <p className="text-xs text-[var(--muted)]">{step.caption}</p>
               </div>
               {index < LIFECYCLE_MAIN_STEPS.length - 1 ? (
-                <span className="hidden h-px flex-1 bg-slate-200 sm:block" />
+                <span className="hidden h-px flex-1 bg-[var(--line)] sm:block" />
               ) : null}
             </li>
           );
@@ -445,12 +430,12 @@ function SurveyLifecyclePanel({
       </ol>
 
       {isPerluPindaan ? (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-amber-900">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--medium-border)] bg-[var(--medium-bg)] p-3">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--medium-text)]">
             <AlertTriangle size={15} /> Sent back for amendments (Perlu Pindaan)
           </p>
           {visit.lifecycle?.amendmentRemark ? (
-            <p className="mt-1 text-sm text-amber-900">
+            <p className="mt-1 text-sm text-[var(--medium-text)]">
               &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
             </p>
           ) : null}
@@ -458,12 +443,12 @@ function SurveyLifecyclePanel({
       ) : null}
 
       {isPindaanSelesai ? (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-amber-900">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--medium-border)] bg-[var(--medium-bg)] p-3">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--medium-text)]">
             <AlertTriangle size={15} /> Amendment completed — pending manager recheck
           </p>
           {visit.lifecycle?.amendmentRemark ? (
-            <p className="mt-1 text-sm text-amber-900">
+            <p className="mt-1 text-sm text-[var(--medium-text)]">
               DC asked: &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
             </p>
           ) : null}
@@ -471,12 +456,12 @@ function SurveyLifecyclePanel({
       ) : null}
 
       {status === "RONDAAN_SELESAI" && wasAmended ? (
-        <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-sky-900">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--info-border)] bg-[var(--info-bg)] p-3">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--info-text)]">
             <RefreshCw size={15} /> Re-issued after amendment
           </p>
           {visit.lifecycle?.amendmentRemark ? (
-            <p className="mt-1 text-sm text-sky-900">
+            <p className="mt-1 text-sm text-[var(--info-text)]">
               Last amendment note: &ldquo;{visit.lifecycle.amendmentRemark}&rdquo;
             </p>
           ) : null}
@@ -484,7 +469,7 @@ function SurveyLifecyclePanel({
       ) : null}
 
       {error ? (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-sm text-[var(--critical-text)]">
           {error}
         </div>
       ) : null}
@@ -494,8 +479,8 @@ function SurveyLifecyclePanel({
           This visit is cancelled — the survey lifecycle is closed.
         </p>
       ) : status === "ARKIB" ? (
-        <div className="mt-4 flex flex-col gap-3">
-          <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
+        <div className="mt-4 flex flex-col items-start gap-3">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-[var(--success)]">
             <CheckCircle2 size={15} /> Cycle archived
             {visit.lifecycle?.archivedAt
               ? ` · ${formatDateTime(visit.lifecycle.archivedAt)}`
@@ -503,11 +488,10 @@ function SurveyLifecyclePanel({
             .
           </p>
           {canReport ? (
-            <button
-              type="button"
+            <Tbtn
+              variant="secondary"
               onClick={onDownloadReport}
               disabled={isBusy || downloadingReport}
-              className={subtleBtn}
             >
               {downloadingReport ? (
                 <RefreshCw size={15} className="animate-spin" />
@@ -515,33 +499,23 @@ function SurveyLifecyclePanel({
                 <Download size={15} />
               )}
               Download compiled report
-            </button>
+            </Tbtn>
           ) : null}
           {canInspect ? (
-            <button
-              type="button"
-              onClick={onOpenNextCycle}
-              disabled={isBusy}
-              className={subtleBtn}
-            >
+            <Tbtn variant="secondary" onClick={onOpenNextCycle} disabled={isBusy}>
               {pendingAction === "open-next-cycle" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <CalendarDays size={15} />
               )}
               Open next cycle (re-survey)
-            </button>
+            </Tbtn>
           ) : null}
         </div>
       ) : (
         <div className="mt-4 flex flex-wrap gap-2">
           {(status === "DALAM_RONDAAN" || status === "PERLU_PINDAAN") && canInspect ? (
-            <button
-              type="button"
-              onClick={onRondaanSelesai}
-              disabled={isBusy}
-              className={primaryBtn}
-            >
+            <Tbtn variant="primary" onClick={onRondaanSelesai} disabled={isBusy}>
               {pendingAction === "rondaan-selesai" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
@@ -550,60 +524,49 @@ function SurveyLifecyclePanel({
               {status === "PERLU_PINDAAN"
                 ? "Re-submit (manager recheck)"
                 : "Submit for DC review"}
-            </button>
+            </Tbtn>
           ) : null}
 
           {isPindaanSelesai && canReviewSurvey ? (
-            <button
-              type="button"
-              onClick={onManagerApprove}
-              disabled={isBusy}
-              className={primaryBtn}
-            >
+            <Tbtn variant="primary" onClick={onManagerApprove} disabled={isBusy}>
               {pendingAction === "manager-approve" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <CheckCircle2 size={15} />
               )}
               Confirm fixes — re-issue to DC
-            </button>
+            </Tbtn>
           ) : null}
 
           {amendmentVisible ? (
-            <button
-              type="button"
+            <Tbtn
+              variant="secondary"
               onClick={() => setAmendmentOpen((open) => !open)}
               disabled={isBusy}
-              className={amberBtn}
+              className={amberBtnClass}
             >
               <AlertTriangle size={15} />{" "}
               {canManagerAmend ? "Send back to crew" : "Request amendment"}
-            </button>
+            </Tbtn>
           ) : null}
 
           {(status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") &&
           canReport ? (
-            <button
-              type="button"
-              onClick={onGenerateReport}
-              disabled={isBusy}
-              className={primaryBtn}
-            >
+            <Tbtn variant="primary" onClick={onGenerateReport} disabled={isBusy}>
               {pendingAction === "generate-report" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <CheckCircle2 size={15} />
               )}
               Generate report (Laporan Selesai)
-            </button>
+            </Tbtn>
           ) : null}
 
           {status === "LAPORAN_SELESAI" && canReport ? (
-            <button
-              type="button"
+            <Tbtn
+              variant="secondary"
               onClick={onDownloadReport}
               disabled={isBusy || downloadingReport}
-              className={subtleBtn}
             >
               {downloadingReport ? (
                 <RefreshCw size={15} className="animate-spin" />
@@ -611,30 +574,25 @@ function SurveyLifecyclePanel({
                 <Download size={15} />
               )}
               Download compiled report
-            </button>
+            </Tbtn>
           ) : null}
 
           {status === "LAPORAN_SELESAI" && canGovern ? (
-            <button
-              type="button"
-              onClick={onArchive}
-              disabled={isBusy}
-              className={primaryBtn}
-            >
+            <Tbtn variant="primary" onClick={onArchive} disabled={isBusy}>
               {pendingAction === "archive" ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <ShieldCheck size={15} />
               )}
               Archive (Arkib)
-            </button>
+            </Tbtn>
           ) : null}
         </div>
       )}
 
       {amendmentOpen && amendmentVisible ? (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <label className="block text-xs font-semibold uppercase text-amber-800">
+        <div className="mt-3 rounded-[var(--radius-control)] border border-[var(--medium-border)] bg-[var(--medium-bg)] p-3">
+          <label className="block font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--medium-text)]">
             {canManagerAmend
               ? "Manager recheck — what's still not fixed? (required)"
               : "Amendment remark (required)"}
@@ -644,11 +602,11 @@ function SurveyLifecyclePanel({
             onChange={(event) => setAmendmentRemark(event.target.value)}
             rows={3}
             placeholder="What must the inspector fix? (e.g. duplicate RONDAAN on pole A 3, missing photo)"
-            className="mt-1.5 w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+            className={`${filterControlClass} mt-1.5 !h-auto w-full resize-none py-2`}
           />
           <div className="mt-2 flex gap-2">
-            <button
-              type="button"
+            <Tbtn
+              variant="secondary"
               disabled={isBusy || amendmentRemark.trim().length === 0}
               onClick={() => {
                 const remark = amendmentRemark.trim();
@@ -660,7 +618,7 @@ function SurveyLifecyclePanel({
                 setAmendmentRemark("");
                 setAmendmentOpen(false);
               }}
-              className={amberBtn}
+              className={amberBtnClass}
             >
               {pendingAction === "manager-request-amendment" ||
               pendingAction === "request-amendment" ? (
@@ -669,27 +627,25 @@ function SurveyLifecyclePanel({
                 <AlertTriangle size={15} />
               )}
               Send back for amendments
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmendmentOpen(false)}
-              className={subtleBtn}
-            >
+            </Tbtn>
+            <Tbtn variant="secondary" onClick={() => setAmendmentOpen(false)}>
               Cancel
-            </button>
+            </Tbtn>
           </div>
         </div>
       ) : null}
 
       {visit.lifecycleEvents.length > 0 ? (
-        <div className="mt-5 border-t border-slate-100 pt-4">
-          <p className="text-xs font-semibold uppercase text-slate-500">History</p>
+        <div className="mt-5 border-t border-[var(--line2)] pt-4">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--muted-2)]">
+            History
+          </p>
           <ul className="mt-2 space-y-2">
             {visit.lifecycleEvents.map((event) => (
               <li key={event.id} className="flex items-start gap-2 text-sm">
                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand)]" />
                 <div className="min-w-0">
-                  <p className="text-slate-800">
+                  <p className="text-[var(--foreground-soft)]">
                     {event.fromStatus ? `${lifecycleLabel(event.fromStatus)} → ` : ""}
                     <span className="font-semibold">{lifecycleLabel(event.toStatus)}</span>
                   </p>
@@ -706,7 +662,7 @@ function SurveyLifecyclePanel({
           </ul>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -721,12 +677,12 @@ function CycleDeltaStat({
 }) {
   const className =
     tone === "added"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      ? "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-text)]"
       : tone === "removed"
-        ? "border-red-200 bg-red-50 text-red-700"
-        : "border-slate-200 bg-slate-50 text-slate-600";
+        ? "border-[var(--critical-border)] bg-[var(--critical-bg)] text-[var(--critical-text)]"
+        : "border-[var(--neutral-border)] bg-[var(--neutral-bg)] text-[var(--neutral-text)]";
   return (
-    <div className={`rounded-lg border p-3 text-center ${className}`}>
+    <div className={`rounded-[var(--radius-control)] border p-3 text-center ${className}`}>
       <p className="text-2xl font-bold">{count}</p>
       <p className="text-xs font-semibold uppercase">{label}</p>
     </div>
@@ -748,7 +704,7 @@ function CycleDeltaPoleList({
       {poles.map((pole) => (
         <li
           key={pole.id}
-          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700"
+          className="rounded-md border border-[var(--line)] bg-[var(--panel)] px-2 py-0.5 text-xs font-semibold text-[var(--foreground-soft)]"
         >
           {pole.assetCode}
           {pole.noTiangLama ? ` · ${pole.noTiangLama}` : ""}
@@ -760,16 +716,20 @@ function CycleDeltaPoleList({
 
 function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-        <CalendarDays size={17} className="text-[var(--brand)]" />
-        Inspection Cycle
-      </div>
+    <Card>
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-2">
+            <CalendarDays size={16} className="text-[var(--brand)]" />
+            Inspection Cycle
+          </span>
+        }
+      />
 
       {delta.recency.lastInspectedAt ? (
-        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span className="text-[var(--muted)]">Last inspected:</span>
-          <span className="font-semibold text-slate-900">
+          <span className="font-semibold text-[var(--foreground)]">
             {formatDateTime(delta.recency.lastInspectedAt)}
           </span>
           {delta.recency.monthsSince !== null ? (
@@ -789,7 +749,7 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
         </p>
       ) : (
         <>
-          <p className="mt-1 text-sm text-[var(--muted)]">
+          <p className="mt-2 text-sm text-[var(--muted)]">
             This survey versus the previous inspection:
           </p>
           <div className="mt-4 grid grid-cols-3 gap-3">
@@ -799,13 +759,13 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
           </div>
           <div className="mt-4 space-y-3">
             <div>
-              <p className="mb-1.5 text-xs font-semibold uppercase text-emerald-700">
+              <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--success-text)]">
                 New poles
               </p>
               <CycleDeltaPoleList poles={delta.newPoles} emptyText="None added this cycle." />
             </div>
             <div>
-              <p className="mb-1.5 text-xs font-semibold uppercase text-red-700">
+              <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--critical-text)]">
                 Removed / not re-surveyed
               </p>
               <CycleDeltaPoleList
@@ -816,7 +776,7 @@ function CycleDeltaPanel({ delta }: { delta: CycleDelta }) {
           </div>
         </>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -828,24 +788,30 @@ function ContributionsPanel({
   const { teams, reassignments, totalAssets, totalCompleted } = contributions;
 
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-        <Users size={17} className="text-[var(--brand)]" />
-        Team Contributions
-      </div>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        Each team&apos;s share of completed inspections — the basis for contractor
-        billing when a Pencawang is split across teams (ADR 0002 §5).
-        {totalAssets > 0 ? (
+    <Card>
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Users size={16} className="text-[var(--brand)]" />
+            Team Contributions
+          </span>
+        }
+        hint={
           <>
-            {" "}
-            <span className="font-semibold text-slate-700">
-              {totalCompleted} of {totalAssets}
-            </span>{" "}
-            assets completed.
+            Each team&apos;s share of completed inspections — the basis for contractor
+            billing when a Pencawang is split across teams (ADR 0002 §5).
+            {totalAssets > 0 ? (
+              <>
+                {" "}
+                <span className="font-semibold text-[var(--foreground-soft)]">
+                  {totalCompleted} of {totalAssets}
+                </span>{" "}
+                assets completed.
+              </>
+            ) : null}
           </>
-        ) : null}
-      </p>
+        }
+      />
 
       <div className="mt-4 space-y-3">
         {teams.map((team) => {
@@ -855,34 +821,27 @@ function ContributionsPanel({
               : 0;
 
           return (
-            <div key={team.teamId} className="rounded-lg border border-slate-200 p-3">
+            <div key={team.teamId} className="rounded-[var(--radius-control)] border border-[var(--line)] p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
                   {team.teamName ?? "Unknown team"}
-                  {team.isCurrent ? (
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
-                      Current
-                    </span>
-                  ) : null}
+                  {team.isCurrent ? <Chip tone="success">Current</Chip> : null}
                 </span>
-                <span className="text-sm font-semibold text-slate-700">
+                <span className="text-sm font-semibold text-[var(--foreground-soft)]">
                   {team.assetsCompleted}
                   {totalAssets > 0 ? ` / ${totalAssets}` : ""}
                   <span className="ml-1 text-xs text-[var(--muted)]">({pct}%)</span>
                 </span>
               </div>
-              <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-[var(--brand)]"
-                  style={{ width: `${pct}%` }}
-                />
+              <div className="mt-1.5">
+                <ProgressBar value={pct} showLabel={false} />
               </div>
               {team.snapshots.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {team.snapshots.map((snapshot, index) => (
                     <span
                       key={index}
-                      className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600"
+                      className="rounded-md border border-[var(--line)] bg-[var(--panel-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)]"
                     >
                       {snapshot.reason === "COMPLETED" ? "Completed" : "Handover"}:{" "}
                       {snapshot.assetsCompleted}
@@ -898,12 +857,12 @@ function ContributionsPanel({
 
       {reassignments.length > 0 ? (
         <div className="mt-4">
-          <p className="mb-1.5 text-xs font-semibold uppercase text-[var(--muted)]">
+          <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--muted-2)]">
             Handover history
           </p>
           <ul className="space-y-2">
             {reassignments.map((entry, index) => (
-              <li key={index} className="text-sm text-slate-700">
+              <li key={index} className="text-sm text-[var(--foreground-soft)]">
                 <span className="flex flex-wrap items-center gap-x-1.5">
                   <span className="font-semibold">{entry.fromTeamName ?? "—"}</span>
                   <ArrowLeftRight size={13} className="text-[var(--muted)]" />
@@ -924,7 +883,7 @@ function ContributionsPanel({
           </ul>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -1024,45 +983,46 @@ function ReassignTeamPanel({
   };
 
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-            <Users size={17} className="text-[var(--brand)]" />
+    <Card>
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Users size={16} className="text-[var(--brand)]" />
             Team Assignment
-          </div>
-          <p className="mt-1 text-sm text-[var(--muted)]">
+          </span>
+        }
+        hint={
+          <>
             Owned by{" "}
-            <span className="font-semibold text-slate-700">{currentTeamLabel}</span>. Hand the
-            in-progress survey to another team — every inspection, photo and defect transfers.
-          </p>
-        </div>
-        {!open ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-          >
-            <ArrowLeftRight size={15} /> Reassign team
-          </button>
-        ) : null}
-      </div>
+            <span className="font-semibold text-[var(--foreground-soft)]">
+              {currentTeamLabel}
+            </span>
+            . Hand the in-progress survey to another team — every inspection, photo and
+            defect transfers.
+          </>
+        }
+        actions={
+          !open ? (
+            <Tbtn variant="secondary" onClick={() => setOpen(true)}>
+              <ArrowLeftRight size={15} /> Reassign team
+            </Tbtn>
+          ) : null
+        }
+      />
 
       {error ? (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-sm text-[var(--critical-text)]">
           {error}
         </div>
       ) : null}
 
       {open ? (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <label className="block text-xs font-semibold uppercase text-slate-600">
-            Reassign to team
-          </label>
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-4">
+          <label className={filterLabelClass}>Reassign to team</label>
           <select
             value={toTeamId}
             onChange={(event) => setToTeamId(event.target.value)}
-            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
+            className={`${filterSelectClass} mt-1.5 w-full`}
           >
             <option value="">{teamsLoaded ? "Select a team…" : "Loading teams…"}</option>
             {options.map((team) => (
@@ -1072,45 +1032,37 @@ function ReassignTeamPanel({
             ))}
           </select>
 
-          <label className="mt-3 block text-xs font-semibold uppercase text-slate-600">
-            Reason (required)
-          </label>
+          <label className={`${filterLabelClass} mt-3 block`}>Reason (required)</label>
           <textarea
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             rows={3}
             placeholder="Why is this being reassigned? (e.g. Team Alpha pulled to an outage — Beta to finish the walk)"
-            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
+            className={`${filterControlClass} mt-1.5 !h-auto w-full resize-none py-2`}
           />
 
           <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={() => void submit()}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
+            <Tbtn variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
               {submitting ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <ArrowLeftRight size={15} />
               )}
               Reassign
-            </button>
-            <button
-              type="button"
+            </Tbtn>
+            <Tbtn
+              variant="secondary"
               onClick={() => {
                 setOpen(false);
                 setError("");
               }}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
             >
               Cancel
-            </button>
+            </Tbtn>
           </div>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -1125,10 +1077,10 @@ function DeleteStat({
 }) {
   const className =
     tone === "danger"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : "border-slate-200 bg-slate-50 text-slate-600";
+      ? "border-[var(--critical-border)] bg-[var(--critical-bg)] text-[var(--critical-text)]"
+      : "border-[var(--neutral-border)] bg-[var(--neutral-bg)] text-[var(--neutral-text)]";
   return (
-    <div className={`rounded-lg border p-3 text-center ${className}`}>
+    <div className={`rounded-[var(--radius-control)] border p-3 text-center ${className}`}>
       <p className="text-2xl font-bold">{value}</p>
       <p className="text-xs font-semibold uppercase">{label}</p>
     </div>
@@ -1213,36 +1165,34 @@ function DeleteSurveyPanel({
     }
   }, [token, confirmText, confirmTarget, visit.id, onDeleted, onUnauthorized]);
 
-  const dangerBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300";
-  const subtleBtn =
-    "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400";
-
   return (
-    <section className="rounded-xl border border-red-200 bg-red-50/50 p-5 shadow-[var(--shadow-card)]">
+    <Card className="!border-[var(--critical-border)] !bg-[var(--danger-tint)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold text-red-700">
-            <Trash2 size={17} />
+          <div
+            className="flex items-center gap-2 text-[14.5px] font-semibold text-[var(--critical-text)]"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            <Trash2 size={16} className="text-[var(--critical)]" />
             Danger zone — delete survey
           </div>
-          <p className="mt-1 text-sm text-red-900/80">
+          <p className="mt-1 text-[12px] text-[var(--critical-text)]">
             Permanently deletes this survey and the poles created during it — its
             inspections, photos, compiled report and history. Poles also used by
             another survey/cycle are kept. This cannot be undone.
           </p>
         </div>
         {!open ? (
-          <button type="button" onClick={() => void openPanel()} className={dangerBtn}>
+          <Tbtn variant="danger" onClick={() => void openPanel()}>
             <Trash2 size={15} /> Delete survey
-          </button>
+          </Tbtn>
         ) : null}
       </div>
 
       {open ? (
-        <div className="mt-4 rounded-lg border border-red-200 bg-white p-4">
+        <div className="mt-4 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--panel)] p-4">
           {previewError ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="rounded-[var(--radius-control)] border border-[var(--medium-border)] bg-[var(--medium-bg)] px-3 py-2 text-sm text-[var(--medium-text)]">
               {previewError}
             </div>
           ) : preview ? (
@@ -1255,51 +1205,45 @@ function DeleteSurveyPanel({
             <p className="text-sm text-[var(--muted)]">Loading deletion preview…</p>
           )}
 
-          <label className="mt-4 block text-xs font-semibold uppercase text-red-800">
-            Type <span className="font-mono text-red-900">{confirmTarget}</span> to confirm
+          <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--critical-text)]">
+            Type <span className="font-mono text-[var(--foreground)]">{confirmTarget}</span> to confirm
           </label>
           <input
             type="text"
             value={confirmText}
             onChange={(event) => setConfirmText(event.target.value)}
             placeholder={confirmTarget}
-            className="mt-1.5 w-full rounded-md border border-red-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+            className={`${filterControlClass} mt-1.5 w-full !border-[var(--critical-border)]`}
           />
 
           {error ? (
-            <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mt-3 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-sm text-[var(--critical-text)]">
               {error}
             </div>
           ) : null}
 
           <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              disabled={!canConfirm}
-              onClick={() => void submit()}
-              className={dangerBtn}
-            >
+            <Tbtn variant="danger" disabled={!canConfirm} onClick={() => void submit()}>
               {submitting ? (
                 <RefreshCw size={15} className="animate-spin" />
               ) : (
                 <Trash2 size={15} />
               )}
               Permanently delete
-            </button>
-            <button
-              type="button"
+            </Tbtn>
+            <Tbtn
+              variant="secondary"
               onClick={() => {
                 setOpen(false);
                 setError("");
               }}
-              className={subtleBtn}
             >
               Cancel
-            </button>
+            </Tbtn>
           </div>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -1316,6 +1260,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [cycleDelta, setCycleDelta] = useState<CycleDelta | null>(null);
   const [contributions, setContributions] = useState<SiteVisitContributions | null>(null);
   const [assetSearch, setAssetSearch] = useState("");
+  const [inspectionsExpanded, setInspectionsExpanded] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1605,73 +1550,73 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <button
-                type="button"
-                onClick={() => router.push("/site-visits")}
-                className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--brand)] transition hover:text-[var(--brand-strong)]"
-              >
-                <ArrowLeft size={16} />
-                Site Visits
-              </button>
-              <p className="mt-4 text-sm font-semibold uppercase text-[var(--brand)]">
-                Operations Detail
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                {visit ? displayPencawang(visit) : "Site Visit"}
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
-                  {isReadOnly ? "Read-only" : "Full access"}
-                </span>
-                <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(event) => setAutoRefresh(event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
-                  />
-                  Auto-refresh 60s
-                </label>
-                {visit ? <HealthBadge status={visit.operationalHealthStatus} /> : null}
-                {visit ? <StatusBadge status={visit.status} /> : null}
-                {visit ? <ValidationBadge status={visit.validationStatus} /> : null}
-              </div>
-            </div>
+          <button
+            type="button"
+            onClick={() => router.push("/site-visits")}
+            className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--brand)] transition hover:text-[var(--brand-strong)]"
+          >
+            <ArrowLeft size={16} />
+            Site Visits
+          </button>
 
-            <button
-              type="button"
-              onClick={() => (session?.token ? loadVisit(session.token, false) : undefined)}
-              disabled={(isLoading && !visit) || isRefreshing || !session?.token}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-              Refresh
-            </button>
+          <div className="mt-4">
+            <PageHeader
+              eyebrow="Operations Detail"
+              title={visit ? displayPencawang(visit) : "Site Visit"}
+              chips={
+                <>
+                  <Chip tone="neutral">
+                    <ShieldCheck size={13} />
+                    {isReadOnly ? "Read-only" : "Full access"}
+                  </Chip>
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--panel)] px-[9px] py-[3px] text-[11px] font-semibold leading-tight text-[var(--foreground-soft)] transition hover:bg-[var(--panel-muted)]">
+                    <input
+                      type="checkbox"
+                      checked={autoRefresh}
+                      onChange={(event) => setAutoRefresh(event.target.checked)}
+                      className="h-3 w-3 rounded border-[var(--line-strong)] accent-[var(--brand)]"
+                    />
+                    Auto-refresh 60s
+                  </label>
+                  {visit ? <HealthBadge status={visit.operationalHealthStatus} /> : null}
+                  {visit ? <StatusBadge status={visit.status} /> : null}
+                  {visit ? <ValidationBadge status={visit.validationStatus} /> : null}
+                </>
+              }
+              actions={
+                <Tbtn
+                  onClick={() =>
+                    session?.token ? loadVisit(session.token, false) : undefined
+                  }
+                  disabled={(isLoading && !visit) || isRefreshing || !session?.token}
+                >
+                  <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+                  Refresh
+                </Tbtn>
+              }
+            />
           </div>
 
           <div className="mt-6">
             {isLoading && !visit ? (
-              <div className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                <div className="h-8 w-72 animate-pulse rounded-md bg-slate-100" />
+              <Card>
+                <div className="h-8 w-72 animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
                 <div className="mt-5 grid gap-4 md:grid-cols-4">
                   {Array.from({ length: 8 }).map((_, index) => (
-                    <div key={index} className="h-24 animate-pulse rounded-md bg-slate-100" />
+                    <div key={index} className="h-24 animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
                   ))}
                 </div>
-              </div>
+              </Card>
             ) : error && !visit ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : visit ? (
               <div className="space-y-6">
                 {error ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-4 text-[13px] text-[var(--critical-text)]">
                     {error}
                   </div>
                 ) : null}
@@ -1740,12 +1685,16 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   <div className="space-y-6">
                     <ProgressPanel visit={visit} />
 
-                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-                        <Activity size={17} className="text-[var(--brand)]" />
-                        Operational Metadata
-                      </div>
-                      <dl className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <Card>
+                      <CardHead
+                        title={
+                          <span className="inline-flex items-center gap-2">
+                            <Activity size={16} className="text-[var(--brand)]" />
+                            Operational Metadata
+                          </span>
+                        }
+                      />
+                      <dl className="mt-5 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                         <MainheadDetailField visit={visit} />
                         <DetailField label="Pencawang Code" value={formatNullable(visit.pencawangCode)} />
                         <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
@@ -1774,23 +1723,27 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         <DetailField label="Team" value={displayTeam(visit)} />
                         <DetailField label="Created By" value={formatNullable(visit.createdBy?.name ?? visit.createdBy?.email)} />
                       </dl>
-                    </section>
+                    </Card>
 
-                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-                          <Users size={17} className="text-[var(--brand)]" />
-                          Team Members
-                        </div>
-                        <span className="text-sm text-[var(--muted)]">
-                          {visit.teamMembers.length} active on visit
-                        </span>
-                      </div>
+                    <Card>
+                      <CardHead
+                        title={
+                          <span className="inline-flex items-center gap-2">
+                            <Users size={16} className="text-[var(--brand)]" />
+                            Team Members
+                          </span>
+                        }
+                        actions={
+                          <span className="text-[12px] text-[var(--muted)]">
+                            {visit.teamMembers.length} active on visit
+                          </span>
+                        }
+                      />
                       <div className="mt-5 grid gap-3 md:grid-cols-2">
                         {visit.teamMembers.length > 0 ? (
                           visit.teamMembers.map((member) => (
-                            <div key={`${member.id}-${member.siteVisitUserId ?? ""}`} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                              <p className="text-sm font-semibold text-slate-950">
+                            <div key={`${member.id}-${member.siteVisitUserId ?? ""}`} className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-4">
+                              <p className="text-sm font-semibold text-[var(--foreground)]">
                                 {member.name || member.email || "Team member"}
                               </p>
                               <p className="mt-1 text-xs text-[var(--muted)]">
@@ -1799,66 +1752,70 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                             </div>
                           ))
                         ) : (
-                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)] md:col-span-2">
+                          <div className="rounded-[var(--radius-control)] border border-dashed border-[var(--line-strong)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)] md:col-span-2">
                             No team members returned for this visit.
                           </div>
                         )}
                       </div>
-                    </section>
+                    </Card>
 
-                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-                          <Activity size={17} className="text-[var(--brand)]" />
-                          Linked Assets
-                        </div>
-                        <span className="text-sm text-[var(--muted)]">
-                          {filteredAssetRows.length === operationalAssetRows.length
-                            ? `${operationalAssetRows.length} rows`
-                            : `${filteredAssetRows.length} / ${operationalAssetRows.length} rows`}
-                        </span>
-                      </div>
+                    <Card>
+                      <CardHead
+                        title={
+                          <span className="inline-flex items-center gap-2">
+                            <Activity size={16} className="text-[var(--brand)]" />
+                            Linked Assets
+                          </span>
+                        }
+                        actions={
+                          <span className="text-[12px] text-[var(--muted)]">
+                            {filteredAssetRows.length === operationalAssetRows.length
+                              ? `${operationalAssetRows.length} rows`
+                              : `${filteredAssetRows.length} / ${operationalAssetRows.length} rows`}
+                          </span>
+                        }
+                      />
 
                       {operationalAssetRows.length > 0 ? (
                         <label className="relative mt-4 block">
                           <span className="sr-only">Search linked assets</span>
                           <Search
-                            size={17}
-                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                            size={15}
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-2)]"
                           />
                           <input
                             type="search"
                             value={assetSearch}
                             onChange={(event) => setAssetSearch(event.target.value)}
                             placeholder="Search by code, name or type"
-                            className="h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
+                            className={`${filterControlClass} w-full pl-9`}
                           />
                         </label>
                       ) : null}
 
                       <div className="mt-4 max-h-[28rem] overflow-x-auto overflow-y-auto">
                         {operationalAssetRows.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+                          <div className="rounded-[var(--radius-control)] border border-dashed border-[var(--line-strong)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)]">
                             No linked assets returned for this visit.
                           </div>
                         ) : filteredAssetRows.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+                          <div className="rounded-[var(--radius-control)] border border-dashed border-[var(--line-strong)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)]">
                             No assets match your search.
                           </div>
                         ) : (
-                          <table className="min-w-full text-left text-sm">
+                          <table className="min-w-full text-left">
                             <thead>
-                              <tr className="sticky top-0 z-10 border-y border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                                <th className="px-4 py-3">No Tiang Rondaan</th>
-                                <th className="px-4 py-3">No Tiang Lama</th>
-                                <th className="px-4 py-3">Bacaan Kelegaan 1</th>
-                                <th className="px-4 py-3">Catitan</th>
-                                <th className="px-4 py-3">Type</th>
-                                <th className="px-4 py-3">Source</th>
-                                <th className="px-4 py-3">Added</th>
+                              <tr className={`sticky top-0 z-10 border-y border-[var(--line)] ${tableHeadClass}`}>
+                                <th className={tableHeadCellClass}>No Tiang Rondaan</th>
+                                <th className={tableHeadCellClass}>No Tiang Lama</th>
+                                <th className={tableHeadCellClass}>Bacaan Kelegaan 1</th>
+                                <th className={tableHeadCellClass}>Catitan</th>
+                                <th className={tableHeadCellClass}>Type</th>
+                                <th className={tableHeadCellClass}>Source</th>
+                                <th className={tableHeadCellClass}>Added</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-100">
+                            <tbody>
                               {filteredAssetRows.map((link) => {
                                 // Carry a return path so Asset Detail's back
                                 // button comes back here, not to the Assets list.
@@ -1876,28 +1833,28 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                       router.push(assetHref);
                                     }
                                   }}
-                                  className="cursor-pointer outline-none transition hover:bg-slate-50 focus-visible:bg-slate-50"
+                                  className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--brand-tint)]`}
                                   aria-label={`Open asset ${link.asset.assetCode}`}
                                 >
-                                  <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-900">
+                                  <td className={`${tableMonoCellClass} whitespace-nowrap font-semibold text-[var(--foreground)]`}>
                                     {link.asset.assetCode}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
+                                  <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.asset.noTiangLama ?? link.asset.name)}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-700">
+                                  <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.checklist?.bacaanKelegaan1)}
                                   </td>
-                                  <td className="min-w-48 px-4 py-4 text-slate-600">
+                                  <td className={`${tableCellClass} min-w-48`}>
                                     {formatNullable(link.checklist?.catitan)}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-700">
+                                  <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.asset.assetType?.name ?? link.asset.assetType?.code)}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
+                                  <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.source)}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
+                                  <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatDateTime(link.addedAt)}
                                   </td>
                                 </tr>
@@ -1907,79 +1864,99 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           </table>
                         )}
                       </div>
-                    </section>
+                    </Card>
 
-                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-                          <CalendarDays size={17} className="text-[var(--brand)]" />
+                    <Card>
+                      <button
+                        type="button"
+                        onClick={() => setInspectionsExpanded((open) => !open)}
+                        aria-expanded={inspectionsExpanded}
+                        className="flex w-full items-center justify-between gap-4 text-left"
+                      >
+                        <span
+                          className="inline-flex items-center gap-2 text-[14.5px] font-semibold text-[var(--foreground)]"
+                          style={{ fontFamily: "var(--font-display)" }}
+                        >
+                          <ChevronRight
+                            size={16}
+                            className={`shrink-0 text-[var(--muted-2)] transition-transform ${
+                              inspectionsExpanded ? "rotate-90" : ""
+                            }`}
+                          />
+                          <CalendarDays size={16} className="text-[var(--brand)]" />
                           Inspections
-                        </div>
-                        <span className="text-sm text-[var(--muted)]">
+                        </span>
+                        <span className="shrink-0 text-[12px] text-[var(--muted)]">
                           {submittedInspections.length}/{visit.inspections.length} submitted
                         </span>
-                      </div>
-                      <div className="mt-5 overflow-x-auto">
-                        {visit.inspections.length > 0 ? (
-                          <table className="min-w-full text-left text-sm">
-                            <thead>
-                              <tr className="border-y border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                                <th className="px-4 py-3">Asset</th>
-                                <th className="px-4 py-3">Template</th>
-                                <th className="px-4 py-3">Cycle</th>
-                                <th className="px-4 py-3">Status</th>
-                                <th className="px-4 py-3">Defects</th>
-                                <th className="px-4 py-3">Images</th>
-                                <th className="px-4 py-3">Submitted</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {visit.inspections.map((inspection) => (
-                                <tr key={inspection.id}>
-                                  <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-900">
-                                    {inspection.assetCode}
-                                  </td>
-                                  <td className="min-w-56 px-4 py-4 text-slate-700">
-                                    {formatNullable(inspection.templateName)}
-                                    {inspection.templateVersion ? (
-                                      <span className="ml-2 text-xs text-[var(--muted)]">
-                                        v{inspection.templateVersion}
-                                      </span>
-                                    ) : null}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                                    {inspection.cycleNumber ?? "N/A"}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                                    {formatEnum(inspection.completionStatus)}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-900">
-                                    {inspection.defectCount}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                                    {inspection.imageCount}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-4 text-slate-600">
-                                    {formatDateTime(inspection.submittedAt)}
-                                  </td>
+                      </button>
+                      {inspectionsExpanded ? (
+                        <div className="mt-5 overflow-x-auto">
+                          {visit.inspections.length > 0 ? (
+                            <table className="min-w-full text-left">
+                              <thead>
+                                <tr className={`border-y border-[var(--line)] ${tableHeadClass}`}>
+                                  <th className={tableHeadCellClass}>Asset</th>
+                                  <th className={tableHeadCellClass}>Template</th>
+                                  <th className={tableHeadCellClass}>Cycle</th>
+                                  <th className={tableHeadCellClass}>Status</th>
+                                  <th className={tableHeadCellClass}>Defects</th>
+                                  <th className={tableHeadCellClass}>Images</th>
+                                  <th className={tableHeadCellClass}>Submitted</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        ) : (
-                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
-                            No inspections returned for this visit.
-                          </div>
-                        )}
-                      </div>
-                    </section>
+                              </thead>
+                              <tbody>
+                                {visit.inspections.map((inspection) => (
+                                  <tr key={inspection.id} className={`${tableRowClass} last:border-b-0`}>
+                                    <td className={`${tableMonoCellClass} whitespace-nowrap font-semibold text-[var(--foreground)]`}>
+                                      {inspection.assetCode}
+                                    </td>
+                                    <td className={`${tableCellClass} min-w-56`}>
+                                      {formatNullable(inspection.templateName)}
+                                      {inspection.templateVersion ? (
+                                        <span className="ml-2 text-xs text-[var(--muted)]">
+                                          v{inspection.templateVersion}
+                                        </span>
+                                      ) : null}
+                                    </td>
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {inspection.cycleNumber ?? "N/A"}
+                                    </td>
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {formatEnum(inspection.completionStatus)}
+                                    </td>
+                                    <td className={`${tableCellClass} whitespace-nowrap font-semibold text-[var(--foreground)]`}>
+                                      {inspection.defectCount}
+                                    </td>
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {inspection.imageCount}
+                                    </td>
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {formatDateTime(inspection.submittedAt)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <div className="rounded-[var(--radius-control)] border border-dashed border-[var(--line-strong)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)]">
+                              No inspections returned for this visit.
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </Card>
 
-                    <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-                      <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
-                        <Clock3 size={17} className="text-[var(--brand)]" />
-                        Timestamps & Notes
-                      </div>
-                      <dl className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <Card>
+                      <CardHead
+                        title={
+                          <span className="inline-flex items-center gap-2">
+                            <Clock3 size={16} className="text-[var(--brand)]" />
+                            Timestamps & Notes
+                          </span>
+                        }
+                      />
+                      <dl className="mt-5 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         <DetailField label="Started" value={formatDateTime(visit.startedAt)} />
                         <DetailField label="Completed" value={formatDateTime(visit.completedAt)} />
                         <DetailField label="Ended" value={formatDateTime(visit.endedAt)} />
@@ -1989,7 +1966,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         <DetailField label="Visit Notes" value={formatNullable(visit.notes)} />
                         <DetailField label="Cancel Reason" value={formatNullable(visit.cancelReason)} />
                       </dl>
-                    </section>
+                    </Card>
                   </div>
                 </div>
 
@@ -2003,9 +1980,9 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                 ) : null}
               </div>
             ) : (
-              <div className="rounded-xl border border-[var(--line)] bg-white p-8 text-center text-sm text-[var(--muted)] shadow-[var(--shadow-card)]">
+              <Card padded={false} className="p-8 text-center text-sm text-[var(--muted)]">
                 Site visit not found.
-              </div>
+              </Card>
             )}
           </div>
         </div>
