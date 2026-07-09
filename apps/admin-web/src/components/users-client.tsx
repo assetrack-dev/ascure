@@ -12,15 +12,30 @@ import {
   Plus,
   Power,
   RefreshCw,
-  Search,
   ShieldCheck,
   SlidersHorizontal,
-  UserRound,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  Card,
+  Chip,
+  Eyebrow,
+  FilterBar,
+  IconBtn,
+  PageHeader,
+  SearchField,
+  Tbtn,
+  filterControlClass,
+  filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableRowClass,
+  type Tone,
+} from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
@@ -50,6 +65,7 @@ import { USER_ROLES } from "@/types/users";
 
 type RoleFilter = "ALL" | UserRole;
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
+type OrgFilter = "ALL" | string;
 type ModalMode = "create" | "edit";
 
 // Roles a MANAGER may provision (mirrors the API allow-list in users.service).
@@ -113,25 +129,23 @@ const STATUS_FILTER_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Active", value: "ACTIVE" },
   { label: "Inactive", value: "INACTIVE" },
 ];
-const inputClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const searchControlClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
-const secondaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
-const primaryButtonClassName =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-sm font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300";
+
+// Modal fields reuse the filter-pill controls (a restyle, not a rewrite): same
+// height and token surface as the filter bar, with a label gap baked in.
+const modalInputClass = `${filterControlClass} mt-1.5 w-full`;
+const modalSelectClass = `${filterSelectClass} mt-1.5 w-full`;
+const modalLabelClass = "text-[12.5px] font-semibold text-[var(--foreground-soft)]";
 
 function UsersLoading() {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
-      <div className="h-10 w-full animate-pulse rounded-md bg-slate-100" />
+    <Card>
+      <div className="h-[38px] w-full animate-pulse rounded-[var(--radius-control)] bg-[var(--panel-muted)]" />
       <div className="mt-5 space-y-3">
         {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="h-12 animate-pulse rounded-md bg-slate-100" />
+          <div key={index} className="h-12 animate-pulse rounded-[9px] bg-[var(--panel-muted)]" />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -141,6 +155,37 @@ function normalizeSearchText(value: string | null | undefined) {
 
 function roleLabel(role: UserRole) {
   return role.charAt(0) + role.slice(1).toLowerCase();
+}
+
+function roleTone(role: UserRole): Tone {
+  if (role === "ADMIN") {
+    return "monitor";
+  }
+
+  if (role === "MANAGER") {
+    return "info";
+  }
+
+  if (role === "SUPERVISOR") {
+    return "success";
+  }
+
+  return "neutral";
+}
+
+/** 1–2 letter monogram from a display name, for the avatar tile. */
+function initialsOf(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+
+  if (parts.length === 0) {
+    return "?";
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 function optionLabel(option: { name: string; code?: string | null }) {
@@ -185,6 +230,15 @@ function capabilityNames(user: ManagedUser) {
   );
 }
 
+/** The capability labels as a list, for rendering one chip apiece. */
+function capabilityNameList(user: ManagedUser) {
+  return (
+    user.capabilityAssignments
+      ?.map((assignment) => assignment.capability?.name || assignment.capability?.code)
+      .filter((name): name is string => Boolean(name)) ?? []
+  );
+}
+
 function mainheadAccessNames(user: ManagedUser) {
   const names =
     user.mainheadAccesses
@@ -215,36 +269,13 @@ function requestErrorMessage(error: unknown, fallback: string) {
 }
 
 function StatusBadge({ isActive }: { isActive: boolean }) {
-  const className = isActive
-    ? "border-green-200 bg-green-50 text-green-700"
-    : "border-slate-200 bg-slate-50 text-slate-600";
-
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {isActive ? "Active" : "Inactive"}
-    </span>
+    <Chip tone={isActive ? "success" : "neutral"}>{isActive ? "Active" : "Inactive"}</Chip>
   );
 }
 
 function RoleBadge({ role }: { role: UserRole }) {
-  const className =
-    role === "ADMIN"
-      ? "border-teal-200 bg-teal-50 text-teal-700"
-      : role === "MANAGER"
-        ? "border-blue-200 bg-blue-50 text-blue-700"
-        : role === "SUPERVISOR"
-          ? "border-amber-200 bg-amber-50 text-amber-800"
-          : role === "CLIENT"
-            ? "border-cyan-200 bg-cyan-50 text-cyan-700"
-            : role === "VIEWER"
-              ? "border-violet-200 bg-violet-50 text-violet-700"
-              : "border-slate-200 bg-slate-50 text-slate-600";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {roleLabel(role)}
-    </span>
-  );
+  return <Chip tone={roleTone(role)}>{roleLabel(role)}</Chip>;
 }
 
 function UserCapabilityPicker({
@@ -292,17 +323,17 @@ function UserCapabilityPicker({
       {groups.map((group) => (
         <fieldset
           key={group.key}
-          className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+          className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-3"
         >
-          <legend className="px-1 text-sm font-semibold text-slate-700">
+          <legend className="px-1 text-[13px] font-semibold text-[var(--foreground-soft)]">
             {group.title}
           </legend>
-          <p className="px-1 text-xs text-slate-500">{group.caption}</p>
+          <p className="px-1 text-[12px] text-[var(--muted)]">{group.caption}</p>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {group.items.map((capability) => (
               <label
                 key={capability.id}
-                className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                className="flex min-w-0 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--foreground-soft)]"
               >
                 <input
                   type="checkbox"
@@ -310,7 +341,7 @@ function UserCapabilityPicker({
                   onChange={(event) =>
                     toggleCapability(capability.id, event.target.checked)
                   }
-                  className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                  className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                 />
                 <span className="truncate">{optionLabel(capability)}</span>
               </label>
@@ -346,21 +377,21 @@ function UserAccessPicker({
   }
 
   return (
-    <fieldset className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-      <legend className="px-1 text-sm font-semibold text-slate-700">
+    <fieldset className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-3">
+      <legend className="px-1 text-[13px] font-semibold text-[var(--foreground-soft)]">
         {title}
       </legend>
       <div className="mt-2 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
         {options.map((option) => (
           <label
             key={option.id}
-            className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+            className="flex min-w-0 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--foreground-soft)]"
           >
             <input
               type="checkbox"
               checked={values.includes(option.id)}
               onChange={(event) => toggleOption(option.id, event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+              className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
             />
             <span className="truncate">
               {optionLabel(option)}
@@ -425,18 +456,18 @@ function EffectiveMainheadPreview({
       : "No MAINHEAD access — user will not see any visits.";
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
         Effective MAINHEAD Access
       </p>
       {overrideMessage ? (
-        <p className="mt-1 text-sm font-semibold text-amber-700">
+        <p className="mt-1 text-[13px] font-semibold text-[var(--warning-text)]">
           {overrideMessage}
         </p>
       ) : null}
-      <p className="mt-1 text-sm text-slate-700">{summary}</p>
+      <p className="mt-1 text-[13px] text-[var(--foreground-soft)]">{summary}</p>
       {preview.effective.length > 0 ? (
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-[12px] text-[var(--muted)]">
           {preview.effective.length} MAINHEAD
           {preview.effective.length === 1 ? "" : "s"} resolved.
         </p>
@@ -499,64 +530,60 @@ function UserFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--line2)] px-[18px] py-4">
           <div>
-            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-              {isCreateMode ? "New User" : "Edit User"}
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">
+            <Eyebrow>{isCreateMode ? "New User" : "Edit User"}</Eyebrow>
+            <h2
+              className="mt-1 text-[18px] font-bold leading-tight text-[var(--foreground)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
               {isCreateMode ? "Create User" : "Update User"}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            aria-label="Close user modal"
-          >
-            <X size={17} />
-          </button>
+          <IconBtn onClick={onClose} aria-label="Close user modal">
+            <X size={16} />
+          </IconBtn>
         </div>
 
-        <form onSubmit={onSubmit} autoComplete="off" className="space-y-4 px-5 py-5">
+        <form onSubmit={onSubmit} autoComplete="off" className="space-y-4 px-[18px] py-5">
           {error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] text-[var(--critical-text)]">
               {error}
             </div>
           ) : null}
 
           <label className="block">
-            <span className="text-sm font-semibold text-slate-700">Name</span>
+            <span className={modalLabelClass}>Name</span>
             <input
               type="text"
               value={values.name}
               onChange={(event) => onChange("name", event.target.value)}
-              className={`${inputClassName} mt-1.5`}
+              className={modalInputClass}
               required
               maxLength={255}
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-semibold text-slate-700">Email</span>
+            <span className={modalLabelClass}>Email</span>
             <input
               type="email"
               value={values.email}
               onChange={(event) => onChange("email", event.target.value)}
               autoComplete="new-email"
-              className={`${inputClassName} mt-1.5`}
+              className={modalInputClass}
               required
               maxLength={320}
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-semibold text-slate-700">Role</span>
+            <span className={modalLabelClass}>Role</span>
             <select
               value={values.role}
               onChange={(event) => onChange("role", event.target.value as UserRole)}
-              className={`${inputClassName} mt-1.5`}
+              className={modalSelectClass}
             >
               {roleOptions.map((role) => (
                 <option key={role} value={role}>
@@ -568,11 +595,11 @@ function UserFormModal({
 
           {isManagerOnly ? (
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Team</span>
+              <span className={modalLabelClass}>Team</span>
               <select
                 value={values.teamId}
                 onChange={(event) => onChange("teamId", event.target.value)}
-                className={`${inputClassName} mt-1.5`}
+                className={modalSelectClass}
               >
                 <option value="">No team</option>
                 {visibleTeams.map((team) => (
@@ -581,18 +608,18 @@ function UserFormModal({
                   </option>
                 ))}
               </select>
-              <span className="mt-1.5 block text-xs text-slate-500">
+              <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
                 New users are added to your company automatically.
               </span>
             </label>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Organization</span>
+                <span className={modalLabelClass}>Organization</span>
                 <select
                   value={values.organizationId}
                   onChange={(event) => onChange("organizationId", event.target.value)}
-                  className={`${inputClassName} mt-1.5`}
+                  className={modalSelectClass}
                 >
                   <option value="">No organization</option>
                   {enterpriseOptions?.organizations.map((organization) => (
@@ -603,11 +630,11 @@ function UserFormModal({
                 </select>
               </label>
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Branch</span>
+                <span className={modalLabelClass}>Branch</span>
                 <select
                   value={values.branchId}
                   onChange={(event) => onChange("branchId", event.target.value)}
-                  className={`${inputClassName} mt-1.5`}
+                  className={modalSelectClass}
                 >
                   <option value="">No branch</option>
                   {enterpriseOptions?.branches.map((branch) => (
@@ -618,11 +645,11 @@ function UserFormModal({
                 </select>
               </label>
               <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Team</span>
+                <span className={modalLabelClass}>Team</span>
                 <select
                   value={values.teamId}
                   onChange={(event) => onChange("teamId", event.target.value)}
-                  className={`${inputClassName} mt-1.5`}
+                  className={modalSelectClass}
                 >
                   <option value="">No team</option>
                   {/*
@@ -686,49 +713,47 @@ function UserFormModal({
 
           {isCreateMode && !isManagerOnly ? (
             <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Password</span>
+              <span className={modalLabelClass}>Password</span>
               <input
                 type="password"
                 value={values.password}
                 onChange={(event) => onChange("password", event.target.value)}
                 autoComplete="new-password"
-                className={`${inputClassName} mt-1.5`}
+                className={modalInputClass}
                 minLength={8}
                 maxLength={128}
               />
-              <span className="mt-1.5 block text-xs text-slate-500">
+              <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
                 Leave blank to generate a temporary password. Either way, the user
                 must change it at first login.
               </span>
             </label>
           ) : null}
           {isCreateMode && isManagerOnly ? (
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-3 py-2 text-[12px] text-[var(--muted)]">
               A temporary password will be generated for the new user. Share it
               with them — they must change it at first login.
             </p>
           ) : null}
 
           {isCreateMode ? (
-            <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+            <label className="inline-flex items-center gap-3 text-[13px] font-semibold text-[var(--foreground-soft)]">
               <input
                 type="checkbox"
                 checked={values.isActive}
                 onChange={(event) => onChange("isActive", event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
               />
               Active
             </label>
           ) : null}
 
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
-              Cancel
-            </button>
-            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+          <div className="flex flex-col-reverse gap-3 border-t border-[var(--line2)] pt-4 sm:flex-row sm:justify-end">
+            <Tbtn onClick={onClose}>Cancel</Tbtn>
+            <Tbtn type="submit" variant="primary" disabled={isSaving}>
               <CheckCircle2 size={16} />
               {isSaving ? "Saving" : isCreateMode ? "Create User" : "Save Changes"}
-            </button>
+            </Tbtn>
           </div>
         </form>
       </div>
@@ -755,56 +780,52 @@ function PasswordModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
-      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div className="w-full max-w-md rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--line2)] px-[18px] py-4">
           <div>
-            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-              Reset Password
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">{user.name}</h2>
+            <Eyebrow>Reset Password</Eyebrow>
+            <h2
+              className="mt-1 text-[18px] font-bold leading-tight text-[var(--foreground)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              {user.name}
+            </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            aria-label="Close password modal"
-          >
-            <X size={17} />
-          </button>
+          <IconBtn onClick={onClose} aria-label="Close password modal">
+            <X size={16} />
+          </IconBtn>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4 px-5 py-5">
+        <form onSubmit={onSubmit} className="space-y-4 px-[18px] py-5">
           {error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] text-[var(--critical-text)]">
               {error}
             </div>
           ) : null}
 
           <label className="block">
-            <span className="text-sm font-semibold text-slate-700">New Password</span>
+            <span className={modalLabelClass}>New Password</span>
             <input
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="new-password"
-              className={`${inputClassName} mt-1.5`}
+              className={modalInputClass}
               minLength={8}
               maxLength={128}
             />
-            <span className="mt-1.5 block text-xs text-slate-500">
+            <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
               Leave blank to generate a temporary password. The user must change
               it at next login.
             </span>
           </label>
 
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className={secondaryButtonClassName}>
-              Cancel
-            </button>
-            <button type="submit" disabled={isSaving} className={primaryButtonClassName}>
+          <div className="flex flex-col-reverse gap-3 border-t border-[var(--line2)] pt-4 sm:flex-row sm:justify-end">
+            <Tbtn onClick={onClose}>Cancel</Tbtn>
+            <Tbtn type="submit" variant="primary" disabled={isSaving}>
               <KeyRound size={16} />
               {isSaving ? "Saving" : "Reset Password"}
-            </button>
+            </Tbtn>
           </div>
         </form>
       </div>
@@ -833,43 +854,41 @@ function CredentialResultModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
-      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div className="w-full max-w-md rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--line2)] px-[18px] py-4">
           <div>
-            <p className="text-xs font-semibold uppercase text-[var(--brand)]">
-              Temporary password
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">{credential.name}</h2>
+            <Eyebrow>Temporary password</Eyebrow>
+            <h2
+              className="mt-1 text-[18px] font-bold leading-tight text-[var(--foreground)]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              {credential.name}
+            </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            aria-label="Close"
-          >
-            <X size={17} />
-          </button>
+          <IconBtn onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </IconBtn>
         </div>
 
-        <div className="space-y-4 px-5 py-5">
-          <p className="text-sm text-slate-600">
+        <div className="space-y-4 px-[18px] py-5">
+          <p className="text-[13px] text-[var(--muted)]">
             Share these credentials with{" "}
-            <span className="font-semibold">{credential.email}</span>. They must set
+            <span className="font-semibold text-[var(--foreground)]">{credential.email}</span>. They must set
             a new password at first login. This password is shown only once.
           </p>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
               Temporary password
             </p>
             <div className="mt-1.5 flex items-center justify-between gap-3">
-              <code className="break-all font-mono text-base font-semibold text-slate-900">
+              <code className="break-all font-mono text-[15px] font-semibold text-[var(--foreground)]">
                 {credential.password}
               </code>
               <button
                 type="button"
                 onClick={copy}
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 text-[12px] font-semibold text-[var(--foreground-soft)] transition hover:bg-[var(--panel-muted)]"
               >
                 {copied ? <Check size={14} /> : <Copy size={14} />}
                 {copied ? "Copied" : "Copy"}
@@ -877,10 +896,10 @@ function CredentialResultModal({
             </div>
           </div>
 
-          <div className="flex justify-end border-t border-slate-200 pt-4">
-            <button type="button" onClick={onClose} className={primaryButtonClassName}>
+          <div className="flex justify-end border-t border-[var(--line2)] pt-4">
+            <Tbtn variant="primary" onClick={onClose}>
               Done
-            </button>
+            </Tbtn>
           </div>
         </div>
       </div>
@@ -899,6 +918,7 @@ function UsersContent() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [orgFilter, setOrgFilter] = useState<OrgFilter>("ALL");
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
   const [userForm, setUserForm] = useState<UserFormState>(() => createDefaultUserForm());
@@ -982,6 +1002,7 @@ function UsersContent() {
         const matchesStatus =
           statusFilter === "ALL" ||
           (statusFilter === "ACTIVE" ? user.isActive : !user.isActive);
+        const matchesOrg = orgFilter === "ALL" || user.organization?.id === orgFilter;
         const matchesSearch =
           !normalizedSearch ||
           [
@@ -1004,7 +1025,7 @@ function UsersContent() {
             capabilityNames(user),
           ].some((value) => normalizeSearchText(value).includes(normalizedSearch));
 
-        return matchesRole && matchesStatus && matchesSearch;
+        return matchesRole && matchesStatus && matchesOrg && matchesSearch;
       })
       .sort((left, right) => {
         const nameSort = left.name.localeCompare(right.name, "en", {
@@ -1014,7 +1035,25 @@ function UsersContent() {
 
         return nameSort || left.email.localeCompare(right.email, "en", { sensitivity: "base" });
       });
-  }, [roleFilter, search, statusFilter, users]);
+  }, [orgFilter, roleFilter, search, statusFilter, users]);
+
+  const organizationOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    users.forEach((user) => {
+      const organization = user.organization;
+
+      if (!organization?.id || options.has(organization.id)) {
+        return;
+      }
+
+      options.set(organization.id, optionLabel(organization));
+    });
+
+    return Array.from(options.entries()).sort((left, right) =>
+      left[1].localeCompare(right[1], "en", { numeric: true, sensitivity: "base" }),
+    );
+  }, [users]);
 
   const isAdmin = session?.user?.role === "ADMIN";
   const canManageUsers = isAdmin || session?.user?.canManageUsers === true;
@@ -1271,233 +1310,212 @@ function UsersContent() {
     setSearch("");
     setRoleFilter("ALL");
     setStatusFilter("ALL");
+    setOrgFilter("ALL");
   }
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-                User Management
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                Users
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
+          <PageHeader
+            eyebrow="Access Control"
+            title="Users"
+            subtitle="Provision console and field accounts, set each person's role and access scope, and issue or reset credentials."
+            chips={
+              <>
+                <Chip tone="neutral">
+                  <ShieldCheck size={13} />
                   {isAdmin ? "Admin access" : isManagerOnly ? "Manager access" : "Restricted"}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {users.length} total
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {activeUserCount} active
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  {activeAdminCount} active admins
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => (session?.token ? loadUsers(session.token) : undefined)}
-                disabled={isLoading || !session?.token || !canManageUsers}
-                className={secondaryButtonClassName}
-              >
-                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={openCreateModal}
-                disabled={!canManageUsers}
-                className={primaryButtonClassName}
-              >
-                <Plus size={16} />
-                Create User
-              </button>
-            </div>
-          </div>
+                </Chip>
+                <Chip tone="neutral">{users.length} total</Chip>
+                <Chip tone="success">{activeUserCount} active</Chip>
+                <Chip tone="neutral">{activeAdminCount} active admins</Chip>
+              </>
+            }
+            actions={
+              <>
+                <Tbtn
+                  onClick={() => (session?.token ? loadUsers(session.token) : undefined)}
+                  disabled={isLoading || !session?.token || !canManageUsers}
+                >
+                  <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                  Refresh
+                </Tbtn>
+                <Tbtn variant="primary" onClick={openCreateModal} disabled={!canManageUsers}>
+                  <Plus size={16} />
+                  Create User
+                </Tbtn>
+              </>
+            }
+          />
 
           <div className="mt-6">
             {isLoading && users.length === 0 ? (
               <UsersLoading />
             ) : error && users.length === 0 ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+              <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
             ) : (
-              <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
-                <div className="border-b border-slate-200 p-5">
+              <Card padded={false}>
+                <div className="border-b border-[var(--line2)] p-[18px]">
                   {successMessage ? (
-                    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    <div className="mb-4 rounded-[var(--radius-control)] border border-[var(--success-border)] bg-[var(--success-bg)] px-3 py-2 text-[13px] text-[var(--success-text)]">
                       {successMessage}
                     </div>
                   ) : null}
 
                   {error ? (
-                    <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <div className="mb-4 rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] text-[var(--critical-text)]">
                       {error}
                     </div>
                   ) : null}
 
-                  <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_repeat(2,minmax(150px,auto))_auto]">
-                    <label className="relative block">
-                      <span className="sr-only">Search users</span>
-                      <Search
-                        size={17}
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-                      <input
-                        type="search"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Search users"
-                        className={searchControlClassName}
-                      />
-                    </label>
+                  <FilterBar>
+                    <SearchField
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search users"
+                      aria-label="Search users"
+                    />
 
-                    <label className="block">
-                      <span className="sr-only">Role</span>
-                      <select
-                        value={roleFilter}
-                        onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
-                        className={inputClassName}
-                      >
-                        {ROLE_FILTER_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Role"
+                      value={roleFilter}
+                      onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
+                      className={filterSelectClass}
+                    >
+                      {ROLE_FILTER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <label className="block">
-                      <span className="sr-only">Status</span>
-                      <select
-                        value={statusFilter}
-                        onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                        className={inputClassName}
-                      >
-                        {STATUS_FILTER_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <select
+                      aria-label="Status"
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                      className={filterSelectClass}
+                    >
+                      {STATUS_FILTER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
 
-                    <button type="button" onClick={resetFilters} className={secondaryButtonClassName}>
+                    <select
+                      aria-label="Organization"
+                      value={orgFilter}
+                      onChange={(event) => setOrgFilter(event.target.value)}
+                      className={filterSelectClass}
+                    >
+                      <option value="ALL">All organizations</option>
+                      {organizationOptions.map(([id, label]) => (
+                        <option key={id} value={id}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <Tbtn variant="ghost" onClick={resetFilters}>
                       <X size={16} />
                       Reset
-                    </button>
-                  </div>
+                    </Tbtn>
+                  </FilterBar>
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
+                  <table className="min-w-full text-left">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-                        <th className="min-w-44 px-5 py-3.5 font-semibold">Name</th>
-                        <th className="min-w-48 px-5 py-3.5 font-semibold">Email</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Role</th>
-                        <th className="min-w-44 px-5 py-3.5 font-semibold">Scope</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 font-semibold">Status</th>
-                        <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">
-                          Actions
-                        </th>
+                      <tr className={tableHeadClass}>
+                        <th className={tableHeadCellClass}>User</th>
+                        <th className={`${tableHeadCellClass} whitespace-nowrap`}>Role</th>
+                        <th className={tableHeadCellClass}>Organization</th>
+                        <th className={tableHeadCellClass}>Capabilities</th>
+                        <th className={`${tableHeadCellClass} whitespace-nowrap`}>Status</th>
+                        <th className={`${tableHeadCellClass} text-right`}>Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody>
                       {filteredUsers.map((user) => {
                         const isCurrentUser = user.id === session?.user?.id;
                         const disableDeactivate = isCurrentUser && user.isActive;
                         const manageable = canManageTarget(user);
-                        const scopeLabel =
-                          [
-                            user.organization?.code || user.organization?.name,
-                            user.branch?.code || user.branch?.name,
-                            mainheadAccessNames(user),
-                            user.team?.code || user.team?.name,
-                          ]
-                            .filter(Boolean)
-                            .join(" / ") || "Not assigned";
+                        const orgLabel = user.organization
+                          ? optionLabel(user.organization)
+                          : "Not assigned";
                         const regionAccess = operationalRegionAccessNames(user);
-                        const userCapabilities = capabilityNames(user);
+                        const userCapabilities = capabilityNameList(user);
 
                         return (
-                          <tr key={user.id} className="transition hover:bg-teal-50/40">
-                            <td className="px-5 py-4">
+                          <tr key={user.id} className={`${tableRowClass} last:border-b-0`}>
+                            <td className={tableCellClass}>
                               <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500">
-                                  <UserRound size={17} />
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--brand-tint)] text-[11px] font-bold text-[var(--brand-strong)]">
+                                  {initialsOf(user.name)}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="truncate font-semibold text-slate-900">
+                                  <div className="truncate font-semibold text-[var(--foreground)]">
                                     {user.name}
                                   </div>
+                                  <div className="truncate text-[12px] text-[var(--muted)]">
+                                    {user.email}
+                                  </div>
                                   {user.department ? (
-                                    <div className="mt-0.5 truncate text-xs text-[var(--muted)]">
+                                    <div className="truncate text-[11px] text-[var(--muted-2)]">
                                       {user.department.name}
                                     </div>
                                   ) : null}
                                 </div>
                               </div>
                             </td>
-                            <td className="px-5 py-4 text-slate-700">
-                              <div className="max-w-48 truncate">{user.email}</div>
-                            </td>
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
                               <RoleBadge role={user.role} />
                             </td>
-                            <td className="px-5 py-4 text-slate-700">
-                              <div className="max-w-44 truncate font-medium text-slate-900">
-                                {scopeLabel}
+                            <td className={tableCellClass}>
+                              <div className="max-w-52 truncate font-medium text-[var(--foreground)]">
+                                {orgLabel}
                               </div>
-                              {userCapabilities ? (
-                                <div className="mt-1 max-w-44 truncate text-xs text-[var(--muted)]">
-                                  {userCapabilities}
-                                </div>
-                              ) : null}
                               {regionAccess ? (
-                                <div className="mt-1 max-w-44 truncate text-xs text-[var(--muted)]">
+                                <div className="mt-1 max-w-52 truncate text-[12px] text-[var(--muted)]">
                                   Regions: {regionAccess}
                                 </div>
                               ) : null}
                             </td>
-                            <td className="whitespace-nowrap px-5 py-4">
+                            <td className={tableCellClass}>
+                              {userCapabilities.length > 0 ? (
+                                <div className="flex max-w-72 flex-wrap gap-1.5">
+                                  {userCapabilities.map((name) => (
+                                    <Chip key={name} tone="neutral">
+                                      {name}
+                                    </Chip>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[var(--muted-2)]">—</span>
+                              )}
+                            </td>
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
                               <StatusBadge isActive={user.isActive} />
                             </td>
-                            <td className="px-5 py-4">
+                            <td className={tableCellClass}>
                               <div className="flex flex-wrap justify-end gap-2">
                                 {manageable ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditModal(user)}
-                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-                                  >
+                                  <Tbtn onClick={() => openEditModal(user)}>
                                     <Pencil size={14} />
                                     Edit
-                                  </button>
+                                  </Tbtn>
                                 ) : null}
                                 {manageable ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openPasswordModal(user)}
-                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
-                                  >
+                                  <Tbtn onClick={() => openPasswordModal(user)}>
                                     <KeyRound size={14} />
                                     Password
-                                  </button>
+                                  </Tbtn>
                                 ) : null}
                                 {manageable ? (
-                                  <button
-                                    type="button"
+                                  <Tbtn
                                     onClick={() => requestStatusToggle(user)}
                                     disabled={disableDeactivate || statusUserId === user.id}
                                     title={
@@ -1505,11 +1523,10 @@ function UsersContent() {
                                         ? "You cannot deactivate your own account"
                                         : undefined
                                     }
-                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                                   >
                                     <Power size={14} />
                                     {user.isActive ? "Deactivate" : "Activate"}
-                                  </button>
+                                  </Tbtn>
                                 ) : null}
                               </div>
                             </td>
@@ -1520,21 +1537,21 @@ function UsersContent() {
                   </table>
 
                   {filteredUsers.length === 0 ? (
-                    <div className="border-t border-slate-100 px-5 py-12 text-center">
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+                    <div className="border-t border-[var(--line2)] px-5 py-12 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
                         <SlidersHorizontal size={20} />
                       </div>
-                      <p className="mt-4 text-sm font-semibold text-slate-900">
+                      <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
                         No users found
                       </p>
                     </div>
                   ) : null}
                 </div>
 
-                <div className="border-t border-slate-200 px-5 py-4 text-sm text-[var(--muted)]">
+                <div className="border-t border-[var(--line2)] px-[18px] py-3 text-[12.5px] text-[var(--muted)]">
                   Showing {filteredUsers.length} of {users.length}
                 </div>
-              </section>
+              </Card>
             )}
           </div>
         </div>
