@@ -6,7 +6,12 @@ import type {
   DashboardMetrics,
   DashboardPersona,
   DashboardPersonaKind,
+  DashboardRange,
+  DashboardRangeKey,
+  DefectFlowPoint,
 } from "@/types/dashboard";
+
+const RANGE_KEYS: DashboardRangeKey[] = ["7d", "30d", "90d", "ytd"];
 
 const SEVERITY_LABELS = ["Critical", "High", "Medium", "Low"];
 const SLA_LABELS = ["Overdue", "On Track", "No Due Date", "Stopped"];
@@ -123,8 +128,61 @@ function normalizeTrend(input: unknown): DailyTrendPoint[] {
     .filter((item): item is DailyTrendPoint => Boolean(item));
 }
 
-export async function fetchDashboardMetrics(token: string): Promise<DashboardMetrics> {
-  const dashboard = await apiRequest<DashboardApiResponse>("/dashboard", { token });
+function normalizeDefectFlow(input: unknown): DefectFlowPoint[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const date = typeof record.date === "string" ? record.date : null;
+      if (!date) {
+        return null;
+      }
+      return {
+        date,
+        opened: numberOrZero(record.opened),
+        closed: numberOrZero(record.closed),
+      };
+    })
+    .filter((item): item is DefectFlowPoint => Boolean(item));
+}
+
+function normalizeRange(input: unknown): DashboardRange | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  const rawKey = typeof record.key === "string" ? record.key : "";
+  if (!(RANGE_KEYS as string[]).includes(rawKey)) {
+    return null;
+  }
+  return {
+    key: rawKey as DashboardRangeKey,
+    label: typeof record.label === "string" ? record.label : rawKey,
+    from: typeof record.from === "string" ? record.from : "",
+    to: typeof record.to === "string" ? record.to : "",
+  };
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
+}
+
+export async function fetchDashboardMetrics(
+  token: string,
+  range?: DashboardRangeKey,
+): Promise<DashboardMetrics> {
+  const path = range ? `/dashboard?range=${encodeURIComponent(range)}` : "/dashboard";
+  const dashboard = await apiRequest<DashboardApiResponse>(path, { token });
 
   const defectsBySeverity = normalizeSeverityData(dashboard.defectsBySeverity);
   const defectsBySlaState = normalizeSlaData(dashboard.defectsBySlaState);
@@ -144,6 +202,24 @@ export async function fetchDashboardMetrics(token: string): Promise<DashboardMet
       dashboard.operationalOverdueThresholdHours,
     ),
     latestVisitActivityAt: dashboard.latestVisitActivityAt ?? null,
+    range: normalizeRange(dashboard.range),
+    // `assetsInScope` echoes totalAssets on a ranged API; fall back so a
+    // pre-range API still populates the KPI.
+    inspectedThisPeriod: numberOrZero(dashboard.inspectedThisPeriod),
+    inspectedPrevPeriod: numberOrZero(dashboard.inspectedPrevPeriod),
+    assetsInScope: numberOrZero(dashboard.assetsInScope ?? dashboard.totalAssets),
+    assetsInScopePrev: numberOrZero(dashboard.assetsInScopePrev),
+    openDefectsPrev: numberOrZero(dashboard.openDefectsPrev),
+    emergencyOpen: numberOrZero(dashboard.emergencyOpen),
+    emergencyUnassigned: numberOrZero(dashboard.emergencyUnassigned),
+    emergencyOverdue: numberOrZero(dashboard.emergencyOverdue),
+    emergencyOverduePrev: numberOrZero(dashboard.emergencyOverduePrev),
+    defectFlow: normalizeDefectFlow(dashboard.defectFlow),
+    avgCloseHours: numberOrZero(dashboard.avgCloseHours),
+    netBacklogChange: numberOrZero(dashboard.netBacklogChange),
+    assetsBySubstation: normalizeChartData(dashboard.assetsBySubstation),
+    slaOnTimePct: nullableNumber(dashboard.slaOnTimePct),
+    slaOnTimePctPrev: nullableNumber(dashboard.slaOnTimePctPrev),
     defectsBySeverity,
     defectsByCategory: normalizeChartData(dashboard.defectsByCategory),
     defectsByStatus: normalizeChartData(dashboard.defectsByStatus),

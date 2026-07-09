@@ -9,14 +9,15 @@ interface SeverityDonutProps {
 }
 
 // Severity colours mirror the Defects page severity badges so the donut, the
-// list, and the map all read the same.
+// list, and the map all read the same. Tokens (not raw hex) so the ring flips
+// with the theme.
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#dc2626", // red-600
-  high: "#f97316", // orange-500
-  medium: "#eab308", // yellow-500
-  low: "#22c55e", // green-500
+  critical: "var(--critical)",
+  high: "var(--high)",
+  medium: "var(--medium)",
+  low: "var(--success)",
 };
-const FALLBACK_COLOR = "#94a3b8"; // slate-400
+const FALLBACK_COLOR = "var(--neutral)";
 
 function colorFor(label: string): string {
   return SEVERITY_COLORS[label.trim().toLowerCase()] ?? FALLBACK_COLOR;
@@ -111,8 +112,8 @@ export function SeverityDonut({
                     className="h-3 w-3 shrink-0 rounded-full"
                     style={{ backgroundColor: colorFor(item.label) }}
                   />
-                  <span className="font-medium text-slate-700">{item.label}</span>
-                  <span className="ml-auto font-semibold text-slate-900">
+                  <span className="font-medium text-[var(--foreground-soft)]">{item.label}</span>
+                  <span className="ml-auto font-semibold text-[var(--foreground)]">
                     {item.value.toLocaleString()}
                   </span>
                   <span className="w-10 text-right text-xs text-[var(--muted)]">
@@ -124,7 +125,7 @@ export function SeverityDonut({
           </ul>
         </div>
       ) : (
-        <div className="mt-5 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+        <div className="mt-5 rounded-lg border border-dashed border-[var(--line)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)]">
           {emptyLabel}
         </div>
       )}

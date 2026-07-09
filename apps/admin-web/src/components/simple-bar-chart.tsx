@@ -9,8 +9,8 @@ interface SimpleBarChartProps {
 
 const toneClasses = {
   teal: "bg-[var(--brand)]",
-  amber: "bg-orange-500",
-  rose: "bg-red-600",
+  amber: "bg-[var(--amber)]",
+  rose: "bg-[var(--critical)]",
 };
 
 export function SimpleBarChart({
@@ -36,10 +36,10 @@ export function SimpleBarChart({
             return (
               <div key={item.label}>
                 <div className="mb-2 flex items-center justify-between gap-4 text-sm">
-                  <span className="font-medium text-slate-700">{item.label}</span>
-                  <span className="font-semibold text-slate-900">{item.value.toLocaleString()}</span>
+                  <span className="font-medium text-[var(--foreground-soft)]">{item.label}</span>
+                  <span className="font-semibold text-[var(--foreground)]">{item.value.toLocaleString()}</span>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-2.5 overflow-hidden rounded-full bg-[var(--panel-muted)]">
                   <div
                     className={`h-full rounded-full ${toneClasses[tone]}`}
                     style={{ width: `${width}%` }}
@@ -49,7 +49,7 @@ export function SimpleBarChart({
             );
           })
         ) : (
-          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
+          <div className="rounded-lg border border-dashed border-[var(--line)] bg-[var(--panel-muted)] px-4 py-8 text-center text-sm text-[var(--muted)]">
             {emptyLabel}
           </div>
         )}
