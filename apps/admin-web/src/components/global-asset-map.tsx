@@ -185,5 +185,12 @@ export default function GlobalAssetMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
-  return <div ref={containerRef} className="h-full w-full" role="img" aria-label="Global asset map" />;
+  // `isolate` (isolation: isolate) makes this div its own stacking context.
+  // Without it, Leaflet's internal panes (z-index 400) and controls (800-1000)
+  // leak into the parent stacking context and paint OVER the map chrome that
+  // sits alongside this div (filter dock z-20, view/colour toggles + zoom z-10),
+  // which made the filters look like they'd disappeared.
+  return (
+    <div ref={containerRef} className="isolate h-full w-full" role="img" aria-label="Global asset map" />
+  );
 }
