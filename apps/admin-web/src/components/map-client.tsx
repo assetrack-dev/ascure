@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  ChevronDown,
   Filter as FilterIcon,
   ListOrdered,
   Minus,
@@ -130,32 +129,22 @@ function FilterGroup({
   options,
   selected,
   onToggle,
-  defaultOpen = true,
 }: {
   label: string;
   options: Option[];
   selected: Set<string>;
   onToggle: (value: string) => void;
-  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   if (options.length === 0) {
     return null;
   }
   return (
     <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)] transition hover:text-[var(--on-chrome)]"
-      >
-        <ChevronDown size={12} className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
-        <span className="truncate">{label}</span>
-        {selected.size > 0 ? <span className="ml-1 text-[var(--chrome-accent)]">· {selected.size}</span> : null}
-      </button>
-      {open ? (
-      <div className="mt-1.5 max-h-[220px] space-y-0.5 overflow-y-auto">
+      <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
+        {label}
+        {selected.size > 0 ? ` · ${selected.size}` : ""}
+      </p>
+      <div className="space-y-0.5">
         {options.map((opt) => {
           const on = selected.has(opt.value);
           return (
@@ -188,7 +177,6 @@ function FilterGroup({
           );
         })}
       </div>
-      ) : null}
     </div>
   );
 }
