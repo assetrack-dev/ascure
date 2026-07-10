@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { APIProvider, Map as GoogleMap, useMap } from "@vis.gl/react-google-maps";
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import type { AssetMapProps } from "@/components/asset-map-shared";
@@ -80,20 +80,6 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
   onSelectRef.current = onSelect;
   onVisibleRef.current = onVisibleChange;
 
-  // Refs so the marker-diff effect can read the latest colour/selection without
-  // taking them as deps (which would rebuild every marker on each change).
-  const colorModeRef = useRef(colorMode);
-  const selectedIdRef = useRef(selectedId);
-  const prevViewModeRef = useRef<string | null>(null);
-  colorModeRef.current = colorMode;
-  selectedIdRef.current = selectedId;
-
-  const assetById = useMemo(() => {
-    const byId = new Map<string, MapAsset>();
-    for (const a of assets) byId.set(a.id, a);
-    return byId;
-  }, [assets]);
-
   // Bounds → in-view ids, plus imperative zoom controls.
   useEffect(() => {
     if (!map) return;
@@ -127,28 +113,21 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
-  // Build/DIFF the marker layer for the current view. Markers are REUSED across
-  // filter changes (keyed by asset id): applying a filter only creates/removes
-  // the delta instead of tearing down + recreating ~2000 google.maps.Marker
-  // objects, which froze the page ("Page Unresponsive"). Selection + colour are
-  // applied as cheap in-place icon swaps (see the effect below), not a rebuild —
-  // so they're kept OUT of this effect's deps.
+  // Build the marker / cluster / heat layer for the current view.
   useEffect(() => {
     if (!map) return;
 
-    const viewModeChanged = prevViewModeRef.current !== viewMode;
-    prevViewModeRef.current = viewMode;
+    // Tear down previous layers.
+    for (const marker of markersRef.current.values()) marker.setMap(null);
+    markersRef.current.clear();
+    clustererRef.current?.clearMarkers();
+    clustererRef.current = null;
+    if (heatRef.current) {
+      heatRef.current.setMap(null);
+      heatRef.current = null;
+    }
 
     if (viewMode === "heat") {
-      // Heat replaces pins entirely: drop all markers + clusterer, draw heat.
-      for (const marker of markersRef.current.values()) marker.setMap(null);
-      markersRef.current.clear();
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-      if (heatRef.current) {
-        heatRef.current.setMap(null);
-        heatRef.current = null;
-      }
       // HeatmapLayer is a deprecated visualization-library class and throws on
       // some Maps builds. Guard it so a failure degrades to pins instead of
       // white-screening the map; the Leaflet renderer keeps a native heat layer.
@@ -167,70 +146,28 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
           // fall through to pins
         }
       }
-      // No heat support → fall through and render pins so the view is never blank.
-    } else if (heatRef.current) {
-      heatRef.current.setMap(null);
-      heatRef.current = null;
+      // No heat support → render pins so the view is never blank.
     }
 
-    // Switching pin <-> cluster mode: reset so the layer structure rebuilds clean.
-    if (viewModeChanged) {
-      for (const marker of markersRef.current.values()) marker.setMap(null);
-      markersRef.current.clear();
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-    }
-
-    // Diff: remove markers whose asset is gone, add markers for new assets, and
-    // leave the rest of the objects untouched (the whole point).
-    const existing = markersRef.current;
-    const nextIds = new Set<string>();
-    for (const asset of assets) nextIds.add(asset.id);
-
-    const removed: google.maps.Marker[] = [];
-    for (const [id, marker] of existing) {
-      if (!nextIds.has(id)) {
-        marker.setMap(null);
-        removed.push(marker);
-        existing.delete(id);
-      }
-    }
-    const added: google.maps.Marker[] = [];
+    const markers: google.maps.Marker[] = [];
     for (const asset of assets) {
-      if (existing.has(asset.id)) continue;
       const marker = new google.maps.Marker({
         position: { lat: asset.latitude, lng: asset.longitude },
-        icon: markerIcon(asset, colorModeRef.current, asset.id === selectedIdRef.current),
+        icon: markerIcon(asset, colorMode, asset.id === selectedId),
         title: asset.assetCode,
       });
       marker.addListener("click", () => onSelectRef.current(asset.id));
-      existing.set(asset.id, marker);
-      added.push(marker);
+      markersRef.current.set(asset.id, marker);
+      markers.push(marker);
     }
 
     if (viewMode === "clusters") {
-      if (!clustererRef.current) {
-        clustererRef.current = new MarkerClusterer({ map, markers: [...existing.values()] });
-      } else {
-        if (removed.length) clustererRef.current.removeMarkers(removed, true);
-        if (added.length) clustererRef.current.addMarkers(added, true);
-        clustererRef.current.render();
-      }
+      clustererRef.current = new MarkerClusterer({ map, markers });
     } else {
-      for (const marker of added) marker.setMap(map);
+      for (const marker of markers) marker.setMap(map);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, assets, viewMode]);
-
-  // Selection + colour → a cheap in-place icon swap on the existing markers, so
-  // clicking a pin or toggling the colour mode never rebuilds the marker set.
-  useEffect(() => {
-    for (const [id, marker] of markersRef.current) {
-      const asset = assetById.get(id);
-      if (asset) marker.setIcon(markerIcon(asset, colorMode, id === selectedId));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode, selectedId]);
+  }, [map, assets, colorMode, viewMode, selectedId]);
 
   // Fit to the pin set only when the membership changes.
   useEffect(() => {
