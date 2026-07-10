@@ -5,6 +5,8 @@ interface SimpleBarChartProps {
   data: ChartDatum[];
   emptyLabel: string;
   tone?: "teal" | "amber" | "rose";
+  /** When set and the list is longer, cap the height to ~this many rows and scroll. */
+  maxRows?: number;
 }
 
 const toneClasses = {
@@ -18,9 +20,14 @@ export function SimpleBarChart({
   data,
   emptyLabel,
   tone = "teal",
+  maxRows,
 }: SimpleBarChartProps) {
   const maxValue = Math.max(...data.map((item) => item.value), 0);
   const hasData = data.some((item) => item.value > 0);
+  // Cap the list to ~maxRows tall and let the rest scroll (a row ≈ 3.4rem incl.
+  // the space-y-4 gap), so a long list (substations/mainheads) can't stretch the
+  // card. The partial next row hints there's more to scroll.
+  const scroll = maxRows != null && data.length > maxRows;
 
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
@@ -28,7 +35,10 @@ export function SimpleBarChart({
         <h2 className="text-base font-semibold text-[var(--foreground)]">{title}</h2>
       </div>
 
-      <div className="mt-5 space-y-4">
+      <div
+        className={`mt-5 space-y-4${scroll ? " overflow-y-auto pr-1" : ""}`}
+        style={scroll ? { maxHeight: `${(maxRows as number) * 3.4}rem` } : undefined}
+      >
         {data.length > 0 ? (
           data.map((item) => {
             const width = maxValue > 0 ? Math.max((item.value / maxValue) * 100, 4) : 0;

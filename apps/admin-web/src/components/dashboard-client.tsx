@@ -198,7 +198,7 @@ function NeedsAttention({ defects }: { defects: DashboardMetrics["criticalOverdu
         <Chip tone={defects.length > 0 ? "critical" : "success"}>{defects.length} active</Chip>
       </div>
       {defects.length > 0 ? (
-        <div>
+        <div className="max-h-[14rem] overflow-y-auto">
           {defects.map((defect) => (
             <div
               key={defect.id}
@@ -233,10 +233,10 @@ function RecentDefects({ defects }: { defects: DashboardMetrics["recentDefects"]
         <span className="text-[12px] text-[var(--muted)]">{defects.length} latest</span>
       </div>
       {defects.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="max-h-[16rem] overflow-auto">
           <table className="min-w-full text-left">
             <thead>
-              <tr className="bg-[var(--panel-muted)] font-mono text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--muted)]">
+              <tr className="sticky top-0 z-10 bg-[var(--panel-muted)] font-mono text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--muted)]">
                 <th className="px-3.5 py-2.5 text-left font-semibold">Asset</th>
                 <th className="px-3.5 py-2.5 text-left font-semibold">Defect</th>
                 <th className="px-3.5 py-2.5 text-left font-semibold">Severity</th>
@@ -398,6 +398,7 @@ function OverviewSections({ metrics }: { metrics: DashboardMetrics }) {
           data={metrics.assetsBySubstation}
           emptyLabel="No assets attributed to a substation yet."
           tone="teal"
+          maxRows={5}
         />
       </div>
 
@@ -456,8 +457,8 @@ function InspectionSections({ metrics }: { metrics: DashboardMetrics }) {
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <SeverityDonut title="Defects by severity" data={metrics.defectsBySeverity} centerCaption="defects" emptyLabel="No defects recorded yet." />
-        <SimpleBarChart title="Assets by substation" data={metrics.assetsBySubstation} emptyLabel="No assets attributed yet." tone="teal" />
-        <SimpleBarChart title="Total assets by mainhead" data={metrics.assetsByMainhead} emptyLabel="No mainhead counts yet." tone="teal" />
+        <SimpleBarChart title="Assets by substation" data={metrics.assetsBySubstation} emptyLabel="No assets attributed yet." tone="teal" maxRows={5} />
+        <SimpleBarChart title="Total assets by mainhead" data={metrics.assetsByMainhead} emptyLabel="No mainhead counts yet." tone="teal" maxRows={5} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <NeedsAttention defects={metrics.criticalOverdueAlerts} />
