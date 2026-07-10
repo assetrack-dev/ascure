@@ -64,8 +64,8 @@ export function SeverityDonut({
       <h2 className="text-base font-semibold text-[var(--foreground)]">{title}</h2>
 
       {total > 0 ? (
-        <div className="mt-5 flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:gap-8">
-          <div className="relative h-40 w-40 shrink-0">
+        <div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:gap-5">
+          <div className="relative h-36 w-36 shrink-0">
             <svg viewBox="0 0 140 140" className="h-full w-full -rotate-90">
               <circle
                 cx="70"
@@ -100,23 +100,23 @@ export function SeverityDonut({
             </div>
           </div>
 
-          <ul className="flex-1 space-y-2 self-stretch">
+          <ul className="min-w-0 flex-1 space-y-2 self-stretch">
             {data.map((item) => {
               const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
               return (
                 <li
                   key={item.label}
-                  className="flex items-center gap-3 text-sm"
+                  className="flex items-center gap-2.5 text-sm"
                 >
                   <span
                     className="h-3 w-3 shrink-0 rounded-full"
                     style={{ backgroundColor: colorFor(item.label) }}
                   />
-                  <span className="font-medium text-[var(--foreground-soft)]">{item.label}</span>
-                  <span className="ml-auto font-semibold text-[var(--foreground)]">
+                  <span className="min-w-0 truncate font-medium text-[var(--foreground-soft)]">{item.label}</span>
+                  <span className="ml-auto shrink-0 font-semibold text-[var(--foreground)]">
                     {item.value.toLocaleString()}
                   </span>
-                  <span className="w-10 text-right text-xs text-[var(--muted)]">
+                  <span className="w-9 shrink-0 text-right text-xs text-[var(--muted)]">
                     {pct}%
                   </span>
                 </li>
