@@ -44,6 +44,7 @@ import {
   type MapColorMode,
   type MapFilters,
   type MapLevel,
+  type PencawangMarker,
 } from "@/lib/map";
 import { fetchAssetTypes } from "@/lib/checklist-templates";
 import { fetchTeams } from "@/lib/teams";
@@ -265,6 +266,7 @@ function MapContent() {
   const [bubbles, setBubbles] = useState<MapBubble[]>([]);
   const [points, setPoints] = useState<MapAsset[]>([]);
   const [selected, setSelected] = useState<MapAsset | null>(null);
+  const [pencawangMarker, setPencawangMarker] = useState<PencawangMarker | null>(null);
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
@@ -304,9 +306,13 @@ function MapContent() {
       setError("");
       try {
         if (current.pencawang) {
-          setPoints(
-            await fetchMapPoints(authToken, current.pencawang.id, currentFilters),
+          const result = await fetchMapPoints(
+            authToken,
+            current.pencawang.id,
+            currentFilters,
           );
+          setPoints(result.poles);
+          setPencawangMarker(result.pencawang);
           setBubbles([]);
         } else {
           const lvl = current.mainhead
@@ -326,6 +332,7 @@ function MapContent() {
             ),
           );
           setPoints([]);
+          setPencawangMarker(null);
         }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -550,6 +557,7 @@ function MapContent() {
               bubbles={bubbles}
               points={points}
               colorMode={colorMode}
+              pencawang={pencawangMarker}
               onDrill={drillInto}
               onSelectPoint={setSelected}
               apiKey={GOOGLE_MAPS_API_KEY}

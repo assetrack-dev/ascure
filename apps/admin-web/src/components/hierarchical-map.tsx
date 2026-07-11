@@ -13,6 +13,7 @@ import {
   type MapAsset,
   type MapBubble,
   type MapColorMode,
+  type PencawangMarker,
 } from "@/lib/map";
 
 declare global {
@@ -28,6 +29,8 @@ export interface HierarchicalMapProps {
   bubbles: MapBubble[];
   points: MapAsset[];
   colorMode: MapColorMode;
+  /** The drilled Pencawang's check-in location (points level only). */
+  pencawang?: PencawangMarker | null;
   /** Click a group bubble → drill into it. */
   onDrill: (bubble: MapBubble) => void;
   /** Click an individual pole (leaf level). */
@@ -60,25 +63,51 @@ function bubbleSize(count: number): number {
   return 30 + Math.min(34, Math.round(Math.log10(count + 1) * 16));
 }
 
+/** Escape XML special chars so DB names are safe inside the SVG <text>. */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // The count is drawn INTO the SVG (not a google.maps.Marker label) so it is
-// always perfectly centred regardless of Maps' label placement quirks.
+// always perfectly centred; the group NAME sits in a pill below the disc so the
+// user can read what each bubble is at a glance.
 const bubbleIconCache = new Map<string, google.maps.Icon>();
-function bubbleIcon(color: string, size: number, label: string): google.maps.Icon {
-  const key = `${color}|${size}|${label}`;
+function bubbleIcon(
+  color: string,
+  size: number,
+  countLabel: string,
+  name: string,
+): google.maps.Icon {
+  const key = `${color}|${size}|${countLabel}|${name}`;
   const cached = bubbleIconCache.get(key);
   if (cached) return cached;
-  const c = size / 2;
-  const r = c - 2;
+  const label = name.length > 22 ? `${name.slice(0, 21)}…` : name;
+  const nameFs = 11;
+  const pillH = 18;
+  const gap = 4;
+  const pillW = Math.min(200, Math.max(size, label.length * 6.4 + 14));
+  const w = Math.max(size, pillW);
+  const h = size + gap + pillH;
+  const cx = w / 2;
+  const discCy = size / 2;
+  const r = size / 2 - 2;
   const fs = Math.round(size * 0.34);
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
-    `<circle cx='${c}' cy='${c}' r='${r}' fill='${color}' fill-opacity='0.92' stroke='#ffffff' stroke-width='2'/>` +
-    `<text x='${c}' y='${c}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${fs}' font-weight='700' fill='#ffffff'>${label}</text>` +
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
+    `<circle cx='${cx}' cy='${discCy}' r='${r}' fill='${color}' fill-opacity='0.92' stroke='#ffffff' stroke-width='2'/>` +
+    `<text x='${cx}' y='${discCy}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${fs}' font-weight='700' fill='#ffffff'>${countLabel}</text>` +
+    `<rect x='${(w - pillW) / 2}' y='${size + gap}' width='${pillW}' height='${pillH}' rx='${pillH / 2}' fill='#0b0e12' fill-opacity='0.82'/>` +
+    `<text x='${cx}' y='${size + gap + pillH / 2 + 0.5}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${nameFs}' font-weight='600' fill='#ffffff'>${escapeXml(label)}</text>` +
     `</svg>`;
   const icon: google.maps.Icon = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: new google.maps.Size(size, size),
-    anchor: new google.maps.Point(c, c),
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(cx, discCy),
   };
   bubbleIconCache.set(key, icon);
   return icon;
@@ -102,11 +131,44 @@ function dotIcon(color: string): google.maps.Icon {
   return icon;
 }
 
+// The drilled Pencawang's own check-in location: a blue SQUARE (clearly NOT one
+// of the round pole dots) with its name in a pill below.
+const pencawangIconCache = new Map<string, google.maps.Icon>();
+function pencawangMarkerIcon(name: string): google.maps.Icon {
+  const cached = pencawangIconCache.get(name);
+  if (cached) return cached;
+  const box = 22;
+  const label = name.length > 24 ? `${name.slice(0, 23)}…` : name;
+  const nameFs = 11;
+  const pillH = 18;
+  const gap = 4;
+  const pillW = Math.min(220, Math.max(box, label.length * 6.4 + 14));
+  const w = Math.max(box, pillW);
+  const h = box + gap + pillH;
+  const cx = w / 2;
+  const bx = (w - box) / 2;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
+    `<rect x='${bx}' y='0' width='${box}' height='${box}' rx='5' fill='#2563eb' stroke='#ffffff' stroke-width='2'/>` +
+    `<rect x='${bx + box / 2 - 4.5}' y='${box / 2 - 4.5}' width='9' height='9' rx='1.5' fill='#ffffff'/>` +
+    `<rect x='${(w - pillW) / 2}' y='${box + gap}' width='${pillW}' height='${pillH}' rx='${pillH / 2}' fill='#2563eb' fill-opacity='0.95'/>` +
+    `<text x='${cx}' y='${box + gap + pillH / 2 + 0.5}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${nameFs}' font-weight='700' fill='#ffffff'>${escapeXml(label)}</text>` +
+    `</svg>`;
+  const icon: google.maps.Icon = {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(cx, box / 2),
+  };
+  pencawangIconCache.set(name, icon);
+  return icon;
+}
+
 function Layers({
   mode,
   bubbles,
   points,
   colorMode,
+  pencawang,
   onDrill,
   onSelectPoint,
   controlsRef,
@@ -158,6 +220,7 @@ function Layers({
             bubbleColor(bubble, colorMode),
             bubbleSize(bubble.count),
             abbreviate(bubble.count),
+            bubble.name,
           ),
           title: `${bubble.name} — ${bubble.count}`,
           optimized: true,
@@ -182,6 +245,19 @@ function Layers({
         markersRef.current.push(marker);
         positions.push(position);
       }
+      if (pencawang) {
+        const position = { lat: pencawang.latitude, lng: pencawang.longitude };
+        const marker = new google.maps.Marker({
+          position,
+          icon: pencawangMarkerIcon(pencawang.name),
+          title: `Pencawang: ${pencawang.name}`,
+          optimized: true,
+          zIndex: 100000,
+        });
+        marker.setMap(map);
+        markersRef.current.push(marker);
+        positions.push(position);
+      }
     }
     positionsRef.current = positions;
 
@@ -191,7 +267,7 @@ function Layers({
       "|" +
       (mode === "bubbles"
         ? bubbles.map((b) => b.id).join(",")
-        : points.map((p) => p.id).join(","));
+        : points.map((p) => p.id).join(",") + "|" + (pencawang?.id ?? ""));
     if (fitKey !== fitKeyRef.current && positions.length > 0) {
       fitKeyRef.current = fitKey;
       fitToPositions(map);
@@ -202,7 +278,7 @@ function Layers({
       return () => google.maps.event.removeListener(listener);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, mode, bubbles, points, colorMode]);
+  }, [map, mode, bubbles, points, colorMode, pencawang]);
 
   return null;
 }
