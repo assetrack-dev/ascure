@@ -340,7 +340,87 @@ export class AssetsService {
       });
     }
 
+    // Mainhead / Pencawang are ALSO the drill-down nav, but a direct filter lets
+    // the user narrow across the hierarchy without walking it.
+    const mainheadIds = splitCsv(query.mainheadIds);
+    if (mainheadIds.length > 0) {
+      and.push({ substation: { mainheadId: { in: mainheadIds } } });
+    }
+
+    const pencawangIds = splitCsv(query.pencawangIds);
+    if (pencawangIds.length > 0) {
+      and.push({ substationId: { in: pencawangIds } });
+    }
+
+    const statuses = splitCsv(query.statuses).filter(
+      (value): value is AssetStatus =>
+        (Object.values(AssetStatus) as string[]).includes(value),
+    );
+    if (statuses.length > 0) {
+      and.push({ status: { in: statuses } });
+    }
+
+    // Team isn't a column on Asset — it comes from the pole's latest inspection
+    // visit or its creation visit (mirrors how loadMapAssets derives it).
+    const teamIds = splitCsv(query.teamIds);
+    if (teamIds.length > 0) {
+      and.push({
+        OR: [
+          { inspections: { some: { siteVisit: { teamId: { in: teamIds } } } } },
+          { createdDuringVisit: { teamId: { in: teamIds } } },
+        ],
+      });
+    }
+
     return and.length > 0 ? { AND: and } : {};
+  }
+
+  /**
+   * Scoped option lists for the map's filter dock: the Mainheads and Pencawang
+   * that actually have a located, in-scope pole (so the filters never offer an
+   * empty option). Same scope as the map feed. Teams / asset types / statuses
+   * are sourced elsewhere (existing endpoints / a static enum).
+   */
+  async mapFilterOptions(user: RequestUser) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const scopeWhere = siteVisitMapWhere(user, ctx);
+    const where: Prisma.AssetWhereInput = {
+      tenantId: user.tenantId,
+      latitude: { not: null },
+      longitude: { not: null },
+      ...(ctx.isAdmin
+        ? {}
+        : {
+            OR: [
+              { inspections: { some: { siteVisit: scopeWhere } } },
+              { createdDuringVisit: scopeWhere },
+            ],
+          }),
+    };
+
+    const substations = await this.prisma.substation.findMany({
+      where: { assets: { some: where } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        mainhead: { select: { id: true, name: true } },
+      },
+      orderBy: { code: 'asc' },
+    });
+
+    const mainheads = new Map<string, string>();
+    const pencawang = substations.map((s) => {
+      if (s.mainhead) mainheads.set(s.mainhead.id, s.mainhead.name);
+      return { id: s.id, name: s.name || s.code };
+    });
+
+    return {
+      mainheads: [...mainheads.entries()]
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      pencawang,
+    };
   }
 
   /**

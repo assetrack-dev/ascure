@@ -356,6 +356,10 @@ export interface MapFilters {
   assetTypeIds: string[];
   categories: string[];
   defectsOnly: boolean;
+  mainheadIds: string[];
+  pencawangIds: string[];
+  statuses: string[];
+  teamIds: string[];
 }
 
 export const EMPTY_MAP_FILTERS: MapFilters = {
@@ -363,6 +367,10 @@ export const EMPTY_MAP_FILTERS: MapFilters = {
   assetTypeIds: [],
   categories: [],
   defectsOnly: false,
+  mainheadIds: [],
+  pencawangIds: [],
+  statuses: [],
+  teamIds: [],
 };
 
 /** How many filters are active (for the dock badge). */
@@ -371,7 +379,11 @@ export function mapFiltersActive(filters: MapFilters): number {
     (filters.inspected !== "all" ? 1 : 0) +
     filters.assetTypeIds.length +
     filters.categories.length +
-    (filters.defectsOnly ? 1 : 0)
+    (filters.defectsOnly ? 1 : 0) +
+    filters.mainheadIds.length +
+    filters.pencawangIds.length +
+    filters.statuses.length +
+    filters.teamIds.length
   );
 }
 
@@ -383,6 +395,39 @@ function appendFilters(params: URLSearchParams, filters?: MapFilters): void {
   if (filters.categories.length > 0)
     params.set("categories", filters.categories.join(","));
   if (filters.defectsOnly) params.set("defectsOnly", "true");
+  if (filters.mainheadIds.length > 0)
+    params.set("mainheadIds", filters.mainheadIds.join(","));
+  if (filters.pencawangIds.length > 0)
+    params.set("pencawangIds", filters.pencawangIds.join(","));
+  if (filters.statuses.length > 0) params.set("statuses", filters.statuses.join(","));
+  if (filters.teamIds.length > 0) params.set("teamIds", filters.teamIds.join(","));
+}
+
+/** Scoped Mainhead + Pencawang options for the filter dock. */
+export interface MapFilterOptions {
+  mainheads: { id: string; name: string }[];
+  pencawang: { id: string; name: string }[];
+}
+
+export async function fetchMapFilterOptions(
+  token: string,
+): Promise<MapFilterOptions> {
+  const payload = await apiRequest<unknown>("/assets/map/filter-options", { token });
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<
+    string,
+    unknown
+  >;
+  const norm = (raw: unknown): { id: string; name: string }[] =>
+    Array.isArray(raw)
+      ? raw
+          .map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>) : null))
+          .filter((r): r is Record<string, unknown> => r !== null && typeof r.id === "string")
+          .map((r) => ({
+            id: r.id as string,
+            name: typeof r.name === "string" && r.name ? r.name : "—",
+          }))
+      : [];
+  return { mainheads: norm(source.mainheads), pencawang: norm(source.pencawang) };
 }
 
 /** Fetch the count bubbles for one drill-down level. */

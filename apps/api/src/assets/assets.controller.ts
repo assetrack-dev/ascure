@@ -46,6 +46,12 @@ export class AssetsController {
     return this.assetsService.listMap(user, query);
   }
 
+  // Scoped Mainhead + Pencawang options for the map filter dock.
+  @Get('map/filter-options')
+  mapFilterOptions(@CurrentUser() user: RequestUser) {
+    return this.assetsService.mapFilterOptions(user);
+  }
+
   @Get(':id')
   getById(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
     return this.assetsService.getById(user, params.id);
