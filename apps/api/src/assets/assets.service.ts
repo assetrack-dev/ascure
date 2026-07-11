@@ -26,6 +26,7 @@ import {
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
+import { MapQueryDto } from './dto/map-query.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import {
@@ -77,7 +78,10 @@ export class AssetsService {
    * Distinct from MasterDataService.listAssets (GET /assets), which is tenant-
    * scoped only and feeds the mobile inspection flow + the assets table.
    */
-  async listMapAssets(user: RequestUser) {
+  private async loadMapAssets(
+    user: RequestUser,
+    extraWhere?: Prisma.AssetWhereInput,
+  ) {
     const ctx = await buildScopeContext(this.prisma, user);
     // Map scope: a TECHNICIAN additionally sees (read-only) their company's other
     // teams working a MAINHEAD where their own team works, so same-area crews can
@@ -98,6 +102,7 @@ export class AssetsService {
               { createdDuringVisit: scopeWhere },
             ],
           }),
+      ...extraWhere,
     };
 
     const assets = await this.prisma.asset.findMany({
@@ -249,6 +254,224 @@ export class AssetsService {
         hasActiveDefect: defectSummary?.hasActiveDefect ?? false,
       };
     });
+  }
+
+  /**
+   * Hierarchical map feed. Without a `level` this returns the legacy full
+   * per-asset list (kept until the client always drills down). With a level it
+   * returns aggregated count "bubbles" for region / mainhead / pencawang, or the
+   * per-asset points for a single Pencawang. See docs/PLAN-hierarchical-map.md.
+   */
+  async listMap(user: RequestUser, query: MapQueryDto) {
+    if (!query.level) {
+      return this.loadMapAssets(user);
+    }
+    if (query.level === 'points') {
+      if (!query.pencawangId) {
+        throw new BadRequestException(
+          'pencawangId is required for the points level.',
+        );
+      }
+      return this.loadMapAssets(user, { substationId: query.pencawangId });
+    }
+    return this.aggregateMap(user, query.level, query);
+  }
+
+  /**
+   * One count bubble per group at the requested level, positioned at the
+   * count-weighted centroid of its poles. The DB does the heavy grouping (by
+   * Pencawang); a light JS roll-up folds Pencawang into mainhead / region, so the
+   * payload is a handful of bubbles no matter how many poles exist.
+   */
+  private async aggregateMap(
+    user: RequestUser,
+    level: 'region' | 'mainhead' | 'pencawang',
+    query: MapQueryDto,
+  ) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const scopeWhere = siteVisitMapWhere(user, ctx);
+
+    // Parent drill-down filter (a Region's mainheads, a Mainhead's pencawangs).
+    const substationFilter: Prisma.SubstationWhereInput = {};
+    if (level === 'mainhead' && query.regionId) {
+      substationFilter.mainhead = { operationalRegionId: query.regionId };
+    }
+    if (level === 'pencawang' && query.mainheadId) {
+      substationFilter.mainheadId = query.mainheadId;
+    }
+
+    const where: Prisma.AssetWhereInput = {
+      tenantId: user.tenantId,
+      latitude: { not: null },
+      longitude: { not: null },
+      ...(ctx.isAdmin
+        ? {}
+        : {
+            OR: [
+              { inspections: { some: { siteVisit: scopeWhere } } },
+              { createdDuringVisit: scopeWhere },
+            ],
+          }),
+      ...(Object.keys(substationFilter).length > 0
+        ? { substation: substationFilter }
+        : {}),
+    };
+
+    // Count + centroid per Pencawang (the DB does the grouping).
+    const grouped = await this.prisma.asset.groupBy({
+      by: ['substationId'],
+      where,
+      _count: true,
+      _avg: { latitude: true, longitude: true },
+    });
+    if (grouped.length === 0) {
+      return [];
+    }
+
+    // Inspected poles per Pencawang.
+    const inspectedGrouped = await this.prisma.asset.groupBy({
+      by: ['substationId'],
+      where: {
+        ...where,
+        inspections: {
+          some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+        },
+      },
+      _count: true,
+    });
+    const inspectedBySub = new Map(
+      inspectedGrouped.map((g) => [g.substationId, g._count] as const),
+    );
+
+    // Open-defect poles per Pencawang (distinct assets + the emergency subset).
+    const openDefects = await this.prisma.defect.findMany({
+      where: {
+        status: { in: [...OPEN_DEFECT_STATUSES] },
+        inspectionItemResult: { isDefect: true, inspection: { asset: where } },
+      },
+      select: {
+        isEmergency: true,
+        inspectionItemResult: {
+          select: {
+            inspection: {
+              select: {
+                assetId: true,
+                asset: { select: { substationId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const defectAssetsBySub = new Map<string, Set<string>>();
+    const emergencyAssetsBySub = new Map<string, Set<string>>();
+    for (const defect of openDefects) {
+      const { assetId, asset } = defect.inspectionItemResult.inspection;
+      const subId = asset.substationId;
+      let withDefect = defectAssetsBySub.get(subId);
+      if (!withDefect) defectAssetsBySub.set(subId, (withDefect = new Set()));
+      withDefect.add(assetId);
+      if (defect.isEmergency) {
+        let withEmergency = emergencyAssetsBySub.get(subId);
+        if (!withEmergency)
+          emergencyAssetsBySub.set(subId, (withEmergency = new Set()));
+        withEmergency.add(assetId);
+      }
+    }
+
+    // Pencawang metadata (name + its mainhead + region) for the roll-up keys.
+    const substationIds = grouped.map((g) => g.substationId);
+    const substations = await this.prisma.substation.findMany({
+      where: { id: { in: substationIds } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        mainheadId: true,
+        mainhead: {
+          select: {
+            id: true,
+            name: true,
+            operationalRegion: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    const subMeta = new Map(substations.map((s) => [s.id, s] as const));
+
+    // Roll each Pencawang up into the requested level's bucket.
+    const UNASSIGNED = '__unassigned__';
+    type Bucket = {
+      id: string;
+      name: string;
+      count: number;
+      sumLat: number;
+      sumLng: number;
+      inspected: number;
+      openDefects: number;
+      emergency: number;
+    };
+    const buckets = new Map<string, Bucket>();
+
+    for (const g of grouped) {
+      const meta = subMeta.get(g.substationId);
+      const count = g._count;
+      const key =
+        level === 'pencawang'
+          ? { id: g.substationId, name: meta?.name || meta?.code || 'Pencawang' }
+          : level === 'mainhead'
+            ? {
+                id: meta?.mainheadId ?? UNASSIGNED,
+                name: meta?.mainhead?.name ?? 'Unassigned',
+              }
+            : {
+                id: meta?.mainhead?.operationalRegion?.id ?? UNASSIGNED,
+                name: meta?.mainhead?.operationalRegion?.name ?? 'Unassigned',
+              };
+
+      let bucket = buckets.get(key.id);
+      if (!bucket) {
+        buckets.set(
+          key.id,
+          (bucket = {
+            id: key.id,
+            name: key.name,
+            count: 0,
+            sumLat: 0,
+            sumLng: 0,
+            inspected: 0,
+            openDefects: 0,
+            emergency: 0,
+          }),
+        );
+      }
+      bucket.count += count;
+      bucket.sumLat += (g._avg.latitude ?? 0) * count;
+      bucket.sumLng += (g._avg.longitude ?? 0) * count;
+      bucket.inspected += inspectedBySub.get(g.substationId) ?? 0;
+      bucket.openDefects += defectAssetsBySub.get(g.substationId)?.size ?? 0;
+      bucket.emergency += emergencyAssetsBySub.get(g.substationId)?.size ?? 0;
+    }
+
+    return [...buckets.values()]
+      .map((b) => ({
+        level,
+        id: b.id,
+        name: b.name,
+        count: b.count,
+        latitude: b.count > 0 ? b.sumLat / b.count : 0,
+        longitude: b.count > 0 ? b.sumLng / b.count : 0,
+        inspected: b.inspected,
+        notInspected: b.count - b.inspected,
+        openDefects: b.openDefects,
+        emergency: b.emergency,
+      }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, 'en', {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      );
   }
 
   async create(user: RequestUser, dto: CreateAssetDto) {
