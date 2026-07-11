@@ -51,4 +51,24 @@ export class MapQueryDto {
   @IsOptional()
   @IsString()
   defectsOnly?: string;
+
+  /** Comma-separated Mainhead ids (a Pencawang's structural parent). */
+  @IsOptional()
+  @IsString()
+  mainheadIds?: string;
+
+  /** Comma-separated Pencawang (Substation) ids. */
+  @IsOptional()
+  @IsString()
+  pencawangIds?: string;
+
+  /** Comma-separated AssetStatus values. */
+  @IsOptional()
+  @IsString()
+  statuses?: string;
+
+  /** Comma-separated Team ids (via the pole's site visit). */
+  @IsOptional()
+  @IsString()
+  teamIds?: string;
 }

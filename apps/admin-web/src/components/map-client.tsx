@@ -27,6 +27,7 @@ import {
 import {
   fetchMapBubbles,
   fetchMapPoints,
+  fetchMapFilterOptions,
   formatMaintenanceCategory,
   isMapAssetInspected,
   mapAssetMarkerColor,
@@ -45,6 +46,7 @@ import {
   type MapLevel,
 } from "@/lib/map";
 import { fetchAssetTypes } from "@/lib/checklist-templates";
+import { fetchTeams } from "@/lib/teams";
 import { MAINTENANCE_CATEGORIES } from "@/types/defects";
 import type { AuthSession } from "@/types/auth";
 
@@ -65,6 +67,23 @@ const INSPECTED_FILTER_OPTIONS: SegOption<MapFilters["inspected"]>[] = [
   { value: "inspected", label: "Inspected" },
   { value: "not", label: "Not" },
 ];
+
+// AssetStatus enum → filter options.
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "ACTIVE", label: "Active" },
+  { value: "INACTIVE", label: "Inactive" },
+  { value: "NOT_FOUND", label: "Not found" },
+  { value: "REMOVED", label: "Removed" },
+  { value: "DUPLICATE", label: "Duplicate" },
+];
+
+type ArrayFilterKey =
+  | "assetTypeIds"
+  | "categories"
+  | "mainheadIds"
+  | "pencawangIds"
+  | "statuses"
+  | "teamIds";
 
 type IdName = { id: string; name: string };
 type DrillState = { region?: IdName; mainhead?: IdName; pencawang?: IdName };
@@ -145,27 +164,41 @@ function LegendRow({
   );
 }
 
-/** A collapsible checkbox filter group inside the left dock. */
+/** A collapsible checkbox filter group inside the left dock. Long lists get a
+ *  search box + scroll (Pencawang / Mainhead can be large at scale). */
 function FilterCheckGroup({
   label,
   options,
   selected,
   onToggle,
+  searchable = false,
 }: {
   label: string;
   options: { value: string; label: string }[];
   selected: string[];
   onToggle: (value: string) => void;
+  searchable?: boolean;
 }) {
+  const [query, setQuery] = useState("");
   if (options.length === 0) return null;
+  const q = query.trim().toLowerCase();
+  const shown = searchable && q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
   return (
     <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
       <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
         {label}
         {selected.length > 0 ? ` · ${selected.length}` : ""}
       </p>
-      <div className="space-y-0.5">
-        {options.map((opt) => {
+      {searchable && options.length > 8 ? (
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search…"
+          className="mb-1.5 w-full rounded-[6px] border border-[var(--chrome-line-strong)] bg-[var(--chrome-panel)] px-2 py-1 text-[12px] text-[var(--on-chrome)] outline-none placeholder:text-[var(--on-chrome-faint)]"
+        />
+      ) : null}
+      <div className="max-h-52 space-y-0.5 overflow-y-auto">
+        {shown.map((opt) => {
           const on = selected.includes(opt.value);
           return (
             <label
@@ -193,6 +226,9 @@ function FilterCheckGroup({
             </label>
           );
         })}
+        {shown.length === 0 ? (
+          <p className="px-1.5 py-1 text-[12px] text-[var(--on-chrome-faint)]">No matches</p>
+        ) : null}
       </div>
     </div>
   );
@@ -212,6 +248,9 @@ function MapContent() {
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
+  const [mainheadOptions, setMainheadOptions] = useState<{ id: string; name: string }[]>([]);
+  const [pencawangOptions, setPencawangOptions] = useState<{ id: string; name: string }[]>([]);
+  const [teamOptions, setTeamOptions] = useState<{ id: string; name: string }[]>([]);
   const controlsRef = useRef<MapControls | null>(null);
 
   const level = levelFor(drill);
@@ -285,32 +324,40 @@ function MapContent() {
     if (token) void load(token, drill, filters);
   }, [token, drill, filters, load]);
 
-  // Asset-type options for the filter dock (fetched once).
+  // Filter-dock option lists (fetched once).
   useEffect(() => {
     if (!token) return;
     fetchAssetTypes(token)
       .then((types) => setAssetTypes(types.map((t) => ({ id: t.id, name: t.name }))))
       .catch(() => {});
+    fetchMapFilterOptions(token)
+      .then((o) => {
+        setMainheadOptions(o.mainheads);
+        setPencawangOptions(o.pencawang);
+      })
+      .catch(() => {});
+    fetchTeams(token)
+      .then((teams) =>
+        setTeamOptions(
+          teams
+            .filter((t) => t.name)
+            .map((t) => ({ id: t.id, name: t.name as string })),
+        ),
+      )
+      .catch(() => {});
   }, [token]);
 
-  const toggleCategory = useCallback(
-    (value: string) =>
-      setFilters((f) => ({
-        ...f,
-        categories: f.categories.includes(value)
-          ? f.categories.filter((x) => x !== value)
-          : [...f.categories, value],
-      })),
-    [],
-  );
-  const toggleAssetType = useCallback(
-    (value: string) =>
-      setFilters((f) => ({
-        ...f,
-        assetTypeIds: f.assetTypeIds.includes(value)
-          ? f.assetTypeIds.filter((x) => x !== value)
-          : [...f.assetTypeIds, value],
-      })),
+  const toggleFilter = useCallback(
+    (key: ArrayFilterKey) => (value: string) =>
+      setFilters((f) => {
+        const list = f[key];
+        return {
+          ...f,
+          [key]: list.includes(value)
+            ? list.filter((x) => x !== value)
+            : [...list, value],
+        };
+      }),
     [],
   );
   const activeFilters = mapFiltersActive(filters);
@@ -650,19 +697,46 @@ function MapContent() {
                   </label>
                 </div>
                 <FilterCheckGroup
+                  label="Status"
+                  options={STATUS_OPTIONS}
+                  selected={filters.statuses}
+                  onToggle={toggleFilter("statuses")}
+                />
+                <FilterCheckGroup
+                  label="Mainhead"
+                  options={mainheadOptions.map((m) => ({ value: m.id, label: m.name }))}
+                  selected={filters.mainheadIds}
+                  onToggle={toggleFilter("mainheadIds")}
+                  searchable
+                />
+                <FilterCheckGroup
+                  label="Pencawang"
+                  options={pencawangOptions.map((p) => ({ value: p.id, label: p.name }))}
+                  selected={filters.pencawangIds}
+                  onToggle={toggleFilter("pencawangIds")}
+                  searchable
+                />
+                <FilterCheckGroup
+                  label="Asset type"
+                  options={assetTypes.map((t) => ({ value: t.id, label: t.name }))}
+                  selected={filters.assetTypeIds}
+                  onToggle={toggleFilter("assetTypeIds")}
+                />
+                <FilterCheckGroup
                   label="Defect category"
                   options={MAINTENANCE_CATEGORIES.map((c) => ({
                     value: c,
                     label: formatMaintenanceCategory(c),
                   }))}
                   selected={filters.categories}
-                  onToggle={toggleCategory}
+                  onToggle={toggleFilter("categories")}
                 />
                 <FilterCheckGroup
-                  label="Asset type"
-                  options={assetTypes.map((t) => ({ value: t.id, label: t.name }))}
-                  selected={filters.assetTypeIds}
-                  onToggle={toggleAssetType}
+                  label="Team"
+                  options={teamOptions.map((t) => ({ value: t.id, label: t.name }))}
+                  selected={filters.teamIds}
+                  onToggle={toggleFilter("teamIds")}
+                  searchable
                 />
               </div>
             </div>
