@@ -40,6 +40,7 @@ import {
   OPEN_DEFECT_MARKER_COLOR,
   UNASSIGNED_BUBBLE_ID,
   type MapAsset,
+  type MapBaseType,
   type MapBubble,
   type MapColorMode,
   type MapFilters,
@@ -61,6 +62,13 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 const COLOR_OPTIONS: SegOption<MapColorMode>[] = [
   { value: "inspection", label: "Inspection" },
   { value: "defect", label: "Defects" },
+];
+
+// Base-map layer toggle. "Satellite" is Google's hybrid (imagery + labels), the
+// default so crews see the real terrain; "Map" is the plain road map.
+const BASE_TYPE_OPTIONS: SegOption<MapBaseType>[] = [
+  { value: "hybrid", label: "Satellite" },
+  { value: "roadmap", label: "Map" },
 ];
 
 const INSPECTED_FILTER_OPTIONS: SegOption<MapFilters["inspected"]>[] = [
@@ -261,6 +269,9 @@ function MapContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [googleFailed, setGoogleFailed] = useState(false);
+  // True while the Street View panorama is open — used to hide the map-chrome
+  // overlays so the auto-hide docks can't block Street View's own controls.
+  const [streetViewOpen, setStreetViewOpen] = useState(false);
 
   const [drill, setDrill] = useState<DrillState>({});
   const [bubbles, setBubbles] = useState<MapBubble[]>([]);
@@ -268,6 +279,7 @@ function MapContent() {
   const [selected, setSelected] = useState<MapAsset | null>(null);
   const [pencawangMarker, setPencawangMarker] = useState<PencawangMarker | null>(null);
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
+  const [mapBaseType, setMapBaseType] = useState<MapBaseType>("hybrid");
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
   const [mainheadOptions, setMainheadOptions] = useState<{ id: string; name: string }[]>([]);
@@ -557,12 +569,14 @@ function MapContent() {
               bubbles={bubbles}
               points={points}
               colorMode={colorMode}
+              baseType={mapBaseType}
               pencawang={pencawangMarker}
               onDrill={drillInto}
               onSelectPoint={setSelected}
               apiKey={GOOGLE_MAPS_API_KEY}
               onLoadError={() => setGoogleFailed(true)}
               controlsRef={controlsRef}
+              onStreetViewVisibleChange={setStreetViewOpen}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
@@ -570,16 +584,32 @@ function MapContent() {
             </div>
           )}
 
-          {/* Colour-by control */}
-          <div className="pointer-events-auto absolute right-[46px] top-3 z-10">
-            <Seg
-              options={COLOR_OPTIONS}
-              value={colorMode}
-              onChange={setColorMode}
-              aria-label="Colour markers by"
-              className="shadow-[var(--shadow-card)]"
-            />
-          </div>
+          {/* Every map-chrome overlay below hides while Street View is open, so
+              the auto-hide filter/list docks can't slide over the panorama's own
+              controls — notably its top-left "back to map" button. */}
+          {!streetViewOpen ? (
+            <>
+          {/* Top-centre toggle row — [Inspection/Defects] [Satellite/Map],
+              centred so the left/right auto-hide docks never cover it. The
+              native Street View pegman lives bottom-right, above the zoom box. */}
+          {showMap ? (
+            <div className="pointer-events-auto absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2">
+              <Seg
+                options={COLOR_OPTIONS}
+                value={colorMode}
+                onChange={setColorMode}
+                aria-label="Colour markers by"
+                className="shadow-[var(--shadow-card)]"
+              />
+              <Seg
+                options={BASE_TYPE_OPTIONS}
+                value={mapBaseType}
+                onChange={setMapBaseType}
+                aria-label="Base map layer"
+                className="shadow-[var(--shadow-card)]"
+              />
+            </div>
+          ) : null}
 
           {/* Legend */}
           <div className="pointer-events-none absolute bottom-3 left-[46px] z-10 w-52 rounded-[12px] border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_86%,transparent)] p-3 shadow-[var(--shadow-card)] backdrop-blur">
@@ -869,6 +899,8 @@ function MapContent() {
               </div>
             </div>
           </div>
+            </>
+          ) : null}
         </div>
       </main>
     </AppShell>

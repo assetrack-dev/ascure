@@ -11,6 +11,7 @@ import {
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
   type MapAsset,
+  type MapBaseType,
   type MapBubble,
   type MapColorMode,
   type PencawangMarker,
@@ -36,6 +37,8 @@ export interface HierarchicalMapProps {
   /** Click an individual pole (leaf level). */
   onSelectPoint: (asset: MapAsset) => void;
   controlsRef?: MutableRefObject<MapControls | null>;
+  /** Fires when the Street View panorama opens (true) or closes (false). */
+  onStreetViewVisibleChange?: (visible: boolean) => void;
 }
 
 /** Short count label — 2,268 → "2.3k" so it fits inside the disc. */
@@ -172,6 +175,7 @@ function Layers({
   onDrill,
   onSelectPoint,
   controlsRef,
+  onStreetViewVisibleChange,
 }: HierarchicalMapProps) {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -179,8 +183,10 @@ function Layers({
   const fitKeyRef = useRef<string>("");
   const onDrillRef = useRef(onDrill);
   const onSelectRef = useRef(onSelectPoint);
+  const onSvVisibleRef = useRef(onStreetViewVisibleChange);
   onDrillRef.current = onDrill;
   onSelectRef.current = onSelectPoint;
+  onSvVisibleRef.current = onStreetViewVisibleChange;
 
   const fitToPositions = (target: google.maps.Map) => {
     const positions = positionsRef.current;
@@ -202,6 +208,32 @@ function Layers({
       if (controlsRef) controlsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // Bring back the native draggable Street View pegman — drag it onto a road to
+  // open Street View. `disableDefaultUI` hides every built-in control, so
+  // re-enable just this one at RIGHT_BOTTOM; globals.css strips its white box and
+  // lifts it to sit just above the custom zoom box (see `.gm-svpc`).
+  useEffect(() => {
+    if (!map) return;
+    map.setOptions({
+      streetViewControl: true,
+      streetViewControlOptions: {
+        position: google.maps.ControlPosition.RIGHT_BOTTOM,
+      },
+    });
+  }, [map]);
+
+  // Report Street View open/close so the chrome can hide the map overlays — the
+  // auto-hide docks would otherwise slide over the panorama's own controls (its
+  // top-left "back to map" button in particular).
+  useEffect(() => {
+    if (!map) return;
+    const panorama = map.getStreetView();
+    const listener = panorama.addListener("visible_changed", () => {
+      onSvVisibleRef.current?.(panorama.getVisible());
+    });
+    return () => google.maps.event.removeListener(listener);
   }, [map]);
 
   // Rebuild the marker layer whenever the items or colour change.
@@ -287,8 +319,13 @@ function Layers({
 export default function HierarchicalMap({
   apiKey,
   onLoadError,
+  baseType,
   ...rest
-}: HierarchicalMapProps & { apiKey: string; onLoadError?: () => void }) {
+}: HierarchicalMapProps & {
+  apiKey: string;
+  onLoadError?: () => void;
+  baseType: MapBaseType;
+}) {
   useEffect(() => {
     const prev = window.gm_authFailure;
     window.gm_authFailure = () => onLoadError?.();
@@ -303,6 +340,7 @@ export default function HierarchicalMap({
         <GoogleMap
           defaultCenter={DEFAULT_CENTER}
           defaultZoom={6}
+          mapTypeId={baseType}
           gestureHandling="greedy"
           clickableIcons={false}
           disableDefaultUI

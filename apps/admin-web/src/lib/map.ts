@@ -42,6 +42,13 @@ export type MapColorMode = "inspection" | "defect";
 /** How to render the marker layer. */
 export type MapViewMode = "pins" | "clusters" | "heat";
 
+/**
+ * Google base-map layer. "hybrid" is satellite imagery WITH road/place labels
+ * (what consumer Google Maps shows under "Satellite"); "roadmap" is the plain
+ * road map. Satellite is the default so field crews see the real terrain.
+ */
+export type MapBaseType = "hybrid" | "roadmap";
+
 // Inspection-mode marker colours mirror the mobile app
 // (apps/mobile/src/assetDisplay.ts) so the admin map and the field map read
 // identically: lime = inspected, red = not yet inspected.
