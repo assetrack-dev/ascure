@@ -58,6 +58,11 @@ import {
   type SurveyDeletePreview,
 } from "@/lib/site-visits";
 import { downloadCompiledReport } from "@/lib/report-templates";
+import {
+  checkRondaanForCompletion,
+  type AssetLike,
+  type RondaanCheckResult,
+} from "@ascure/shared-utils";
 import { fetchTeams, type TeamOption } from "@/lib/teams";
 import type { AuthSession } from "@/types/auth";
 import type {
@@ -1534,6 +1539,25 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     );
   }, [visit]);
 
+  // The SAME NO TIANG RONDAAN pre-check the inspector runs before completing,
+  // re-run here so DC can see at a glance whether the sequence is clean without
+  // reading every row. Errors = must fix; warnings = gaps the inspector may have
+  // confirmed (see completion notes).
+  const rondaanCheck: RondaanCheckResult = useMemo(
+    () =>
+      checkRondaanForCompletion(
+        operationalAssetRows.map(
+          (link): AssetLike => ({
+            id: link.assetId,
+            name: link.asset.name,
+            assetCode: link.asset.assetCode,
+            noTiangRondaan: link.asset.assetCode,
+          }),
+        ),
+      ),
+    [operationalAssetRows],
+  );
+
   const filteredAssetRows = useMemo(() => {
     const query = assetSearch.trim().toLowerCase();
     if (!query) {
@@ -1775,6 +1799,49 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           </span>
                         }
                       />
+
+                      {operationalAssetRows.length > 0 ? (
+                        rondaanCheck.ok ? (
+                          <div className="mt-4 flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--success-border)] bg-[var(--success-bg)] px-3 py-2 text-[13px] text-[var(--success-text)]">
+                            <CheckCircle2 size={15} className="shrink-0" />
+                            NO TIANG RONDAAN sequence looks correct.
+                          </div>
+                        ) : (
+                          <div
+                            className={`mt-4 rounded-[var(--radius-control)] border px-3 py-2.5 text-[13px] ${
+                              rondaanCheck.hasErrors
+                                ? "border-[var(--critical-border)] bg-[var(--critical-bg)] text-[var(--critical-text)]"
+                                : "border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning-text)]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 font-semibold">
+                              <AlertTriangle size={15} className="shrink-0" />
+                              {rondaanCheck.hasErrors
+                                ? `${rondaanCheck.errors.length} NO TIANG RONDAAN error${
+                                    rondaanCheck.errors.length === 1 ? "" : "s"
+                                  } to fix`
+                                : `${rondaanCheck.warnings.length} NO TIANG RONDAAN gap${
+                                    rondaanCheck.warnings.length === 1 ? "" : "s"
+                                  } to confirm`}
+                              {rondaanCheck.hasErrors && rondaanCheck.warnings.length > 0
+                                ? ` · ${rondaanCheck.warnings.length} gap${
+                                    rondaanCheck.warnings.length === 1 ? "" : "s"
+                                  }`
+                                : ""}
+                            </div>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-6 text-[12.5px]">
+                              {rondaanCheck.issues.slice(0, 15).map((issue, index) => (
+                                <li key={index}>{issue.message}</li>
+                              ))}
+                              {rondaanCheck.issues.length > 15 ? (
+                                <li className="list-none opacity-80">
+                                  +{rondaanCheck.issues.length - 15} more…
+                                </li>
+                              ) : null}
+                            </ul>
+                          </div>
+                        )
+                      ) : null}
 
                       {operationalAssetRows.length > 0 ? (
                         <label className="relative mt-4 block">
