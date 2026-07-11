@@ -61,6 +61,15 @@ const DEFECT_SEVERITY_BY_RANK = [
   DefectSeverity.CRITICAL,
 ] as const;
 
+/** Split a comma-separated query param into trimmed, non-empty values. */
+function splitCsv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -257,6 +266,84 @@ export class AssetsService {
   }
 
   /**
+   * Orthogonal map filters (inspection / asset type / defects-only / defect
+   * category) folded into a single AND so they compose without clobbering the
+   * shared `inspections` relation key. Returns {} when no filter is set. Applied
+   * at every level, so they narrow the bubble counts and the leaf points alike.
+   */
+  private mapFilterWhere(query: MapQueryDto): Prisma.AssetWhereInput {
+    const and: Prisma.AssetWhereInput[] = [];
+
+    if (query.inspected === 'inspected') {
+      and.push({
+        inspections: {
+          some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+        },
+      });
+    } else if (query.inspected === 'not') {
+      and.push({
+        NOT: {
+          inspections: {
+            some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+          },
+        },
+      });
+    }
+
+    const assetTypeIds = splitCsv(query.assetTypeIds);
+    if (assetTypeIds.length > 0) {
+      and.push({ assetTypeId: { in: assetTypeIds } });
+    }
+
+    if (query.defectsOnly === 'true') {
+      and.push({
+        inspections: {
+          some: {
+            itemResults: {
+              some: {
+                isDefect: true,
+                defect: { status: { in: [...OPEN_DEFECT_STATUSES] } },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    const categories = splitCsv(query.categories).filter(
+      (value): value is MaintenanceCategory =>
+        (Object.values(MaintenanceCategory) as string[]).includes(value),
+    );
+    if (categories.length > 0) {
+      // The map buckets a null defect category as SELENGGARAAN, so match null
+      // too when SELENGGARAAN is among the chosen categories.
+      const categoryMatch: Prisma.DefectWhereInput[] = [
+        { maintenanceCategory: { in: categories } },
+      ];
+      if (categories.includes(MaintenanceCategory.SELENGGARAAN)) {
+        categoryMatch.push({ maintenanceCategory: null });
+      }
+      and.push({
+        inspections: {
+          some: {
+            itemResults: {
+              some: {
+                isDefect: true,
+                defect: {
+                  status: { in: [...OPEN_DEFECT_STATUSES] },
+                  OR: categoryMatch,
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return and.length > 0 ? { AND: and } : {};
+  }
+
+  /**
    * Hierarchical map feed. Without a `level` this returns the legacy full
    * per-asset list (kept until the client always drills down). With a level it
    * returns aggregated count "bubbles" for region / mainhead / pencawang, or the
@@ -272,7 +359,10 @@ export class AssetsService {
           'pencawangId is required for the points level.',
         );
       }
-      return this.loadMapAssets(user, { substationId: query.pencawangId });
+      return this.loadMapAssets(user, {
+        substationId: query.pencawangId,
+        ...this.mapFilterWhere(query),
+      });
     }
     return this.aggregateMap(user, query.level, query);
   }
@@ -315,6 +405,7 @@ export class AssetsService {
       ...(Object.keys(substationFilter).length > 0
         ? { substation: substationFilter }
         : {}),
+      ...this.mapFilterWhere(query),
     };
 
     // Count + centroid per Pencawang (the DB does the grouping).
