@@ -164,8 +164,9 @@ function LegendRow({
   );
 }
 
-/** A collapsible checkbox filter group inside the left dock. Long lists get a
- *  search box + scroll (Pencawang / Mainhead can be large at scale). */
+/** A checkbox filter group inside the left dock — collapsed by default, click
+ *  the header to expand. A badge keeps active selections visible when collapsed.
+ *  Long lists get a search box + scroll (Pencawang can be large at scale). */
 function FilterCheckGroup({
   label,
   options,
@@ -179,57 +180,76 @@ function FilterCheckGroup({
   onToggle: (value: string) => void;
   searchable?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   if (options.length === 0) return null;
   const q = query.trim().toLowerCase();
   const shown = searchable && q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
   return (
-    <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
-      <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
-        {label}
-        {selected.length > 0 ? ` · ${selected.length}` : ""}
-      </p>
-      {searchable && options.length > 8 ? (
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search…"
-          className="mb-1.5 w-full rounded-[6px] border border-[var(--chrome-line-strong)] bg-[var(--chrome-panel)] px-2 py-1 text-[12px] text-[var(--on-chrome)] outline-none placeholder:text-[var(--on-chrome-faint)]"
+    <div className="border-t border-[var(--chrome-line)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition hover:bg-[var(--chrome-active)]"
+      >
+        <ChevronRight
+          size={13}
+          className={`shrink-0 text-[var(--on-chrome-muted)] transition-transform ${open ? "rotate-90" : ""}`}
         />
-      ) : null}
-      <div className="max-h-52 space-y-0.5 overflow-y-auto">
-        {shown.map((opt) => {
-          const on = selected.includes(opt.value);
-          return (
-            <label
-              key={opt.value}
-              className="flex cursor-pointer items-center gap-2 rounded-[7px] px-1.5 py-1 text-[12.5px] transition hover:bg-[var(--chrome-active)]"
-            >
-              <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                  on
-                    ? "border-[var(--chrome-accent)] bg-[var(--chrome-accent)]"
-                    : "border-[var(--chrome-line-strong)]"
-                }`}
-              >
-                {on ? <span className="text-[10px] font-bold text-white">✓</span> : null}
-              </span>
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => onToggle(opt.value)}
-                className="sr-only"
-              />
-              <span className="truncate text-[var(--on-chrome)]" title={opt.label}>
-                {opt.label}
-              </span>
-            </label>
-          );
-        })}
-        {shown.length === 0 ? (
-          <p className="px-1.5 py-1 text-[12px] text-[var(--on-chrome-faint)]">No matches</p>
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
+          {label}
+        </span>
+        {selected.length > 0 ? (
+          <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--chrome-accent)] px-1 text-[10px] font-bold text-white">
+            {selected.length}
+          </span>
         ) : null}
-      </div>
+      </button>
+      {open ? (
+        <div className="px-3.5 pb-3">
+          {searchable && options.length > 8 ? (
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              className="mb-1.5 w-full rounded-[6px] border border-[var(--chrome-line-strong)] bg-[var(--chrome-panel)] px-2 py-1 text-[12px] text-[var(--on-chrome)] outline-none placeholder:text-[var(--on-chrome-faint)]"
+            />
+          ) : null}
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            {shown.map((opt) => {
+              const on = selected.includes(opt.value);
+              return (
+                <label
+                  key={opt.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-[7px] px-1.5 py-1 text-[12.5px] transition hover:bg-[var(--chrome-active)]"
+                >
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                      on
+                        ? "border-[var(--chrome-accent)] bg-[var(--chrome-accent)]"
+                        : "border-[var(--chrome-line-strong)]"
+                    }`}
+                  >
+                    {on ? <span className="text-[10px] font-bold text-white">✓</span> : null}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => onToggle(opt.value)}
+                    className="sr-only"
+                  />
+                  <span className="truncate text-[var(--on-chrome)]" title={opt.label}>
+                    {opt.label}
+                  </span>
+                </label>
+              );
+            })}
+            {shown.length === 0 ? (
+              <p className="px-1.5 py-1 text-[12px] text-[var(--on-chrome-faint)]">No matches</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
