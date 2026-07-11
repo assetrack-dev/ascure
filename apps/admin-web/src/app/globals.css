@@ -393,3 +393,16 @@ select:focus-visible {
   background: transparent;
   border: 0;
 }
+
+/* Google Street View pegman control on the Asset Map (enabled at RIGHT_BOTTOM).
+   Drop its white box + shadow so only the yellow pegman shows, and lift it to
+   sit just above the custom zoom box at bottom-right. Google pins the control to
+   the corner and ignores `margin`, so we shift it with `transform` instead:
+   -x = left (to centre over the zoom box), -y = up (above the top + button).
+   The zoom box is a fixed-size overlay (38px wide, 46px right inset, top 122px
+   above the stage bottom), so these two px values are stable — tune if off. */
+.gm-svpc {
+  background: none !important;
+  box-shadow: none !important;
+  transform: translate(-35px, -120px) !important;
+}
