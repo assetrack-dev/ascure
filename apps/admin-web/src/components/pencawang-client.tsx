@@ -199,14 +199,10 @@ function PencawangContent() {
       setError("");
       setNotice("");
 
-      const isEmpty =
-        (substation.assetCount ?? 0) === 0 && (substation.visitCount ?? 0) === 0;
-      if (isEmpty) {
-        setCascadePreview(null);
-        setConfirmDeleteId(substation.id);
-        return;
-      }
-
+      // Always preview before confirming. The list only carries pole/visit
+      // counts, but a Pencawang can also be pinned by FEEDERS or route From/To
+      // links — the preview counts all of those (and surfaces any hard block),
+      // so we never mis-route a cascadable Pencawang to the plain delete (409).
       setActionId(substation.id);
       try {
         const preview = await previewDeletePencawang(token, substation.id);
@@ -368,6 +364,14 @@ function PencawangContent() {
                   const isConfirmingDelete = confirmDeleteId === substation.id;
                   const isCascadeConfirm =
                     cascadePreview?.pencawangId === substation.id;
+                  const cascadeTotal =
+                    (cascadePreview?.assets ?? 0) +
+                    (cascadePreview?.siteVisits ?? 0) +
+                    (cascadePreview?.feeders ?? 0);
+                  const cascadeLabel =
+                    cascadeTotal > 0
+                      ? `Delete ${cascadePreview?.assets ?? 0} pole(s) + ${cascadePreview?.siteVisits ?? 0} visit(s) + ${cascadePreview?.feeders ?? 0} feeder(s)?`
+                      : "Delete this Pencawang?";
 
                   return (
                     <tr key={substation.id} className="align-middle">
@@ -391,9 +395,7 @@ function PencawangContent() {
                         {isConfirmingDelete ? (
                           <div className="flex items-center justify-end gap-2">
                             <span className="text-xs font-semibold text-rose-700">
-                              {isCascadeConfirm
-                                ? `Delete ${cascadePreview?.siteVisits ?? 0} visit(s) + ${cascadePreview?.assets ?? 0} pole(s)?`
-                                : "Delete?"}
+                              {isCascadeConfirm ? cascadeLabel : "Delete?"}
                             </span>
                             <button
                               type="button"
