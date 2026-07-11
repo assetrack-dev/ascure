@@ -226,7 +226,7 @@ function MapContent() {
   const [catSel, setCatSel] = useState<Set<string>>(new Set());
   const [inspectedSel, setInspectedSel] = useState<InspectedFilter>("all");
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
-  const [viewMode, setViewMode] = useState<MapViewMode>("pins");
+  const [viewMode, setViewMode] = useState<MapViewMode>("clusters");
   const [defectsOnly, setDefectsOnly] = useState(false);
   const [backHref, setBackHref] = useState<string | null>(null);
 
