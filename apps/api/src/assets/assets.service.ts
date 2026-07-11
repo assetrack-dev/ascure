@@ -424,6 +424,45 @@ export class AssetsService {
   }
 
   /**
+   * The Pencawang's own map location — its most recent site-visit check-in GPS.
+   * Shown alongside the poles (as a distinct marker) at the points level.
+   */
+  private async pencawangCheckIn(user: RequestUser, pencawangId: string) {
+    const substation = await this.prisma.substation.findFirst({
+      where: { id: pencawangId, tenantId: user.tenantId },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        siteVisits: {
+          where: {
+            checkInLatitude: { not: null },
+            checkInLongitude: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { checkInLatitude: true, checkInLongitude: true },
+        },
+      },
+    });
+    const visit = substation?.siteVisits[0];
+    if (
+      !substation ||
+      !visit ||
+      visit.checkInLatitude == null ||
+      visit.checkInLongitude == null
+    ) {
+      return null;
+    }
+    return {
+      id: substation.id,
+      name: substation.name || substation.code,
+      latitude: visit.checkInLatitude,
+      longitude: visit.checkInLongitude,
+    };
+  }
+
+  /**
    * Hierarchical map feed. Without a `level` this returns the legacy full
    * per-asset list (kept until the client always drills down). With a level it
    * returns aggregated count "bubbles" for region / mainhead / pencawang, or the
@@ -439,10 +478,14 @@ export class AssetsService {
           'pencawangId is required for the points level.',
         );
       }
-      return this.loadMapAssets(user, {
-        substationId: query.pencawangId,
-        ...this.mapFilterWhere(query),
-      });
+      const [poles, pencawang] = await Promise.all([
+        this.loadMapAssets(user, {
+          substationId: query.pencawangId,
+          ...this.mapFilterWhere(query),
+        }),
+        this.pencawangCheckIn(user, query.pencawangId),
+      ]);
+      return { poles, pencawang };
     }
     return this.aggregateMap(user, query.level, query);
   }

@@ -452,20 +452,53 @@ export async function fetchMapBubbles(
 }
 
 /** Fetch the individual poles for one Pencawang (the drill-down leaf). */
+/** The drilled Pencawang's own location (its site-visit check-in GPS). */
+export interface PencawangMarker {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** The points-level response: the Pencawang's poles + its own check-in marker. */
+export interface MapPointsResult {
+  poles: MapAsset[];
+  pencawang: PencawangMarker | null;
+}
+
+function normalizePencawangMarker(raw: unknown): PencawangMarker | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : null;
+  const latitude = toFiniteNumber(record.latitude);
+  const longitude = toFiniteNumber(record.longitude);
+  if (!id || latitude === null || longitude === null) return null;
+  return {
+    id,
+    name: typeof record.name === "string" && record.name ? record.name : "Pencawang",
+    latitude,
+    longitude,
+  };
+}
+
 export async function fetchMapPoints(
   token: string,
   pencawangId: string,
   filters?: MapFilters,
-): Promise<MapAsset[]> {
+): Promise<MapPointsResult> {
   const params = new URLSearchParams({ level: "points", pencawangId });
   appendFilters(params, filters);
   const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
     token,
   });
-  if (!Array.isArray(payload)) {
-    return [];
-  }
-  return payload
-    .map(normalizeMapAsset)
-    .filter((asset): asset is MapAsset => asset !== null);
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<
+    string,
+    unknown
+  >;
+  const poles = Array.isArray(source.poles)
+    ? source.poles
+        .map(normalizeMapAsset)
+        .filter((asset): asset is MapAsset => asset !== null)
+    : [];
+  return { poles, pencawang: normalizePencawangMarker(source.pencawang) };
 }
