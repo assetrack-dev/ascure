@@ -20,23 +20,41 @@ declare global {
 
 const DEFAULT_CENTER = { lat: 4.2105, lng: 101.9758 };
 
-// A colour-by-state circle icon. Legacy google.maps.Marker + SymbolPath renders
-// reliably on a raster basemap (no mapId / cloud-styling entitlement needed),
-// which AdvancedMarker would require. Selection reads as a larger disc with a
-// blue ring; the emergency pulse is a Leaflet-only nicety.
+// Above this many individual markers, Pins mode routes through the clusterer so
+// the renderer never places thousands of markers at once (that froze the tab at
+// ~2.3k assets). Below it, Pins shows raw individual markers.
+const PIN_LIMIT = 1000;
+
+// A colour-by-state circle icon rendered as a tiny SVG data-URI — a RASTER icon,
+// NOT a google.maps.Symbol. Symbol icons disable Google's marker optimisation, so
+// every marker gets its own <canvas>; at ~2.3k assets that's ~2.3k canvases and
+// the tab freezes. A url icon keeps optimisation on (markers batch onto a few
+// shared canvases). Icons are cached by (colour, selected) — ~12 distinct total.
+const iconCache = new Map<string, google.maps.Icon>();
 function markerIcon(
   asset: MapAsset,
   colorMode: AssetMapProps["colorMode"],
   selected: boolean,
-): google.maps.Symbol {
-  return {
-    path: google.maps.SymbolPath.CIRCLE,
-    scale: selected ? 9 : 6.5,
-    fillColor: mapAssetMarkerColor(asset, colorMode),
-    fillOpacity: 1,
-    strokeColor: selected ? "#2563eb" : "#ffffff",
-    strokeWeight: selected ? 3 : 1.5,
+): google.maps.Icon {
+  const color = mapAssetMarkerColor(asset, colorMode);
+  const key = `${color}|${selected ? 1 : 0}`;
+  const cached = iconCache.get(key);
+  if (cached) return cached;
+  const size = selected ? 22 : 15;
+  const stroke = selected ? "#2563eb" : "#ffffff";
+  const sw = selected ? 3 : 1.5;
+  const c = size / 2;
+  const r = c - sw;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
+    `<circle cx='${c}' cy='${c}' r='${r}' fill='${color}' stroke='${stroke}' stroke-width='${sw}'/></svg>`;
+  const icon: google.maps.Icon = {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(c, c),
   };
+  iconCache.set(key, icon);
+  return icon;
 }
 
 function infoHtml(asset: MapAsset): string {
@@ -76,9 +94,12 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
   const assetsRef = useRef(assets);
   const onSelectRef = useRef(onSelect);
   const onVisibleRef = useRef(onVisibleChange);
+  const selectedIdRef = useRef(selectedId);
+  const prevSelectedRef = useRef<string | null>(null);
   assetsRef.current = assets;
   onSelectRef.current = onSelect;
   onVisibleRef.current = onVisibleChange;
+  selectedIdRef.current = selectedId;
 
   // Bounds → in-view ids, plus imperative zoom controls.
   useEffect(() => {
@@ -153,21 +174,43 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
     for (const asset of assets) {
       const marker = new google.maps.Marker({
         position: { lat: asset.latitude, lng: asset.longitude },
-        icon: markerIcon(asset, colorMode, asset.id === selectedId),
+        icon: markerIcon(asset, colorMode, asset.id === selectedIdRef.current),
         title: asset.assetCode,
+        optimized: true,
       });
       marker.addListener("click", () => onSelectRef.current(asset.id));
       markersRef.current.set(asset.id, marker);
       markers.push(marker);
     }
 
-    if (viewMode === "clusters") {
+    // Cluster in Clusters mode, and also when Pins would place too many markers
+    // at once — thousands of individual markers freeze the renderer.
+    if (viewMode === "clusters" || markers.length > PIN_LIMIT) {
       clustererRef.current = new MarkerClusterer({ map, markers });
     } else {
       for (const marker of markers) marker.setMap(map);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, assets, colorMode, viewMode, selectedId]);
+  }, [map, assets, colorMode, viewMode]);
+
+  // Selection restyle — update only the affected markers, never rebuild all.
+  // (Rebuilding every marker on each selection is what stalled the map.)
+  useEffect(() => {
+    const markers = markersRef.current;
+    const prev = prevSelectedRef.current;
+    if (prev && prev !== selectedId) {
+      const marker = markers.get(prev);
+      const asset = assetsRef.current.find((a) => a.id === prev);
+      if (marker && asset) marker.setIcon(markerIcon(asset, colorMode, false));
+    }
+    if (selectedId) {
+      const marker = markers.get(selectedId);
+      const asset = assetsRef.current.find((a) => a.id === selectedId);
+      if (marker && asset) marker.setIcon(markerIcon(asset, colorMode, true));
+    }
+    prevSelectedRef.current = selectedId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, colorMode]);
 
   // Fit to the pin set only when the membership changes.
   useEffect(() => {
@@ -206,7 +249,7 @@ function Layers({ assets, colorMode, viewMode, selectedId, onSelect, onVisibleCh
   return null;
 }
 
-/** Google Maps renderer — AdvancedMarker DOM markers, clustering, and heatmap. */
+/** Google Maps renderer — legacy markers with raster SVG icons (optimised), clustering, and heatmap. */
 export default function GoogleAssetMap({ apiKey, onLoadError, ...rest }: AssetMapProps & { apiKey: string; onLoadError?: () => void }) {
   useEffect(() => {
     const prev = window.gm_authFailure;

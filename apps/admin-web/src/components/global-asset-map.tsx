@@ -16,6 +16,10 @@ import {
 
 const DEFAULT_CENTER: [number, number] = [4.2105, 101.9758];
 
+// Above this many markers, Pins mode routes through the cluster group so the map
+// never mounts thousands of divIcon DOM markers at once.
+const PIN_LIMIT = 1000;
+
 function markerIcon(asset: MapAsset, colorMode: AssetMapProps["colorMode"], selected: boolean): L.DivIcon {
   const color = mapAssetMarkerColor(asset, colorMode);
   const emergency = mapAssetDefectState(asset) === "emergency";
@@ -54,9 +58,12 @@ export default function GlobalAssetMap({
   const assetsRef = useRef(assets);
   const onSelectRef = useRef(onSelect);
   const onVisibleRef = useRef(onVisibleChange);
+  const selectedIdRef = useRef(selectedId);
+  const prevSelRef = useRef<string | null>(null);
   assetsRef.current = assets;
   onSelectRef.current = onSelect;
   onVisibleRef.current = onVisibleChange;
+  selectedIdRef.current = selectedId;
 
   const emitVisible = () => {
     const map = mapRef.current;
@@ -145,22 +152,41 @@ export default function GlobalAssetMap({
       return;
     }
 
-    const target: L.LayerGroup = viewMode === "clusters" ? cluster : pinLayer;
+    // Cluster in Clusters mode, and also when Pins would mount too many markers.
+    const useCluster = viewMode === "clusters" || assets.length > PIN_LIMIT;
+    const target: L.LayerGroup = useCluster ? cluster : pinLayer;
     for (const asset of assets) {
       const marker = L.marker([asset.latitude, asset.longitude], {
-        icon: markerIcon(asset, colorMode, asset.id === selectedId),
+        icon: markerIcon(asset, colorMode, asset.id === selectedIdRef.current),
         title: asset.assetCode,
       });
       marker.on("click", () => onSelectRef.current(asset.id));
       marker.addTo(target);
       markerById.current.set(asset.id, marker);
     }
-    if (viewMode === "clusters") {
+    if (useCluster) {
       map.addLayer(cluster);
     }
     emitVisible();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assets, colorMode, viewMode, selectedId]);
+  }, [assets, colorMode, viewMode]);
+
+  // Selection restyle — update only the affected markers, not the whole layer.
+  useEffect(() => {
+    const prev = prevSelRef.current;
+    if (prev && prev !== selectedId) {
+      const marker = markerById.current.get(prev);
+      const asset = assetsRef.current.find((a) => a.id === prev);
+      if (marker && asset) marker.setIcon(markerIcon(asset, colorMode, false));
+    }
+    if (selectedId) {
+      const marker = markerById.current.get(selectedId);
+      const asset = assetsRef.current.find((a) => a.id === selectedId);
+      if (marker && asset) marker.setIcon(markerIcon(asset, colorMode, true));
+    }
+    prevSelRef.current = selectedId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, colorMode]);
 
   // Fit to the pin set only when the SET changes (not on colour/selection).
   const idsKey = assets.map((a) => a.id).sort().join("|");
