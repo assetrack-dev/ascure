@@ -284,3 +284,104 @@ export async function fetchMapAssets(token: string): Promise<MapAsset[]> {
     .map(normalizeMapAsset)
     .filter((asset): asset is MapAsset => asset !== null);
 }
+
+// ---------------------------------------------------------------------------
+// Hierarchical drill-down (docs/PLAN-hierarchical-map.md)
+// ---------------------------------------------------------------------------
+
+/** Drill-down levels. `points` returns individual poles; the rest return groups. */
+export type MapLevel = "region" | "mainhead" | "pencawang" | "points";
+
+/** A group id the API returns for poles whose Pencawang has no Mainhead/Region. */
+export const UNASSIGNED_BUBBLE_ID = "__unassigned__";
+
+/**
+ * An aggregated group ("bubble") on the hierarchical map: a count of all poles
+ * under a Region / Mainhead / Pencawang, positioned at their centroid, with a
+ * rolled-up inspection + defect summary. Fed by `GET /assets/map?level=...`.
+ */
+export interface MapBubble {
+  level: "region" | "mainhead" | "pencawang";
+  id: string;
+  name: string;
+  count: number;
+  latitude: number;
+  longitude: number;
+  inspected: number;
+  notInspected: number;
+  openDefects: number;
+  emergency: number;
+}
+
+function normalizeMapBubble(raw: unknown): MapBubble | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : null;
+  const level = record.level;
+  if (level !== "region" && level !== "mainhead" && level !== "pencawang") {
+    return null;
+  }
+  const latitude = toFiniteNumber(record.latitude);
+  const longitude = toFiniteNumber(record.longitude);
+  if (!id || latitude === null || longitude === null) {
+    return null;
+  }
+  return {
+    level: level as MapBubble["level"],
+    id,
+    name: typeof record.name === "string" && record.name ? record.name : "—",
+    count: toFiniteNumber(record.count) ?? 0,
+    latitude,
+    longitude,
+    inspected: toFiniteNumber(record.inspected) ?? 0,
+    notInspected: toFiniteNumber(record.notInspected) ?? 0,
+    openDefects: toFiniteNumber(record.openDefects) ?? 0,
+    emergency: toFiniteNumber(record.emergency) ?? 0,
+  };
+}
+
+export interface MapBubbleQuery {
+  level: "region" | "mainhead" | "pencawang";
+  /** mainhead level: only mainheads in this Region. */
+  regionId?: string;
+  /** pencawang level: only Pencawang under this Mainhead. */
+  mainheadId?: string;
+}
+
+/** Fetch the count bubbles for one drill-down level. */
+export async function fetchMapBubbles(
+  token: string,
+  query: MapBubbleQuery,
+): Promise<MapBubble[]> {
+  const params = new URLSearchParams({ level: query.level });
+  if (query.regionId) params.set("regionId", query.regionId);
+  if (query.mainheadId) params.set("mainheadId", query.mainheadId);
+  const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
+    token,
+  });
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload
+    .map(normalizeMapBubble)
+    .filter((bubble): bubble is MapBubble => bubble !== null);
+}
+
+/** Fetch the individual poles for one Pencawang (the drill-down leaf). */
+export async function fetchMapPoints(
+  token: string,
+  pencawangId: string,
+): Promise<MapAsset[]> {
+  const params = new URLSearchParams({ level: "points", pencawangId });
+  const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
+    token,
+  });
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload
+    .map(normalizeMapAsset)
+    .filter((asset): asset is MapAsset => asset !== null);
+}
