@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
@@ -21,6 +22,7 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { DeleteAssetsDto } from './dto/delete-assets.dto';
+import { MapQueryDto } from './dto/map-query.dto';
 import { AssetsService } from './assets.service';
 
 class AssetIdParamDto {
@@ -40,8 +42,8 @@ export class AssetsController {
 
   // Declared before `:id` so the literal `map` segment is not matched as an id.
   @Get('map')
-  listMap(@CurrentUser() user: RequestUser) {
-    return this.assetsService.listMapAssets(user);
+  listMap(@CurrentUser() user: RequestUser, @Query() query: MapQueryDto) {
+    return this.assetsService.listMap(user, query);
   }
 
   @Get(':id')

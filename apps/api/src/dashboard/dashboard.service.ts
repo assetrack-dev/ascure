@@ -396,7 +396,7 @@ export class DashboardService {
       }),
       // Assets carry no mainhead column, so attribute each to the mainhead of its
       // latest SUBMITTED inspection's site visit, falling back to its creation
-      // visit (mirrors AssetsService.listMapAssets). Light select — id + the two
+      // visit (mirrors AssetsService.loadMapAssets). Light select — id + the two
       // candidate mainhead refs — tallied in JS below.
       this.prisma.asset.findMany({
         where: this.accessibleAssetWhere(user, ctx),
@@ -1378,7 +1378,7 @@ export class DashboardService {
     // The Asset row carries no team/region/mainhead column, so scope is applied
     // transitively through the site visits that touch it — an asset is visible
     // if it has an inspection in a site visit the user may see, or it was
-    // created during such a visit (mirrors AssetsService.listMapAssets). ADMIN /
+    // created during such a visit (mirrors AssetsService.loadMapAssets). ADMIN /
     // QA-admin see every asset in the tenant. This is the fix for the dashboard
     // "Total Assets" counting every team's poles regardless of the viewer's
     // scope.
