@@ -25,7 +25,8 @@ async function main() {
       select: { id: true, code: true, name: true, mainheadId: true },
     }),
     prisma.siteVisit.findMany({
-      where: { substationId: { not: null }, mainheadId: { not: null } },
+      // substationId is a required column; only mainheadId can be null.
+      where: { mainheadId: { not: null } },
       select: { substationId: true, mainheadId: true },
     }),
   ]);
