@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import {
   ChevronRight,
   Crosshair,
+  Filter as FilterIcon,
+  ListOrdered,
   Minus,
   Plus,
   RefreshCw,
-  ListOrdered,
+  RotateCcw,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -25,9 +27,12 @@ import {
 import {
   fetchMapBubbles,
   fetchMapPoints,
+  formatMaintenanceCategory,
   isMapAssetInspected,
   mapAssetMarkerColor,
   mapAssetPriority,
+  mapFiltersActive,
+  EMPTY_MAP_FILTERS,
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
   EMERGENCY_DEFECT_MARKER_COLOR,
@@ -36,8 +41,11 @@ import {
   type MapAsset,
   type MapBubble,
   type MapColorMode,
+  type MapFilters,
   type MapLevel,
 } from "@/lib/map";
+import { fetchAssetTypes } from "@/lib/checklist-templates";
+import { MAINTENANCE_CATEGORIES } from "@/types/defects";
 import type { AuthSession } from "@/types/auth";
 
 const HierarchicalMap = dynamic(() => import("@/components/hierarchical-map"), {
@@ -50,6 +58,12 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 const COLOR_OPTIONS: SegOption<MapColorMode>[] = [
   { value: "inspection", label: "Inspection" },
   { value: "defect", label: "Defects" },
+];
+
+const INSPECTED_FILTER_OPTIONS: SegOption<MapFilters["inspected"]>[] = [
+  { value: "all", label: "All" },
+  { value: "inspected", label: "Inspected" },
+  { value: "not", label: "Not" },
 ];
 
 type IdName = { id: string; name: string };
@@ -131,6 +145,59 @@ function LegendRow({
   );
 }
 
+/** A collapsible checkbox filter group inside the left dock. */
+function FilterCheckGroup({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
+      <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
+        {label}
+        {selected.length > 0 ? ` · ${selected.length}` : ""}
+      </p>
+      <div className="space-y-0.5">
+        {options.map((opt) => {
+          const on = selected.includes(opt.value);
+          return (
+            <label
+              key={opt.value}
+              className="flex cursor-pointer items-center gap-2 rounded-[7px] px-1.5 py-1 text-[12.5px] transition hover:bg-[var(--chrome-active)]"
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                  on
+                    ? "border-[var(--chrome-accent)] bg-[var(--chrome-accent)]"
+                    : "border-[var(--chrome-line-strong)]"
+                }`}
+              >
+                {on ? <span className="text-[10px] font-bold text-white">✓</span> : null}
+              </span>
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => onToggle(opt.value)}
+                className="sr-only"
+              />
+              <span className="truncate text-[var(--on-chrome)]" title={opt.label}>
+                {opt.label}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MapContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -143,6 +210,8 @@ function MapContent() {
   const [points, setPoints] = useState<MapAsset[]>([]);
   const [selected, setSelected] = useState<MapAsset | null>(null);
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
+  const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
+  const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
   const controlsRef = useRef<MapControls | null>(null);
 
   const level = levelFor(drill);
@@ -171,12 +240,14 @@ function MapContent() {
   const token = session?.token ?? null;
 
   const load = useCallback(
-    async (authToken: string, current: DrillState) => {
+    async (authToken: string, current: DrillState, currentFilters: MapFilters) => {
       setIsLoading(true);
       setError("");
       try {
         if (current.pencawang) {
-          setPoints(await fetchMapPoints(authToken, current.pencawang.id));
+          setPoints(
+            await fetchMapPoints(authToken, current.pencawang.id, currentFilters),
+          );
           setBubbles([]);
         } else {
           const lvl = current.mainhead
@@ -185,11 +256,15 @@ function MapContent() {
               ? "mainhead"
               : "region";
           setBubbles(
-            await fetchMapBubbles(authToken, {
-              level: lvl,
-              regionId: current.region?.id,
-              mainheadId: current.mainhead?.id,
-            }),
+            await fetchMapBubbles(
+              authToken,
+              {
+                level: lvl,
+                regionId: current.region?.id,
+                mainheadId: current.mainhead?.id,
+              },
+              currentFilters,
+            ),
           );
           setPoints([]);
         }
@@ -207,8 +282,38 @@ function MapContent() {
   );
 
   useEffect(() => {
-    if (token) void load(token, drill);
-  }, [token, drill, load]);
+    if (token) void load(token, drill, filters);
+  }, [token, drill, filters, load]);
+
+  // Asset-type options for the filter dock (fetched once).
+  useEffect(() => {
+    if (!token) return;
+    fetchAssetTypes(token)
+      .then((types) => setAssetTypes(types.map((t) => ({ id: t.id, name: t.name }))))
+      .catch(() => {});
+  }, [token]);
+
+  const toggleCategory = useCallback(
+    (value: string) =>
+      setFilters((f) => ({
+        ...f,
+        categories: f.categories.includes(value)
+          ? f.categories.filter((x) => x !== value)
+          : [...f.categories, value],
+      })),
+    [],
+  );
+  const toggleAssetType = useCallback(
+    (value: string) =>
+      setFilters((f) => ({
+        ...f,
+        assetTypeIds: f.assetTypeIds.includes(value)
+          ? f.assetTypeIds.filter((x) => x !== value)
+          : [...f.assetTypeIds, value],
+      })),
+    [],
+  );
+  const activeFilters = mapFiltersActive(filters);
 
   const drillInto = useCallback((bubble: MapBubble) => {
     if (bubble.id === UNASSIGNED_BUBBLE_ID) return; // ungrouped poles aren't drillable
@@ -342,7 +447,7 @@ function MapContent() {
             <KpiTile label="Open defects" value={kpis.openDefects} />
             <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
             <Tbtn
-              onClick={() => (token ? load(token, drill) : undefined)}
+              onClick={() => (token ? load(token, drill, filters) : undefined)}
               disabled={!token || isLoading}
               className="ml-1"
             >
@@ -402,7 +507,7 @@ function MapContent() {
           </div>
 
           {/* Legend */}
-          <div className="pointer-events-none absolute bottom-3 left-3 z-10 w-52 rounded-[12px] border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_86%,transparent)] p-3 shadow-[var(--shadow-card)] backdrop-blur">
+          <div className="pointer-events-none absolute bottom-3 left-[46px] z-10 w-52 rounded-[12px] border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_86%,transparent)] p-3 shadow-[var(--shadow-card)] backdrop-blur">
             <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">
               {colorMode === "inspection" ? "Inspection" : "Defects"}
             </p>
@@ -490,6 +595,90 @@ function MapContent() {
               </button>
             </div>
           ) : null}
+
+          {/* Left auto-hide dock — filters */}
+          <div className="group absolute bottom-0 left-0 top-0 z-20 flex -translate-x-[250px] transition-transform duration-300 [transition-timing-function:cubic-bezier(.4,0,.2,1)] focus-within:translate-x-0 hover:translate-x-0">
+            <div className="flex h-full w-[250px] flex-col overflow-hidden border-r border-[var(--chrome-line)] bg-[var(--chrome)] text-[var(--on-chrome)] shadow-[6px_0_24px_rgba(11,14,18,.12)]">
+              <div className="flex items-center justify-between gap-2 border-b border-[var(--chrome-line)] px-3.5 py-3">
+                <span className="text-[13px] font-semibold">Filters</span>
+                {activeFilters > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setFilters(EMPTY_MAP_FILTERS)}
+                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--chrome-accent)]"
+                  >
+                    <RotateCcw size={13} />
+                    Reset
+                  </button>
+                ) : null}
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="px-3.5 py-3">
+                  <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
+                    Inspection
+                  </p>
+                  <Seg
+                    options={INSPECTED_FILTER_OPTIONS}
+                    value={filters.inspected}
+                    onChange={(v) => setFilters((f) => ({ ...f, inspected: v }))}
+                    aria-label="Inspection filter"
+                    className="w-full !bg-[var(--chrome-panel)]"
+                  />
+                </div>
+                <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12.5px]">
+                    <span
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                        filters.defectsOnly
+                          ? "border-[var(--chrome-accent)] bg-[var(--chrome-accent)]"
+                          : "border-[var(--chrome-line-strong)]"
+                      }`}
+                    >
+                      {filters.defectsOnly ? (
+                        <span className="text-[10px] font-bold text-white">✓</span>
+                      ) : null}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={filters.defectsOnly}
+                      onChange={(e) =>
+                        setFilters((f) => ({ ...f, defectsOnly: e.target.checked }))
+                      }
+                      className="sr-only"
+                    />
+                    <span className="text-[var(--on-chrome)]">Only poles with open defects</span>
+                  </label>
+                </div>
+                <FilterCheckGroup
+                  label="Defect category"
+                  options={MAINTENANCE_CATEGORIES.map((c) => ({
+                    value: c,
+                    label: formatMaintenanceCategory(c),
+                  }))}
+                  selected={filters.categories}
+                  onToggle={toggleCategory}
+                />
+                <FilterCheckGroup
+                  label="Asset type"
+                  options={assetTypes.map((t) => ({ value: t.id, label: t.name }))}
+                  selected={filters.assetTypeIds}
+                  onToggle={toggleAssetType}
+                />
+              </div>
+            </div>
+            {/* Handle */}
+            <div className="flex w-8 shrink-0 cursor-pointer flex-col items-center justify-center gap-2 self-center rounded-r-[10px] border border-l-0 border-[var(--chrome-line)] bg-[var(--chrome)] py-4 shadow-[3px_0_10px_rgba(11,14,18,.08)]">
+              <FilterIcon size={15} className="text-[var(--on-chrome-muted)]" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--on-chrome-muted)] [writing-mode:vertical-rl]">
+                Filters
+              </span>
+              {activeFilters > 0 ? (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--chrome-accent)] px-1 text-[10px] font-bold text-white">
+                  {activeFilters}
+                </span>
+              ) : null}
+            </div>
+          </div>
 
           {/* Right auto-hide dock — the current level's list */}
           <div className="group absolute bottom-0 right-0 top-0 z-20 flex translate-x-[300px] transition-transform duration-300 [transition-timing-function:cubic-bezier(.4,0,.2,1)] focus-within:translate-x-0 hover:translate-x-0">

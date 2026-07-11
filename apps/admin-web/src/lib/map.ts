@@ -350,14 +350,51 @@ export interface MapBubbleQuery {
   mainheadId?: string;
 }
 
+/** Orthogonal map filters — narrow the counts at every level (and the leaf). */
+export interface MapFilters {
+  inspected: "all" | "inspected" | "not";
+  assetTypeIds: string[];
+  categories: string[];
+  defectsOnly: boolean;
+}
+
+export const EMPTY_MAP_FILTERS: MapFilters = {
+  inspected: "all",
+  assetTypeIds: [],
+  categories: [],
+  defectsOnly: false,
+};
+
+/** How many filters are active (for the dock badge). */
+export function mapFiltersActive(filters: MapFilters): number {
+  return (
+    (filters.inspected !== "all" ? 1 : 0) +
+    filters.assetTypeIds.length +
+    filters.categories.length +
+    (filters.defectsOnly ? 1 : 0)
+  );
+}
+
+function appendFilters(params: URLSearchParams, filters?: MapFilters): void {
+  if (!filters) return;
+  if (filters.inspected !== "all") params.set("inspected", filters.inspected);
+  if (filters.assetTypeIds.length > 0)
+    params.set("assetTypeIds", filters.assetTypeIds.join(","));
+  if (filters.categories.length > 0)
+    params.set("categories", filters.categories.join(","));
+  if (filters.defectsOnly) params.set("defectsOnly", "true");
+}
+
 /** Fetch the count bubbles for one drill-down level. */
 export async function fetchMapBubbles(
   token: string,
   query: MapBubbleQuery,
+  filters?: MapFilters,
 ): Promise<MapBubble[]> {
   const params = new URLSearchParams({ level: query.level });
   if (query.regionId) params.set("regionId", query.regionId);
   if (query.mainheadId) params.set("mainheadId", query.mainheadId);
+  appendFilters(params, filters);
   const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
     token,
   });
@@ -373,8 +410,10 @@ export async function fetchMapBubbles(
 export async function fetchMapPoints(
   token: string,
   pencawangId: string,
+  filters?: MapFilters,
 ): Promise<MapAsset[]> {
   const params = new URLSearchParams({ level: "points", pencawangId });
+  appendFilters(params, filters);
   const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
     token,
   });
