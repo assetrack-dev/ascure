@@ -37,10 +37,14 @@ import {
 } from '../assetDisplay';
 import { Asset, SiteVisit, SiteVisitSummary, UserRole } from '../types';
 import {
+  checkRondaanForCompletion,
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
+  type AssetLike,
   type DisplayStatus,
+  type RondaanCheckResult,
 } from '@ascure/shared-utils';
+import { RondaanCheckSheet } from '../components/RondaanCheckSheet';
 import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -97,6 +101,8 @@ export function VisitDetailScreen() {
   const [linkingAssetId, setLinkingAssetId] = useState<string | null>(null);
   const [completionNotes, setCompletionNotes] = useState('');
   const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+  const [rondaanResult, setRondaanResult] = useState<RondaanCheckResult | null>(null);
+  const [rondaanSheetVisible, setRondaanSheetVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isCompletionQueued = hasQueuedVisitCompletion(syncQueueSnapshot, visitId);
 
@@ -161,14 +167,22 @@ export function VisitDetailScreen() {
     }, [loadVisitData]),
   );
 
-  async function handleCompleteVisit() {
+  async function handleCompleteVisit(gapAcknowledgement?: string) {
     if (!visit) {
       return;
     }
 
+    // Fold any acknowledged NO TIANG RONDAAN gap reason into the completion
+    // notes so DC sees why the sequence skips a number (e.g. "pole removed").
+    const baseNote = normalizeOperationalPayloadText(completionNotes);
+    const ackNote = gapAcknowledgement?.trim()
+      ? `NO TIANG RONDAAN gaps confirmed by inspector: ${gapAcknowledgement.trim()}`
+      : undefined;
+    const combinedNotes = [baseNote, ackNote].filter(Boolean).join(' — ') || undefined;
+
     const payload = {
       completedAt: new Date().toISOString(),
-      completionNotes: normalizeOperationalPayloadText(completionNotes),
+      completionNotes: combinedNotes,
     };
 
     if (isOffline) {
@@ -254,6 +268,29 @@ export function VisitDetailScreen() {
       return;
     }
 
+    // Pre-check NO TIANG RONDAAN sequencing/format before it ever reaches DC.
+    // Errors block; gaps open the sheet for the inspector to confirm. A clean
+    // rondaan falls through to the normal completion confirmation below.
+    const rondaanCheck = checkRondaanForCompletion(
+      assets.map(
+        (asset): AssetLike => ({
+          id: asset.id,
+          name: asset.name,
+          assetCode: asset.assetCode,
+          noTiangRondaan: asset.assetCode,
+          latitude: asset.latitude,
+          longitude: asset.longitude,
+        }),
+      ),
+    );
+
+    if (!rondaanCheck.ok) {
+      setError(null);
+      setRondaanResult(rondaanCheck);
+      setRondaanSheetVisible(true);
+      return;
+    }
+
     const message =
       queuedInspectionCount > 0
         ? `${queuedInspectionCount} inspection submission${queuedInspectionCount === 1 ? '' : 's'} will sync before visit completion.`
@@ -273,6 +310,23 @@ export function VisitDetailScreen() {
         },
       },
     ]);
+  }
+
+  // From the rondaan sheet: jump to the offending pole so the inspector can fix
+  // it, then re-tap Complete (the visit reloads on focus and re-checks).
+  function handleEditPoleFromCheck(assetId: string) {
+    const asset = assets.find((item) => item.id === assetId);
+    setRondaanSheetVisible(false);
+    if (asset) {
+      navigation.navigate('AddAsset', { visitId, substationId, assetToEdit: asset });
+    }
+  }
+
+  // From the rondaan sheet: the only issues left are gaps and the inspector has
+  // given a reason — complete, carrying that reason to DC.
+  function handleAcknowledgeGapsAndComplete(note: string) {
+    setRondaanSheetVisible(false);
+    void handleCompleteVisit(note);
   }
 
   async function handleLinkAsset(asset: Asset) {
@@ -529,6 +583,15 @@ export function VisitDetailScreen() {
           ) : null}
         </>
       ) : null}
+
+      <RondaanCheckSheet
+        visible={rondaanSheetVisible}
+        result={rondaanResult}
+        isCompleting={isCompleting}
+        onEditPole={handleEditPoleFromCheck}
+        onClose={() => setRondaanSheetVisible(false)}
+        onAcknowledgeComplete={handleAcknowledgeGapsAndComplete}
+      />
     </Screen>
   );
 }

@@ -40,7 +40,7 @@ import {
 import { Theme, useTheme } from '../theme';
 import { Asset, AssetStatus, AssetType, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
-import { suggestNextPoleCode } from '../utils/feederSequence';
+import { normalizePoleInput, suggestNextPoleCode } from '../utils/feederSequence';
 import { loadLastPoleCode, storeLastPoleCode } from '../storage';
 
 type Coordinate = {
@@ -622,7 +622,12 @@ export function AddAssetScreen() {
         ? normalizedAssetCode.toUpperCase().startsWith(`${routePrefix} `.toUpperCase())
           ? normalizedAssetCode
           : `${routePrefix} ${normalizedAssetCode}`
-        : normalizedAssetCode;
+        : isSAVRWorkflow
+          ? // Store SAVR pole codes in canonical NO TIANG RONDAAN form (single
+            // spaces, upper-case, `FP<n>`/`&`/`/` spacing) so what's saved always
+            // matches the pre-completion sequence check — no stray-space drift.
+            normalizePoleInput(normalizedAssetCode)
+          : normalizedAssetCode;
 
     const parsedLatitude = parseCoordinate(latitude, -90, 90);
 
