@@ -2165,15 +2165,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   }`
                                 : ""}
                             </div>
-                            <ul className="mt-1.5 list-disc space-y-1 pl-6 text-[12.5px]">
-                              {rondaanCheck.issues.slice(0, 15).map((issue, index) => (
+                            <ul className="mt-1.5 max-h-40 list-disc space-y-1 overflow-y-auto pl-6 pr-1 text-[12.5px]">
+                              {rondaanCheck.issues.map((issue, index) => (
                                 <li key={index}>{issue.message}</li>
                               ))}
-                              {rondaanCheck.issues.length > 15 ? (
-                                <li className="list-none opacity-80">
-                                  +{rondaanCheck.issues.length - 15} more…
-                                </li>
-                              ) : null}
                             </ul>
                           </div>
                         )

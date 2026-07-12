@@ -158,10 +158,14 @@ export function normalizePoleInput(input: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Collapse a leading Feeder-Pillar token back to its canonical `FP<n>` form:
-  // the letter→digit spacer above splits `FP1` into `FP 1`. Only when it prefixes
-  // a feeder line, so a bare `FP 1` (feeders F & P at index 1) is left untouched.
-  return normalized.replace(/^FP\s+([1-9]\d*)\s+(?=[A-Z])/, 'FP$1 ');
+  // Collapse a Feeder-Pillar token back to its canonical `FP<n>` form: the
+  // letter→digit spacer above splits `FP1` into `FP 1`. An `FP<n>` prefix may sit
+  // at the front OR on any `&`-joined segment — a pole shared across feeder lines
+  // that run from a Feeder Pillar is written per-segment, e.g. `FP1 C 1 & FP1 G 1`
+  // (or `FP1 A 1 & FP2 B 1` for two different pillars). Only collapse when it
+  // prefixes a feeder line, so a bare `FP 1` (feeders F & P at index 1) is left as
+  // the normal feeder grammar.
+  return normalized.replace(/(^|& )FP\s+([1-9]\d*)\s+(?=[A-Z])/g, '$1FP$2 ');
 }
 
 /**
@@ -243,15 +247,22 @@ export function parsePoleCode(input: string): ParsedPoleCode[] {
     return [createInvalidParsed(original, '', ['Pole code is required.'])];
   }
 
-  // A pole has at most one origin: strip a single leading `FP<n>` and apply it to
-  // every `&`-joined feeder segment (no nesting — a later segment that still
-  // leads with `FP` won't match the feeder pattern and is flagged invalid).
-  const { feederPillar, rest } = extractFeederPillar(normalizedInput);
+  // Each `&`-joined segment may carry its own `FP<n>` origin: a pole shared
+  // across feeder lines is written per-segment (`FP1 C 1 & FP1 G 1`), and the
+  // lines can even run from different Feeder Pillars (`FP1 A 1 & FP2 B 1`). A
+  // single `FP<n>` at the FRONT is the default origin for any bare segment, so
+  // `FP1 C 1 & G 1` still reads both lines as FP1 (backward-compatible). Still no
+  // nesting — at most one `FP<n>` per segment.
+  const { feederPillar: frontFeederPillar, rest } = extractFeederPillar(normalizedInput);
   const segments = rest.split('&').map((segment) => segment.trim());
   const parsedCodes: ParsedPoleCode[] = [];
 
   for (const segment of segments) {
-    parsedCodes.push(...parsePoleSegment(original, segment, feederPillar));
+    const { feederPillar: segmentFeederPillar, rest: segmentRest } =
+      extractFeederPillar(segment);
+    parsedCodes.push(
+      ...parsePoleSegment(original, segmentRest, segmentFeederPillar ?? frontFeederPillar),
+    );
   }
 
   return parsedCodes;
