@@ -281,10 +281,30 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
           // source the Download Checklist uses, NOT itemResults.remark.
           results: {
             select: {
+              templateItemId: true,
               valueText: true,
               valueNumber: true,
               templateItem: { select: { label: true } },
             },
+          },
+          // Item-tagged photos (the Smart Sensor / OCR captures) so the DC can
+          // eyeball the LCD in the Linked-Assets table and re-verify the recorded
+          // reading against the real measurement. Mobile tags each OCR capture
+          // with its checklist item's templateItemId (InspectionFormScreen), so a
+          // reading pairs with its photo by that id. Only item-bound photos are
+          // needed here — general inspection photos live in the visit Images tab.
+          inspectionImages: {
+            where: { templateItemId: { not: null } },
+            select: {
+              url: true,
+              filename: true,
+              templateItemId: true,
+              latitude: true,
+              longitude: true,
+              timestamp: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
           },
         },
       },
@@ -2681,22 +2701,53 @@ export class SiteVisitsService {
   private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
     const { inspections, ...asset } = link.asset;
     const latest = inspections[0] ?? null;
-    // Recorded value of a checklist item, matched by its template-item label
-    // (first label that hits wins). Text/OCR fields use valueText; numeric
-    // readings fall back to valueNumber. Same source as the Download Checklist.
+    type ResultRow = NonNullable<typeof latest>['results'][number];
+    type ImageRow = NonNullable<typeof latest>['inspectionImages'][number];
     const norm = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
-    const reading = (...labels: string[]): string | null => {
+    // Recorded value of a checklist result — text/OCR fields use valueText;
+    // numeric readings fall back to valueNumber. Same source as the Download
+    // Checklist.
+    const valueOf = (match: ResultRow | null): string | null =>
+      match?.valueText?.trim() ||
+      (match?.valueNumber != null ? match.valueNumber.toString() : null);
+    // Results matching any of the given label aliases, in alias priority order.
+    const matchRows = (...labels: string[]): ResultRow[] => {
+      const rows: ResultRow[] = [];
       for (const want of labels.map(norm)) {
         const match = latest?.results?.find(
           (r) => r.templateItem?.label != null && norm(r.templateItem.label) === want,
         );
-        const value =
-          match?.valueText?.trim() ||
-          (match?.valueNumber != null ? match.valueNumber.toString() : null);
-        if (value) return value;
+        if (match) rows.push(match);
       }
-      return null;
+      return rows;
     };
+    // Displayed value for a set of aliases: the first alias carrying a non-empty
+    // value (preserving the old reading() behavior), else the first that exists.
+    const pickValue = (...labels: string[]): string | null => {
+      const rows = matchRows(...labels);
+      return valueOf(rows.find((r) => valueOf(r)) ?? rows[0] ?? null);
+    };
+
+    const kelegaanRows = matchRows('GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1');
+    const kelegaanValue = valueOf(
+      kelegaanRows.find((r) => valueOf(r)) ?? kelegaanRows[0] ?? null,
+    );
+    // The Smart Sensor photo behind the reading: the item-tagged image whose
+    // templateItemId matches one of the alias-matched items (mobile tags each OCR
+    // capture by its item id). Trying every alias-matched item covers templates
+    // that split the reading and the GAMBAR photo across separate checklist items;
+    // the current production template combines them on a single item.
+    let kelegaanImage: ImageRow | null = null;
+    for (const row of kelegaanRows) {
+      const img = latest?.inspectionImages?.find(
+        (i) => i.templateItemId === row.templateItemId,
+      );
+      if (img) {
+        kelegaanImage = img;
+        break;
+      }
+    }
+
     return {
       id: link.id,
       siteVisitId: link.siteVisitId,
@@ -2720,8 +2771,22 @@ export class SiteVisitsService {
       },
       // Checklist readings surfaced as Linked-Assets columns for DC checking.
       checklist: {
-        bacaanKelegaan1: reading('GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1'),
-        catitan: reading('CATITAN', 'CATATAN', 'CATATAN / REMARK'),
+        bacaanKelegaan1: kelegaanValue,
+        // The Smart Sensor photo behind the reading, so the DC can re-verify the
+        // recorded value against the LCD. url is the API-relative /uploads path;
+        // timestamp is the capture time, createdAt the upload/record time (the
+        // client falls back to createdAt when the capture time is missing).
+        bacaanKelegaan1Image: kelegaanImage
+          ? {
+              url: kelegaanImage.url,
+              filename: kelegaanImage.filename,
+              latitude: kelegaanImage.latitude,
+              longitude: kelegaanImage.longitude,
+              timestamp: kelegaanImage.timestamp?.toISOString() ?? null,
+              createdAt: kelegaanImage.createdAt.toISOString(),
+            }
+          : null,
+        catitan: pickValue('CATITAN', 'CATATAN', 'CATATAN / REMARK'),
       },
     };
   }
