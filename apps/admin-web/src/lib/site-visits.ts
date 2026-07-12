@@ -10,6 +10,7 @@ import type {
   SiteVisitInspection,
   SiteVisitListItem,
   SiteVisitMainhead,
+  SiteVisitSensorPhoto,
   SiteVisitStatus,
   SiteVisitSubstation,
   SiteVisitTeam,
@@ -413,6 +414,28 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
   };
 }
 
+function normalizeSensorPhoto(raw: unknown): SiteVisitSensorPhoto | null {
+  const record = asRecord(raw);
+
+  if (!record) {
+    return null;
+  }
+
+  const url = firstString(record, ["url", "path"]);
+
+  if (!url) {
+    return null;
+  }
+
+  return {
+    url,
+    filename: firstString(record, ["filename"]),
+    timestamp: firstString(record, ["timestamp", "createdAt"]),
+    latitude: readNumber(record, "latitude"),
+    longitude: readNumber(record, "longitude"),
+  };
+}
+
 function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink | null {
   const record = asRecord(rawLink);
   const asset = nestedRecord(record, "asset") ?? record;
@@ -451,6 +474,9 @@ function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink
       bacaanKelegaan1: firstString(nestedRecord(record, "checklist"), [
         "bacaanKelegaan1",
       ]),
+      bacaanKelegaan1Image: normalizeSensorPhoto(
+        nestedRecord(nestedRecord(record, "checklist"), "bacaanKelegaan1Image"),
+      ),
       catitan: firstString(nestedRecord(record, "checklist"), ["catitan"]),
     },
   };

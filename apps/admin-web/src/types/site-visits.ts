@@ -151,8 +151,20 @@ export interface SiteVisitAssetLink {
   /** Latest-inspection checklist readings surfaced as columns for DC checking. */
   checklist?: {
     bacaanKelegaan1: string | null;
+    /** Smart Sensor photo behind the Bacaan Kelegaan 1 reading — lets the DC
+     * eyeball the LCD and re-verify the recorded value. */
+    bacaanKelegaan1Image?: SiteVisitSensorPhoto | null;
     catitan: string | null;
   };
+}
+
+export interface SiteVisitSensorPhoto {
+  /** API-relative /uploads path (resolve against the API origin to render). */
+  url: string | null;
+  filename: string | null;
+  timestamp?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface SiteVisitInspection {

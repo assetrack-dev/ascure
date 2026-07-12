@@ -1,23 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   ArrowLeftRight,
+  ArrowUp,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
+  ChevronsUpDown,
   Clock3,
   Download,
+  ImageOff,
   Radio,
   RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -58,6 +63,7 @@ import {
   type SurveyDeletePreview,
 } from "@/lib/site-visits";
 import { downloadCompiledReport } from "@/lib/report-templates";
+import { getImageSourceUrl } from "@/components/inspection-evidence-grid";
 import {
   checkRondaanForCompletion,
   type AssetLike,
@@ -72,6 +78,7 @@ import type {
   SiteVisitAssetLink,
   SiteVisitContributions,
   SiteVisitDetail,
+  SiteVisitSensorPhoto,
   SiteVisitStatus,
   SiteVisitValidationStatus,
   SurveyDueStatus,
@@ -1252,6 +1259,304 @@ function DeleteSurveyPanel({
   );
 }
 
+interface SensorPhotoView {
+  photo: SiteVisitSensorPhoto;
+  reading: string | null;
+  poleCode: string;
+}
+
+/**
+ * Full-size viewer for a Smart Sensor photo, shown beside its recorded reading so
+ * the DC can confirm the OCR value matches the LCD in the photo. Closes on the X,
+ * a backdrop click, or Escape.
+ */
+function SensorPhotoLightbox({
+  view,
+  onClose,
+}: {
+  view: SensorPhotoView;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [broken, setBroken] = useState(false);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    // Move focus into the dialog so Escape/Tab act on it — not the thumbnail
+    // button behind the overlay — then restore focus to the opener on close.
+    dialogRef.current?.focus();
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (!focusables || focusables.length === 0) {
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
+
+  const src = getImageSourceUrl({ url: view.photo.url });
+  const gps =
+    typeof view.photo.latitude === "number" &&
+    Number.isFinite(view.photo.latitude) &&
+    typeof view.photo.longitude === "number" &&
+    Number.isFinite(view.photo.longitude)
+      ? `${view.photo.latitude.toFixed(6)}, ${view.photo.longitude.toFixed(6)}`
+      : null;
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Smart Sensor photo for ${view.poleCode}`}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] outline-none"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--line)] px-4 py-3">
+          <div className="min-w-0">
+            <p className="font-mono text-[13px] font-semibold text-[var(--foreground)]">
+              {view.poleCode}
+            </p>
+            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+              Recorded Bacaan Kelegaan 1:{" "}
+              <span className="font-semibold text-[var(--foreground-soft)]">
+                {view.reading ?? "Not recorded"}
+              </span>{" "}
+              — compare against the LCD in the photo.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--panel-muted)] hover:text-[var(--foreground)]"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[var(--panel-muted)] p-3">
+          {src && !broken ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={view.photo.filename ?? `Smart Sensor photo for ${view.poleCode}`}
+              onError={() => setBroken(true)}
+              className="max-h-[70vh] w-auto max-w-full rounded-[var(--radius-control)] object-contain"
+            />
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-[var(--muted)]">
+              <ImageOff size={28} className="text-[var(--muted-2)]" />
+              Photo unavailable — the file could not be loaded.
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] px-4 py-2 text-[11px] text-[var(--muted)]">
+          <span>{formatDateTime(view.photo.timestamp)}</span>
+          <span className="flex items-center gap-3">
+            {gps ? <span>GPS {gps}</span> : null}
+            {src ? (
+              <a
+                href={src}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-[var(--brand)] hover:underline"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Open full size
+              </a>
+            ) : null}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type AssetSortKey =
+  | "rondaan"
+  | "lama"
+  | "bacaan"
+  | "gambar"
+  | "catitan"
+  | "type"
+  | "source"
+  | "added";
+type AssetSortDirection = "asc" | "desc";
+
+function assetSortText(value: string | null | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * Comparable value for a Linked-Assets column: numeric for the reading / photo
+ * presence / added-date, natural-sortable lowercase text for the rest. Empties
+ * collapse to "" or 0 so they cluster at one end (matches the Assets table).
+ */
+function getAssetSortValue(link: SiteVisitAssetLink, key: AssetSortKey): string | number {
+  switch (key) {
+    case "rondaan":
+      return assetSortText(link.asset.assetCode);
+    case "lama":
+      return assetSortText(link.asset.noTiangLama ?? link.asset.name);
+    case "bacaan": {
+      const raw = link.checklist?.bacaanKelegaan1 ?? "";
+      const numeric = Number.parseFloat(raw);
+      return Number.isFinite(numeric) ? numeric : assetSortText(raw);
+    }
+    case "gambar":
+      return link.checklist?.bacaanKelegaan1Image?.url ? 1 : 0;
+    case "catitan":
+      return assetSortText(link.checklist?.catitan);
+    case "type":
+      return assetSortText(link.asset.assetType?.name ?? link.asset.assetType?.code);
+    case "source":
+      return assetSortText(link.source);
+    case "added": {
+      const time = link.addedAt ? new Date(link.addedAt).getTime() : 0;
+      return Number.isFinite(time) ? time : 0;
+    }
+  }
+}
+
+function compareAssetSortValues(left: string | number, right: string | number) {
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  // Natural, case-insensitive — so "A 1/1/1/1/2" orders sensibly with numbers.
+  return String(left).localeCompare(String(right), "en", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+/** Clickable Linked-Assets column header: sort by this key, toggle asc/desc. */
+function SortButton({
+  label,
+  sortKey,
+  activeSortKey,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: AssetSortKey;
+  activeSortKey: AssetSortKey;
+  direction: AssetSortDirection;
+  onSort: (key: AssetSortKey) => void;
+}) {
+  const isActive = sortKey === activeSortKey;
+  const Icon = isActive ? (direction === "asc" ? ArrowUp : ArrowDown) : ChevronsUpDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      aria-label={`Sort by ${label}${
+        isActive ? (direction === "asc" ? " (ascending)" : " (descending)") : ""
+      }`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap text-left transition ${
+        isActive ? "text-[var(--foreground)]" : "hover:text-[var(--foreground-soft)]"
+      }`}
+    >
+      {label}
+      <Icon size={13} className={isActive ? "text-[var(--brand)]" : "text-[var(--muted-2)]"} />
+    </button>
+  );
+}
+
+/**
+ * Linked-Assets cell for the Smart Sensor photo behind a Bacaan Kelegaan 1
+ * reading. Shows a thumbnail that opens the full-size viewer; a muted dash when
+ * no item-tagged photo was captured. Stops click/keyboard events from bubbling
+ * to the row (which navigates to the asset detail).
+ */
+function SensorPhotoCell({
+  photo,
+  reading,
+  poleCode,
+  onOpen,
+}: {
+  photo: SiteVisitSensorPhoto | null;
+  reading: string | null;
+  poleCode: string;
+  onOpen: (view: SensorPhotoView) => void;
+}) {
+  const [broken, setBroken] = useState(false);
+  const src = photo ? getImageSourceUrl({ url: photo.url }) : null;
+
+  if (!photo || !src) {
+    // No item-tagged photo was captured for this reading.
+    return <span className="text-[var(--muted-2)]">—</span>;
+  }
+
+  if (broken) {
+    // A photo record exists but its file could not be loaded — flag it (distinct
+    // from the em-dash "no photo") so the DC knows the reading is unverifiable.
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[var(--muted-2)]"
+        title="Sensor photo unavailable"
+      >
+        <ImageOff size={14} /> N/A
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen({ photo, reading, poleCode });
+      }}
+      onKeyDown={(event) => {
+        // Keep Enter/Space from bubbling to the row (which navigates to the
+        // asset); let every other key (Escape, Tab, …) pass through.
+        if (event.key === "Enter" || event.key === " ") {
+          event.stopPropagation();
+        }
+      }}
+      aria-label={`View Smart Sensor photo for ${poleCode}`}
+      className="group block h-10 w-14 overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        onError={() => setBroken(true)}
+        className="h-full w-full object-cover transition group-hover:scale-105"
+      />
+    </button>
+  );
+}
+
 function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -1266,6 +1571,13 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [contributions, setContributions] = useState<SiteVisitContributions | null>(null);
   const [assetSearch, setAssetSearch] = useState("");
   const [inspectionsExpanded, setInspectionsExpanded] = useState(false);
+  const [sensorPhotoView, setSensorPhotoView] = useState<SensorPhotoView | null>(null);
+  // Stable identity so the lightbox's focus effect isn't torn down/re-run (and
+  // focus yanked back) by the 60s auto-refresh re-render while it's open.
+  const closeSensorPhoto = useCallback(() => setSensorPhotoView(null), []);
+  const [assetSortKey, setAssetSortKey] = useState<AssetSortKey>("rondaan");
+  const [assetSortDirection, setAssetSortDirection] =
+    useState<AssetSortDirection>("asc");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1572,6 +1884,30 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     });
   }, [operationalAssetRows, assetSearch]);
 
+  const handleAssetSort = useCallback(
+    (key: AssetSortKey) => {
+      if (key === assetSortKey) {
+        setAssetSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+        return;
+      }
+      setAssetSortKey(key);
+      // Dates read most-useful newest-first; every other column A→Z.
+      setAssetSortDirection(key === "added" ? "desc" : "asc");
+    },
+    [assetSortKey],
+  );
+
+  const sortedAssetRows = useMemo(() => {
+    const directionMultiplier = assetSortDirection === "asc" ? 1 : -1;
+    return [...filteredAssetRows].sort(
+      (left, right) =>
+        compareAssetSortValues(
+          getAssetSortValue(left, assetSortKey),
+          getAssetSortValue(right, assetSortKey),
+        ) * directionMultiplier,
+    );
+  }, [filteredAssetRows, assetSortKey, assetSortDirection]);
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
@@ -1873,17 +2209,32 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           <table className="min-w-full text-left">
                             <thead>
                               <tr className={`sticky top-0 z-10 border-y border-[var(--line)] ${tableHeadClass}`}>
-                                <th className={tableHeadCellClass}>No Tiang Rondaan</th>
-                                <th className={tableHeadCellClass}>No Tiang Lama</th>
-                                <th className={tableHeadCellClass}>Bacaan Kelegaan 1</th>
-                                <th className={tableHeadCellClass}>Catitan</th>
-                                <th className={tableHeadCellClass}>Type</th>
-                                <th className={tableHeadCellClass}>Source</th>
-                                <th className={tableHeadCellClass}>Added</th>
+                                {(
+                                  [
+                                    ["No Tiang Rondaan", "rondaan"],
+                                    ["No Tiang Lama", "lama"],
+                                    ["Bacaan Kelegaan 1", "bacaan"],
+                                    ["Gambar Kelegaan", "gambar"],
+                                    ["Catitan", "catitan"],
+                                    ["Type", "type"],
+                                    ["Source", "source"],
+                                    ["Added", "added"],
+                                  ] as [string, AssetSortKey][]
+                                ).map(([label, key]) => (
+                                  <th key={key} className={tableHeadCellClass}>
+                                    <SortButton
+                                      label={label}
+                                      sortKey={key}
+                                      activeSortKey={assetSortKey}
+                                      direction={assetSortDirection}
+                                      onSort={handleAssetSort}
+                                    />
+                                  </th>
+                                ))}
                               </tr>
                             </thead>
                             <tbody>
-                              {filteredAssetRows.map((link) => {
+                              {sortedAssetRows.map((link) => {
                                 // Carry a return path so Asset Detail's back
                                 // button comes back here, not to the Assets list.
                                 const assetHref = `/assets/${link.assetId}?from=${encodeURIComponent(
@@ -1911,6 +2262,14 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   </td>
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.checklist?.bacaanKelegaan1)}
+                                  </td>
+                                  <td className={tableCellClass}>
+                                    <SensorPhotoCell
+                                      photo={link.checklist?.bacaanKelegaan1Image ?? null}
+                                      reading={link.checklist?.bacaanKelegaan1 ?? null}
+                                      poleCode={link.asset.assetCode}
+                                      onOpen={setSensorPhotoView}
+                                    />
                                   </td>
                                   <td className={`${tableCellClass} min-w-48`}>
                                     {formatNullable(link.checklist?.catitan)}
@@ -2054,6 +2413,9 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
           </div>
         </div>
       </main>
+      {sensorPhotoView ? (
+        <SensorPhotoLightbox view={sensorPhotoView} onClose={closeSensorPhoto} />
+      ) : null}
     </AppShell>
   );
 }
