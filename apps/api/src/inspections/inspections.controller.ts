@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   UploadedFile,
@@ -16,6 +17,7 @@ import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { CorrectReadingDto } from './dto/correct-reading.dto';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { DeclareEmergencyDto } from './dto/declare-emergency.dto';
 import { SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
@@ -72,6 +74,17 @@ export class InspectionsController {
   @Post(':id/submit')
   submit(@CurrentUser() user: RequestUser, @Param() params: InspectionIdParamDto) {
     return this.inspectionsService.submit(user, params.id);
+  }
+
+  // In-place DC correction of the recorded BACAAN KELEGAAN 1 reading (governance
+  // override of the submitted-inspection lock; ADMIN / MANAGER / QA actor only).
+  @Patch(':id/kelegaan-reading')
+  correctKelegaanReading(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionIdParamDto,
+    @Body() dto: CorrectReadingDto,
+  ) {
+    return this.inspectionsService.correctKelegaanReading(user, params.id, dto);
   }
 
   @Post(':id/amend')

@@ -469,6 +469,7 @@ function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink
       longitude: readNumber(asset, "longitude"),
       assetType: normalizeTeam(asset.assetType),
       substation: normalizeSubstation(asset.substation),
+      latestInspectionId: firstString(nestedRecord(asset, "latestInspection"), ["id"]),
     },
     checklist: {
       bacaanKelegaan1: firstString(nestedRecord(record, "checklist"), [
@@ -836,6 +837,30 @@ export async function reassignSiteVisit(
   }
 
   return visit;
+}
+
+/**
+ * In-place DC correction of a pole's recorded BACAAN KELEGAAN 1 reading on its
+ * latest submitted inspection (governance override of the submitted-lock — see
+ * PATCH /inspections/:id/kelegaan-reading). `value` is free text: a number, the
+ * "LO" sentinel, or "" to clear.
+ */
+export async function correctKelegaanReading(
+  token: string,
+  inspectionId: string,
+  value: string,
+  siteVisitId: string,
+): Promise<void> {
+  await apiRequest<unknown>(
+    `/inspections/${encodeURIComponent(inspectionId)}/kelegaan-reading`,
+    {
+      method: "PATCH",
+      token,
+      // siteVisitId lets the server reject a cross-cycle correction (the shown
+      // reading is the pole's latest submitted inspection, maybe a newer cycle).
+      body: JSON.stringify({ value, siteVisitId }),
+    },
+  );
 }
 
 function normalizeCycleDeltaPole(rawPole: unknown, index: number): CycleDeltaPole | null {

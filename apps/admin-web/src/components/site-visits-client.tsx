@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -99,6 +99,9 @@ const DEFAULT_SITE_VISIT_CREATE_FORM: SiteVisitCreateForm = {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const AUTO_REFRESH_MS = 60000;
+// Per-tab persistence of the Site Visits filter/sort/page view, so returning
+// from a visit detail restores the same filtered list.
+const FILTERS_STORAGE_KEY = "ascure:admin-web:site-visits-filters";
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "All statuses", value: "ALL" },
   { label: "Not Started", value: "NOT_STARTED" },
@@ -734,6 +737,92 @@ function SiteVisitsContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Persist the filter/sort/page view so returning from a visit detail (or any
+  // back-navigation) restores the same filtered list instead of resetting.
+  const filtersHydrated = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as Record<string, unknown>;
+        // Enum filters: only restore values that still exist in their option
+        // sets, so a value removed by a deploy can't strand the list. The
+        // data-derived filters (mainhead/pencawang/team) are reconciled against
+        // the loaded data below instead.
+        const statusValues = new Set<string>(STATUS_OPTIONS.map((o) => o.value));
+        const visitTypeValues = new Set<string>(VISIT_TYPE_OPTIONS.map((o) => o.value));
+        const domainValues = new Set<string>(OPERATIONAL_DOMAIN_OPTIONS.map((o) => o.value));
+        if (typeof saved.search === "string") setSearch(saved.search);
+        if (typeof saved.mainheadFilter === "string") setMainheadFilter(saved.mainheadFilter);
+        if (typeof saved.pencawangFilter === "string") setPencawangFilter(saved.pencawangFilter);
+        if (typeof saved.teamFilter === "string") setTeamFilter(saved.teamFilter);
+        if (typeof saved.memberFilter === "string") setMemberFilter(saved.memberFilter);
+        if (typeof saved.statusFilter === "string" && statusValues.has(saved.statusFilter))
+          setStatusFilter(saved.statusFilter as StatusFilter);
+        if (typeof saved.visitTypeFilter === "string" && visitTypeValues.has(saved.visitTypeFilter))
+          setVisitTypeFilter(saved.visitTypeFilter as VisitTypeFilter);
+        if (typeof saved.operationalDomainFilter === "string" && domainValues.has(saved.operationalDomainFilter))
+          setOperationalDomainFilter(saved.operationalDomainFilter as OperationalDomainFilter);
+        if (typeof saved.startDate === "string") setStartDate(saved.startDate);
+        if (typeof saved.endDate === "string") setEndDate(saved.endDate);
+        if (typeof saved.sortKey === "string") setSortKey(saved.sortKey as SortKey);
+        if (saved.sortDirection === "asc" || saved.sortDirection === "desc")
+          setSortDirection(saved.sortDirection);
+        if (typeof saved.pageSize === "number" && saved.pageSize > 0) setPageSize(saved.pageSize);
+      }
+    } catch {
+      // Ignore corrupt/unavailable storage — fall back to defaults.
+    }
+  }, []);
+
+  useEffect(() => {
+    // Skip the initial mount commit: the restore effect above runs in the SAME
+    // commit and its setState hasn't re-rendered yet, so the values here are
+    // still the defaults — writing now would clobber the saved view before it
+    // loads. Prime on the first run, then persist on every change after.
+    if (!filtersHydrated.current) {
+      filtersHydrated.current = true;
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(
+        FILTERS_STORAGE_KEY,
+        JSON.stringify({
+          search,
+          mainheadFilter,
+          pencawangFilter,
+          teamFilter,
+          memberFilter,
+          statusFilter,
+          visitTypeFilter,
+          operationalDomainFilter,
+          startDate,
+          endDate,
+          sortKey,
+          sortDirection,
+          pageSize,
+        }),
+      );
+    } catch {
+      // Ignore quota/serialization errors — persistence is best-effort.
+    }
+  }, [
+    search,
+    mainheadFilter,
+    pencawangFilter,
+    teamFilter,
+    memberFilter,
+    statusFilter,
+    visitTypeFilter,
+    operationalDomainFilter,
+    startDate,
+    endDate,
+    sortKey,
+    sortDirection,
+    pageSize,
+  ]);
+
   const handleLogout = useCallback(() => {
     clearStoredSession();
     router.replace("/login");
@@ -859,6 +948,34 @@ function SiteVisitsContent() {
       ).sort((a, b) => a.localeCompare(b)),
     [visits],
   );
+
+  // Reconcile the data-derived filters against the loaded data: a restored (or
+  // auto-refresh-stale) Mainhead/Pencawang/Team value whose option no longer
+  // exists would strand the list on an empty result with a blank control, so
+  // reset it to "ALL". Gated on loaded visits so it never clears a valid filter
+  // during the initial fetch (when the option lists are still empty).
+  useEffect(() => {
+    if (visits.length === 0) {
+      return;
+    }
+    if (mainheadFilter !== "ALL" && !mainheadOptions.includes(mainheadFilter)) {
+      setMainheadFilter("ALL");
+    }
+    if (pencawangFilter !== "ALL" && !pencawangOptions.includes(pencawangFilter)) {
+      setPencawangFilter("ALL");
+    }
+    if (teamFilter !== "ALL" && !teamOptions.some(([id]) => id === teamFilter)) {
+      setTeamFilter("ALL");
+    }
+  }, [
+    visits.length,
+    mainheadOptions,
+    pencawangOptions,
+    teamOptions,
+    mainheadFilter,
+    pencawangFilter,
+    teamFilter,
+  ]);
 
   const filteredVisits = useMemo(() => {
     const normalizedSearch = normalizeSearchText(search);

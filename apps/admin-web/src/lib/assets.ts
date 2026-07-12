@@ -383,6 +383,20 @@ export async function fetchAssetDetail(token: string, assetId: string): Promise<
   return normalizeAssetDetail(payload);
 }
 
+/** Update a pole's NO TIANG RONDAAN (asset code). Pass an already-canonicalized
+ *  code (normalizePoleInput) so the stored value matches the rondaan grammar. */
+export async function updateAssetCode(
+  token: string,
+  assetId: string,
+  assetCode: string,
+): Promise<void> {
+  await apiRequest<unknown>(`/assets/${encodeURIComponent(assetId)}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ assetCode }),
+  });
+}
+
 export interface DeleteAssetsResult {
   deleted: number;
   deletedIds: string[];

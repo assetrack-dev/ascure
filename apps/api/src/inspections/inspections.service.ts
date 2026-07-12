@@ -50,6 +50,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
+import { CorrectReadingDto } from './dto/correct-reading.dto';
+import { isQaActor } from '../common/authorization/qa-actor';
 import {
   SaveInspectionItemResultDto,
   SaveInspectionResultItemDto,
@@ -526,6 +528,118 @@ export class InspectionsService {
     ]);
 
     return this.reloadForm(user, inspectionId);
+  }
+
+  /**
+   * In-place governance correction of the recorded BACAAN KELEGAAN 1 reading (the
+   * Smart-Sensor value the DC re-verifies against the photo). Unlike saveResults,
+   * this deliberately BYPASSES the submitted-inspection lock — it is a targeted
+   * data-quality fix, so it is restricted to ADMIN / MANAGER / QA actor (never a
+   * technician) and scoped to inspections the caller can reach; old→new is logged.
+   * Numeric text → valueNumber, non-numeric (e.g. the "LO" sentinel) → valueText,
+   * empty → clears the recorded value.
+   */
+  async correctKelegaanReading(
+    user: RequestUser,
+    inspectionId: string,
+    dto: CorrectReadingDto,
+  ) {
+    if (
+      user.role !== UserRole.ADMIN &&
+      user.role !== UserRole.MANAGER &&
+      !(await isQaActor(this.prisma, user))
+    ) {
+      throw new ForbiddenException(
+        'Only an admin, manager, or QA actor can correct a recorded reading.',
+      );
+    }
+
+    // Scope with the FULL ScopeContext so a QA/DC actor — who governs by mainhead,
+    // not team membership — can actually reach the inspection (mirrors the defects
+    // path). Without ctx the QA branch is skipped and every DC edit 404s.
+    const ctx = await buildScopeContext(this.prisma, user);
+    const inspection = await this.getAccessibleInspection(inspectionId, user, ctx);
+
+    // A cancelled visit is closed data — never mutate its readings.
+    if (inspection.siteVisit.status === SiteVisitStatus.CANCELLED) {
+      throw new BadRequestException(
+        'This visit is cancelled — its readings cannot be corrected.',
+      );
+    }
+
+    // Reject a correction whose inspection belongs to a DIFFERENT survey cycle than
+    // the visit on screen: for a re-surveyed pole the displayed reading is the
+    // pole's globally-latest submitted inspection, which may be a newer cycle.
+    if (dto.siteVisitId && inspection.siteVisitId !== dto.siteVisitId) {
+      throw new BadRequestException(
+        'This reading was recorded in a different survey cycle — open that visit to correct it.',
+      );
+    }
+
+    // Resolve the KELEGAAN item in ALIAS-PRIORITY order (matching the column
+    // serializer), not template sort order, so on a split template the edit hits
+    // the same item the column displays.
+    const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
+    const items = inspection.template.sections.flatMap((section) => section.items);
+    let matched: (typeof items)[number] | undefined;
+    for (const alias of ['GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1'].map(norm)) {
+      matched = items.find((templateItem) => norm(templateItem.label) === alias);
+      if (matched) {
+        break;
+      }
+    }
+
+    if (!matched) {
+      throw new BadRequestException(
+        'This inspection has no BACAAN KELEGAAN 1 item to correct.',
+      );
+    }
+    const item = matched;
+
+    const existing = inspection.results.find(
+      (result) => result.templateItemId === item.id,
+    );
+    const oldValue =
+      existing?.valueText?.trim() ||
+      (existing?.valueNumber != null ? existing.valueNumber.toString() : null);
+
+    const raw = dto.value?.trim() ?? '';
+    const numeric = raw === '' ? Number.NaN : Number(raw);
+    const isNumeric = raw !== '' && Number.isFinite(numeric);
+    // valueNumber is Decimal(18,4) — reject a finite value too large for the
+    // column instead of letting Postgres raise a 500 (numeric field overflow).
+    if (isNumeric && Math.abs(numeric) >= 1e14) {
+      throw new BadRequestException('Reading is out of range.');
+    }
+    const data = {
+      valueText: raw === '' ? null : isNumeric ? null : raw.toUpperCase(),
+      valueNumber: isNumeric ? numeric : null,
+      valueBoolean: null,
+      valueDate: null,
+      valueDateTime: null,
+      valueJson: Prisma.DbNull,
+    };
+
+    await this.prisma.inspectionResult.upsert({
+      where: {
+        inspectionId_templateItemId: {
+          inspectionId: inspection.id,
+          templateItemId: item.id,
+        },
+      },
+      create: { inspectionId: inspection.id, templateItemId: item.id, ...data },
+      update: data,
+    });
+
+    const newValue =
+      data.valueText ??
+      (data.valueNumber != null ? data.valueNumber.toString() : null);
+
+    this.logger.warn(
+      `BACAAN KELEGAAN 1 corrected on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}"`,
+    );
+
+    return { ok: true, value: newValue };
   }
 
   /** Map templateItemId → chosen option value(s) from the structured `results`
@@ -1043,12 +1157,16 @@ export class InspectionsService {
     return '.jpg';
   }
 
-  private async getAccessibleInspection(inspectionId: string, user: RequestUser) {
+  private async getAccessibleInspection(
+    inspectionId: string,
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ) {
     const inspection = await this.prisma.inspection.findFirst({
       where: {
         id: inspectionId,
         tenantId: user.tenantId,
-        ...this.inspectionAccessScope(user),
+        ...this.inspectionAccessScope(user, ctx),
       },
       include: {
         ...this.inspectionInclude(),
@@ -1135,8 +1253,13 @@ export class InspectionsService {
   // this used a narrow own-team-membership filter, which locked a MANAGER out of
   // viewing/amending their own company's inspections (they oversee teams but
   // aren't members of them).
-  private inspectionAccessScope(user: RequestUser): Prisma.InspectionWhereInput {
-    return { siteVisit: siteVisitAccessWhere(user) };
+  private inspectionAccessScope(
+    user: RequestUser,
+    ctx?: ScopeContext,
+  ): Prisma.InspectionWhereInput {
+    // ctx enables the QA-actor (governs by mainhead) branch of siteVisitAccessWhere;
+    // omit it and a QA/DC caller falls back to team membership and matches nothing.
+    return { siteVisit: siteVisitAccessWhere(user, ctx) };
   }
 
   // READ-ONLY oversight variant of inspectionAccessScope: a MANAGER additionally

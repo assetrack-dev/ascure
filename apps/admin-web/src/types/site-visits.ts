@@ -147,6 +147,9 @@ export interface SiteVisitAssetLink {
       name?: string | null;
     } | null;
     substation?: SiteVisitSubstation | null;
+    /** Latest SUBMITTED inspection for this pole — the edit target for an
+     *  in-place Bacaan Kelegaan 1 correction. Null when never submitted. */
+    latestInspectionId?: string | null;
   };
   /** Latest-inspection checklist readings surfaced as columns for DC checking. */
   checklist?: {

@@ -10,12 +10,14 @@ import {
   ArrowLeftRight,
   ArrowUp,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronRight,
   ChevronsUpDown,
   Clock3,
   Download,
   ImageOff,
+  Pencil,
   Radio,
   RefreshCw,
   Search,
@@ -48,6 +50,7 @@ import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
+  correctKelegaanReading,
   deleteSiteVisit,
   fetchCycleDelta,
   fetchSiteVisitContributions,
@@ -63,9 +66,11 @@ import {
   type SurveyDeletePreview,
 } from "@/lib/site-visits";
 import { downloadCompiledReport } from "@/lib/report-templates";
+import { updateAssetCode } from "@/lib/assets";
 import { getImageSourceUrl } from "@/components/inspection-evidence-grid";
 import {
   checkRondaanForCompletion,
+  normalizePoleInput,
   type AssetLike,
   type RondaanCheckResult,
 } from "@ascure/shared-utils";
@@ -1491,6 +1496,166 @@ function SortButton({
 }
 
 /**
+ * Inline-editable Linked-Assets cell (NO TIANG RONDAAN / Bacaan Kelegaan 1). When
+ * `canEdit`, a hover pencil switches the cell to an input with save/cancel;
+ * Enter saves, Esc cancels. All interactions stopPropagation so the row's
+ * navigate-to-asset click/keydown doesn't fire. `onSave` does the API write +
+ * refetch; errors surface inline.
+ */
+function EditableCell({
+  value,
+  canEdit,
+  onSave,
+  ariaLabel,
+  placeholder,
+  inputMode = "text",
+  mono = false,
+}: {
+  value: string | null;
+  canEdit: boolean;
+  onSave: (next: string) => Promise<void>;
+  ariaLabel: string;
+  placeholder?: string;
+  inputMode?: "text" | "decimal";
+  mono?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      wasEditing.current = true;
+    } else if (wasEditing.current) {
+      // On close (save/cancel) return focus to the pencil so a keyboard user
+      // keeps their place instead of dropping to document.body.
+      wasEditing.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [editing]);
+
+  const begin = (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+    setDraft(value ?? "");
+    setError("");
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setError("");
+  };
+  const commit = async () => {
+    if (saving) {
+      return;
+    }
+    const next = draft.trim();
+    if (next === (value ?? "").trim()) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(next);
+      setEditing(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="group/edit flex items-center gap-1.5">
+        <span className={mono ? "font-mono" : undefined}>{formatNullable(value)}</span>
+        {canEdit ? (
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={begin}
+            onKeyDown={(event) => event.stopPropagation()}
+            aria-label={`Edit ${ariaLabel}`}
+            className="shrink-0 rounded p-0.5 text-[var(--muted-2)] opacity-0 outline-none transition group-hover/edit:opacity-100 hover:text-[var(--brand)] focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-[var(--brand)]"
+          >
+            <Pencil size={13} />
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-center gap-1">
+        <input
+          ref={inputRef}
+          value={draft}
+          inputMode={inputMode}
+          disabled={saving}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
+          onChange={(event) => setDraft(event.target.value)}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void commit();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+          className={`h-8 w-full min-w-28 rounded-[var(--radius-control)] border border-[var(--line-strong)] bg-[var(--panel)] px-2 text-[13px] text-[var(--foreground)] outline-none focus:border-[var(--brand)] ${
+            mono ? "font-mono" : ""
+          }`}
+        />
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            void commit();
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+          disabled={saving}
+          aria-label="Save"
+          className="shrink-0 rounded p-1 text-[var(--success)] hover:bg-[var(--panel-muted)] disabled:opacity-50"
+        >
+          {saving ? (
+            <RefreshCw size={14} className="animate-spin" />
+          ) : (
+            <Check size={14} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            cancel();
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+          disabled={saving}
+          aria-label="Cancel"
+          className="shrink-0 rounded p-1 text-[var(--muted)] hover:bg-[var(--panel-muted)] disabled:opacity-50"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      {error ? (
+        <span className="text-[11px] text-[var(--critical-text)]">{error}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * Linked-Assets cell for the Smart Sensor photo behind a Bacaan Kelegaan 1
  * reading. Shows a thumbnail that opens the full-size viewer; a muted dash when
  * no item-tagged photo was captured. Stops click/keyboard events from bubbling
@@ -1685,6 +1850,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   // flag — MANAGER collapses to VIEWER client-side); the API scopes a MANAGER to
   // their own company.
   const canDeleteSurvey = isAdmin || (session?.user?.canDeleteSurvey ?? false);
+  // Inline edit of NO TIANG RONDAAN + Bacaan Kelegaan 1 in the Linked Assets
+  // table — ADMIN, DC (canGovernQa), or the respective MANAGER (canReviewSurvey).
+  // The API re-enforces its own scope on each write.
+  const canEditLinkedAssets = canGovern || canReviewSurvey;
 
   const runLifecycle = useCallback(
     async (action: LifecycleAction, run: () => Promise<SiteVisitDetail>) => {
@@ -2249,14 +2418,59 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--brand-tint)]`}
                                   aria-label={`Open asset ${link.asset.assetCode}`}
                                 >
-                                  <td className={`${tableMonoCellClass} whitespace-nowrap font-semibold text-[var(--foreground)]`}>
-                                    {link.asset.assetCode}
+                                  <td className={`${tableMonoCellClass} font-semibold text-[var(--foreground)]`}>
+                                    <EditableCell
+                                      value={link.asset.assetCode}
+                                      canEdit={canEditLinkedAssets}
+                                      mono
+                                      ariaLabel={`NO TIANG RONDAAN for ${link.asset.assetCode}`}
+                                      onSave={async (next) => {
+                                        const token = session?.token;
+                                        if (!token) {
+                                          throw new Error("Your session has expired.");
+                                        }
+                                        const canonical = normalizePoleInput(next);
+                                        if (!canonical) {
+                                          throw new Error("NO TIANG RONDAAN is required.");
+                                        }
+                                        await updateAssetCode(token, link.assetId, canonical);
+                                        await loadVisit(token, false);
+                                      }}
+                                    />
                                   </td>
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.asset.noTiangLama ?? link.asset.name)}
                                   </td>
-                                  <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    {formatNullable(link.checklist?.bacaanKelegaan1)}
+                                  <td className={tableCellClass}>
+                                    <EditableCell
+                                      value={link.checklist?.bacaanKelegaan1 ?? null}
+                                      canEdit={
+                                        canEditLinkedAssets &&
+                                        Boolean(link.asset.latestInspectionId)
+                                      }
+                                      inputMode="decimal"
+                                      placeholder="e.g. 5.69"
+                                      ariaLabel={`Bacaan Kelegaan 1 for ${link.asset.assetCode}`}
+                                      onSave={async (next) => {
+                                        const token = session?.token;
+                                        const inspectionId = link.asset.latestInspectionId;
+                                        if (!token) {
+                                          throw new Error("Your session has expired.");
+                                        }
+                                        if (!inspectionId) {
+                                          throw new Error(
+                                            "No submitted inspection to correct.",
+                                          );
+                                        }
+                                        await correctKelegaanReading(
+                                          token,
+                                          inspectionId,
+                                          next,
+                                          siteVisitId,
+                                        );
+                                        await loadVisit(token, false);
+                                      }}
+                                    />
                                   </td>
                                   <td className={tableCellClass}>
                                     <SensorPhotoCell
