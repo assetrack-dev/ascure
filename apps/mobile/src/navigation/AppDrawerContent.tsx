@@ -18,6 +18,7 @@ const NAV_ITEMS: { label: string; route: DrawerRouteName; icon: FeatherName }[] 
   { label: 'Dashboard', route: 'Dashboard', icon: 'bar-chart-2' },
   { label: 'Map', route: 'AssetMap', icon: 'map' },
   { label: 'Defects', route: 'DefectList', icon: 'alert-triangle' },
+  { label: 'Offline Maps', route: 'OfflineMaps', icon: 'download-cloud' },
   { label: 'Sync Queue', route: 'SyncQueue', icon: 'upload-cloud' },
 ];
 

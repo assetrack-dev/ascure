@@ -4,6 +4,7 @@ import { DefectListScreen } from '../screens/DefectListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { MapScreen } from '../screens/MapScreen';
 import { SyncQueueScreen } from '../screens/SyncQueueScreen';
+import { OfflineMapsScreen } from '../screens/OfflineMapsScreen';
 import { AppDrawerContent } from './AppDrawerContent';
 import type { AppDrawerParamList } from './types';
 
@@ -25,6 +26,7 @@ export function AppDrawer() {
       <Drawer.Screen name="AssetMap" component={MapScreen} />
       <Drawer.Screen name="DefectList" component={DefectListScreen} />
       <Drawer.Screen name="SyncQueue" component={SyncQueueScreen} />
+      <Drawer.Screen name="OfflineMaps" component={OfflineMapsScreen} />
     </Drawer.Navigator>
   );
 }

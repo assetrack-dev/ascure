@@ -40,6 +40,7 @@ export type AppDrawerParamList = {
   AssetMap: AssetMapParams | undefined;
   DefectList: undefined;
   SyncQueue: undefined;
+  OfflineMaps: undefined;
 };
 
 export type RootStackParamList = {
