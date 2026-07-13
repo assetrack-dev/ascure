@@ -116,6 +116,9 @@ export function CheckInScreen() {
   }
 
   const [teams, setTeams] = useState<Team[]>([]);
+  // True only after the options (teams etc.) actually loaded from the server, so
+  // an offline/failed load isn't mistaken for "you have no team".
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
   const [substations, setSubstations] = useState<Substation[]>([]);
   const [mainheads, setMainheads] = useState<Mainhead[]>([]);
   const [activeVisits, setActiveVisits] = useState<SiteVisit[]>([]);
@@ -225,6 +228,7 @@ export function CheckInScreen() {
     try {
       setError(null);
       setIsLoading(true);
+      setOptionsLoaded(false);
 
       const [teamList, substationList, mainheadList, activeVisitList] = await Promise.all([
         api.getTeams(token),
@@ -237,6 +241,7 @@ export function CheckInScreen() {
       setSubstations(substationList);
       setMainheads(mainheadList);
       setActiveVisits(activeVisitList);
+      setOptionsLoaded(true);
 
       if (teamList.length > 0) {
         setSelectedTeamId((currentValue) =>
@@ -798,7 +803,13 @@ export function CheckInScreen() {
 
           <Card>
             <SectionTitle>Team and PIC</SectionTitle>
-            {teams.length === 0 ? (
+            {!optionsLoaded ? (
+              <EmptyState
+                icon="wifi-off"
+                title="Couldn't load your team"
+                description="You appear to be offline. Starting a new site visit needs a connection — turn off Work Offline (menu) or get signal, then tap Refresh."
+              />
+            ) : teams.length === 0 ? (
               <EmptyState
                 icon="users"
                 title="No active teams"
