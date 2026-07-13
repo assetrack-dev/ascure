@@ -259,6 +259,9 @@ importers:
       expo-font:
         specifier: ~55.0.8
         version: 55.0.8(expo@55.0.26)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+      expo-image-manipulator:
+        specifier: ~55.0.16
+        version: 55.0.18(expo@55.0.26)
       expo-location:
         specifier: ~55.1.10
         version: 55.1.10(expo@55.0.26)(typescript@5.9.3)
@@ -268,6 +271,9 @@ importers:
       expo-status-bar:
         specifier: ~55.0.6
         version: 55.0.6(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+      jpeg-js:
+        specifier: ^0.4.4
+        version: 0.4.4
       react:
         specifier: 19.2.0
         version: 19.2.0
@@ -3645,6 +3651,16 @@ packages:
       react: '*'
       react-native: '*'
 
+  expo-image-loader@55.0.1:
+    resolution: {integrity: sha512-o8gCo1j59XpXDh0/llgNYPcnfecYQhafQAO0yw5pb+kukPizvNoEqea8tFQIIQmNYqxd6Ljgs7lLXed0gXpOdQ==}
+    peerDependencies:
+      expo: '*'
+
+  expo-image-manipulator@55.0.18:
+    resolution: {integrity: sha512-wEXPvVFB6Zn/Ybghm5RNumQ8cLdo84kIqDaSZihcxmFIq4JNfaTCPx3fAJWGgcgoUWIrqrPSAHr6ZT8eisuQfg==}
+    peerDependencies:
+      expo: '*'
+
   expo-keep-awake@55.0.8:
     resolution: {integrity: sha512-PfIpMfM+STOBwkR5XOE+yVtER86c44MD+W8QD8JxuO0sT9pF7Y1SJYakWlpvX8xsGA+bjKLxftm9403s9kQhKA==}
     peerDependencies:
@@ -4315,6 +4331,9 @@ packages:
   jiti@2.6.1:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
+
+  jpeg-js@0.4.4:
+    resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
 
   js-md5@0.8.3:
     resolution: {integrity: sha512-qR0HB5uP6wCuRMrWPTrkMaev7MJZwJuuw4fnwAzRgP4J4/F8RwtodOKpGp4XpqsLBFzzgqIO42efFAyz2Et6KQ==}
@@ -10070,6 +10089,15 @@ snapshots:
       react: 19.2.0
       react-native: 0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
+  expo-image-loader@55.0.1(expo@55.0.26):
+    dependencies:
+      expo: 55.0.26(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native-worklets@0.7.4(@babel/core@7.29.0)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
+
+  expo-image-manipulator@55.0.18(expo@55.0.26):
+    dependencies:
+      expo: 55.0.26(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native-worklets@0.7.4(@babel/core@7.29.0)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
+      expo-image-loader: 55.0.1(expo@55.0.26)
+
   expo-keep-awake@55.0.8(expo@55.0.26)(react@19.2.0):
     dependencies:
       expo: 55.0.26(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native-worklets@0.7.4(@babel/core@7.29.0)(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.6(patch_hash=c5034a18ecfb40bdcb54913d5e17341001193a4a44f72ecefbdac09282f575c7)(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
@@ -11007,6 +11035,8 @@ snapshots:
   jimp-compact@0.16.1: {}
 
   jiti@2.6.1: {}
+
+  jpeg-js@0.4.4: {}
 
   js-md5@0.8.3: {}
 

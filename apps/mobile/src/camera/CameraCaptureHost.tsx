@@ -29,6 +29,7 @@ import { Feather } from '@expo/vector-icons';
 import { registerCameraCaptureHost, type CaptureRequest } from './captureWithCamera';
 import { TimestampStamp } from './TimestampStamp';
 import { TiltOverlay } from './TiltOverlay';
+import { READING_AIM_BOX } from '../ocr';
 
 type ReviewPhoto = {
   uri: string;
@@ -114,6 +115,7 @@ export function CameraCaptureHost() {
 
   const visible = request != null;
   const mode = request?.mode ?? 'photo';
+  const guide = request?.guide;
 
   // Swing the measurement line about the frame centre to follow the drag.
   function swingLine(x: number, y: number) {
@@ -463,6 +465,21 @@ export function CameraCaptureHost() {
                   <View style={[styles.gridLineH, { top: '66.66%' }]} />
                 </View>
               ) : null}
+              {guide === 'reading' && !tiltMode && frameSize.w > 0 ? (
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <View
+                    style={[
+                      styles.aimBox,
+                      {
+                        left: READING_AIM_BOX.x * frameSize.w,
+                        top: READING_AIM_BOX.y * frameSize.h,
+                        width: READING_AIM_BOX.w * frameSize.w,
+                        height: READING_AIM_BOX.h * frameSize.h,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
               {tiltMode ? <TiltOverlay angleDeg={lineAngleDeg} showHint /> : null}
               {reticle && !tiltMode ? (
                 <Animated.View
@@ -614,6 +631,15 @@ export function CameraCaptureHost() {
             {reticle?.locked && !tiltMode ? (
               <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
                 <Text style={styles.lockPill}>🔒 AE/AF LOCK · tap to refocus</Text>
+              </View>
+            ) : null}
+
+            {/* Smart Sensor aim guide (reading scan) */}
+            {guide === 'reading' && !tiltMode && !reticle?.locked ? (
+              <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
+                <Text style={[styles.levelPill, styles.guideHintPill]}>
+                  ⌖ Fit the big reading in the box · avoid glare
+                </Text>
               </View>
             ) : null}
 
@@ -888,6 +914,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: 'rgba(245,158,11,0.9)',
+  },
+  // Smart Sensor reading aim box — the crew frames the big LCD number inside it;
+  // OCR crops to this same region (READING_AIM_BOX) to isolate it from the
+  // temperature + buttons. Blue to match the app's primary accent.
+  aimBox: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    borderRadius: 10,
+    backgroundColor: 'rgba(37,99,235,0.10)',
+  },
+  guideHintPill: {
+    backgroundColor: 'rgba(37,99,235,0.92)',
   },
   evWrap: {
     position: 'absolute',

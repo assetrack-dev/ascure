@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { captureWithCamera } from '../camera/captureWithCamera';
+import { captureWithCamera, type CaptureGuide } from '../camera/captureWithCamera';
 import { TimestampStamp } from '../camera/TimestampStamp';
 import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
@@ -67,7 +67,12 @@ import {
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { getPositionWithTimeout } from '../location';
-import { scanReadingFromImage } from '../ocr';
+import {
+  scanReadingFromImage,
+  READING_AIM_BOX,
+  type ReadingScan,
+  type ReadingCandidate,
+} from '../ocr';
 import { READING_SENTINEL_LO, isReadingSentinel } from '@ascure/shared-utils';
 import {
   DraftValues,
@@ -187,6 +192,9 @@ export function InspectionFormScreen() {
   const [emergencySheetVisible, setEmergencySheetVisible] = useState(false);
   const [isDeclaringEmergency, setIsDeclaringEmergency] = useState(false);
   const [scanningItemId, setScanningItemId] = useState<string | null>(null);
+  // Latest Smart Sensor scan result per item — drives the "did you mean…"
+  // correction chips and the raw-OCR diagnostic line under the reading field.
+  const [scanByItem, setScanByItem] = useState<Record<string, ReadingScan>>({});
   const [capturingItemId, setCapturingItemId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CapturedInspectionPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -595,7 +603,7 @@ export function InspectionFormScreen() {
     }
   }
 
-  async function captureInspectionPhoto() {
+  async function captureInspectionPhoto(options?: { guide?: CaptureGuide }) {
     if (isReadOnly) {
       return null;
     }
@@ -614,7 +622,7 @@ export function InspectionFormScreen() {
       throw new Error('Location permission is required to attach GPS to the photo.');
     }
 
-    const capturedAsset = await captureWithCamera({ mode: 'photo' });
+    const capturedAsset = await captureWithCamera({ mode: 'photo', guide: options?.guide });
 
     if (!capturedAsset) {
       return null;
@@ -666,6 +674,10 @@ export function InspectionFormScreen() {
       // The original (pre-overlay) capture is the clean source for OCR — the
       // timestamp/GPS badge would otherwise feed stray digits to the parser.
       originalUri: capturedAsset.uri,
+      // Pixel dims of the original capture — used to crop the aim-box region for
+      // OCR without a fragile Image.getSize on the file URI.
+      originalWidth: capturedAsset.width,
+      originalHeight: capturedAsset.height,
     };
   }
 
@@ -748,7 +760,10 @@ export function InspectionFormScreen() {
       setScanningItemId(itemId);
       setError(null);
 
-      const captured = await captureInspectionPhoto();
+      // Open the camera with the reading aim box so the crew frames just the big
+      // LCD number — we then crop to that box for OCR (isolating it from the
+      // temperature + buttons that full-frame OCR keeps grabbing).
+      const captured = await captureInspectionPhoto({ guide: 'reading' });
 
       if (!captured) {
         return;
@@ -768,19 +783,30 @@ export function InspectionFormScreen() {
       // band (see ocr.ts). Only auto-fill a confident value — never silently
       // write the on-screen temperature or a stray glyph. Surface the raw OCR
       // text on a miss so field validation shows us exactly what ML Kit saw.
-      const scan = await scanReadingFromImage(captured.originalUri);
+      const scan = await scanReadingFromImage(captured.originalUri, {
+        region: READING_AIM_BOX,
+        imageWidth: captured.originalWidth,
+        imageHeight: captured.originalHeight,
+      });
+      // Keep the full scan for this item so the field can render correction
+      // chips + the raw-OCR diagnostic line (see ChecklistItemCard).
+      setScanByItem((current) => ({ ...current, [itemId]: scan }));
+
+      const hasChoices = scan.candidates.some((candidate) => candidate.inRange);
 
       if (!scan.lowConfidence && scan.best) {
+        // Confident — a single clean read, or both passes agreed. Auto-fill.
         updateDraftValue(itemId, scan.best);
-      } else if (scan.best) {
-        setError(
-          `Reading looks off (OCR saw "${scan.best}"). Check the display and enter it manually.`,
-        );
+      } else if (hasChoices) {
+        // Ambiguous seven-segment digits (the two passes disagreed, or the read
+        // was unsure): don't silently guess. The correction chips + the photo
+        // render inline under the field so the crew taps the right value — the
+        // inline prompt replaces a global error here.
       } else {
         const saw = scan.rawText.trim();
         setError(
           saw
-            ? `Couldn't read a clear number (OCR saw "${saw}"). Enter the reading manually.`
+            ? `Couldn't read a clear number (Smart Sensor saw "${saw}"). Enter the reading manually.`
             : 'No number detected in the photo — enter the reading manually.',
         );
       }
@@ -1221,6 +1247,7 @@ export function InspectionFormScreen() {
                   onUpdateDraftValue={updateDraftValue}
                   onScanReading={handleScanReading}
                   scanningItemId={scanningItemId}
+                  scanByItem={scanByItem}
                   onCaptureItemPhoto={handleCaptureItemPhoto}
                   capturingItemId={capturingItemId}
                   onRemoveItemPhoto={handleRemovePhoto}
@@ -1416,6 +1443,7 @@ function ChecklistSectionCard({
   onUpdateDraftValue,
   onScanReading,
   scanningItemId,
+  scanByItem,
   onCaptureItemPhoto,
   capturingItemId,
   onRemoveItemPhoto,
@@ -1439,6 +1467,7 @@ function ChecklistSectionCard({
   ) => void;
   onScanReading: (itemId: string) => void;
   scanningItemId: string | null;
+  scanByItem: Record<string, ReadingScan>;
   onCaptureItemPhoto: (itemId: string) => void;
   capturingItemId: string | null;
   onRemoveItemPhoto: (photoId: string) => void;
@@ -1549,6 +1578,7 @@ function ChecklistSectionCard({
                 onChange={(nextValue) => onUpdateDraftValue(item.id, nextValue)}
                 onScanReading={() => onScanReading(item.id)}
                 scanning={scanningItemId === item.id}
+                scanInfo={scanByItem[item.id]}
                 scanPhotoUri={photos.find((photo) => photo.templateItemId === item.id)?.uri}
                 itemPhotos={photos.filter((photo) => photo.templateItemId === item.id)}
                 capturing={capturingItemId === item.id}
@@ -1580,6 +1610,7 @@ function ChecklistItemCard({
   onChange,
   onScanReading,
   scanning,
+  scanInfo,
   scanPhotoUri,
   itemPhotos,
   capturing,
@@ -1593,6 +1624,7 @@ function ChecklistItemCard({
   onChange: (value: DraftValues[string]) => void;
   onScanReading: () => void;
   scanning: boolean;
+  scanInfo?: ReadingScan;
   scanPhotoUri?: string;
   itemPhotos: CapturedInspectionPhoto[];
   capturing: boolean;
@@ -1609,6 +1641,24 @@ function ChecklistItemCard({
   // than a value. The numeric keypad can't type letters, so it's set by tapping.
   const readingText = typeof value === 'string' ? value : '';
   const isBelowRange = inputType === 'OCR' && isReadingSentinel(readingText);
+  // "Did you mean…" correction chips: the in-range candidates from the last
+  // scan. Shown when the read was unsure / the two passes disagreed, or when
+  // there's more than one plausible value to choose between.
+  const readingChips: ReadingCandidate[] =
+    inputType === 'OCR' && scanInfo
+      ? scanInfo.candidates.filter((candidate) => candidate.inRange).slice(0, 4)
+      : [];
+  const showReadingChips =
+    !disabled &&
+    !!scanInfo &&
+    readingChips.length >= 1 &&
+    (scanInfo.lowConfidence || scanInfo.disagreement === true || readingChips.length >= 2);
+  // Raw OCR text (whitespace-collapsed) — an on-screen diagnostic so a field
+  // screenshot reveals exactly what the scanner read on a miss.
+  const scannerSaw = scanInfo?.rawText.replace(/\s+/g, ' ').trim() ?? '';
+  const scannerSawZoom = scanInfo?.rawTextCrop?.replace(/\s+/g, ' ').trim() ?? '';
+  const scannerCropError = scanInfo?.cropError?.replace(/\s+/g, ' ').trim() ?? '';
+  const readerTrace = scanInfo?.decoderText?.replace(/\s+/g, ' ').trim() ?? '';
 
   return (
     <View style={styles.itemCard}>
@@ -1667,6 +1717,42 @@ function ChecklistItemCard({
             <Text style={styles.sentinelHint}>
               Below the meter&apos;s range — cable clearance under 3 m.
             </Text>
+          ) : null}
+          {showReadingChips ? (
+            <View style={styles.readingChipsWrap}>
+              <Text style={styles.readingChipsLabel}>
+                {scanInfo?.disagreement
+                  ? 'Two reads differed — tap the correct value'
+                  : 'Not sure — tap the value on the meter'}
+              </Text>
+              <View style={styles.readingChipsRow}>
+                {readingChips.map((candidate) => {
+                  const selected = candidate.value === readingText;
+                  return (
+                    <Pressable
+                      key={candidate.value}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use reading ${candidate.value}`}
+                      onPress={() => onChange(candidate.value)}
+                      style={({ pressed }) => [
+                        styles.readingChip,
+                        selected && styles.readingChipSelected,
+                        pressed && styles.scanButtonPressed,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.readingChipText,
+                          selected && styles.readingChipTextSelected,
+                        ]}
+                      >
+                        {candidate.value}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
           ) : null}
           {scanPhotoUri ? (
             <Pressable
@@ -1733,6 +1819,19 @@ function ChecklistItemCard({
               {isBelowRange ? 'Clear “LO” — enter a number' : 'Cable below range — mark “LO”'}
             </Text>
           </Pressable>
+          {readerTrace || scannerSawZoom || scannerSaw || scannerCropError ? (
+            <View style={styles.scanDiagnosticWrap}>
+              {readerTrace ? (
+                <Text style={styles.scanDiagnostic} numberOfLines={1}>
+                  Reader: {readerTrace}
+                </Text>
+              ) : null}
+              <Text style={styles.scanDiagnostic} numberOfLines={1}>
+                {scannerSawZoom ? `zoom: “${scannerSawZoom}”` : `saw: “${scannerSaw || '—'}”`}
+                {scannerCropError ? `  · crop failed: ${scannerCropError}` : ''}
+              </Text>
+            </View>
+          ) : null}
         </>
       ) : null}
       {inputType === 'DATE' ? (
@@ -2984,6 +3083,60 @@ const createStyles = (t: Theme) =>
     paddingVertical: 2,
     borderRadius: 4,
     overflow: 'hidden',
+  },
+  // "Did you mean…" correction chips under a Smart Sensor reading. Blue-tinted
+  // (primary), distinct from the warning-tinted LO control, with mono numerals
+  // so 6 vs 5 etc. read clearly. Selected chip fills solid.
+  readingChipsWrap: {
+    marginTop: 10,
+  },
+  readingChipsLabel: {
+    marginBottom: 6,
+    color: t.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: t.fonts.bodyBold,
+  },
+  readingChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  readingChip: {
+    minWidth: 60,
+    minHeight: 40,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: t.radius.control,
+    borderWidth: 1,
+    borderColor: t.colors.primary,
+    backgroundColor: t.colors.primarySoft,
+  },
+  readingChipSelected: {
+    backgroundColor: t.colors.primary,
+  },
+  readingChipText: {
+    color: t.colors.primary,
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: t.fonts.mono,
+    letterSpacing: 0.5,
+  },
+  readingChipTextSelected: {
+    color: t.colors.onSolidFill,
+  },
+  // On-screen diagnostic: the raw text ML Kit returned, so a field screenshot
+  // reveals what the scanner actually read on a miss (feeds OCR tuning).
+  scanDiagnosticWrap: {
+    marginTop: 8,
+    gap: 2,
+  },
+  scanDiagnostic: {
+    color: t.colors.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: t.fonts.mono,
   },
   previewModalBackdrop: {
     flex: 1,

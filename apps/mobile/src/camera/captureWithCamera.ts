@@ -21,6 +21,13 @@
 
 export type CaptureMode = 'photo' | 'video';
 
+/**
+ * Optional framing guide overlaid on the live camera. 'reading' draws an aim box
+ * for the Smart Sensor LCD so the crew frames just the big reading (which is
+ * then cropped + OCR'd, isolated from the temperature/buttons).
+ */
+export type CaptureGuide = 'reading';
+
 export type CaptureResult = {
   uri: string;
   width: number;
@@ -32,6 +39,8 @@ export type CaptureResult = {
 
 export type CaptureRequest = {
   mode: CaptureMode;
+  /** Optional framing guide to overlay on the live preview. */
+  guide?: CaptureGuide;
   resolve: (result: CaptureResult | null) => void;
   reject: (error: Error) => void;
 };
@@ -64,6 +73,7 @@ export function registerCameraCaptureHost(listener: HostListener): () => void {
  */
 export function captureWithCamera(options: {
   mode: CaptureMode;
+  guide?: CaptureGuide;
 }): Promise<CaptureResult | null> {
   if (pending) {
     return Promise.reject(
@@ -80,6 +90,7 @@ export function captureWithCamera(options: {
 
     const request: CaptureRequest = {
       mode: options.mode,
+      guide: options.guide,
       resolve: (result) => {
         settle();
         resolve(result);
