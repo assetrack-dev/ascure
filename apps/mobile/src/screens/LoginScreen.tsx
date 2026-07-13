@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,7 +15,7 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { ErrorBanner } from '../ui';
+import { ErrorBanner, KEYBOARD_AVOIDING_BEHAVIOR } from '../ui';
 import { Theme, useTheme } from '../theme';
 
 export function LoginScreen() {
@@ -48,10 +47,7 @@ export function LoginScreen() {
   return (
     <SafeAreaView style={styles.backdrop} edges={['bottom']}>
       <ExpoStatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior={KEYBOARD_AVOIDING_BEHAVIOR}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"

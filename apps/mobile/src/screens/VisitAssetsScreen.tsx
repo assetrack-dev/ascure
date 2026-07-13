@@ -5,6 +5,7 @@ import { api, ApiError, isEndpointUnavailableError } from '../api';
 import { cachedFetch } from '../offlineCache';
 import {
   Card,
+  Dropdown,
   EmptyState,
   ErrorBanner,
   LoadingBlock,
@@ -34,6 +35,15 @@ const FILTERS: Array<{ key: AssetFilter; label: string }> = [
   { key: 'NOT_FOUND', label: 'Not Found' },
 ];
 
+type AssetSort = 'RONDAAN_ASC' | 'RONDAAN_DESC' | 'LAMA_ASC' | 'STATUS';
+
+const SORT_OPTIONS: Array<{ value: AssetSort; label: string }> = [
+  { value: 'RONDAAN_ASC', label: 'NO TIANG RONDAAN (A–Z)' },
+  { value: 'RONDAAN_DESC', label: 'NO TIANG RONDAAN (Z–A)' },
+  { value: 'LAMA_ASC', label: 'NO TIANG LAMA (A–Z)' },
+  { value: 'STATUS', label: 'Inspection status' },
+];
+
 export function VisitAssetsScreen() {
   const navigation = useNavigation<RootStackScreenProps<'VisitAssets'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'VisitAssets'>['route']>();
@@ -48,6 +58,9 @@ export function VisitAssetsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<AssetFilter>('ALL');
+  // Default to the patrol sequence (NO TIANG RONDAAN, natural order) so the list
+  // reads as the walk order the crew reviews it in, regardless of API order.
+  const [sort, setSort] = useState<AssetSort>('RONDAAN_ASC');
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
@@ -137,15 +150,15 @@ export function VisitAssetsScreen() {
     return tally;
   }, [assets, submittedAssetIds, defectAssetIds]);
 
-  const visibleAssets = useMemo(
-    () =>
-      assets.filter(
-        (asset) =>
-          matchesFilter(asset, filter, submittedAssetIds, defectAssetIds) &&
-          matchesSearch(asset, search),
-      ),
-    [assets, filter, search, submittedAssetIds, defectAssetIds],
-  );
+  const visibleAssets = useMemo(() => {
+    const filtered = assets.filter(
+      (asset) =>
+        matchesFilter(asset, filter, submittedAssetIds, defectAssetIds) &&
+        matchesSearch(asset, search),
+    );
+
+    return sortAssets(filtered, sort, submittedAssetIds, defectAssetIds);
+  }, [assets, filter, search, sort, submittedAssetIds, defectAssetIds]);
 
   function openAsset(asset: Asset) {
     navigation.navigate('AssetDetail', {
@@ -267,6 +280,17 @@ export function VisitAssetsScreen() {
               </Pressable>
             );
           })}
+        </View>
+        <View style={styles.sortWrap}>
+          <Dropdown
+            label="Sort by"
+            value={sort}
+            options={SORT_OPTIONS.map((option) => ({
+              label: option.label,
+              value: option.value,
+            }))}
+            onSelect={(value) => setSort(value as AssetSort)}
+          />
         </View>
       </Card>
 
@@ -417,6 +441,135 @@ function matchesFilter(
   }
 }
 
+function sortAssets(
+  assets: Asset[],
+  sort: AssetSort,
+  submittedAssetIds: Set<string>,
+  defectAssetIds: Set<string>,
+): Asset[] {
+  const sorted = [...assets];
+
+  switch (sort) {
+    case 'RONDAAN_DESC':
+      sorted.sort((a, b) => compareValues(getNoTiangRondaan(a), getNoTiangRondaan(b), true));
+      break;
+    case 'LAMA_ASC':
+      sorted.sort((a, b) => compareValues(getNoTiangLama(a), getNoTiangLama(b), false));
+      break;
+    case 'STATUS':
+      sorted.sort((a, b) => {
+        const rankDelta =
+          assetStateRank(a, submittedAssetIds, defectAssetIds) -
+          assetStateRank(b, submittedAssetIds, defectAssetIds);
+
+        if (rankDelta !== 0) {
+          return rankDelta;
+        }
+
+        return compareValues(getNoTiangRondaan(a), getNoTiangRondaan(b), false);
+      });
+      break;
+    case 'RONDAAN_ASC':
+    default:
+      sorted.sort((a, b) => compareValues(getNoTiangRondaan(a), getNoTiangRondaan(b), false));
+      break;
+  }
+
+  return sorted;
+}
+
+/**
+ * Compares two display values with missing values ALWAYS sorted last, independent
+ * of direction — so choosing Z–A never floats a blank pole to the top. Present
+ * values compare naturally; `descending` only reverses the real comparison.
+ */
+function compareValues(a: string | null, b: string | null, descending: boolean): number {
+  if (a == null && b == null) {
+    return 0;
+  }
+  if (a == null) {
+    return 1;
+  }
+  if (b == null) {
+    return -1;
+  }
+
+  const cmp = naturalCompare(a, b);
+
+  return descending ? -cmp : cmp;
+}
+
+// Review order for the status sort: defects first (need attention), then poles
+// still pending, then completed inspections, with not-found poles last.
+function assetStateRank(
+  asset: Asset,
+  submittedAssetIds: Set<string>,
+  defectAssetIds: Set<string>,
+): number {
+  if (asset.status === 'NOT_FOUND') {
+    return 3;
+  }
+  if (defectAssetIds.has(asset.id)) {
+    return 0;
+  }
+  if (submittedAssetIds.has(asset.id)) {
+    return 2;
+  }
+
+  return 1;
+}
+
+/**
+ * Human/alphanumeric comparison so pole numbers sort by their real sequence:
+ * "A 2" before "A 10", and "FP1 C 5" before "FP1 C 5/1". Numeric runs compare as
+ * numbers, text runs case-insensitively. Callers handle missing values.
+ */
+function naturalCompare(a: string, b: string): number {
+  const at = tokenizeForSort(a);
+  const bt = tokenizeForSort(b);
+  const length = Math.min(at.length, bt.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const av = at[i];
+    const bv = bt[i];
+
+    if (typeof av === 'number' && typeof bv === 'number') {
+      if (av !== bv) {
+        return av - bv;
+      }
+    } else if (typeof av === 'number') {
+      return -1; // numeric run sorts before a text run at the same position
+    } else if (typeof bv === 'number') {
+      return 1;
+    } else {
+      const cmp = av.localeCompare(bv);
+      if (cmp !== 0) {
+        return cmp;
+      }
+    }
+  }
+
+  return at.length - bt.length;
+}
+
+function tokenizeForSort(value: string): Array<string | number> {
+  const matches = value.toUpperCase().match(/\d+|\D+/g) ?? [];
+  const tokens: Array<string | number> = [];
+
+  for (const match of matches) {
+    if (/^\d+$/.test(match)) {
+      tokens.push(Number.parseInt(match, 10));
+    } else {
+      const trimmed = match.trim();
+      if (trimmed) {
+        tokens.push(trimmed);
+      }
+    }
+  }
+
+  return tokens;
+}
+
 function matchesSearch(asset: Asset, query: string): boolean {
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -444,6 +597,9 @@ const createStyles = (t: Theme) =>
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
+    },
+    sortWrap: {
+      marginTop: t.spacing.section,
     },
     filterChip: {
       paddingHorizontal: 12,

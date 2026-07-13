@@ -22,6 +22,17 @@ import { Theme, uiTheme, useTheme } from './theme';
 export { uiTheme } from './theme';
 export type { Theme, ThemeMode } from './theme';
 
+/**
+ * KeyboardAvoidingView behavior for the app's forms. Expo 55 enables edge-to-edge
+ * (react-native-edge-to-edge); on Android API 30+ that stops the window resizing
+ * for the soft keyboard, so `adjustResize` is a no-op and inputs need "padding"
+ * to lift clear of the keyboard. On API < 30 the window still resizes, so adding
+ * "padding" on top would double-lift the content — keep it off (undefined) there.
+ * iOS always uses "padding".
+ */
+export const KEYBOARD_AVOIDING_BEHAVIOR: 'padding' | undefined =
+  Platform.OS === 'android' && (Platform.Version as number) < 30 ? undefined : 'padding';
+
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
 type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
 
@@ -111,10 +122,7 @@ export function Screen({
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.keyboardRoot}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.keyboardRoot} behavior={KEYBOARD_AVOIDING_BEHAVIOR}>
       {body}
     </KeyboardAvoidingView>
   );

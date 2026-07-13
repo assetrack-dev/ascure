@@ -126,6 +126,12 @@ export function HomeScreen() {
     useState<MobileWorkspaceId | null>(null);
   const [selectedScope, setSelectedScope] = useState<OperationalScope>('SAVR');
   const [capabilities, setCapabilities] = useState<EffectiveCapability[]>([]);
+  // Which Mainhead sections the crew has collapsed. Held here (not inside
+  // InspectionWorkspaceView) so it survives a refresh — the parent unmounts that
+  // child while isLoading, which would otherwise reset every section to expanded.
+  const [collapsedMainheads, setCollapsedMainheads] = useState<Set<string>>(
+    () => new Set(),
+  );
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const workspaces = useMemo(
@@ -297,6 +303,18 @@ export function HomeScreen() {
     [handleOpenVisit],
   );
 
+  const toggleMainhead = useCallback((key: string) => {
+    setCollapsedMainheads((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
   // Persistent offline / sync signal for the identity-row pill (handoff 1b /
   // C4). Counts come straight from the live useSync() snapshot — never faked.
   const queuedCount = getActiveQueueCount(syncQueueSnapshot);
@@ -394,6 +412,8 @@ export function HomeScreen() {
           queueItems={queueItems}
           onSelectScope={setSelectedScope}
           onOpenQueueItem={handleOpenQueueItem}
+          collapsedMainheads={collapsedMainheads}
+          onToggleMainhead={toggleMainhead}
         />
       ) : null}
 
@@ -466,6 +486,8 @@ function InspectionWorkspaceView({
   queueItems,
   onSelectScope,
   onOpenQueueItem,
+  collapsedMainheads,
+  onToggleMainhead,
 }: {
   availableScopes: OperationalScope[];
   selectedScope: OperationalScope;
@@ -473,6 +495,8 @@ function InspectionWorkspaceView({
   queueItems: InspectionQueueItem[];
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
+  collapsedMainheads: Set<string>;
+  onToggleMainhead: (key: string) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -485,6 +509,10 @@ function InspectionWorkspaceView({
     () => buildMainheadQueueGroups(queueItems),
     [queueItems],
   );
+  // When the queue spans several Mainheads, each section header can be tapped to
+  // collapse it — keeping a multi-Mainhead home view scannable. Collapse state is
+  // owned by the parent (survives refresh); default expanded so no queued work is
+  // ever hidden without the crew choosing to hide it.
   const showMainheadHeaders = mainheadGroups.length > 1;
 
   // One labelled status group ("In Progress" / "Needs attention" / "Completed"),
@@ -541,21 +569,40 @@ function InspectionWorkspaceView({
         // Single Mainhead (or none): keep the original flat per-status layout.
         (mainheadGroups[0]?.statusGroups ?? []).map(renderStatusGroup)
       ) : (
-        // Multiple Mainheads: a labelled section per Mainhead, status groups within.
-        mainheadGroups.map((group) => (
-          <View key={group.key} style={styles.mainheadSection}>
-            <View style={styles.mainheadHeader}>
-              <Feather name="map-pin" size={13} color={theme.colors.primary} />
-              <Text style={styles.mainheadTitle} numberOfLines={1}>
-                {group.label}
-              </Text>
-              <Mono size={12} muted>
-                {group.total}
-              </Mono>
+        // Multiple Mainheads: a collapsible labelled section per Mainhead, with
+        // its status groups nested within.
+        mainheadGroups.map((group) => {
+          const collapsed = collapsedMainheads.has(group.key);
+
+          return (
+            <View key={group.key} style={styles.mainheadSection}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: !collapsed }}
+                accessibilityLabel={`${group.label}, ${group.total} in queue`}
+                onPress={() => onToggleMainhead(group.key)}
+                style={({ pressed }) => [
+                  styles.mainheadHeader,
+                  pressed && styles.mainheadHeaderPressed,
+                ]}
+              >
+                <Feather name="map-pin" size={13} color={theme.colors.primary} />
+                <Text style={styles.mainheadTitle} numberOfLines={1}>
+                  {group.label}
+                </Text>
+                <Mono size={12} muted>
+                  {group.total}
+                </Mono>
+                <Feather
+                  name={collapsed ? 'chevron-down' : 'chevron-up'}
+                  size={18}
+                  color={theme.colors.textMuted}
+                />
+              </Pressable>
+              {collapsed ? null : group.statusGroups.map(renderStatusGroup)}
             </View>
-            {group.statusGroups.map(renderStatusGroup)}
-          </View>
-        ))
+          );
+        })
       )}
     </>
   );
@@ -1473,11 +1520,16 @@ const createStyles = (t: Theme) =>
       gap: 12,
     },
     mainheadHeader: {
+      minHeight: 36,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      paddingHorizontal: 2,
-      paddingTop: 2,
+      paddingHorizontal: 4,
+      paddingVertical: 4,
+      borderRadius: t.radius.chip,
+    },
+    mainheadHeaderPressed: {
+      backgroundColor: t.colors.surfacePressed,
     },
     mainheadTitle: {
       flex: 1,
