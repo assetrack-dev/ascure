@@ -25,6 +25,10 @@ import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import { ThemeProvider, useTheme } from './src/theme';
 import { LoadingScreen } from './src/ui';
+import { initMapbox } from './src/mapbox';
+
+// Set the Mapbox access token once, before any MapView mounts (offline satellite).
+initMapbox();
 
 function AppShell() {
   const { isBooting } = useAuth();

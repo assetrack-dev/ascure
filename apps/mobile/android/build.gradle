@@ -17,6 +17,20 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    // Mapbox SDK registry (offline satellite via @rnmapbox/maps). We DON'T run
+    // expo prebuild (native is hand-maintained), so the @rnmapbox/maps config
+    // plugin can't add this — it's declared here manually. The SECRET download
+    // token (sk.* with DOWNLOADS:READ) is NEVER committed: set it as a gradle
+    // property MAPBOX_DOWNLOADS_TOKEN in ~/.gradle/gradle.properties (or -P /
+    // the MAPBOX_DOWNLOADS_TOKEN env var) at build time.
+    maven {
+      url 'https://api.mapbox.com/downloads/v2/releases/maven'
+      authentication { basic(BasicAuthentication) }
+      credentials {
+        username = 'mapbox'
+        password = project.findProperty('MAPBOX_DOWNLOADS_TOKEN') ?: System.getenv('MAPBOX_DOWNLOADS_TOKEN') ?: ''
+      }
+    }
   }
 }
 

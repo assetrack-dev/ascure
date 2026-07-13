@@ -55,6 +55,16 @@ export default {
           androidGoogleMapsApiKey: googleMapsApiKey,
         },
       ],
+      // Offline satellite (Phase 2). NOTE: native is hand-maintained (we don't run
+      // expo prebuild), so the real build wiring lives in android/build.gradle (the
+      // Mapbox maven repo). This entry documents intent + covers a future prebuild.
+      // The download token is read from env at build time, never committed.
+      [
+        '@rnmapbox/maps',
+        {
+          RNMapboxMapsDownloadToken: process.env.MAPBOX_DOWNLOADS_TOKEN,
+        },
+      ],
     ],
 
     android: {
