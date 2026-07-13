@@ -18,6 +18,7 @@ import {
   storeUser,
 } from '../storage';
 import { cachedFetch, clearAllCache } from '../offlineCache';
+import { resetForceOfflineOnSignOut } from '../networkStatus';
 import type { SessionUser } from '../types';
 
 // A 401 can mean the token simply expired/was invalidated, or that this account
@@ -93,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           })
           .catch(async (error) => {
             if (error instanceof ApiError && error.status === 401) {
+              resetForceOfflineOnSignOut();
               await Promise.all([removeStoredToken(), removeStoredUser(), clearAllCache()]);
               if (isMounted) {
                 setToken(null);
@@ -124,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // signed-in-elsewhere). Offline + no cache → can't render authed screens,
         // so stay on login but KEEP the token for the next (online) boot.
         if (error instanceof ApiError && error.status === 401) {
+          resetForceOfflineOnSignOut();
           await Promise.all([removeStoredToken(), removeStoredUser(), clearAllCache()]);
 
           if (isMounted) {
@@ -158,6 +161,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Reset "Work Offline" so a persisted override can't block the login screen
+    // (which has no toggle) on the next sign-in.
+    resetForceOfflineOnSignOut();
     await Promise.all([removeStoredToken(), removeStoredUser()]);
     setToken(null);
     setUser(null);

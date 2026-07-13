@@ -31,6 +31,7 @@ import {
   persistCapturedInspectionPhoto,
 } from '../syncQueue';
 import { cachedFetch, readCache } from '../offlineCache';
+import { isNetworkOffline } from '../networkStatus';
 import {
   buildChecklistItemsPayloadFromDraft,
   buildResultsPayload,
@@ -510,6 +511,17 @@ export function InspectionFormScreen() {
     // upload with the queued submission once the inspection is reconciled to a
     // real id (see the isTempId branch in handleSubmit / enqueueInspectionSubmission).
     if (isTempId(inspectionId)) {
+      updatePhoto(photo.id, {
+        uploadState: 'pending',
+        uploadError: undefined,
+      });
+      return;
+    }
+
+    // No coverage (or the crew chose Work Offline): don't attempt an eager upload
+    // that would hang on a dead/weak connection ("image stuck after capture").
+    // Mark it pending — it uploads with the queued submission on reconnect.
+    if (isNetworkOffline()) {
       updatePhoto(photo.id, {
         uploadState: 'pending',
         uploadError: undefined,

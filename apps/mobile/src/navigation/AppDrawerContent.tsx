@@ -35,7 +35,7 @@ function initialsOf(name: string): string {
 
 export function AppDrawerContent({ navigation, state }: DrawerContentComponentProps) {
   const { token, user, handleUnauthorized, signOut } = useSession();
-  const { snapshot } = useSync();
+  const { snapshot, forceOffline, setWorkOffline } = useSync();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { mode, toggle } = useThemeControls();
@@ -133,6 +133,26 @@ export function AppDrawerContent({ navigation, state }: DrawerContentComponentPr
         </View>
 
         <View style={styles.footerGroup}>
+          {/* Manual "Work Offline" — hard-blocks network attempts so the app
+              never hangs on a weak trickle of signal in a no-coverage area. */}
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: forceOffline }}
+            accessibilityLabel="Work offline"
+            onPress={() => setWorkOffline(!forceOffline)}
+            style={({ pressed }) => [styles.appearanceRow, pressed && styles.drawerItemPressed]}
+          >
+            <Feather
+              name="cloud-off"
+              size={18}
+              color={forceOffline ? theme.colors.chromeAccent : theme.colors.onChrome}
+            />
+            <Text style={styles.appearanceText}>Work offline</Text>
+            <View style={[styles.appearanceToggle, forceOffline && styles.appearanceToggleOn]}>
+              <View style={[styles.appearanceKnob, forceOffline && styles.appearanceKnobOn]} />
+            </View>
+          </Pressable>
+
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} appearance`}

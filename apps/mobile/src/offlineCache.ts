@@ -1,12 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiError } from './api';
+import { isNetworkOffline } from './networkStatus';
 
 // Persisted read-through cache for offline field use. Generalizes the in-memory
 // SWR pattern (e.g. AssetDetailScreen.assetDetailCache) into an AsyncStorage
 // store that survives a cold boot, so screens can render their last-known data
 // when the device can't reach the API. Caching is strictly best-effort: it must
-// never throw into a screen, and it must never serve a stale value when the
-// server IS reachable (a fresh fetch always wins + refreshes the cache).
+// never throw into a screen. When we BELIEVE we're online a fresh fetch always
+// wins and refreshes the cache (never serving stale); when the shared network
+// status says we're offline, cachedFetch serves the cached value immediately to
+// avoid the per-read timeout hang (a brief NetInfo false-offline can therefore
+// serve slightly-stale data until connectivity is re-confirmed — an accepted
+// trade for not hanging every read in a no-coverage area).
 
 const CACHE_PREFIX = '@ascure/mobile/cache/';
 
@@ -186,15 +191,33 @@ export async function clearAllCache(): Promise<void> {
  * re-throw, so the caller's existing error handling (sign-out on 401, error
  * banner otherwise) is preserved unchanged.
  *
- * NOTE: it deliberately does NOT consult SyncContext.isOffline — NetInfo can be
- * stale at call time, so we always try the network and decide on the real
- * outcome.
+ * FAIL-FAST OFFLINE: when the shared network status says we're offline (NetInfo
+ * or the manual "Work Offline" toggle), serve the cached value IMMEDIATELY
+ * without attempting the network — this is what avoids the ~20s request-timeout
+ * hang on every read in a no-coverage area. If there's no cache while offline we
+ * still throw a status-0 ApiError right away (no network wait). A fresh fetch is
+ * only skipped while offline; the moment NetInfo reports reachable again, reads
+ * revalidate and refresh the cache as before.
  */
 export async function cachedFetch<T>(
   namespace: string,
   id: string | undefined,
   fetcher: () => Promise<T>,
 ): Promise<CachedResult<T>> {
+  if (isNetworkOffline()) {
+    const cached = await readCache<T>(namespace, id);
+
+    if (cached) {
+      return { value: cached.value, fromCache: true, cachedAt: cached.cachedAt };
+    }
+
+    throw new ApiError(
+      'Offline — no cached data available yet for this view.',
+      0,
+      null,
+    );
+  }
+
   try {
     const value = await fetcher();
     await writeCache(namespace, id, value);

@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { isForceOffline, isNetworkOffline } from './networkStatus';
 import {
   Asset,
   AssetDetailResponse,
@@ -59,8 +60,16 @@ const DEFAULT_API_BASE_URL = __DEV__
   : 'https://api.ascure.com.my/api/v1';
 const NETWORK_ERROR_LOG_THROTTLE_MS = 30000;
 // Hard ceiling on a single JSON request so a slow/hung backend can't leave a
-// screen spinning forever (photo uploads use FileSystem.uploadAsync, not this).
+// screen spinning forever.
 const REQUEST_TIMEOUT_MS = 20000;
+// When NetInfo already believes we're offline, don't wait the full ceiling — a
+// weak-signal request that's going to fail should fail FAST so the caller can
+// fall back to cache / the write-queue instead of hanging the workflow.
+const OFFLINE_FAST_TIMEOUT_MS = 6000;
+// Photo/media uploads (FileSystem.uploadAsync) get their own longer ceiling —
+// they're larger than JSON but must still never hang forever on a half-open
+// connection (the "image loading after capture" field pain).
+const UPLOAD_TIMEOUT_MS = 45000;
 
 const networkErrorLogTimes = new Map<string, number>();
 
@@ -114,10 +123,27 @@ async function request<T>(path: string, options: RequestOptions = {}) {
     headers.Authorization = `Bearer ${options.token}`;
   }
 
+  // FAIL FAST: the user chose "Work Offline" — don't even attempt the network
+  // (which would hang until the timeout on a dead connection). Surface the same
+  // status-0 error a real network failure produces, so callers fall back to
+  // cache / the offline write-queue instantly. AUTH endpoints are exempt:
+  // login / identity must ALWAYS be attemptable, else a persisted Work-Offline
+  // setting could trap the login screen (which has no toggle to turn it off).
+  if (isForceOffline() && !path.startsWith('/auth/')) {
+    throw new ApiError(
+      `Working offline — "${method} ${path}" was not sent. It will run when you turn Work Offline off / regain signal.`,
+      0,
+      null,
+    );
+  }
+
   console.log('[API REQUEST]', { url, method });
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // When NetInfo already thinks we're offline, use the short ceiling so a doomed
+  // request fails fast instead of hanging the screen for the full 20s.
+  const timeoutMs = isNetworkOffline() ? OFFLINE_FAST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
 
@@ -976,6 +1002,46 @@ function normalizeSiteVisitAssets(entries: Array<SiteVisitAssetLink | Asset>) {
     .filter(Boolean);
 }
 
+/**
+ * Multipart upload with a HARD TIMEOUT. FileSystem.uploadAsync has no timeout, so
+ * on a half-open / dead connection it hangs forever — the root cause of "image
+ * loading stuck after capture" and of a single photo wedging a whole sync flush.
+ * createUploadTask lets us cancel on a deadline and surface a status-0 (retryable)
+ * ApiError so the queue retries later instead of blocking indefinitely.
+ */
+async function uploadWithTimeout(
+  url: string,
+  fileUri: string,
+  options: FileSystem.FileSystemUploadOptions,
+): Promise<FileSystem.FileSystemUploadResult> {
+  if (isForceOffline()) {
+    throw new ApiError('Working offline — upload deferred to the sync queue.', 0, null);
+  }
+
+  const task = FileSystem.createUploadTask(url, fileUri, options);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void task.cancelAsync().catch(() => undefined);
+      reject(
+        new ApiError(`Upload timed out reaching the ASCURE server (${API_BASE_URL}).`, 0, null),
+      );
+    }, UPLOAD_TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([task.uploadAsync(), timeout]);
+    if (!result) {
+      throw new ApiError('Upload was cancelled or returned no result.', 0, null);
+    }
+    return result;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function uploadInspectionImage(
   token: string,
   inspectionId: string,
@@ -995,7 +1061,7 @@ async function uploadInspectionImage(
   });
 
   try {
-    const response = await FileSystem.uploadAsync(url, uploadUri, {
+    const response = await uploadWithTimeout(url, uploadUri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
@@ -1047,7 +1113,7 @@ async function uploadSiteVisitImage(
   });
 
   try {
-    const response = await FileSystem.uploadAsync(url, uploadUri, {
+    const response = await uploadWithTimeout(url, uploadUri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
@@ -1100,7 +1166,7 @@ async function uploadDefectEvidenceImage(
   });
 
   try {
-    const response = await FileSystem.uploadAsync(url, uploadUri, {
+    const response = await uploadWithTimeout(url, uploadUri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
@@ -1178,7 +1244,7 @@ async function uploadDefectEvidenceMedia(
   if (media.timestamp) parameters.timestamp = media.timestamp;
 
   try {
-    const response = await FileSystem.uploadAsync(url, uploadUri, {
+    const response = await uploadWithTimeout(url, uploadUri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
