@@ -38,3 +38,8 @@ docs/*.py
 
 # Local APK archive — ~60MB per build, never belongs in git history
 apk-backups/
+
+# OCR eval dataset — ~40MB of real Smart Sensor photos, kept on disk for
+# decoder tuning but not versioned (binary bloat). Move to git-lfs if it ever
+# needs to be shared across machines.
+sample-image/

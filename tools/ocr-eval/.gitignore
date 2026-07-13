@@ -1,0 +1,9 @@
+# Generated smoke-test images + any real photo sets dropped in for tuning.
+samples-synthetic/
+samples/
+photos/
+*.jpg
+*.jpeg
+*.png
+*.webp
+!/**/README*

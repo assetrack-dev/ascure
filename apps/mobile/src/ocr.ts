@@ -5,8 +5,24 @@ import TextRecognition, {
 import { Image } from 'react-native';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode as jpegDecode } from 'jpeg-js';
-import { normalizeReadingSentinel, type ReadingSentinel } from '@ascure/shared-utils';
-import { decodeSevenSegment, rgbaToGray, type SevenSegmentResult } from './sevenSegment';
+import {
+  normalizeReadingSentinel,
+  decodeSevenSegment,
+  rgbaToGray,
+  regionToRect,
+  SS_DECODE_WIDTH,
+  type ReadingSentinel,
+  type SevenSegmentResult,
+  type ReadingAimBox,
+  type CropRect,
+} from '@ascure/shared-utils';
+
+// The seven-segment decoder + aim-box geometry now live in @ascure/shared-utils
+// (one source of truth for mobile, the Node eval harness, and the admin
+// auto-check). Re-exported so the camera + inspection-form screens keep
+// importing READING_AIM_BOX from '../ocr'.
+export { READING_AIM_BOX } from '@ascure/shared-utils';
+export type { ReadingAimBox, CropRect };
 
 /**
  * On-device OCR (Google ML Kit) for Smart Sensor readings — the cable
@@ -94,31 +110,6 @@ export interface ReadingScan {
   decoderText?: string;
 }
 
-/** A pixel crop rectangle for expo-image-manipulator. */
-export interface CropRect {
-  originX: number;
-  originY: number;
-  width: number;
-  height: number;
-}
-
-/** A normalized aim-box region ([0..1] of image width/height). */
-export interface ReadingAimBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/**
- * The band of the meter's LCD the big reading sits in — a wide central strip.
- * The ambient temperature (top-right corner) and the buttons (bottom) fall
- * OUTSIDE it, so cropping to this region isolates the reading from the two
- * distractors that defeat full-frame OCR. MUST stay in sync with the camera's
- * on-screen aim box (CameraCaptureHost) so "fill the box" == what we OCR.
- */
-export const READING_AIM_BOX: ReadingAimBox = { x: 0.08, y: 0.32, w: 0.84, h: 0.26 };
-
 export interface ScanOptions {
   constraints?: ReadingConstraints;
   /** Normalized aim-box region to crop + OCR (from the camera guide). */
@@ -171,7 +162,6 @@ const CROP_PAD_Y_FRAC = 0.6; // vertical pad, as a fraction of the box height
 const CROP_PAD_MIN_PX = 24; // …but never less than this many pixels
 const UPSCALE_TARGET_WIDTH = 1000; // enlarge the crop toward this width (px)
 const UPSCALE_MAX_FACTOR = 4; // …but never enlarge a tiny crop more than this
-const SS_DECODE_WIDTH = 500; // resize the crop to this width for the pixel decoder
 
 /**
  * Scan a captured image for a reading, targeting the value the inspector aimed
@@ -558,28 +548,6 @@ function getImageSize(uri: string): Promise<{ width: number; height: number } | 
       () => resolve(null),
     );
   });
-}
-
-/**
- * Convert a normalized aim-box region + source dims into a clamped pixel crop
- * rectangle. Pure. Returns null when the geometry is unusable.
- */
-export function regionToRect(
-  region: ReadingAimBox,
-  imageWidth: number,
-  imageHeight: number,
-): CropRect | null {
-  if (!(imageWidth > 0) || !(imageHeight > 0)) {
-    return null;
-  }
-  const originX = Math.min(imageWidth - 1, Math.max(0, Math.round(region.x * imageWidth)));
-  const originY = Math.min(imageHeight - 1, Math.max(0, Math.round(region.y * imageHeight)));
-  const width = Math.min(imageWidth - originX, Math.round(region.w * imageWidth));
-  const height = Math.min(imageHeight - originY, Math.round(region.h * imageHeight));
-  if (width < 1 || height < 1) {
-    return null;
-  }
-  return { originX, originY, width, height };
 }
 
 /**
