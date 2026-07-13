@@ -13,8 +13,8 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
-import type { Region } from 'react-native-maps';
+import Mapbox from '@rnmapbox/maps';
+import { SATELLITE_STYLE } from '../mapbox';
 import { useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
 import { MapCrosshair } from '../components/MapCrosshair';
@@ -96,7 +96,7 @@ const DEFAULT_MAP_PICKER_COORDINATE: Coordinate = {
   longitude: 101.6869,
 };
 
-const MAP_PICKER_DELTA = 0.004;
+const MAP_PICKER_ZOOM = 15;
 
 export function CheckInScreen() {
   const navigation = useNavigation<RootStackScreenProps<'CheckIn'>['navigation']>();
@@ -1170,9 +1170,10 @@ function MapCoordinatePicker({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  // Uncontrolled region (seed initialRegion + track centre) so the map doesn't
-  // re-snap and fight gestures; the chosen location is the centre crosshair.
-  const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
+  // Uncontrolled camera (seed defaultSettings + track the live centre) so the
+  // map doesn't re-snap and fight gestures; the chosen location is the centre
+  // crosshair.
+  const [center, setCenter] = useState<Coordinate>(initialCoordinate);
 
   return (
     <SafeAreaView style={styles.mapPickerSafeArea}>
@@ -1193,15 +1194,25 @@ function MapCoordinatePicker({
         </View>
 
         <View style={styles.mapPickerMapShell}>
-          <MapView
-            provider={PROVIDER_GOOGLE}
+          <Mapbox.MapView
             style={StyleSheet.absoluteFillObject}
-            initialRegion={region}
-            mapType="satellite"
-            showsUserLocation
-            showsMyLocationButton
-            onRegionChangeComplete={setRegion}
-          />
+            styleURL={SATELLITE_STYLE}
+            scaleBarEnabled={false}
+            compassEnabled={false}
+            onCameraChanged={(state) => {
+              const [longitude, latitude] = state.properties.center as [number, number];
+              setCenter({ latitude, longitude });
+            }}
+          >
+            <Mapbox.Camera
+              animationMode="none"
+              defaultSettings={{
+                centerCoordinate: [initialCoordinate.longitude, initialCoordinate.latitude],
+                zoomLevel: MAP_PICKER_ZOOM,
+              }}
+            />
+            <Mapbox.LocationPuck visible />
+          </Mapbox.MapView>
           <MapCrosshair color={theme.colors.primary} />
         </View>
 
@@ -1209,7 +1220,7 @@ function MapCoordinatePicker({
           <View style={styles.mapPickerCoordinatePanel}>
             <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
             <Mono size={14} color={theme.colors.textPrimary}>
-              Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
+              Lat {center.latitude.toFixed(6)} · Lng {center.longitude.toFixed(6)}
             </Mono>
             <Mono size={13} muted>
               {formatGpsAccuracy(accuracyMeters)}
@@ -1219,7 +1230,7 @@ function MapCoordinatePicker({
             label="Confirm Coordinates"
             onPress={() =>
               onConfirm({
-                coordinate: { latitude: region.latitude, longitude: region.longitude },
+                coordinate: { latitude: center.latitude, longitude: center.longitude },
                 accuracyMeters,
               })
             }
@@ -1342,15 +1353,6 @@ function parseFormCoordinate(latitude: string, longitude: string): Coordinate | 
   }
 
   return null;
-}
-
-function createMapPickerRegion(coordinate: Coordinate): Region {
-  return {
-    latitude: coordinate.latitude,
-    longitude: coordinate.longitude,
-    latitudeDelta: MAP_PICKER_DELTA,
-    longitudeDelta: MAP_PICKER_DELTA,
-  };
 }
 
 const createStyles = (t: Theme) =>

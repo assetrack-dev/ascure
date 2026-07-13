@@ -10,8 +10,8 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { Region } from 'react-native-maps';
+import Mapbox from '@rnmapbox/maps';
+import { SATELLITE_STYLE } from '../mapbox';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { cachedFetch, prependToCachedArray } from '../offlineCache';
@@ -91,7 +91,8 @@ const DEFAULT_MAP_PICKER_COORDINATE: Coordinate = {
   longitude: 101.6869,
 };
 
-const MAP_PICKER_DELTA = 0.004;
+// Rough delta->zoom: the old react-native-maps 0.004 delta ≈ Mapbox zoom 15.
+const MAP_PICKER_ZOOM = 15;
 
 export function AddAssetScreen() {
   const navigation = useNavigation<RootStackScreenProps<'AddAsset'>['navigation']>();
@@ -1178,11 +1179,11 @@ function MapCoordinatePicker({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  // Uncontrolled region: only seed initialRegion and TRACK the centre via
-  // onRegionChangeComplete. Previously this also passed region={region} AND
-  // re-set it on every tap/drag, which fought the native gesture and made the
-  // map slow/janky and taps feel inert.
-  const [region, setRegion] = useState<Region>(() => createMapPickerRegion(initialCoordinate));
+  // Uncontrolled camera: seed the centre once via Camera defaultSettings and
+  // TRACK the centre via onMapIdle (the Mapbox analog of the old
+  // onRegionChangeComplete). We only update on idle — not on every frame of the
+  // pan — so state changes never fight the native gesture or make taps feel inert.
+  const [centre, setCentre] = useState<Coordinate>(initialCoordinate);
 
   const neighbourMarkers = useMemo(
     () =>
@@ -1193,16 +1194,20 @@ function MapCoordinatePicker({
           return [];
         }
         return [
-          <Marker
+          // Mapbox coordinates are [longitude, latitude]. PointAnnotation needs a
+          // child view (no pinColor prop) — a small dot tinted by asset status.
+          <Mapbox.PointAnnotation
             key={`pole-${asset.id}`}
-            coordinate={{ latitude: lat, longitude: lng }}
-            title={asset.assetCode}
-            description={asset.name ?? asset.assetType?.name}
-            pinColor={assetMarkerColor(asset)}
-          />,
+            id={`pole-${asset.id}`}
+            coordinate={[lng, lat]}
+          >
+            <View
+              style={[styles.neighbourPin, { backgroundColor: assetMarkerColor(asset) }]}
+            />
+          </Mapbox.PointAnnotation>,
         ];
       }),
-    [assets],
+    [assets, styles.neighbourPin],
   );
 
   return (
@@ -1224,17 +1229,28 @@ function MapCoordinatePicker({
         </View>
 
         <View style={styles.mapPickerMapShell}>
-          <MapView
-            provider={PROVIDER_GOOGLE}
+          <Mapbox.MapView
             style={StyleSheet.absoluteFillObject}
-            initialRegion={region}
-            mapType="satellite"
-            showsUserLocation
-            showsMyLocationButton
-            onRegionChangeComplete={setRegion}
+            styleURL={SATELLITE_STYLE}
+            scaleBarEnabled={false}
+            compassEnabled={false}
+            onMapIdle={(state) => {
+              const [lng, lat] = state.properties.center as [number, number];
+              if (Number.isFinite(lng) && Number.isFinite(lat)) {
+                setCentre({ latitude: lat, longitude: lng });
+              }
+            }}
           >
+            <Mapbox.Camera
+              animationMode="none"
+              defaultSettings={{
+                centerCoordinate: [initialCoordinate.longitude, initialCoordinate.latitude],
+                zoomLevel: MAP_PICKER_ZOOM,
+              }}
+            />
+            <Mapbox.LocationPuck visible />
             {neighbourMarkers}
-          </MapView>
+          </Mapbox.MapView>
           {/* Fixed centre crosshair: the chosen location is the map centre, so
               the target isn't hidden under the finger. */}
           <MapCrosshair />
@@ -1244,7 +1260,7 @@ function MapCoordinatePicker({
           <View style={styles.mapPickerCoordinatePanel}>
             <Text style={styles.mapPickerCoordinateLabel}>Centre location</Text>
             <Mono size={14} color={theme.colors.textPrimary}>
-              Lat {region.latitude.toFixed(6)} · Lng {region.longitude.toFixed(6)}
+              Lat {centre.latitude.toFixed(6)} · Lng {centre.longitude.toFixed(6)}
             </Mono>
             <Mono size={13} muted>
               {formatGpsAccuracy(accuracyMeters)}
@@ -1254,7 +1270,7 @@ function MapCoordinatePicker({
             label="Confirm Coordinates"
             onPress={() =>
               onConfirm({
-                coordinate: { latitude: region.latitude, longitude: region.longitude },
+                coordinate: { latitude: centre.latitude, longitude: centre.longitude },
                 accuracyMeters,
               })
             }
@@ -1315,15 +1331,6 @@ function parseFormCoordinate(latitude: string, longitude: string): Coordinate | 
   }
 
   return null;
-}
-
-function createMapPickerRegion(coordinate: Coordinate): Region {
-  return {
-    latitude: coordinate.latitude,
-    longitude: coordinate.longitude,
-    latitudeDelta: MAP_PICKER_DELTA,
-    longitudeDelta: MAP_PICKER_DELTA,
-  };
 }
 
 function isSavrAssetType(assetType: AssetType | null) {
@@ -1782,6 +1789,15 @@ const createStyles = (t: Theme) =>
     mapPickerMapShell: {
       flex: 1,
       backgroundColor: t.colors.border,
+    },
+    // Neighbour pole marker: a small status-tinted dot (Mapbox PointAnnotation
+    // has no pinColor prop, so the colour is applied inline per asset).
+    neighbourPin: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      borderWidth: 2,
+      borderColor: '#ffffff',
     },
     mapPickerFooter: {
       borderTopWidth: 1,

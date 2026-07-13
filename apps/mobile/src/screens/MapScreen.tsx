@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import MapView, { Callout, Heatmap, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { LongPressEvent, Region } from 'react-native-maps';
+import Mapbox from '@rnmapbox/maps';
+import type { Camera as MapboxCamera, MapState } from '@rnmapbox/maps';
+import { SATELLITE_STYLE, STREET_STYLE } from '../mapbox';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { cachedFetch } from '../offlineCache';
@@ -22,6 +23,15 @@ import type { AssetLike } from '../utils/feederSequence';
 type Coordinate = {
   latitude: number;
   longitude: number;
+};
+
+// Local stand-in for react-native-maps' Region (the map itself no longer uses a
+// controlled region prop; this tracks the viewport centre + a delta→zoom hint).
+type Region = {
+  latitude: number;
+  longitude: number;
+  latitudeDelta: number;
+  longitudeDelta: number;
 };
 
 type HeatmapPoint = Coordinate & {
@@ -204,7 +214,7 @@ export function MapScreen() {
     [navigation],
   );
 
-  const mapRef = useRef<MapView | null>(null);
+  const cameraRef = useRef<MapboxCamera>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [defectMarkers, setDefectMarkers] = useState<DefectMapMarker[]>([]);
   const [selectedCoordinate, setSelectedCoordinate] = useState<Coordinate | null>(null);
@@ -316,18 +326,25 @@ export function MapScreen() {
     );
   }, []);
 
-  const setMapReference = useCallback((nextMapRef: unknown) => {
-    mapRef.current = nextMapRef as MapView | null;
+  // Programmatic camera move. Also mirrors the target into `region` state so
+  // that (a) the still-unmounted map picks it up via <Camera defaultSettings>
+  // on first mount (the map only mounts once isLoading flips false), and (b) an
+  // already-mounted map animates there via the imperative Camera ref.
+  const applyCameraRegion = useCallback((nextRegion: Region, animationDuration = 600) => {
+    cameraRef.current?.setCamera({
+      centerCoordinate: [nextRegion.longitude, nextRegion.latitude],
+      zoomLevel: regionToZoomLevel(nextRegion.latitudeDelta),
+      animationDuration,
+      animationMode: animationDuration > 0 ? 'easeTo' : 'none',
+    });
+    setRegion(nextRegion);
   }, []);
 
   const centerMapOnCoordinate = useCallback(
     (coordinate: Coordinate, latitudeDelta?: number) => {
-      const nextRegion = createCurrentLocationRegion(coordinate, latitudeDelta);
-
-      mapRef.current?.animateToRegion(nextRegion, 600);
-      setRegion(nextRegion);
+      applyCameraRegion(createCurrentLocationRegion(coordinate, latitudeDelta));
     },
-    [],
+    [applyCameraRegion],
   );
 
   const requestCurrentLocation = useCallback(
@@ -406,7 +423,7 @@ export function MapScreen() {
               );
 
           if (focusCoordinate) {
-            setRegion(createCurrentLocationRegion(focusCoordinate, FOCUS_REGION_DELTA));
+            applyCameraRegion(createCurrentLocationRegion(focusCoordinate, FOCUS_REGION_DELTA));
           } else {
             const nextRegion = createRegion([
               ...assetList.map(getAssetCoordinate).filter(isCoordinate),
@@ -415,7 +432,7 @@ export function MapScreen() {
                 longitude: defect.longitude,
               })),
             ]);
-            setRegion(nextRegion);
+            applyCameraRegion(nextRegion);
           }
         }
       } catch (loadError) {
@@ -434,6 +451,7 @@ export function MapScreen() {
       }
     },
     [
+      applyCameraRegion,
       handleUnauthorized,
       hasExplicitFocusCoordinate,
       focusAssetId,
@@ -520,21 +538,41 @@ export function MapScreen() {
     centerMapOnCoordinate(resolvedFocusCoordinate, FOCUS_REGION_DELTA);
   }, [centerMapOnCoordinate, resolvedFocusCoordinate]);
 
-  function handleLongPress(event: LongPressEvent) {
+  function handleLongPress(feature: GeoJSON.Feature<GeoJSON.Point>) {
     if (!canInspect) {
       return;
     }
-    const nextCoordinate = {
-      latitude: event.nativeEvent.coordinate.latitude,
-      longitude: event.nativeEvent.coordinate.longitude,
-    };
+    const coordinates = feature.geometry?.coordinates;
+    if (!coordinates) {
+      return;
+    }
+    const [longitude, latitude] = coordinates as [number, number];
+    const nextCoordinate = { latitude, longitude };
 
     setSelectedCoordinate(nextCoordinate);
-    setRegion((currentRegion) => ({
-      ...currentRegion,
-      latitude: nextCoordinate.latitude,
-      longitude: nextCoordinate.longitude,
-    }));
+    // Recentre on the dropped pin (parity with the old controlled region),
+    // keeping the current zoom; onMapIdle then syncs `region` to the new centre.
+    cameraRef.current?.setCamera({
+      centerCoordinate: [longitude, latitude],
+      animationDuration: 300,
+      animationMode: 'easeTo',
+    });
+  }
+
+  // Mapbox equivalent of onRegionChangeComplete: fires when the map settles after
+  // a gesture or a programmatic move. Keeps `region` (the drop-pin-at-centre
+  // source of truth) in sync without re-rendering on every pan frame.
+  function handleMapIdle(state: MapState) {
+    const [longitude, latitude] = state.properties.center;
+    const latitudeDelta = zoomLevelToDelta(state.properties.zoom);
+
+    setRegion((currentRegion) =>
+      currentRegion.latitude === latitude &&
+      currentRegion.longitude === longitude &&
+      currentRegion.latitudeDelta === latitudeDelta
+        ? currentRegion
+        : { latitude, longitude, latitudeDelta, longitudeDelta: latitudeDelta },
+    );
   }
 
   // Drop a draggable pin at the current map centre (region tracks the centre via
@@ -563,16 +601,12 @@ export function MapScreen() {
 
       return [
         <AssetMarker
-          // Colour + focus are in the key so a recolour (after inspecting) or a
-          // focus change remounts the marker and re-snapshots its custom view.
-          key={`asset-${asset.id}-${markerColor}-${focused ? 'focused' : ''}`}
+          key={`asset-${asset.id}`}
           coordinate={coordinate}
           color={markerColor}
           // Highlight the asset we were opened to focus (from Asset Detail) so
-          // it's distinguishable from its neighbours, and draw it on top.
+          // it's distinguishable from its neighbours.
           focused={focused}
-          title={asset.assetCode}
-          description={asset.name ?? asset.assetType.name}
           onPress={() => handleOpenAssetDetail(asset)}
         />,
       ];
@@ -580,21 +614,22 @@ export function MapScreen() {
 
     if (!showHeatmap) {
       markers.push(
+        // Mapbox has no always-attached callout; tapping the marker opens the
+        // full Defect detail (the action the old Callout's onPress performed).
         ...filteredDefectMarkers.map((defect) => (
-          <Marker
+          <Mapbox.MarkerView
             key={`defect-${defect.id}`}
-            coordinate={{
-              latitude: defect.latitude,
-              longitude: defect.longitude,
-            }}
+            coordinate={[defect.longitude, defect.latitude]}
             anchor={{ x: 0.5, y: 1 }}
-            centerOffset={{ x: 0, y: -20 }}
+            allowOverlap
           >
-            <DefectMarkerView defect={defect} />
-            <Callout onPress={() => handleOpenDefectDetail(defect.id)}>
-              <DefectCallout defect={defect} />
-            </Callout>
-          </Marker>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => handleOpenDefectDetail(defect.id)}
+            >
+              <DefectMarkerView defect={defect} />
+            </Pressable>
+          </Mapbox.MarkerView>
         )),
       );
     }
@@ -602,32 +637,32 @@ export function MapScreen() {
     if (showSequenceWarnings) {
       markers.push(
         ...sequenceWarningMarkers.map((warning) => (
-          <Marker
+          <Mapbox.MarkerView
             key={`sequence-warning-${warning.assetId}`}
-            coordinate={warning.coordinate}
+            coordinate={[warning.coordinate.longitude, warning.coordinate.latitude]}
             anchor={{ x: 0.5, y: 1 }}
-            centerOffset={{ x: 0, y: -18 }}
+            allowOverlap
           >
             <SequenceWarningMarkerView />
-            <Callout>
-              <SequenceWarningCallout warning={warning} />
-            </Callout>
-          </Marker>
+          </Mapbox.MarkerView>
         )),
       );
     }
 
     if (selectedCoordinate) {
       markers.push(
-        <Marker
+        <Mapbox.PointAnnotation
           key="temporary-add-asset-pin"
-          coordinate={selectedCoordinate}
+          id="temporary-add-asset-pin"
+          coordinate={[selectedCoordinate.longitude, selectedCoordinate.latitude]}
           draggable
-          title="New asset location"
-          description="Confirm below to add an asset here."
-          pinColor="#10b981"
-          onDragEnd={(event) => setSelectedCoordinate(event.nativeEvent.coordinate)}
-        />,
+          onDragEnd={(feature) => {
+            const [longitude, latitude] = feature.geometry.coordinates as [number, number];
+            setSelectedCoordinate({ latitude, longitude });
+          }}
+        >
+          <View style={styles.addAssetPin} />
+        </Mapbox.PointAnnotation>,
       );
     }
 
@@ -642,6 +677,7 @@ export function MapScreen() {
     sequenceWarningMarkers,
     showHeatmap,
     showSequenceWarnings,
+    styles,
   ]);
 
   return (
@@ -672,38 +708,75 @@ export function MapScreen() {
             <LoadingBlock label="Loading asset map..." />
           </View>
         ) : (
-          <MapView
-            ref={setMapReference}
-            provider={PROVIDER_GOOGLE}
+          <Mapbox.MapView
             style={{ flex: 1 }}
-            region={region}
-            mapType={mapType}
-            showsUserLocation={true}
-            showsMyLocationButton={false}
-            followsUserLocation={false}
-            onRegionChangeComplete={setRegion}
+            styleURL={mapType === 'hybrid' ? SATELLITE_STYLE : STREET_STYLE}
+            scaleBarEnabled={false}
             onLongPress={handleLongPress}
+            onMapIdle={handleMapIdle}
           >
+            <Mapbox.Camera
+              ref={cameraRef}
+              animationMode="none"
+              // Only applied at first mount — by then loadMapData has already
+              // fitted/focused `region`, so the map opens on the right view.
+              defaultSettings={{
+                centerCoordinate: [region.longitude, region.latitude],
+                zoomLevel: regionToZoomLevel(region.latitudeDelta),
+              }}
+            />
+            <Mapbox.LocationPuck visible puckBearing="heading" />
             {showHeatmap && defectHeatmapPoints.length > 0 ? (
-              <Heatmap
-                points={defectHeatmapPoints}
-                gradient={DEFECT_HEATMAP_GRADIENT}
-                radius={DEFECT_HEATMAP_RADIUS}
-                opacity={DEFECT_HEATMAP_OPACITY}
-              />
-            ) : null}
-            {showFeederLines &&
-              renderedFeederLines.map((line) => (
-                <Polyline
-                  key={`feeder-line-${line.id}`}
-                  coordinates={line.displayCoordinates}
-                  strokeColor={getFeederLineColor(line.feeder)}
-                  strokeWidth={3}
-                  zIndex={4}
+              <Mapbox.ShapeSource
+                id="defect-heat-source"
+                shape={buildDefectHeatmapFeatureCollection(defectHeatmapPoints)}
+              >
+                <Mapbox.HeatmapLayer
+                  id="defect-heat-layer"
+                  style={{
+                    heatmapRadius: DEFECT_HEATMAP_RADIUS,
+                    heatmapOpacity: DEFECT_HEATMAP_OPACITY,
+                    heatmapWeight: ['get', 'weight'],
+                    // 0 density = transparent; then the green→amber→red ramp at
+                    // the same stops the old react-native-maps gradient used.
+                    heatmapColor: [
+                      'interpolate',
+                      ['linear'],
+                      ['heatmap-density'],
+                      0,
+                      'rgba(34, 197, 94, 0)',
+                      DEFECT_HEATMAP_GRADIENT.startPoints[0],
+                      DEFECT_HEATMAP_GRADIENT.colors[0],
+                      DEFECT_HEATMAP_GRADIENT.startPoints[1],
+                      DEFECT_HEATMAP_GRADIENT.colors[1],
+                      DEFECT_HEATMAP_GRADIENT.startPoints[2],
+                      DEFECT_HEATMAP_GRADIENT.colors[2],
+                    ],
+                  }}
                 />
-              ))}
+              </Mapbox.ShapeSource>
+            ) : null}
+            {showFeederLines
+              ? renderedFeederLines.map((line) => (
+                  <Mapbox.ShapeSource
+                    key={`feeder-line-${line.id}`}
+                    id={`feeder-line-${line.id}`}
+                    shape={buildFeederLineFeature(line.displayCoordinates)}
+                  >
+                    <Mapbox.LineLayer
+                      id={`feeder-line-${line.id}-layer`}
+                      style={{
+                        lineColor: getFeederLineColor(line.feeder),
+                        lineWidth: 3,
+                        lineCap: 'round',
+                        lineJoin: 'round',
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                ))
+              : null}
             {mapMarkers}
-          </MapView>
+          </Mapbox.MapView>
         )}
 
         {/* Aiming crosshair: "Drop Pin to Add Asset" captures the map centre, so
@@ -1236,40 +1309,26 @@ function AssetMarker({
   coordinate,
   color,
   focused,
-  title,
-  description,
   onPress,
 }: {
   coordinate: Coordinate;
   color: string;
   focused: boolean;
-  title?: string;
-  description?: string;
   onPress: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  // Snapshot the dot once it has laid out, then stop tracking so a substation
-  // full of poles doesn't continuously re-rasterize every marker (the default
-  // custom-marker behaviour, which lags on field devices). The marker's key
-  // includes colour + focus, so a recolour remounts it and re-snapshots.
-  const [tracksViewChanges, setTracksViewChanges] = useState(true);
-  useEffect(() => {
-    const handle = setTimeout(() => setTracksViewChanges(false), 250);
-    return () => clearTimeout(handle);
-  }, []);
 
+  // MarkerView renders the live RN view (no rasterisation), so the old
+  // react-native-maps tracksViewChanges perf dance is unnecessary — a recolour
+  // (after inspecting) just re-renders the dot in place.
   return (
-    <Marker
-      coordinate={coordinate}
+    <Mapbox.MarkerView
+      coordinate={[coordinate.longitude, coordinate.latitude]}
       anchor={ASSET_MARKER_ANCHOR}
-      title={title}
-      description={description}
-      tracksViewChanges={tracksViewChanges}
-      zIndex={focused ? 10 : undefined}
-      onPress={onPress}
+      allowOverlap
     >
-      <View style={styles.assetMarkerHitbox}>
+      <Pressable accessibilityRole="button" onPress={onPress} style={styles.assetMarkerHitbox}>
         <View
           style={[
             styles.assetMarkerDot,
@@ -1277,8 +1336,8 @@ function AssetMarker({
             focused && styles.assetMarkerDotFocused,
           ]}
         />
-      </View>
-    </Marker>
+      </Pressable>
+    </Mapbox.MarkerView>
   );
 }
 
@@ -1805,6 +1864,50 @@ function createRegion(coordinates: Coordinate[]) {
     longitude: (minimumLongitude + maximumLongitude) / 2,
     latitudeDelta: Math.max((maximumLatitude - minimumLatitude) * 1.6, 0.01),
     longitudeDelta: Math.max((maximumLongitude - minimumLongitude) * 1.6, 0.01),
+  };
+}
+
+// A latitudeDelta of this many degrees ≈ Mapbox zoom 0; halving the span adds a
+// zoom level. Calibrated so the old react-native-maps deltas land on the same
+// zoom the mapping used (0.004→15, 0.01→14, 0.02→13, 0.05→~12).
+const REGION_ZOOM_CONSTANT = 163.84;
+
+function regionToZoomLevel(latitudeDelta: number): number {
+  if (!Number.isFinite(latitudeDelta) || latitudeDelta <= 0) {
+    return 14;
+  }
+  const zoomLevel = Math.log2(REGION_ZOOM_CONSTANT / latitudeDelta);
+  return Math.min(Math.max(zoomLevel, 2), 20);
+}
+
+function zoomLevelToDelta(zoomLevel: number): number {
+  if (!Number.isFinite(zoomLevel)) {
+    return CURRENT_LOCATION_REGION_DELTA;
+  }
+  return REGION_ZOOM_CONSTANT / 2 ** zoomLevel;
+}
+
+function buildDefectHeatmapFeatureCollection(
+  points: HeatmapPoint[],
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: 'FeatureCollection',
+    features: points.map((point) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [point.longitude, point.latitude] },
+      properties: { weight: point.weight ?? 1 },
+    })),
+  };
+}
+
+function buildFeederLineFeature(coordinates: Coordinate[]): GeoJSON.Feature<GeoJSON.LineString> {
+  return {
+    type: 'Feature',
+    geometry: {
+      type: 'LineString',
+      coordinates: coordinates.map((coordinate) => [coordinate.longitude, coordinate.latitude]),
+    },
+    properties: {},
   };
 }
 
@@ -2460,6 +2563,24 @@ const createStyles = (t: Theme) =>
       borderRadius: 10,
       borderWidth: 3,
       borderColor: '#7c3aed',
+    },
+    // Draggable "add asset here" pin (replaces the old green react-native-maps
+    // teardrop, which had a built-in pinColor MarkerView/PointAnnotation lack).
+    addAssetPin: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 3,
+      borderColor: '#ffffff',
+      backgroundColor: '#10b981',
+      shadowColor: '#000000',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.4,
+      shadowRadius: 3,
+      elevation: 6,
     },
     defectMarkerContainer: {
       width: 44,

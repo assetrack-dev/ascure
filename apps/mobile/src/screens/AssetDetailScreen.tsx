@@ -15,7 +15,8 @@ import {
   View,
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import Mapbox from '@rnmapbox/maps';
+import { SATELLITE_STYLE } from '../mapbox';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { cachedFetch, readCache, removeFromCachedArray, writeCache } from '../offlineCache';
@@ -649,26 +650,30 @@ export function AssetDetailScreen() {
                 pressed && styles.pressedButton,
               ]}
             >
-              <MapView
-                provider={PROVIDER_GOOGLE}
+              <Mapbox.MapView
                 style={styles.miniMap}
-                pointerEvents="none"
-                liteMode
-                region={{
-                  latitude: asset.latitude,
-                  longitude: asset.longitude,
-                  latitudeDelta: 0.004,
-                  longitudeDelta: 0.004,
-                }}
+                styleURL={SATELLITE_STYLE}
+                scaleBarEnabled={false}
+                compassEnabled={false}
+                scrollEnabled={false}
+                zoomEnabled={false}
+                rotateEnabled={false}
+                pitchEnabled={false}
               >
-                <Marker
-                  coordinate={{
-                    latitude: asset.latitude,
-                    longitude: asset.longitude,
+                <Mapbox.Camera
+                  animationMode="none"
+                  defaultSettings={{
+                    centerCoordinate: [asset.longitude, asset.latitude],
+                    zoomLevel: 15,
                   }}
-                  title={asset.assetCode || undefined}
                 />
-              </MapView>
+                <Mapbox.PointAnnotation
+                  id="asset-location"
+                  coordinate={[asset.longitude, asset.latitude]}
+                >
+                  <View style={styles.miniMapPin} />
+                </Mapbox.PointAnnotation>
+              </Mapbox.MapView>
             </Pressable>
             <Text style={styles.miniMapHint}>Tap the map to open it at this asset.</Text>
           </View>
@@ -1204,6 +1209,14 @@ const createStyles = (t: Theme) =>
     miniMap: {
       width: '100%',
       height: 150,
+    },
+    miniMapPin: {
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: t.colors.primary,
+      borderWidth: 2,
+      borderColor: '#ffffff',
     },
     miniMapHint: {
       fontSize: 12,

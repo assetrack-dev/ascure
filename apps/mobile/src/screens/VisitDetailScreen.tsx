@@ -2,8 +2,8 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import type { Region } from 'react-native-maps';
+import Mapbox from '@rnmapbox/maps';
+import { SATELLITE_STYLE } from '../mapbox';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
 import { cachedFetch } from '../offlineCache';
 import {
@@ -55,6 +55,16 @@ import type { RootStackScreenProps } from '../navigation/types';
 type Coordinate = {
   latitude: number;
   longitude: number;
+};
+
+// Local region shape (previously react-native-maps' Region) — retained so the
+// existing marker-fitting math in createRegion stays intact; converted to a
+// Mapbox centerCoordinate + zoomLevel at render time.
+type Region = {
+  latitude: number;
+  longitude: number;
+  latitudeDelta: number;
+  longitudeDelta: number;
 };
 
 type ThumbnailImage = {
@@ -1220,6 +1230,8 @@ function VisitAssetMap({
     })
     .filter(isMappedAsset);
   const region = createRegion(mappedAssets.map((item) => item.coordinate));
+  const centerCoordinate: [number, number] = [region.longitude, region.latitude];
+  const zoomLevel = zoomFromRegion(region);
 
   return (
     <Card>
@@ -1241,29 +1253,33 @@ function VisitAssetMap({
         />
       ) : (
         <View style={styles.mapFrame}>
-          <MapView
-            provider={PROVIDER_GOOGLE}
-            mapType="satellite"
+          <Mapbox.MapView
             style={styles.map}
-            initialRegion={region}
-            region={region}
+            styleURL={SATELLITE_STYLE}
+            scaleBarEnabled={false}
+            compassEnabled={false}
             scrollEnabled={false}
             zoomEnabled={false}
             rotateEnabled={false}
             pitchEnabled={false}
-            toolbarEnabled={false}
           >
+            <Mapbox.Camera
+              animationMode="none"
+              animationDuration={0}
+              centerCoordinate={centerCoordinate}
+              zoomLevel={zoomLevel}
+            />
             {mappedAssets.map(({ asset, coordinate }) => (
-              <Marker
+              <Mapbox.PointAnnotation
                 key={asset.id}
-                coordinate={coordinate}
-                title={asset.assetCode}
-                description={asset.name ?? asset.assetType.name}
-                pinColor={theme.colors.primary}
-                onPress={() => onOpenAsset(asset)}
-              />
+                id={`visit-asset-${asset.id}`}
+                coordinate={[coordinate.longitude, coordinate.latitude]}
+                onSelected={() => onOpenAsset(asset)}
+              >
+                <View style={styles.mapPin} />
+              </Mapbox.PointAnnotation>
             ))}
-          </MapView>
+          </Mapbox.MapView>
         </View>
       )}
     </Card>
@@ -1620,6 +1636,18 @@ function isMappedAsset(
   return value !== null;
 }
 
+// Convert the fitted region (lat/lng deltas) into a Mapbox zoom level. Uses the
+// wider of the two deltas so all markers stay in frame. Calibrated to the port
+// guidance (0.004→15, 0.01→14, 0.02→13, 0.05→12) and clamped to sane bounds.
+function zoomFromRegion(region: Region): number {
+  const delta = Math.max(region.latitudeDelta, region.longitudeDelta);
+  if (!Number.isFinite(delta) || delta <= 0) {
+    return 14;
+  }
+  const zoom = Math.log2(360 / delta) - 1.3;
+  return Math.min(Math.max(zoom, 1), 20);
+}
+
 const createStyles = (t: Theme) =>
   StyleSheet.create({
     // Progress hero (handoff 2f) — dark panel, big mono count, bar + mini-stats.
@@ -1761,6 +1789,16 @@ const createStyles = (t: Theme) =>
     },
     map: {
       flex: 1,
+    },
+    // Marker dot for a mapped visit asset (Mapbox PointAnnotation child view) —
+    // replaces the old react-native-maps pinColor.
+    mapPin: {
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: t.colors.primary,
+      borderWidth: 2,
+      borderColor: '#ffffff',
     },
     assetHeader: {
       minHeight: 44,
