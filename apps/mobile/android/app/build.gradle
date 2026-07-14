@@ -92,8 +92,8 @@ android {
         applicationId 'local.ascure.field'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 19
-        versionName "1.9.0"
+        versionCode 20
+        versionName "1.10.0"
 
         // Launcher label via placeholder (AndroidManifest uses ${appLabel}) so the
         // side-by-side build can carry its own name. Production = "ASCURE".
