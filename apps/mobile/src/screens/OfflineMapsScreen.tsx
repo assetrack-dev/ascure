@@ -52,8 +52,10 @@ export function OfflineMapsScreen() {
   const refreshPacks = useCallback(async () => {
     try {
       setPacks(await listOfflinePacks());
-    } catch {
-      // best-effort — the list is informational
+    } catch (err) {
+      // best-effort — the list is informational, but log so a failing status
+      // read doesn't silently leave "Saved areas (0)".
+      console.warn('Offline pack refresh failed', err);
     }
   }, []);
 
@@ -241,8 +243,9 @@ export function OfflineMapsScreen() {
                     {pack.label}
                   </Text>
                   <Text style={styles.packMeta}>
-                    {pack.complete ? 'Ready offline' : `${Math.round(pack.percentage)}%`} ·{' '}
-                    {(pack.bytes / 1048576).toFixed(1)} MB · {pack.tileCount.toLocaleString()} tiles
+                    {pack.complete ? 'Ready offline' : `${Math.round(pack.percentage ?? 0)}%`} ·{' '}
+                    {((pack.bytes ?? 0) / 1048576).toFixed(1)} MB ·{' '}
+                    {(pack.tileCount ?? 0).toLocaleString()} tiles
                   </Text>
                 </View>
                 <Pressable

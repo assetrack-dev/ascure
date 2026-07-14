@@ -1,3 +1,4 @@
+import { NativeModules } from 'react-native';
 import Mapbox, { offlineManager, StyleURL } from '@rnmapbox/maps';
 
 /**
@@ -31,6 +32,10 @@ export const STREET_STYLE: string = StyleURL.Street;
 export const OFFLINE_TILE_LIMIT = 6000; // Mapbox ToS default, per device
 export const OFFLINE_MIN_ZOOM = 12; // wide context
 export const OFFLINE_MAX_ZOOM = 18; // ~0.6 m/px — pole-precise without blowing the tile budget
+
+// If no progress event arrives for this long, downloadOfflineRegion does ONE
+// safe status probe to tell "finished but events silent" from "genuinely stalled".
+const OFFLINE_STALL_MS = 60000;
 
 let initialized = false;
 
@@ -91,39 +96,157 @@ export async function downloadOfflineRegion(
     );
   }
 
-  await offlineManager.createPack(
-    {
-      name: region.id,
-      styleURL: SATELLITE_STYLE,
-      // Mapbox expects [NE, SW], each a [lng, lat] position.
-      bounds: [region.ne, region.sw],
-      minZoom,
-      maxZoom,
-      metadata: { label: region.label },
-    },
-    (_pack, status) => {
-      onProgress?.(status.percentage);
-    },
-  );
+  // @rnmapbox's createPack(...) promise resolves the instant the native download
+  // is KICKED OFF, not when it finishes — real progress, completion and failure
+  // arrive only via the async progress/error listeners. Worse, those listeners
+  // ride the legacy device-event channel, which can be silently dead under the
+  // New Architecture (the MapView uses a different, working channel — so a map
+  // that renders proves nothing about offline events). Awaiting createPack alone
+  // returns immediately and any download error is swallowed.
+  //
+  // We drive the result from the progress/error listeners (fast, and they carry
+  // the native error message). A watchdog covers the case where those events
+  // never arrive: if the download goes quiet for OFFLINE_STALL_MS we do ONE
+  // status probe to tell "finished but events silent" from "genuinely stalled".
+  //
+  // IMPORTANT: while a download is active we must NOT call offlineManager.getPack
+  // /getPacks — on Android that runs convertRegionsToJSON on the UI thread
+  // (CountDownLatch.await + an unguarded value!!), which ANRs/crashes when polled
+  // mid-download. readPackPercentage() below hits the UI-thread-safe getPackStatus
+  // directly, and only when events have gone silent — never in a hot loop.
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let bestPct = 0;
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const report = (pct: number) => {
+      if (!Number.isFinite(pct)) return;
+      if (pct > bestPct) bestPct = pct;
+      onProgress?.(bestPct); // monotonic — never let the bar jump backwards
+    };
+
+    const cleanup = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+      offlineManager.unsubscribe(region.id); // drop our listeners (safe if already gone)
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    // Watchdog: re-armed on every progress event, so on a healthy device (events
+    // flowing) it NEVER fires and we never touch the native offline module.
+    const armStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        void (async () => {
+          const pct = await readPackPercentage(region.id);
+          if (pct != null && pct >= 100) return succeed(); // done — events were just silent
+          if (pct != null && pct > bestPct) {
+            // Still advancing but events aren't crossing the bridge — degrade to a
+            // slow (once-per-stall) safe poll instead of failing.
+            report(pct);
+            armStall();
+            return;
+          }
+          fail(new Error('Download stalled — no tiles arrived. Check your signal and try again.'));
+        })();
+      }, OFFLINE_STALL_MS);
+    };
+
+    offlineManager
+      .createPack(
+        {
+          name: region.id,
+          styleURL: SATELLITE_STYLE,
+          // Mapbox expects [NE, SW], each a [lng, lat] position.
+          bounds: [region.ne, region.sw],
+          minZoom,
+          maxZoom,
+          metadata: { label: region.label },
+        },
+        (_pack, status) => {
+          report(status.percentage);
+          armStall(); // fresh event — reset the watchdog
+          if (status.percentage >= 100) succeed();
+        },
+        (_pack, error) => {
+          fail(new Error(error?.message || 'Satellite tiles failed to download.'));
+        },
+      )
+      .then(() => armStall()) // kicked off OK — start the watchdog
+      .catch((startError) => fail(startError)); // failed to even start (native reject / name clash)
+  });
+}
+
+/**
+ * UI-thread-SAFE single-pack progress probe (0–100), or null if unavailable.
+ *
+ * Deliberately calls the native getPackStatus method directly instead of
+ * offlineManager.getPack()/getPacks(): the latter run convertRegionsToJSON on
+ * Android's UI thread (blocking CountDownLatch.await + an unguarded `value!!`),
+ * which ANRs/crashes when polled during an active download. getPackStatus is
+ * plain callback-based and safe to call mid-download.
+ */
+async function readPackPercentage(id: string): Promise<number | null> {
+  const mod = (
+    NativeModules as {
+      RNMBXOfflineModule?: { getPackStatus?: (name: string) => Promise<{ percentage?: number }> };
+    }
+  ).RNMBXOfflineModule;
+  if (!mod?.getPackStatus) return null;
+  try {
+    const status = await mod.getPackStatus(id);
+    return typeof status?.percentage === 'number' && Number.isFinite(status.percentage)
+      ? status.percentage
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** All downloaded packs with their status (for a "manage offline maps" screen). */
 export async function listOfflinePacks(): Promise<OfflinePackInfo[]> {
   const packs = await offlineManager.getPacks();
-  return Promise.all(
-    packs.map(async (pack) => {
-      const status = await pack.status();
-      const metadata = (pack.metadata ?? {}) as { label?: string };
-      return {
-        id: String(pack.name),
-        label: metadata.label ?? String(pack.name),
-        percentage: status.percentage,
-        tileCount: status.completedTileCount,
-        bytes: status.completedTileSize,
-        complete: status.percentage >= 100,
-      };
+  const infos = await Promise.all(
+    packs.map(async (pack): Promise<OfflinePackInfo | null> => {
+      try {
+        const status = (await pack.status()) as {
+          percentage?: number;
+          completedResourceCount?: number;
+          completedResourceSize?: number;
+          completedTileCount?: number;
+          completedTileSize?: number;
+        };
+        const metadata = (pack.metadata ?? {}) as { label?: string };
+        const percentage = Number.isFinite(status?.percentage) ? (status.percentage as number) : 0;
+        return {
+          id: String(pack.name),
+          label: metadata.label ?? String(pack.name),
+          percentage,
+          // The Android getPackStatus payload reports completedResource{Count,Size};
+          // the tile-prefixed fields only exist in progress EVENTS (and on iOS). Coalesce
+          // and default to 0 — otherwise `tileCount.toLocaleString()` in the UI throws
+          // "Cannot read property 'toLocaleString' of undefined" and crashes the screen.
+          tileCount: status.completedTileCount ?? status.completedResourceCount ?? 0,
+          bytes: status.completedTileSize ?? status.completedResourceSize ?? 0,
+          complete: percentage >= 100,
+        };
+      } catch {
+        return null; // skip a pack whose status can't be read rather than blank the list
+      }
     }),
   );
+  return infos.filter((p): p is OfflinePackInfo => p !== null);
 }
 
 /** Delete a downloaded pack (free storage / re-download a refreshed area). */
