@@ -910,7 +910,16 @@ export function CheckInScreen() {
             />
             <View style={styles.fieldGroup}>
               <EyebrowLabel>MAINHEAD *</EyebrowLabel>
-              {mainheads.length === 0 ? (
+              {!optionsLoaded ? (
+                // Same offline-aware guard as the Team card: MAINHEADs load from
+                // the same online fetch, so an offline/failed load must NOT read
+                // as "no MAINHEAD exists — contact admin".
+                <EmptyState
+                  icon="wifi-off"
+                  title="Couldn't load MAINHEADs"
+                  description="You appear to be offline. Starting a new site visit needs a connection — turn off Work Offline (menu) or get signal, then tap Refresh."
+                />
+              ) : mainheads.length === 0 ? (
                 <EmptyState
                   icon="database"
                   title="No MAINHEAD available"
