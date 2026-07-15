@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   Users,
   X,
@@ -77,6 +78,7 @@ import {
 import { fetchTeams, type TeamOption } from "@/lib/teams";
 import type { AuthSession } from "@/types/auth";
 import type {
+  ChecklistColumn,
   CycleDelta,
   CycleDeltaPole,
   OperationalHealthStatus,
@@ -1405,7 +1407,7 @@ function SensorPhotoLightbox({
   );
 }
 
-type AssetSortKey =
+type FixedAssetSortKey =
   | "rondaan"
   | "lama"
   | "bacaan"
@@ -1414,7 +1416,14 @@ type AssetSortKey =
   | "type"
   | "source"
   | "added";
+/** A fixed column key, or a DC-toggled checklist column keyed `checklist:<label>`. */
+type AssetSortKey = FixedAssetSortKey | `checklist:${string}`;
 type AssetSortDirection = "asc" | "desc";
+
+const CHECKLIST_SORT_PREFIX = "checklist:";
+/** localStorage key for the DC's personal set of extra checklist columns. Global
+ *  across visits — the picker renders only the ones a given visit actually has. */
+const CHECKLIST_COLUMNS_STORAGE_KEY = "ascure.siteVisit.checklistColumns";
 
 function assetSortText(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? "";
@@ -1447,6 +1456,17 @@ function getAssetSortValue(link: SiteVisitAssetLink, key: AssetSortKey): string 
     case "added": {
       const time = link.addedAt ? new Date(link.addedAt).getTime() : 0;
       return Number.isFinite(time) ? time : 0;
+    }
+    default: {
+      // Dynamic checklist column (`checklist:<normalized label>`): numeric when
+      // the recorded value parses as a number, else natural-sortable text.
+      const raw =
+        link.checklistValues?.[key.slice(CHECKLIST_SORT_PREFIX.length)]?.trim() ?? "";
+      if (!raw) {
+        return "";
+      }
+      const numeric = Number.parseFloat(raw);
+      return Number.isFinite(numeric) ? numeric : raw.toLowerCase();
     }
   }
 }
@@ -1722,6 +1742,146 @@ function SensorPhotoCell({
   );
 }
 
+// Fixed Linked-Assets columns shown before / after the DC's toggleable checklist
+// columns. The extras slot between Catitan and Type so every checklist-derived
+// field clusters together, ahead of the asset/link metadata.
+const LINKED_ASSET_LEAD_COLUMNS: [string, AssetSortKey][] = [
+  ["No Tiang Rondaan", "rondaan"],
+  ["No Tiang Lama", "lama"],
+  ["Bacaan Kelegaan 1", "bacaan"],
+  ["Gambar Kelegaan", "gambar"],
+  ["Catitan", "catitan"],
+];
+const LINKED_ASSET_TAIL_COLUMNS: [string, AssetSortKey][] = [
+  ["Type", "type"],
+  ["Source", "source"],
+  ["Added", "added"],
+];
+
+/**
+ * "Columns" dropdown for the Linked Assets table: lets the DC toggle any
+ * template-defined checklist field on as an extra read-only column. Options come
+ * from the visit's `checklistColumns` (template order, grouped by section); the
+ * selection is personal (persisted by the parent to localStorage). Closes on an
+ * outside click or Escape. Renders nothing when the visit exposes no fields.
+ */
+function ChecklistColumnPicker({
+  columns,
+  selectedKeys,
+  onChange,
+}: {
+  columns: ChecklistColumn[];
+  selectedKeys: string[];
+  onChange: (keys: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (columns.length === 0) {
+    return null;
+  }
+
+  const selectedCount = columns.filter((column) => selectedKeys.includes(column.key)).length;
+
+  const toggle = (key: string) => {
+    onChange(
+      selectedKeys.includes(key)
+        ? selectedKeys.filter((value) => value !== key)
+        : [...selectedKeys, key],
+    );
+  };
+
+  // Group into contiguous runs by section title, preserving template order.
+  const groups: { section: string | null; items: ChecklistColumn[] }[] = [];
+  for (const column of columns) {
+    const last = groups[groups.length - 1];
+    if (last && last.section === column.section) {
+      last.items.push(column);
+    } else {
+      groups.push({ section: column.section, items: [column] });
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Tbtn variant="secondary" onClick={() => setOpen((value) => !value)}>
+        <SlidersHorizontal size={15} />
+        Columns
+        {selectedCount > 0 ? (
+          <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--brand)] px-1 text-[10px] font-bold text-[var(--on-brand)]">
+            {selectedCount}
+          </span>
+        ) : null}
+      </Tbtn>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-1.5 w-72 overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
+          <div className="flex items-center justify-between border-b border-[var(--line2)] px-3 py-2">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--muted-2)]">
+              Checklist columns
+            </span>
+            {selectedCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-[11px] font-semibold text-[var(--brand)] hover:underline"
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1.5">
+            {groups.map((group, groupIndex) => (
+              <div key={group.section ?? `group-${groupIndex}`} className="mb-1 last:mb-0">
+                {group.section ? (
+                  <p className="px-2 pb-0.5 pt-1.5 text-[11px] font-semibold text-[var(--muted)]">
+                    {group.section}
+                  </p>
+                ) : null}
+                {group.items.map((column) => (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] px-2 py-1.5 text-[13px] text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedKeys.includes(column.key)}
+                      onChange={() => toggle(column.key)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-[var(--line-strong)] accent-[var(--brand)]"
+                    />
+                    <span className="min-w-0 flex-1 break-words">{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -1743,6 +1903,33 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const [assetSortKey, setAssetSortKey] = useState<AssetSortKey>("rondaan");
   const [assetSortDirection, setAssetSortDirection] =
     useState<AssetSortDirection>("asc");
+  // DC's personal set of extra checklist columns (normalized label keys). Hydrated
+  // from localStorage after mount to avoid an SSR/first-paint hydration mismatch.
+  const [selectedChecklistKeys, setSelectedChecklistKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CHECKLIST_COLUMNS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSelectedChecklistKeys(parsed.filter((value): value is string => typeof value === "string"));
+      }
+    } catch {
+      // Ignore unavailable or malformed storage — the table just shows no extras.
+    }
+  }, []);
+
+  const persistChecklistKeys = useCallback((keys: string[]) => {
+    setSelectedChecklistKeys(keys);
+    try {
+      window.localStorage.setItem(CHECKLIST_COLUMNS_STORAGE_KEY, JSON.stringify(keys));
+    } catch {
+      // Selection still applies for this session even if it can't be persisted.
+    }
+  }, []);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -2077,6 +2264,17 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     );
   }, [filteredAssetRows, assetSortKey, assetSortDirection]);
 
+  // Checklist columns to actually render: the DC's selection, intersected with the
+  // fields THIS visit's template exposes (a saved key from another template's
+  // checklist simply doesn't appear), kept in template order.
+  const activeChecklistColumns = useMemo(
+    () =>
+      (visit?.checklistColumns ?? []).filter((column) =>
+        selectedChecklistKeys.includes(column.key),
+      ),
+    [visit?.checklistColumns, selectedChecklistKeys],
+  );
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
@@ -2297,11 +2495,18 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           </span>
                         }
                         actions={
-                          <span className="text-[12px] text-[var(--muted)]">
-                            {filteredAssetRows.length === operationalAssetRows.length
-                              ? `${operationalAssetRows.length} rows`
-                              : `${filteredAssetRows.length} / ${operationalAssetRows.length} rows`}
-                          </span>
+                          <div className="flex items-center gap-3">
+                            <ChecklistColumnPicker
+                              columns={visit.checklistColumns ?? []}
+                              selectedKeys={selectedChecklistKeys}
+                              onChange={persistChecklistKeys}
+                            />
+                            <span className="whitespace-nowrap text-[12px] text-[var(--muted)]">
+                              {filteredAssetRows.length === operationalAssetRows.length
+                                ? `${operationalAssetRows.length} rows`
+                                : `${filteredAssetRows.length} / ${operationalAssetRows.length} rows`}
+                            </span>
+                          </div>
                         }
                       />
 
@@ -2373,18 +2578,32 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           <table className="min-w-full text-left">
                             <thead>
                               <tr className={`sticky top-0 z-10 border-y border-[var(--line)] ${tableHeadClass}`}>
-                                {(
-                                  [
-                                    ["No Tiang Rondaan", "rondaan"],
-                                    ["No Tiang Lama", "lama"],
-                                    ["Bacaan Kelegaan 1", "bacaan"],
-                                    ["Gambar Kelegaan", "gambar"],
-                                    ["Catitan", "catitan"],
-                                    ["Type", "type"],
-                                    ["Source", "source"],
-                                    ["Added", "added"],
-                                  ] as [string, AssetSortKey][]
-                                ).map(([label, key]) => (
+                                {LINKED_ASSET_LEAD_COLUMNS.map(([label, key]) => (
+                                  <th key={key} className={tableHeadCellClass}>
+                                    <SortButton
+                                      label={label}
+                                      sortKey={key}
+                                      activeSortKey={assetSortKey}
+                                      direction={assetSortDirection}
+                                      onSort={handleAssetSort}
+                                    />
+                                  </th>
+                                ))}
+                                {activeChecklistColumns.map((column) => (
+                                  <th
+                                    key={`${CHECKLIST_SORT_PREFIX}${column.key}`}
+                                    className={tableHeadCellClass}
+                                  >
+                                    <SortButton
+                                      label={column.label}
+                                      sortKey={`${CHECKLIST_SORT_PREFIX}${column.key}`}
+                                      activeSortKey={assetSortKey}
+                                      direction={assetSortDirection}
+                                      onSort={handleAssetSort}
+                                    />
+                                  </th>
+                                ))}
+                                {LINKED_ASSET_TAIL_COLUMNS.map(([label, key]) => (
                                   <th key={key} className={tableHeadCellClass}>
                                     <SortButton
                                       label={label}
@@ -2483,6 +2702,21 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   <td className={`${tableCellClass} min-w-48`}>
                                     {formatNullable(link.checklist?.catitan)}
                                   </td>
+                                  {activeChecklistColumns.map((column) => {
+                                    const raw = link.checklistValues?.[column.key]?.trim();
+                                    return (
+                                      <td
+                                        key={`${CHECKLIST_SORT_PREFIX}${column.key}`}
+                                        className={`${tableCellClass} min-w-32`}
+                                      >
+                                        {raw ? (
+                                          raw
+                                        ) : (
+                                          <span className="text-[var(--muted-2)]">—</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatNullable(link.asset.assetType?.name ?? link.asset.assetType?.code)}
                                   </td>

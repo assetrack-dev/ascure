@@ -159,6 +159,18 @@ export interface SiteVisitAssetLink {
     bacaanKelegaan1Image?: SiteVisitSensorPhoto | null;
     catitan: string | null;
   };
+  /** Every recorded checklist value for this pole's latest submitted inspection,
+   *  keyed by normalized (upper, single-spaced) label. Feeds the DC's toggleable
+   *  columns — match a {@link ChecklistColumn.key} against this map. */
+  checklistValues?: Record<string, string | null>;
+}
+
+/** A template-defined checklist field the DC can turn on as a Linked-Assets
+ *  column. `key` matches into {@link SiteVisitAssetLink.checklistValues}. */
+export interface ChecklistColumn {
+  key: string;
+  label: string;
+  section: string | null;
 }
 
 export interface SiteVisitSensorPhoto {
@@ -307,4 +319,7 @@ export interface SiteVisitDetail extends SiteVisitListItem {
   images: SiteVisitImage[];
   lifecycle: SurveyLifecycleState | null;
   lifecycleEvents: SurveyLifecycleEvent[];
+  /** Template-defined checklist fields the DC can toggle on as extra Linked-Assets
+   *  columns, in template order (section, then item). Empty when nothing recorded. */
+  checklistColumns?: ChecklistColumn[];
 }
