@@ -511,6 +511,57 @@ export class ReportsService {
   }
 
   /**
+   * DC master-reference export: a flat list of every accessible Pencawang with
+   * its id, Kod Pencawang, Nama Pencawang, Functional Location and lat/long.
+   * Lat/long is the Pencawang's most recent site-visit check-in GPS (from
+   * listSubstations); left BLANK when the Pencawang has never been visited, so an
+   * empty coordinate is a clear "not yet surveyed" flag. Read-only, tenant +
+   * access scoped (via listSubstations → assertCanReport).
+   */
+  async buildPencawangList(
+    user: RequestUser,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const substations = await this.listSubstations(user);
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('PENCAWANG');
+    const header = sheet.addRow([
+      'No',
+      'Pencawang ID',
+      'Kod Pencawang',
+      'Nama Pencawang',
+      'Functional Location',
+      'Latitude',
+      'Longitude',
+    ]);
+    header.font = { bold: true };
+
+    substations.forEach((substation, index) => {
+      sheet.addRow([
+        index + 1,
+        substation.id,
+        substation.code ?? '',
+        substation.name ?? '',
+        substation.location ?? '',
+        // Blank when never visited (no check-in GPS) — an empty coordinate flags a
+        // Pencawang that has not been surveyed. Numeric otherwise.
+        substation.latitude ?? '',
+        substation.longitude ?? '',
+      ]);
+    });
+
+    const columnWidths = [6, 40, 20, 32, 32, 14, 14];
+    columnWidths.forEach((width, index) => {
+      sheet.getColumn(index + 1).width = width;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename = `pencawang-list-${stamp}.xlsx`;
+    return { buffer: Buffer.from(arrayBuffer), filename };
+  }
+
+  /**
    * Builds the per-Pencawang SAVR **masterlist** (wide format: metadata columns
    * + one column per checklist item, 1 pole = 1 row) — the inverse of the F2
    * AppSheet importer, so the file round-trips back through it. Read-only,

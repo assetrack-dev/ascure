@@ -50,6 +50,25 @@ export class ReportsController {
     return this.reportsService.listSubstations(user);
   }
 
+  // DC master reference: every accessible Pencawang (id, code, name, Functional
+  // Location, lat/long) as a downloadable .xlsx. Blank lat/long = never visited.
+  @Get('pencawang-list.xlsx')
+  async exportPencawangList(
+    @CurrentUser() user: RequestUser,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.reportsService.buildPencawangList(user);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   // Per-user output for a period (default: this month) — the manager's monitor
   // + pay view. JSON for the table; .xlsx for the downloadable pay sheet.
   @Get('crew-performance')
