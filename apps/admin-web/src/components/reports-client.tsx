@@ -26,6 +26,7 @@ import {
 } from "@/lib/auth";
 import {
   downloadBulkChecklist,
+  downloadPencawangList,
   downloadPencawangTemplateMasterlist,
   downloadSavtRouteChecklist,
   fetchReportSubstations,
@@ -118,6 +119,7 @@ function ReportsContent() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
+  const [isListDownloading, setIsListDownloading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -354,6 +356,26 @@ function ReportsContent() {
     }
   }
 
+  // DC master reference: download EVERY accessible Pencawang (id, code, name,
+  // Functional Location, lat/long) as .xlsx — independent of the on-screen
+  // filters. Blank lat/long = never visited.
+  async function handleDownloadPencawangList() {
+    if (!session?.token || isListDownloading) {
+      return;
+    }
+    setIsListDownloading(true);
+    setError("");
+    setNotice("");
+    try {
+      await downloadPencawangList(session.token);
+      setNotice("Pencawang list downloaded.");
+    } catch (downloadError) {
+      handleDownloadError(downloadError);
+    } finally {
+      setIsListDownloading(false);
+    }
+  }
+
   const rowCount = isSavt ? filteredRoutes.length : filteredSubstations.length;
 
   return (
@@ -440,6 +462,15 @@ function ReportsContent() {
                           rowCount === 1 ? "" : "s"
                         }${selectedKeys.size > 0 ? ` · ${selectedKeys.size} selected` : ""}`}
                   </span>
+                  <Tbtn
+                    variant="secondary"
+                    onClick={handleDownloadPencawangList}
+                    disabled={isListDownloading || isBulkDownloading || !!downloadingKey}
+                    title="Download every Pencawang (ID, Nama, Functional Location, lat/long) as XLSX — blank lat/long = never visited"
+                  >
+                    <Download size={16} />
+                    {isListDownloading ? "Preparing…" : "Pencawang list"}
+                  </Tbtn>
                   <Tbtn
                     variant="primary"
                     onClick={handleBulkDownload}

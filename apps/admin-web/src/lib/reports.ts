@@ -61,6 +61,18 @@ export async function downloadCrewPerformance(
 }
 
 /**
+ * Downloads the full Pencawang list (.xlsx) — DC's master reference: Pencawang
+ * ID, Kod Pencawang, Nama Pencawang, Functional Location and lat/long. A blank
+ * lat/long means the Pencawang has never been visited.
+ */
+export async function downloadPencawangList(token: string): Promise<void> {
+  const { blob, filename } = await apiRequestBlob("/reports/pencawang-list.xlsx", {
+    token,
+  });
+  triggerBrowserDownload(blob, filename ?? "pencawang-list.xlsx");
+}
+
+/**
  * Downloads the per-route SAVT checklist (.xlsx, 1 pole per row, route-flavoured
  * meta columns + one column per live SAVT checklist item). `status` filters by
  * survey lifecycle; "ALL"/omitted = no filter. Server names it
