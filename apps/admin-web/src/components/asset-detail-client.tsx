@@ -83,6 +83,13 @@ function resultLabel(result: string | null | undefined) {
   return normalized || "—";
 }
 
+/** A real pass/fail evaluation — i.e. a defect-check item. Informational items
+ *  (readings, notes) record N/A here, which carries no meaning in this table. */
+function isPassFailResult(result: string | null | undefined) {
+  const normalized = result?.toUpperCase();
+  return normalized === "PASS" || normalized === "FAIL";
+}
+
 function severityBadgeClassName(severity: string | null | undefined) {
   const normalized = severity?.toUpperCase();
 
@@ -179,6 +186,15 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     [asset],
   );
   const inspectionItems = asset?.latestInspection?.items ?? [];
+  // Shorten the table to the rows that carry meaning: a real pass/fail result
+  // (defect checks), a flagged defect, or a written remark. Informational items
+  // that just recorded N/A with no remark are hidden.
+  const visibleInspectionItems = inspectionItems.filter(
+    (item) =>
+      item.isDefect ||
+      isPassFailResult(item.result) ||
+      (item.remark?.trim().length ?? 0) > 0,
+  );
   const inspectionDefectCount =
     asset?.latestInspection?.totalDefects ??
     inspectionItems.filter((item) => item.isDefect).length;
@@ -360,8 +376,8 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                         Inspection Result
                       </div>
                       <span className="text-sm text-[var(--muted)]">
-                        {inspectionItems.length}{" "}
-                        {inspectionItems.length === 1 ? "item" : "items"}
+                        {visibleInspectionItems.length}{" "}
+                        {visibleInspectionItems.length === 1 ? "item" : "items"}
                         {inspectionDefectCount > 0
                           ? ` · ${inspectionDefectCount} ${
                               inspectionDefectCount === 1 ? "defect" : "defects"
@@ -370,7 +386,7 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                       </span>
                     </div>
                     <div className="mt-5 overflow-x-auto">
-                      {inspectionItems.length > 0 ? (
+                      {visibleInspectionItems.length > 0 ? (
                         <table className="min-w-full text-left text-sm">
                           <thead>
                             <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
@@ -381,7 +397,7 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {inspectionItems.map((item) => (
+                            {visibleInspectionItems.map((item) => (
                               <tr
                                 key={item.id}
                                 className={item.isDefect ? "bg-red-50/40" : undefined}
@@ -390,11 +406,15 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                                   {item.label}
                                 </td>
                                 <td className="whitespace-nowrap px-4 py-3">
-                                  <span
-                                    className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${resultBadgeClassName(item.result)}`}
-                                  >
-                                    {resultLabel(item.result)}
-                                  </span>
+                                  {isPassFailResult(item.result) ? (
+                                    <span
+                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${resultBadgeClassName(item.result)}`}
+                                    >
+                                      {resultLabel(item.result)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
                                 </td>
                                 <td className="whitespace-nowrap px-4 py-3">
                                   {item.isDefect && item.severity ? (
@@ -416,7 +436,7 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                         </table>
                       ) : (
                         <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-[var(--muted)]">
-                          No checklist results recorded for this inspection.
+                          No pass/fail results or remarks for this inspection.
                         </div>
                       )}
                     </div>
