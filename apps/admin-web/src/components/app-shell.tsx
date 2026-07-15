@@ -109,6 +109,9 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: ClipboardList,
       section: "operations",
       requiresGovernQa: true,
+      // Hidden from the nav for now (owner: not needed right now). Route + code
+      // kept; breadcrumbs still resolve if reached directly.
+      hidden: true,
     },
     {
       href: "/maintenance-workspace",

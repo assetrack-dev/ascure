@@ -116,21 +116,56 @@ function bubbleIcon(
   return icon;
 }
 
-const dotIconCache = new Map<string, google.maps.Icon>();
-function dotIcon(color: string): google.maps.Icon {
-  const cached = dotIconCache.get(color);
+// Individual pole dot WITH its NO TIANG RONDAAN drawn beside it (into the SVG,
+// same approach as the Pencawang/bubble labels) so the code reads at a glance at
+// the pole level without hovering. A translucent dark pill keeps the white text
+// legible over the satellite basemap; the dot stays the geographic anchor. Poles
+// with no code fall back to a bare dot.
+const dotLabelIconCache = new Map<string, google.maps.Icon>();
+function dotLabelIcon(color: string, code: string): google.maps.Icon {
+  const trimmed = code.trim();
+  const key = `${color}|${trimmed}`;
+  const cached = dotLabelIconCache.get(key);
   if (cached) return cached;
-  const size = 15;
-  const c = size / 2;
+  const dot = 15;
+  const c = dot / 2;
+  const r = c - 1.5;
+
+  if (!trimmed) {
+    const svg =
+      `<svg xmlns='http://www.w3.org/2000/svg' width='${dot}' height='${dot}'>` +
+      `<circle cx='${c}' cy='${c}' r='${r}' fill='${color}' stroke='#ffffff' stroke-width='1.5'/></svg>`;
+    const icon: google.maps.Icon = {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+      scaledSize: new google.maps.Size(dot, dot),
+      anchor: new google.maps.Point(c, c),
+    };
+    dotLabelIconCache.set(key, icon);
+    return icon;
+  }
+
+  const label = trimmed.length > 20 ? `${trimmed.slice(0, 19)}…` : trimmed;
+  const fs = 11;
+  const padX = 5;
+  const gap = 3;
+  const pillH = 16;
+  const pillW = Math.round(label.length * 6.2 + padX * 2);
+  const w = dot + gap + pillW;
+  const h = Math.max(dot, pillH);
+  const cy = h / 2;
+  const pillX = dot + gap;
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
-    `<circle cx='${c}' cy='${c}' r='${c - 1.5}' fill='${color}' stroke='#ffffff' stroke-width='1.5'/></svg>`;
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
+    `<rect x='${pillX}' y='${cy - pillH / 2}' width='${pillW}' height='${pillH}' rx='${pillH / 2}' fill='#0b0e12' fill-opacity='0.78'/>` +
+    `<text x='${pillX + pillW / 2}' y='${cy + 0.5}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${fs}' font-weight='600' fill='#ffffff'>${escapeXml(label)}</text>` +
+    `<circle cx='${c}' cy='${cy}' r='${r}' fill='${color}' stroke='#ffffff' stroke-width='1.5'/>` +
+    `</svg>`;
   const icon: google.maps.Icon = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: new google.maps.Size(size, size),
-    anchor: new google.maps.Point(c, c),
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(c, cy),
   };
-  dotIconCache.set(color, icon);
+  dotLabelIconCache.set(key, icon);
   return icon;
 }
 
@@ -268,7 +303,7 @@ function Layers({
         const position = { lat: asset.latitude, lng: asset.longitude };
         const marker = new google.maps.Marker({
           position,
-          icon: dotIcon(mapAssetMarkerColor(asset, colorMode)),
+          icon: dotLabelIcon(mapAssetMarkerColor(asset, colorMode), asset.assetCode),
           title: asset.assetCode,
           optimized: true,
         });
