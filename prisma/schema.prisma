@@ -923,6 +923,16 @@ model Substation {
   name                String
   code                String
   location            String?
+  // Stable, human-readable Pencawang reference code = <Mainhead.code><NNNN> (4-digit
+  // running number per Mainhead-code prefix within the tenant, e.g. KTN0001). Once
+  // assigned it never CHANGES (existing codes are immutable), and mid-sequence gaps
+  // are never back-filled. The ONE non-guarantee: if the Pencawang holding the
+  // HIGHEST number for a prefix is hard-deleted and a new one is later added, that
+  // top number can be reused (rare — deletes are mostly dummy cleanup). Null until
+  // the Pencawang has a Mainhead whose code is set. Uniqueness is per-tenant (see
+  // the composite @@unique below), matching every other Substation identifier and
+  // the per-tenant numbering in reports.service.ensurePencawangRefCodes.
+  refCode             String?
   isActive            Boolean     @default(true)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
@@ -935,6 +945,7 @@ model Substation {
   toRouteSiteVisits   SiteVisit[] @relation("SiteVisitToPencawang")
 
   @@unique([tenantId, code])
+  @@unique([tenantId, refCode])
   @@index([tenantId])
   @@index([mainheadId])
 }
