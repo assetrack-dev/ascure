@@ -500,6 +500,22 @@ export class SiteVisitsService {
     const operationalLinks = await this.resolveCreateOperationalLinks(dto);
     const operationalSession = await this.resolveCreateOperationalSession(user, dto);
 
+    // Durable structural link: a Pencawang belongs to a MAINHEAD via
+    // Substation.mainheadId, which drives the hierarchical Asset Map
+    // (Region -> Mainhead -> Pencawang). New Pencawang created in the field only
+    // ever recorded the crew's free-text mainhead, never this FK, so their poles
+    // fell into the map's "Unassigned" bucket. Here the check-in Pencawang adopts
+    // the visit's already-validated Mainhead. `updateMany` + `mainheadId: null`
+    // makes it idempotent: it only fills an unset link (never overwrites a real
+    // one), so it ALSO self-heals any pre-existing Pencawang the next time it's
+    // visited. See [[project_hierarchical_map]].
+    if (operationalLinks.mainheadId) {
+      await this.prisma.substation.updateMany({
+        where: { id: substation.id, mainheadId: null },
+        data: { mainheadId: operationalLinks.mainheadId },
+      });
+    }
+
     const activeTeamMembers = await this.prisma.teamMember.findMany({
       where: {
         teamId: dto.teamId,
