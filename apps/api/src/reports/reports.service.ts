@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -37,6 +38,27 @@ import {
 } from './savr-masterlist';
 
 const UPLOADS_URL_PREFIX = '/uploads';
+
+// The stable Pencawang ref code is `<Mainhead.code><4-digit running number>`.
+const MAX_PENCAWANG_REFCODE_SEQ = 9999;
+
+/** Split a ref code into prefix + numeric suffix ("KTN0007" -> {prefix:"KTN", seq:7}). */
+function parsePencawangRefCode(
+  refCode: string | null,
+): { prefix: string; seq: number } | null {
+  if (!refCode) {
+    return null;
+  }
+  const match = /^(.+?)(\d{4})$/.exec(refCode);
+  if (!match) {
+    return null;
+  }
+  const seq = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(seq)) {
+    return null;
+  }
+  return { prefix: match[1], seq };
+}
 
 // Defect statuses that no longer count as "open" for the asset summary rollup.
 const CLOSED_DEFECT_STATUSES: ReadonlySet<DefectStatus> = new Set([
@@ -398,6 +420,7 @@ export class ReportsService {
       select: {
         id: true,
         code: true,
+        refCode: true,
         name: true,
         location: true,
         _count: { select: { assets: true } },
@@ -511,24 +534,35 @@ export class ReportsService {
   }
 
   /**
-   * DC master-reference export: a flat list of every accessible Pencawang with
-   * its id, Kod Pencawang, Nama Pencawang, Functional Location and lat/long.
-   * Lat/long is the Pencawang's most recent site-visit check-in GPS (from
-   * listSubstations); left BLANK when the Pencawang has never been visited, so an
-   * empty coordinate is a clear "not yet surveyed" flag. Read-only, tenant +
-   * access scoped (via listSubstations → assertCanReport).
+   * DC master-reference export: a flat list of every accessible Pencawang with its
+   * readable Pencawang Code, Nama Pencawang, Functional Location and lat/long.
+   * Pencawang Code = the stable `<Mainhead.code><NNNN>` ref code (blank until the
+   * Pencawang has a coded Mainhead). Lat/long = the most recent site-visit check-in
+   * GPS (from listSubstations); BLANK when never visited = a "not yet surveyed"
+   * flag. Assigns any missing ref codes first, then reads. Tenant + access scoped.
    */
   async buildPencawangList(
     user: RequestUser,
   ): Promise<{ buffer: Buffer; filename: string }> {
+    // Assign a stable ref code to any newly-eligible Pencawang first. Best-effort:
+    // a hiccup here must NEVER break the download — uncoded rows just come out blank.
+    try {
+      await this.ensurePencawangRefCodes(user);
+    } catch (error) {
+      new Logger(ReportsService.name).warn(
+        `ensurePencawangRefCodes failed before export: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     const substations = await this.listSubstations(user);
 
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet('PENCAWANG');
     const header = sheet.addRow([
       'No',
-      'Pencawang ID',
-      'Kod Pencawang',
+      'Pencawang Code',
       'Nama Pencawang',
       'Functional Location',
       'Latitude',
@@ -539,8 +573,8 @@ export class ReportsService {
     substations.forEach((substation, index) => {
       sheet.addRow([
         index + 1,
-        substation.id,
-        substation.code ?? '',
+        // Blank until the Pencawang has a Mainhead whose code is set.
+        substation.refCode ?? '',
         substation.name ?? '',
         substation.location ?? '',
         // Blank when never visited (no check-in GPS) — an empty coordinate flags a
@@ -550,7 +584,7 @@ export class ReportsService {
       ]);
     });
 
-    const columnWidths = [6, 40, 20, 32, 32, 14, 14];
+    const columnWidths = [6, 16, 34, 34, 14, 14];
     columnWidths.forEach((width, index) => {
       sheet.getColumn(index + 1).width = width;
     });
@@ -559,6 +593,96 @@ export class ReportsService {
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `pencawang-list-${stamp}.xlsx`;
     return { buffer: Buffer.from(arrayBuffer), filename };
+  }
+
+  /**
+   * Assign a stable ref code `<Mainhead.code><NNNN>` (e.g. KTN0001) to every
+   * accessible Pencawang that has a Mainhead-with-a-code but no code yet.
+   * Properties (why it's a dependable identifier for DC):
+   *  - IMMUTABLE: a code is assigned once and never changes; other Pencawang are
+   *    never renumbered and mid-sequence gaps (from a delete) are never back-filled.
+   *    The next number = max(existing seq)+1, so the ONE reuse case is hard-deleting
+   *    the HIGHEST-numbered Pencawang for a prefix and then adding a new one (rare —
+   *    deletes are mostly dummy cleanup; a per-prefix counter table would close it
+   *    if absolute never-reuse is ever needed).
+   *  - BLANK when the Pencawang has no Mainhead, or its Mainhead has no code.
+   *  - IDEMPOTENT: only touches Pencawang missing a code, so it's safe to run before
+   *    every export (new Pencawang get coded automatically).
+   * Numbering is PER-TENANT and keyed on the prefix STRING (not the Mainhead id), so
+   * codes stay unique even if two Mainheads share a code. Max 9999 per prefix.
+   */
+  async ensurePencawangRefCodes(user: RequestUser): Promise<{ assigned: number }> {
+    await this.assertCanReport(user);
+
+    // Newly-eligible: a Mainhead with a code, and no ref code yet. Oldest first so
+    // the lower numbers are stable across runs.
+    const eligible = await this.prisma.substation.findMany({
+      where: {
+        tenantId: user.tenantId,
+        refCode: null,
+        mainhead: { is: { code: { not: null } } },
+      },
+      select: { id: true, mainhead: { select: { code: true } } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+
+    if (eligible.length === 0) {
+      return { assigned: 0 };
+    }
+
+    // Highest existing sequence per prefix across ALL tenant ref codes, so new
+    // numbers never collide (even across two Mainheads that share a code).
+    const existing = await this.prisma.substation.findMany({
+      where: { tenantId: user.tenantId, refCode: { not: null } },
+      select: { refCode: true },
+    });
+    const maxByPrefix = new Map<string, number>();
+    for (const row of existing) {
+      const parsed = parsePencawangRefCode(row.refCode);
+      if (!parsed) {
+        continue;
+      }
+      maxByPrefix.set(
+        parsed.prefix,
+        Math.max(maxByPrefix.get(parsed.prefix) ?? 0, parsed.seq),
+      );
+    }
+
+    let assigned = 0;
+    for (const sub of eligible) {
+      const prefix = (sub.mainhead?.code ?? '').trim().toUpperCase();
+      if (!prefix) {
+        continue; // Mainhead code blank -> leave this Pencawang uncoded.
+      }
+
+      const next = (maxByPrefix.get(prefix) ?? 0) + 1;
+      if (next > MAX_PENCAWANG_REFCODE_SEQ) {
+        continue; // 9999 exhausted for this prefix -> leave blank (extremely unlikely).
+      }
+
+      const refCode = `${prefix}${String(next).padStart(4, '0')}`;
+      try {
+        await this.prisma.substation.update({
+          where: { id: sub.id },
+          data: { refCode },
+        });
+        maxByPrefix.set(prefix, next);
+        assigned += 1;
+      } catch (error) {
+        // A concurrent export grabbed this number — advance past it and let the
+        // next run code this Pencawang. Only swallow the unique-collision.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          maxByPrefix.set(prefix, next);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return { assigned };
   }
 
   /**
