@@ -12,6 +12,7 @@ import { extname, resolve } from 'path';
 import {
   AssetStatus,
   InspectionCompletionStatus,
+  InspectionItemInputType,
   Prisma,
   SiteVisitStatus,
   SiteVisitType,
@@ -276,6 +277,9 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
           id: true,
           completionStatus: true,
           submittedAt: true,
+          // Which checklist template this inspection ran — resolves the full set
+          // of template-defined fields the DC can turn on as Linked-Assets columns.
+          templateId: true,
           // Recorded checklist VALUES (InspectionResult, keyed by template-item
           // label) surfaced as Linked-Assets columns for DC checking — the same
           // source the Download Checklist uses, NOT itemResults.remark.
@@ -284,6 +288,12 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
               templateItemId: true,
               valueText: true,
               valueNumber: true,
+              // Non-text field types so a toggled BOOLEAN / DATE checklist column
+              // shows its answer instead of a blank (KELEGAAN/CATITAN are text, so
+              // the fixed columns are unaffected).
+              valueBoolean: true,
+              valueDate: true,
+              valueDateTime: true,
               templateItem: { select: { label: true } },
             },
           },
@@ -427,6 +437,11 @@ type SiteVisitAssetLink = Prisma.SiteVisitAssetGetPayload<{
 type SiteVisitDetail = Prisma.SiteVisitGetPayload<{
   include: typeof SITE_VISIT_DETAIL_INCLUDE;
 }>;
+
+/** A checklist field the DC can toggle on as a Linked-Assets column. `key` is the
+ *  normalized (upper, single-spaced) label used to match recorded values; `label`
+ *  is shown as-is; `section` is the template group for the picker. */
+type ChecklistColumnDef = { key: string; label: string; section: string | null };
 
 type SiteVisitRollup = {
   totalAssets: number;
@@ -642,9 +657,10 @@ export class SiteVisitsService {
       throw new NotFoundException('Site visit not found.');
     }
 
-    const [rollup, lastActivityByVisitId] = await Promise.all([
+    const [rollup, lastActivityByVisitId, checklistColumns] = await Promise.all([
       this.getRollup(siteVisit.id),
       this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
+      this.resolveChecklistColumns(siteVisit),
     ]);
     const now = new Date();
     const overdueThresholdHours = this.getOverdueThresholdHours();
@@ -655,6 +671,7 @@ export class SiteVisitsService {
       lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
       now,
       overdueThresholdHours,
+      checklistColumns,
     );
   }
 
@@ -673,9 +690,10 @@ export class SiteVisitsService {
       throw new NotFoundException('Site visit not found.');
     }
 
-    const [rollup, lastActivityByVisitId] = await Promise.all([
+    const [rollup, lastActivityByVisitId, checklistColumns] = await Promise.all([
       this.getRollup(siteVisit.id),
       this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
+      this.resolveChecklistColumns(siteVisit),
     ]);
     const now = new Date();
     const overdueThresholdHours = this.getOverdueThresholdHours();
@@ -686,6 +704,7 @@ export class SiteVisitsService {
       lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
       now,
       overdueThresholdHours,
+      checklistColumns,
     );
   }
 
@@ -2616,12 +2635,89 @@ export class SiteVisitsService {
     };
   }
 
+  /**
+   * The full set of template-defined checklist fields the DC may turn on as
+   * Linked-Assets columns, in template order (section, then item). Sourced from
+   * the templates the visit's SUBMITTED inspections actually ran, so it tracks
+   * the live checklist and includes fields not yet filled on any pole. IMAGE
+   * items are skipped (they need a photo cell, not a text column), and labels
+   * already shown as fixed columns (the Kelegaan reading/photo, Catitan) are
+   * excluded so the picker never offers a duplicate. Deduped by normalized label.
+   */
+  private async resolveChecklistColumns(
+    siteVisit: SiteVisitDetail,
+  ): Promise<ChecklistColumnDef[]> {
+    const norm = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
+    const PINNED = new Set(
+      [
+        'GAMBAR KELEGAAN 1',
+        'BACAAN KELEGAAN 1',
+        'KELEGAAN 1',
+        'CATITAN',
+        'CATATAN',
+        'CATATAN / REMARK',
+      ].map(norm),
+    );
+
+    const templateIds = Array.from(
+      new Set(
+        siteVisit.visitAssets
+          .map((link) => link.asset.inspections[0]?.templateId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    if (templateIds.length === 0) {
+      return [];
+    }
+
+    const templates = await this.prisma.inspectionTemplate.findMany({
+      where: { id: { in: templateIds } },
+      select: {
+        sections: { select: { id: true, title: true, sortOrder: true } },
+        items: {
+          where: {
+            isActive: true,
+            inputType: { not: InspectionItemInputType.IMAGE },
+          },
+          select: { label: true, sortOrder: true, sectionId: true },
+        },
+      },
+    });
+
+    const columns: (ChecklistColumnDef & { s: number; i: number })[] = [];
+    const seen = new Set<string>();
+    for (const template of templates) {
+      const sectionById = new Map(
+        template.sections.map((section) => [section.id, section]),
+      );
+      for (const item of template.items) {
+        const key = norm(item.label);
+        if (!key || PINNED.has(key) || seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        const section = sectionById.get(item.sectionId) ?? null;
+        columns.push({
+          key,
+          label: item.label,
+          section: section?.title ?? null,
+          s: section?.sortOrder ?? 0,
+          i: item.sortOrder,
+        });
+      }
+    }
+
+    columns.sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label));
+    return columns.map(({ key, label, section }) => ({ key, label, section }));
+  }
+
   private serializeSiteVisitDetail(
     siteVisit: SiteVisitDetail,
     rollup: SiteVisitRollup,
     lastActivityAt: Date,
     now: Date,
     overdueThresholdHours: number,
+    checklistColumns: ChecklistColumnDef[] = [],
   ) {
     const teamMembers = this.serializeTeamMembers(siteVisit);
     const isOverdue = isSiteVisitOverdue({
@@ -2653,6 +2749,9 @@ export class SiteVisitsService {
       linkedAssets: siteVisit.visitAssets.map((link) =>
         this.serializeSiteVisitAssetLink(link),
       ),
+      // Template-defined checklist fields the DC can toggle on as extra
+      // Linked-Assets columns (values ride on each link's checklistValues).
+      checklistColumns,
       lastActivityAt: lastActivityAt.toISOString(),
       operationalHealthStatus,
       isOverdue,
@@ -2723,9 +2822,16 @@ export class SiteVisitsService {
     // Recorded value of a checklist result — text/OCR fields use valueText;
     // numeric readings fall back to valueNumber. Same source as the Download
     // Checklist.
-    const valueOf = (match: ResultRow | null): string | null =>
-      match?.valueText?.trim() ||
-      (match?.valueNumber != null ? match.valueNumber.toString() : null);
+    const valueOf = (match: ResultRow | null): string | null => {
+      if (!match) return null;
+      const text = match.valueText?.trim();
+      if (text) return text;
+      if (match.valueNumber != null) return match.valueNumber.toString();
+      if (match.valueBoolean != null) return match.valueBoolean ? 'Yes' : 'No';
+      if (match.valueDate != null) return match.valueDate.toISOString().slice(0, 10);
+      if (match.valueDateTime != null) return match.valueDateTime.toISOString();
+      return null;
+    };
     // Results matching any of the given label aliases, in alias priority order.
     const matchRows = (...labels: string[]): ResultRow[] => {
       const rows: ResultRow[] = [];
@@ -2761,6 +2867,21 @@ export class SiteVisitsService {
       if (img) {
         kelegaanImage = img;
         break;
+      }
+    }
+
+    // Every recorded checklist value for this pole, keyed by normalized label, so
+    // the client can render any template field the DC toggles on as a column. The
+    // first non-empty value wins for a label (a later blank never clobbers it); a
+    // label present but unfilled maps to null. Same source as the Download
+    // Checklist / the fixed columns above.
+    const checklistValues: Record<string, string | null> = {};
+    for (const row of latest?.results ?? []) {
+      const label = row.templateItem?.label;
+      if (!label) continue;
+      const key = norm(label);
+      if (checklistValues[key] == null) {
+        checklistValues[key] = valueOf(row);
       }
     }
 
@@ -2804,6 +2925,8 @@ export class SiteVisitsService {
           : null,
         catitan: pickValue('CATITAN', 'CATATAN', 'CATATAN / REMARK'),
       },
+      // Generic per-field values for the DC's toggleable checklist columns.
+      checklistValues,
     };
   }
 

@@ -1,6 +1,7 @@
 import { apiRequest } from "@/lib/api";
 import { DISPLAY_STATUS_LABELS } from "@/types/site-visits";
 import type {
+  ChecklistColumn,
   DisplayStatus,
   OperationalDomain,
   OperationalHealthStatus,
@@ -436,6 +437,42 @@ function normalizeSensorPhoto(raw: unknown): SiteVisitSensorPhoto | null {
   };
 }
 
+/** Coerce the API's per-pole checklist value map (label → value) into a plain
+ *  string|null record. Non-string values (numbers/booleans already stringified
+ *  server-side) are defensively coerced; undefined when the field is absent. */
+function normalizeChecklistValues(
+  raw: unknown,
+): Record<string, string | null> | undefined {
+  const record = asRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const out: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] = value == null ? null : typeof value === "string" ? value : String(value);
+  }
+  return out;
+}
+
+/** The visit's toggleable checklist columns (template order), dropping any entry
+ *  missing a key/label. */
+function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const columns: ChecklistColumn[] = [];
+  for (const entry of raw) {
+    const record = asRecord(entry);
+    const key = firstString(record, ["key"]);
+    const label = firstString(record, ["label"]);
+    if (!key || !label) {
+      continue;
+    }
+    columns.push({ key, label, section: firstString(record, ["section"]) ?? null });
+  }
+  return columns;
+}
+
 function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink | null {
   const record = asRecord(rawLink);
   const asset = nestedRecord(record, "asset") ?? record;
@@ -480,6 +517,7 @@ function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink
       ),
       catitan: firstString(nestedRecord(record, "checklist"), ["catitan"]),
     },
+    checklistValues: normalizeChecklistValues(record.checklistValues),
   };
 }
 
@@ -632,6 +670,7 @@ function normalizeSiteVisitDetail(rawVisit: unknown): SiteVisitDetail | null {
     images: readArray(record, ["images"])
       .map(normalizeImage)
       .filter((image): image is SiteVisitImage => Boolean(image)),
+    checklistColumns: normalizeChecklistColumns(record.checklistColumns),
   };
 }
 
