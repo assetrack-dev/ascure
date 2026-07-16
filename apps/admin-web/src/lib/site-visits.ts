@@ -17,6 +17,7 @@ import type {
   SiteVisitTeam,
   SiteVisitType,
   SiteVisitUser,
+  SurveyScope,
   SiteVisitValidationStatus,
   SurveyLifecycleEvent,
   SurveyLifecycleState,
@@ -242,6 +243,23 @@ function normalizeOperationalDomain(value: string | null): OperationalDomain {
   return "UNSPECIFIED";
 }
 
+/** Derive SAVR vs SAVT for a visit. A visit is SAVT when its operational scope is
+ *  SAVT, its session is a ROUTE, or it carries a route code — any one of these is
+ *  a reliable route-survey signal. Everything else is treated as SAVR (the system
+ *  default scope), which also keeps visits created before `operationalScope` was
+ *  populated in the SAVR bucket. Mirrors the Reports page's two-way SAVR/SAVT split. */
+function normalizeSurveyScope(record: ApiRecord | null): SurveyScope {
+  const scope = firstString(record, ["operationalScope"])?.toUpperCase();
+  const sessionKind = firstString(record, ["sessionKind"])?.toUpperCase();
+  const routeCode = firstString(record, ["routeCode"]);
+
+  if (scope === "SAVT" || sessionKind === "ROUTE" || Boolean(routeCode)) {
+    return "SAVT";
+  }
+
+  return "SAVR";
+}
+
 function normalizeUser(rawUser: unknown): SiteVisitUser | null {
   const record = asRecord(rawUser);
 
@@ -385,6 +403,7 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
     operationalDomain: normalizeOperationalDomain(
       firstString(record, ["operationalDomain"]),
     ),
+    surveyScope: normalizeSurveyScope(record),
     cycleNumber: readNumber(record, "cycleNumber"),
     mainhead,
     mainheadRecord,

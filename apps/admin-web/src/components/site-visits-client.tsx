@@ -53,6 +53,7 @@ import type {
   SiteVisitSubstation,
   SiteVisitStatus,
   SiteVisitType,
+  SurveyScope,
 } from "@/types/site-visits";
 
 type SortKey =
@@ -68,6 +69,7 @@ type SortDirection = "asc" | "desc";
 type StatusFilter = "ALL" | DisplayStatus;
 type VisitTypeFilter = "ALL" | SiteVisitType;
 type OperationalDomainFilter = "ALL" | OperationalDomain;
+type AssetTypeFilter = "ALL" | SurveyScope;
 
 interface SiteVisitCreateForm {
   teamId: string;
@@ -119,6 +121,11 @@ const VISIT_TYPE_OPTIONS: Array<{ label: string; value: VisitTypeFilter }> = [
   { label: "Special", value: "SPECIAL" },
   { label: "Audit", value: "AUDIT" },
   { label: "Unspecified", value: "UNSPECIFIED" },
+];
+const ASSET_TYPE_OPTIONS: Array<{ label: string; value: AssetTypeFilter }> = [
+  { label: "All asset types", value: "ALL" },
+  { label: "SAVR", value: "SAVR" },
+  { label: "SAVT", value: "SAVT" },
 ];
 const OPERATIONAL_DOMAIN_OPTIONS: Array<{ label: string; value: OperationalDomainFilter }> = [
   { label: "All domains", value: "ALL" },
@@ -730,6 +737,7 @@ function SiteVisitsContent() {
   const [visitTypeFilter, setVisitTypeFilter] = useState<VisitTypeFilter>("ALL");
   const [operationalDomainFilter, setOperationalDomainFilter] =
     useState<OperationalDomainFilter>("ALL");
+  const [assetTypeFilter, setAssetTypeFilter] = useState<AssetTypeFilter>("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("lastActivity");
@@ -753,6 +761,7 @@ function SiteVisitsContent() {
         const statusValues = new Set<string>(STATUS_OPTIONS.map((o) => o.value));
         const visitTypeValues = new Set<string>(VISIT_TYPE_OPTIONS.map((o) => o.value));
         const domainValues = new Set<string>(OPERATIONAL_DOMAIN_OPTIONS.map((o) => o.value));
+        const assetTypeValues = new Set<string>(ASSET_TYPE_OPTIONS.map((o) => o.value));
         if (typeof saved.search === "string") setSearch(saved.search);
         if (typeof saved.mainheadFilter === "string") setMainheadFilter(saved.mainheadFilter);
         if (typeof saved.pencawangFilter === "string") setPencawangFilter(saved.pencawangFilter);
@@ -764,6 +773,8 @@ function SiteVisitsContent() {
           setVisitTypeFilter(saved.visitTypeFilter as VisitTypeFilter);
         if (typeof saved.operationalDomainFilter === "string" && domainValues.has(saved.operationalDomainFilter))
           setOperationalDomainFilter(saved.operationalDomainFilter as OperationalDomainFilter);
+        if (typeof saved.assetTypeFilter === "string" && assetTypeValues.has(saved.assetTypeFilter))
+          setAssetTypeFilter(saved.assetTypeFilter as AssetTypeFilter);
         if (typeof saved.startDate === "string") setStartDate(saved.startDate);
         if (typeof saved.endDate === "string") setEndDate(saved.endDate);
         if (typeof saved.sortKey === "string") setSortKey(saved.sortKey as SortKey);
@@ -797,6 +808,7 @@ function SiteVisitsContent() {
           statusFilter,
           visitTypeFilter,
           operationalDomainFilter,
+          assetTypeFilter,
           startDate,
           endDate,
           sortKey,
@@ -816,6 +828,7 @@ function SiteVisitsContent() {
     statusFilter,
     visitTypeFilter,
     operationalDomainFilter,
+    assetTypeFilter,
     startDate,
     endDate,
     sortKey,
@@ -928,6 +941,7 @@ function SiteVisitsContent() {
     statusFilter,
     visitTypeFilter,
     operationalDomainFilter,
+    assetTypeFilter,
     startDate,
     endDate,
     pageSize,
@@ -994,6 +1008,7 @@ function SiteVisitsContent() {
           formatEnum(visit.validationStatus),
           formatEnum(visit.visitType),
           formatEnum(visit.operationalDomain),
+          visit.surveyScope,
           visit.createdBy?.name,
           visit.createdBy?.email,
           visit.teamMembers.map((member) => `${member.name ?? ""} ${member.email ?? ""}`).join(" "),
@@ -1017,6 +1032,8 @@ function SiteVisitsContent() {
       const matchesOperationalDomain =
         operationalDomainFilter === "ALL" ||
         visit.operationalDomain === operationalDomainFilter;
+      const matchesAssetType =
+        assetTypeFilter === "ALL" || visit.surveyScope === assetTypeFilter;
       const matchesStartDate = !startDate || (visitDate && visitDate >= startDate);
       const matchesEndDate = !endDate || (visitDate && visitDate <= endDate);
 
@@ -1029,11 +1046,13 @@ function SiteVisitsContent() {
         matchesStatus &&
         matchesVisitType &&
         matchesOperationalDomain &&
+        matchesAssetType &&
         matchesStartDate &&
         matchesEndDate
       );
     });
   }, [
+    assetTypeFilter,
     endDate,
     mainheadFilter,
     memberFilter,
@@ -1109,6 +1128,7 @@ function SiteVisitsContent() {
     setStatusFilter("ALL");
     setVisitTypeFilter("ALL");
     setOperationalDomainFilter("ALL");
+    setAssetTypeFilter("ALL");
     setStartDate("");
     setEndDate("");
   }
@@ -1336,6 +1356,21 @@ function SiteVisitsContent() {
                         className={filterSelectClass}
                       >
                         {OPERATIONAL_DOMAIN_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <select
+                        aria-label="Asset type"
+                        value={assetTypeFilter}
+                        onChange={(event) =>
+                          setAssetTypeFilter(event.target.value as AssetTypeFilter)
+                        }
+                        className={filterSelectClass}
+                      >
+                        {ASSET_TYPE_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>

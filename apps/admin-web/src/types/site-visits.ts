@@ -35,6 +35,11 @@ export type OperationalDomain =
   | "OTHER"
   | "UNSPECIFIED";
 
+/** The asset-type / survey scope a visit belongs to: SAVR (Pencawang-based pole
+ *  survey, the default) or SAVT (HV route survey). Derived from the visit's
+ *  operationalScope, mirroring the Reports page's two-way SAVR/SAVT split. */
+export type SurveyScope = "SAVR" | "SAVT";
+
 export interface SiteVisitTeam {
   id?: string;
   code?: string | null;
@@ -106,6 +111,9 @@ export interface SiteVisitListItem extends SiteVisitSummary {
   overdueThresholdHours: number;
   visitType: SiteVisitType;
   operationalDomain: OperationalDomain;
+  /** SAVR vs SAVT — drives the Asset Type filter on the list. Derived client-side
+   *  from the visit's operationalScope / sessionKind / route code. */
+  surveyScope: SurveyScope;
   cycleNumber: number | null;
   mainhead: string | null;
   mainheadRecord: SiteVisitMainhead | null;
