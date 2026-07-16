@@ -522,6 +522,8 @@ export async function fetchMapPoints(
 export interface MapMainheadPointsResult {
   poles: MapAsset[];
   truncated: boolean;
+  /** Stable per-Pencawang anchor points (viewport-independent centroids). */
+  pencawangMarkers: PencawangMarker[];
 }
 
 /**
@@ -550,7 +552,12 @@ export async function fetchMapPointsForMainhead(
         .map(normalizeMapAsset)
         .filter((asset): asset is MapAsset => asset !== null)
     : [];
-  return { poles, truncated: source.truncated === true };
+  const pencawangMarkers = Array.isArray(source.pencawangMarkers)
+    ? source.pencawangMarkers
+        .map(normalizePencawangMarker)
+        .filter((marker): marker is PencawangMarker => marker !== null)
+    : [];
+  return { poles, truncated: source.truncated === true, pencawangMarkers };
 }
 
 // Distinct-hue palette for colouring poles BY PENCAWANG in the Mainhead-wide

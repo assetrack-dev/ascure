@@ -514,25 +514,38 @@ export class AssetsService {
       // derives the per-Pencawang anchors from the poles' substation ids.
       if (query.mainheadId) {
         const bbox = parseBbox(query.bbox);
-        const rows = await this.loadMapAssets(
-          user,
-          {
-            substation: { mainheadId: query.mainheadId },
-            ...(bbox
-              ? {
-                  latitude: { gte: bbox.minLat, lte: bbox.maxLat },
-                  longitude: { gte: bbox.minLng, lte: bbox.maxLng },
-                }
-              : {}),
-            ...this.mapFilterWhere(query),
-          },
-          MAINHEAD_POINTS_CAP + 1,
-        );
+        const [rows, pencawangBubbles] = await Promise.all([
+          this.loadMapAssets(
+            user,
+            {
+              substation: { mainheadId: query.mainheadId },
+              ...(bbox
+                ? {
+                    latitude: { gte: bbox.minLat, lte: bbox.maxLat },
+                    longitude: { gte: bbox.minLng, lte: bbox.maxLng },
+                  }
+                : {}),
+              ...this.mapFilterWhere(query),
+            },
+            MAINHEAD_POINTS_CAP + 1,
+          ),
+          // STABLE per-Pencawang anchor points: the centroid of ALL the
+          // Pencawang's poles (viewport-independent), so the on-map label sits
+          // still instead of drifting to the visible-poles centroid on every pan.
+          // Reuses the Pencawang-bubble aggregation.
+          this.aggregateMap(user, 'pencawang', query),
+        ]);
         const truncated = rows.length > MAINHEAD_POINTS_CAP;
         return {
           poles: truncated ? rows.slice(0, MAINHEAD_POINTS_CAP) : rows,
           truncated,
           mainheadWide: true,
+          pencawangMarkers: pencawangBubbles.map((b) => ({
+            id: b.id,
+            name: b.name,
+            latitude: b.latitude,
+            longitude: b.longitude,
+          })),
         };
       }
       throw new BadRequestException(

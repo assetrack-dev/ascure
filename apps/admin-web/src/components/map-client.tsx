@@ -292,6 +292,10 @@ function MapContent() {
   // Mainhead — viewport-capped, coloured by Pencawang — instead of group bubbles.
   const [showAllPoles, setShowAllPoles] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  // Stable per-Pencawang anchor points for the overlap view (fixed centroids
+  // from the server) — set on a structural load, NOT on every pan refetch, so
+  // the anchors stay put and don't churn the marker layer.
+  const [pencawangAnchors, setPencawangAnchors] = useState<PencawangMarker[]>([]);
   const controlsRef = useRef<MapControls | null>(null);
   // Debounces the viewport-driven pole refetch as the map is panned/zoomed.
   const bboxTimerRef = useRef<number | null>(null);
@@ -332,6 +336,7 @@ function MapContent() {
       mainheadId: string,
       bbox: string | null,
       currentFilters: MapFilters,
+      updateAnchors: boolean,
     ) => {
       try {
         const result = await fetchMapPointsForMainhead(
@@ -344,6 +349,11 @@ function MapContent() {
         setTruncated(result.truncated);
         setBubbles([]);
         setPencawangMarker(null);
+        // Only refresh the anchors on a structural load — they're viewport-
+        // independent, so a pan refetch must not re-set (and re-render) them.
+        if (updateAnchors) {
+          setPencawangAnchors(result.pencawangMarkers);
+        }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           handleLogout();
@@ -384,6 +394,7 @@ function MapContent() {
             current.mainhead.id,
             bbox,
             currentFilters,
+            true,
           );
         } else {
           const lvl = current.mainhead
@@ -430,7 +441,7 @@ function MapContent() {
         window.clearTimeout(bboxTimerRef.current);
       }
       bboxTimerRef.current = window.setTimeout(() => {
-        void applyMainheadPoints(token, mainheadId, bbox, filters);
+        void applyMainheadPoints(token, mainheadId, bbox, filters, false);
       }, 350);
     },
     [token, showAllPoles, drill, filters, applyMainheadPoints],
@@ -673,6 +684,7 @@ function MapContent() {
               colorByPencawang={mainheadWide}
               suppressAutoFit={mainheadWide}
               onBoundsChange={handleBoundsChange}
+              pencawangAnchors={pencawangAnchors}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
