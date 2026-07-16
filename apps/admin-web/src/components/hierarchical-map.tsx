@@ -6,6 +6,7 @@ import type { MutableRefObject } from "react";
 import type { MapControls } from "@/components/asset-map-shared";
 import {
   mapAssetMarkerColor,
+  pencawangColor,
   EMERGENCY_DEFECT_MARKER_COLOR,
   OPEN_DEFECT_MARKER_COLOR,
   INSPECTED_MARKER_COLOR,
@@ -39,6 +40,25 @@ export interface HierarchicalMapProps {
   controlsRef?: MutableRefObject<MapControls | null>;
   /** Fires when the Street View panorama opens (true) or closes (false). */
   onStreetViewVisibleChange?: (visible: boolean) => void;
+  /** Mainhead-wide "show all poles" overlap view: colour each pole by its
+   *  Pencawang (plain dot, no NO-TIANG-RONDAAN label) so a pole among another
+   *  Pencawang's cluster stands out. */
+  colorByPencawang?: boolean;
+  /** Don't auto-fit the camera to the point set — used by the Mainhead-wide view
+   *  so a viewport-driven refetch doesn't yank the camera (fit→idle→refetch loop). */
+  suppressAutoFit?: boolean;
+  /** Fires (on map idle) with the viewport as "minLng,minLat,maxLng,maxLat" so
+   *  the parent can refetch the poles in view. */
+  onBoundsChange?: (bbox: string) => void;
+}
+
+/** Serialize the map viewport as "minLng,minLat,maxLng,maxLat" (or null). */
+function boundsToBbox(map: google.maps.Map): string | null {
+  const bounds = map.getBounds();
+  if (!bounds) return null;
+  const ne = bounds.getNorthEast();
+  const sw = bounds.getSouthWest();
+  return `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
 }
 
 /** Short count label — 2,268 → "2.3k" so it fits inside the disc. */
@@ -211,6 +231,9 @@ function Layers({
   onSelectPoint,
   controlsRef,
   onStreetViewVisibleChange,
+  colorByPencawang,
+  suppressAutoFit,
+  onBoundsChange,
 }: HierarchicalMapProps) {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -219,9 +242,11 @@ function Layers({
   const onDrillRef = useRef(onDrill);
   const onSelectRef = useRef(onSelectPoint);
   const onSvVisibleRef = useRef(onStreetViewVisibleChange);
+  const onBoundsRef = useRef(onBoundsChange);
   onDrillRef.current = onDrill;
   onSelectRef.current = onSelectPoint;
   onSvVisibleRef.current = onStreetViewVisibleChange;
+  onBoundsRef.current = onBoundsChange;
 
   const fitToPositions = (target: google.maps.Map) => {
     const positions = positionsRef.current;
@@ -238,6 +263,7 @@ function Layers({
       zoomIn: () => map.setZoom((map.getZoom() ?? 7) + 1),
       zoomOut: () => map.setZoom((map.getZoom() ?? 7) - 1),
       recenter: () => fitToPositions(map),
+      getBounds: () => boundsToBbox(map),
     };
     return () => {
       if (controlsRef) controlsRef.current = null;
@@ -267,6 +293,18 @@ function Layers({
     const panorama = map.getStreetView();
     const listener = panorama.addListener("visible_changed", () => {
       onSvVisibleRef.current?.(panorama.getVisible());
+    });
+    return () => google.maps.event.removeListener(listener);
+  }, [map]);
+
+  // Report the viewport whenever the camera settles, so the Mainhead-wide view
+  // can refetch the poles in view. The parent guards + debounces; a no-op when
+  // no handler is set (bubble / single-Pencawang levels).
+  useEffect(() => {
+    if (!map) return;
+    const listener = map.addListener("idle", () => {
+      const bbox = boundsToBbox(map);
+      if (bbox) onBoundsRef.current?.(bbox);
     });
     return () => google.maps.event.removeListener(listener);
   }, [map]);
@@ -303,8 +341,15 @@ function Layers({
         const position = { lat: asset.latitude, lng: asset.longitude };
         const marker = new google.maps.Marker({
           position,
-          icon: dotLabelIcon(mapAssetMarkerColor(asset, colorMode), asset.assetCode),
-          title: asset.assetCode,
+          // Mainhead-wide overlap view: a plain dot coloured by Pencawang (labels
+          // would be an unreadable, heavy mess at this density). Otherwise the
+          // labelled dot coloured by inspection/defect status.
+          icon: colorByPencawang
+            ? dotLabelIcon(pencawangColor(asset.substation?.id), "")
+            : dotLabelIcon(mapAssetMarkerColor(asset, colorMode), asset.assetCode),
+          title: colorByPencawang
+            ? `${asset.assetCode} · ${asset.substation?.name ?? "—"}`
+            : asset.assetCode,
           optimized: true,
         });
         marker.addListener("click", () => onSelectRef.current(asset));
@@ -335,7 +380,7 @@ function Layers({
       (mode === "bubbles"
         ? bubbles.map((b) => b.id).join(",")
         : points.map((p) => p.id).join(",") + "|" + (pencawang?.id ?? ""));
-    if (fitKey !== fitKeyRef.current && positions.length > 0) {
+    if (!suppressAutoFit && fitKey !== fitKeyRef.current && positions.length > 0) {
       fitKeyRef.current = fitKey;
       fitToPositions(map);
       const listener = google.maps.event.addListenerOnce(map, "idle", () => {
@@ -345,7 +390,7 @@ function Layers({
       return () => google.maps.event.removeListener(listener);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, mode, bubbles, points, colorMode, pencawang]);
+  }, [map, mode, bubbles, points, colorMode, pencawang, colorByPencawang, suppressAutoFit]);
 
   return null;
 }

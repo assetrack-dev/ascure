@@ -27,10 +27,18 @@ export class MapQueryDto {
   @IsUUID()
   mainheadId?: string;
 
-  /** points level (required): individual poles in this Pencawang. */
+  /** points level: individual poles in this Pencawang. Provide EITHER this or
+   *  `mainheadId` (the Mainhead-wide "show all poles" view). */
   @IsOptional()
   @IsUUID()
   pencawangId?: string;
+
+  /** points level (Mainhead-wide): viewport bounds "minLng,minLat,maxLng,maxLat".
+   *  When the points level is scoped by `mainheadId`, only poles inside this box
+   *  are returned (capped) so the payload stays bounded as the user pans/zooms. */
+  @IsOptional()
+  @IsString()
+  bbox?: string;
 
   /** Inspection filter: only inspected, or only not-yet-inspected poles. */
   @IsOptional()
