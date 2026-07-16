@@ -7,6 +7,8 @@ import {
   CalendarDays,
   Camera,
   ClipboardList,
+  Eye,
+  EyeOff,
   FileText,
   MapPin,
   RefreshCw,
@@ -131,6 +133,10 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   // return path (e.g. set when opening an asset from a Site Visit) takes over so
   // the user goes back where they came from.
   const [backHref, setBackHref] = useState("/assets");
+  // The Inspection Result table starts curated (only rows that carry meaning);
+  // this reveals every checklist item, including informational readings that
+  // recorded N/A with no remark.
+  const [showAllInspectionItems, setShowAllInspectionItems] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -195,6 +201,13 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
       isPassFailResult(item.result) ||
       (item.remark?.trim().length ?? 0) > 0,
   );
+  // How many rows the curated view hides — the "See all" toggle only appears
+  // when there is something extra to reveal.
+  const hiddenInspectionItemCount =
+    inspectionItems.length - visibleInspectionItems.length;
+  const displayedInspectionItems = showAllInspectionItems
+    ? inspectionItems
+    : visibleInspectionItems;
   const inspectionDefectCount =
     asset?.latestInspection?.totalDefects ??
     inspectionItems.filter((item) => item.isDefect).length;
@@ -375,18 +388,48 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                         <ClipboardList size={17} className="text-[var(--brand)]" />
                         Inspection Result
                       </div>
-                      <span className="text-sm text-[var(--muted)]">
-                        {visibleInspectionItems.length}{" "}
-                        {visibleInspectionItems.length === 1 ? "item" : "items"}
-                        {inspectionDefectCount > 0
-                          ? ` · ${inspectionDefectCount} ${
-                              inspectionDefectCount === 1 ? "defect" : "defects"
-                            }`
-                          : ""}
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-[var(--muted)]">
+                          {displayedInspectionItems.length}{" "}
+                          {displayedInspectionItems.length === 1 ? "item" : "items"}
+                          {inspectionDefectCount > 0
+                            ? ` · ${inspectionDefectCount} ${
+                                inspectionDefectCount === 1 ? "defect" : "defects"
+                              }`
+                            : ""}
+                        </span>
+                        {hiddenInspectionItemCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowAllInspectionItems((value) => !value)
+                            }
+                            aria-pressed={showAllInspectionItems}
+                            title={
+                              showAllInspectionItems
+                                ? "Show only pass/fail checks, defects, and items with a remark"
+                                : `Show all ${inspectionItems.length} checklist items, including informational readings recorded as N/A`
+                            }
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-semibold shadow-[var(--shadow-soft)] transition ${
+                              showAllInspectionItems
+                                ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                            }`}
+                          >
+                            {showAllInspectionItems ? (
+                              <EyeOff size={13} />
+                            ) : (
+                              <Eye size={13} />
+                            )}
+                            {showAllInspectionItems
+                              ? "Show key items"
+                              : `See all (${inspectionItems.length})`}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="mt-5 overflow-x-auto">
-                      {visibleInspectionItems.length > 0 ? (
+                      {displayedInspectionItems.length > 0 ? (
                         <table className="min-w-full text-left text-sm">
                           <thead>
                             <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
@@ -397,7 +440,7 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {visibleInspectionItems.map((item) => (
+                            {displayedInspectionItems.map((item) => (
                               <tr
                                 key={item.id}
                                 className={item.isDefect ? "bg-red-50/40" : undefined}
