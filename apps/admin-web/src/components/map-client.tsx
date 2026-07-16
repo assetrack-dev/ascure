@@ -28,6 +28,7 @@ import {
   fetchMapBubbles,
   fetchMapPoints,
   fetchMapFilterOptions,
+  fetchMapPointsForMainhead,
   formatMaintenanceCategory,
   isMapAssetInspected,
   mapAssetMarkerColor,
@@ -285,10 +286,18 @@ function MapContent() {
   const [mainheadOptions, setMainheadOptions] = useState<{ id: string; name: string }[]>([]);
   const [pencawangOptions, setPencawangOptions] = useState<{ id: string; name: string }[]>([]);
   const [teamOptions, setTeamOptions] = useState<{ id: string; name: string }[]>([]);
+  // "Show all poles" overlap view (Mainhead level): render every pole under the
+  // Mainhead — viewport-capped, coloured by Pencawang — instead of group bubbles.
+  const [showAllPoles, setShowAllPoles] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const controlsRef = useRef<MapControls | null>(null);
+  // Debounces the viewport-driven pole refetch as the map is panned/zoomed.
+  const bboxTimerRef = useRef<number | null>(null);
 
   const level = levelFor(drill);
-  const mode: "bubbles" | "points" = level === "points" ? "points" : "bubbles";
+  const mainheadWide = showAllPoles && Boolean(drill.mainhead) && !drill.pencawang;
+  const mode: "bubbles" | "points" =
+    drill.pencawang || mainheadWide ? "points" : "bubbles";
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -312,8 +321,45 @@ function MapContent() {
 
   const token = session?.token ?? null;
 
+  // Fetch + apply the Mainhead-wide poles for a viewport. Shared by the
+  // structural load and the silent pan/zoom refetch; it does NOT toggle the
+  // full-stage loading state, so panning doesn't flash the spinner.
+  const applyMainheadPoints = useCallback(
+    async (
+      authToken: string,
+      mainheadId: string,
+      bbox: string | null,
+      currentFilters: MapFilters,
+    ) => {
+      try {
+        const result = await fetchMapPointsForMainhead(
+          authToken,
+          mainheadId,
+          bbox,
+          currentFilters,
+        );
+        setPoints(result.poles);
+        setTruncated(result.truncated);
+        setBubbles([]);
+        setPencawangMarker(null);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          handleLogout();
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Unable to load the map.");
+      }
+    },
+    [handleLogout],
+  );
+
   const load = useCallback(
-    async (authToken: string, current: DrillState, currentFilters: MapFilters) => {
+    async (
+      authToken: string,
+      current: DrillState,
+      currentFilters: MapFilters,
+      showAll: boolean,
+    ) => {
       setIsLoading(true);
       setError("");
       try {
@@ -326,6 +372,17 @@ function MapContent() {
           setPoints(result.poles);
           setPencawangMarker(result.pencawang);
           setBubbles([]);
+          setTruncated(false);
+        } else if (showAll && current.mainhead) {
+          // Seed with the current viewport so the first fetch matches what the
+          // user already sees; pan/zoom refines it (handleBoundsChange).
+          const bbox = controlsRef.current?.getBounds?.() ?? null;
+          await applyMainheadPoints(
+            authToken,
+            current.mainhead.id,
+            bbox,
+            currentFilters,
+          );
         } else {
           const lvl = current.mainhead
             ? "pencawang"
@@ -345,6 +402,7 @@ function MapContent() {
           );
           setPoints([]);
           setPencawangMarker(null);
+          setTruncated(false);
         }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -356,12 +414,29 @@ function MapContent() {
         setIsLoading(false);
       }
     },
-    [handleLogout],
+    [handleLogout, applyMainheadPoints],
+  );
+
+  // Silent, debounced pole refetch as the Mainhead-wide map is panned/zoomed.
+  const handleBoundsChange = useCallback(
+    (bbox: string) => {
+      if (!token || !showAllPoles || !drill.mainhead || drill.pencawang) {
+        return;
+      }
+      const mainheadId = drill.mainhead.id;
+      if (bboxTimerRef.current) {
+        window.clearTimeout(bboxTimerRef.current);
+      }
+      bboxTimerRef.current = window.setTimeout(() => {
+        void applyMainheadPoints(token, mainheadId, bbox, filters);
+      }, 350);
+    },
+    [token, showAllPoles, drill, filters, applyMainheadPoints],
   );
 
   useEffect(() => {
-    if (token) void load(token, drill, filters);
-  }, [token, drill, filters, load]);
+    if (token) void load(token, drill, filters, showAllPoles);
+  }, [token, drill, filters, showAllPoles, load]);
 
   // Filter-dock option lists (fetched once).
   useEffect(() => {
@@ -404,6 +479,7 @@ function MapContent() {
   const drillInto = useCallback((bubble: MapBubble) => {
     if (bubble.id === UNASSIGNED_BUBBLE_ID) return; // ungrouped poles aren't drillable
     setSelected(null);
+    setShowAllPoles(false);
     setDrill((prev) => {
       const step: IdName = { id: bubble.id, name: bubble.name };
       if (!prev.region) return { region: step };
@@ -415,6 +491,7 @@ function MapContent() {
 
   const goToDepth = useCallback((depth: 0 | 1 | 2) => {
     setSelected(null);
+    setShowAllPoles(false);
     setDrill((prev) => {
       if (depth === 0) return {};
       if (depth === 1) return { region: prev.region };
@@ -461,7 +538,7 @@ function MapContent() {
     [points],
   );
 
-  const itemsLabel = LEVEL_ITEMS[level];
+  const itemsLabel = mode === "points" ? LEVEL_ITEMS.points : LEVEL_ITEMS[level];
   const itemCount = mode === "bubbles" ? bubbles.length : points.length;
   const showMap = Boolean(GOOGLE_MAPS_API_KEY) && !googleFailed;
 
@@ -533,7 +610,9 @@ function MapContent() {
             <KpiTile label="Open defects" value={kpis.openDefects} />
             <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
             <Tbtn
-              onClick={() => (token ? load(token, drill, filters) : undefined)}
+              onClick={() =>
+                token ? load(token, drill, filters, showAllPoles) : undefined
+              }
               disabled={!token || isLoading}
               className="ml-1"
             >
@@ -577,6 +656,9 @@ function MapContent() {
               onLoadError={() => setGoogleFailed(true)}
               controlsRef={controlsRef}
               onStreetViewVisibleChange={setStreetViewOpen}
+              colorByPencawang={mainheadWide}
+              suppressAutoFit={mainheadWide}
+              onBoundsChange={handleBoundsChange}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
@@ -593,7 +675,25 @@ function MapContent() {
               centred so the left/right auto-hide docks never cover it. The
               native Street View pegman lives bottom-right, above the zoom box. */}
           {showMap ? (
-            <div className="pointer-events-auto absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2">
+            <div className="pointer-events-auto absolute left-1/2 top-3 z-10 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+              {/* Overlap view (Mainhead level only): swap the Pencawang group
+                  bubbles for every pole under the Mainhead, coloured by Pencawang. */}
+              {drill.mainhead && !drill.pencawang ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPoles((value) => !value)}
+                  aria-pressed={showAllPoles}
+                  title="Show every pole under this Mainhead (viewport-capped), coloured by Pencawang — to spot poles overlapping the wrong Pencawang."
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-semibold shadow-[var(--shadow-card)] transition ${
+                    showAllPoles
+                      ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
+                      : "border-[var(--line)] bg-[var(--panel)] text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+                  }`}
+                >
+                  <span className="h-2 w-2 rounded-full bg-current opacity-80" />
+                  {showAllPoles ? "Showing all poles" : "Show all poles"}
+                </button>
+              ) : null}
               <Seg
                 options={COLOR_OPTIONS}
                 value={colorMode}
@@ -611,13 +711,30 @@ function MapContent() {
             </div>
           ) : null}
 
+          {/* Cap notice — the viewport holds more poles than the 1000-cap. */}
+          {showMap && mainheadWide && truncated ? (
+            <div className="pointer-events-none absolute left-1/2 top-16 z-10 -translate-x-1/2 rounded-full border border-[var(--medium-border)] bg-[var(--medium-bg)] px-3 py-1 text-[11.5px] font-semibold text-[var(--medium-text)] shadow-[var(--shadow-card)]">
+              Showing 1,000 poles — zoom in to see the rest
+            </div>
+          ) : null}
+
           {/* Legend */}
           <div className="pointer-events-none absolute bottom-3 left-[46px] z-10 w-52 rounded-[12px] border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_86%,transparent)] p-3 shadow-[var(--shadow-card)] backdrop-blur">
             <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">
-              {colorMode === "inspection" ? "Inspection" : "Defects"}
+              {mainheadWide
+                ? "By Pencawang"
+                : colorMode === "inspection"
+                  ? "Inspection"
+                  : "Defects"}
             </p>
             <div className="space-y-1.5">
-              {colorMode === "inspection" ? (
+              {mainheadWide ? (
+                <p className="text-[11px] leading-snug text-[var(--muted)]">
+                  Each Pencawang has its own colour. Hover a pole for its code +
+                  Pencawang — an off-colour pole inside a cluster is a possible
+                  overlap.
+                </p>
+              ) : colorMode === "inspection" ? (
                 <>
                   <LegendRow color={INSPECTED_MARKER_COLOR} label="Inspected" count={kpis.inspected} />
                   <LegendRow color={NOT_INSPECTED_MARKER_COLOR} label="Not inspected" count={kpis.notInspected} />

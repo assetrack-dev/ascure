@@ -6,6 +6,10 @@ export interface MapControls {
   zoomIn(): void;
   zoomOut(): void;
   recenter(): void;
+  /** Current viewport as "minLng,minLat,maxLng,maxLat", or null if unavailable.
+   *  Used to seed the Mainhead-wide "show all poles" viewport query. Optional —
+   *  only the hierarchical (Google) renderer implements it. */
+  getBounds?(): string | null;
 }
 
 /** The contract both the Google and Leaflet renderers implement. */

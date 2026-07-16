@@ -509,3 +509,60 @@ export async function fetchMapPoints(
     : [];
   return { poles, pencawang: normalizePencawangMarker(source.pencawang) };
 }
+
+/** Mainhead-wide "show all poles" response: the viewport-capped poles + whether
+ *  the cap clipped the set (more poles exist outside / beyond the cap). */
+export interface MapMainheadPointsResult {
+  poles: MapAsset[];
+  truncated: boolean;
+}
+
+/**
+ * Fetch every pole under a Mainhead, clipped to the current viewport `bbox`
+ * ("minLng,minLat,maxLng,maxLat") and capped server-side. Drives the overlap
+ * view — the caller re-fetches with a fresh bbox as the map is panned/zoomed.
+ */
+export async function fetchMapPointsForMainhead(
+  token: string,
+  mainheadId: string,
+  bbox: string | null,
+  filters?: MapFilters,
+): Promise<MapMainheadPointsResult> {
+  const params = new URLSearchParams({ level: "points", mainheadId });
+  if (bbox) params.set("bbox", bbox);
+  appendFilters(params, filters);
+  const payload = await apiRequest<unknown>(`/assets/map?${params.toString()}`, {
+    token,
+  });
+  const source = (payload && typeof payload === "object" ? payload : {}) as Record<
+    string,
+    unknown
+  >;
+  const poles = Array.isArray(source.poles)
+    ? source.poles
+        .map(normalizeMapAsset)
+        .filter((asset): asset is MapAsset => asset !== null)
+    : [];
+  return { poles, truncated: source.truncated === true };
+}
+
+// Distinct-hue palette for colouring poles BY PENCAWANG in the Mainhead-wide
+// overlap view — so a pole sitting among another Pencawang's poles stands out.
+// Cycled by a stable hash of the Pencawang id so a Pencawang keeps its colour
+// across pans/refetches. Concrete hex (markers render outside the DOM cascade).
+export const PENCAWANG_PALETTE = [
+  "#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed",
+  "#0891b2", "#db2777", "#65a30d", "#ea580c", "#0d9488",
+  "#4f46e5", "#b91c1c", "#059669", "#ca8a04", "#9333ea",
+  "#0284c7", "#e11d48", "#15803d", "#c2410c", "#1d4ed8",
+];
+
+/** Stable colour for a Pencawang id (slate when unassigned). */
+export function pencawangColor(pencawangId: string | null | undefined): string {
+  if (!pencawangId) return "#94a3b8";
+  let hash = 0;
+  for (let index = 0; index < pencawangId.length; index += 1) {
+    hash = (hash * 31 + pencawangId.charCodeAt(index)) >>> 0;
+  }
+  return PENCAWANG_PALETTE[hash % PENCAWANG_PALETTE.length];
+}

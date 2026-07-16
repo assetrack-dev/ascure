@@ -70,6 +70,24 @@ function splitCsv(value: string | undefined): string[] {
     .filter((part) => part.length > 0);
 }
 
+/** Max poles returned for the Mainhead-wide "show all poles" view — matches the
+ *  AppSheet-style cap; the viewport bbox keeps the visible set under this. */
+const MAINHEAD_POINTS_CAP = 1000;
+
+/** Parse a "minLng,minLat,maxLng,maxLat" viewport string → bounds, or null if it
+ *  is missing / malformed / degenerate. Tolerant: a bad value disables the clip
+ *  (returns the capped set unfiltered) rather than erroring. */
+function parseBbox(
+  raw: string | undefined,
+): { minLng: number; minLat: number; maxLng: number; maxLat: number } | null {
+  if (!raw) return null;
+  const parts = raw.split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [minLng, minLat, maxLng, maxLat] = parts;
+  if (minLng > maxLng || minLat > maxLat) return null;
+  return { minLng, minLat, maxLng, maxLat };
+}
+
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -90,6 +108,7 @@ export class AssetsService {
   private async loadMapAssets(
     user: RequestUser,
     extraWhere?: Prisma.AssetWhereInput,
+    take?: number,
   ) {
     const ctx = await buildScopeContext(this.prisma, user);
     // Map scope: a TECHNICIAN additionally sees (read-only) their company's other
@@ -160,6 +179,9 @@ export class AssetsService {
         },
       },
       orderBy: { assetCode: 'asc' },
+      // Undefined = no limit (single-Pencawang view). The Mainhead-wide view
+      // passes a cap so a huge Mainhead can't flood the client.
+      take,
     });
 
     // Attach a lightweight open-defect summary per pole so the map can filter by
@@ -473,19 +495,47 @@ export class AssetsService {
       return this.loadMapAssets(user);
     }
     if (query.level === 'points') {
-      if (!query.pencawangId) {
-        throw new BadRequestException(
-          'pencawangId is required for the points level.',
-        );
+      // Single-Pencawang view: every pole (no cap — a Pencawang is bounded).
+      if (query.pencawangId) {
+        const [poles, pencawang] = await Promise.all([
+          this.loadMapAssets(user, {
+            substationId: query.pencawangId,
+            ...this.mapFilterWhere(query),
+          }),
+          this.pencawangCheckIn(user, query.pencawangId),
+        ]);
+        return { poles, pencawang };
       }
-      const [poles, pencawang] = await Promise.all([
-        this.loadMapAssets(user, {
-          substationId: query.pencawangId,
-          ...this.mapFilterWhere(query),
-        }),
-        this.pencawangCheckIn(user, query.pencawangId),
-      ]);
-      return { poles, pencawang };
+      // Mainhead-wide "show all poles" view: poles under the Mainhead's
+      // Pencawang, clipped to the viewport bbox and capped so the map can't jam.
+      // Fetch cap+1 to detect truncation; the client colours by Pencawang and
+      // derives the per-Pencawang anchors from the poles' substation ids.
+      if (query.mainheadId) {
+        const bbox = parseBbox(query.bbox);
+        const rows = await this.loadMapAssets(
+          user,
+          {
+            substation: { mainheadId: query.mainheadId },
+            ...(bbox
+              ? {
+                  latitude: { gte: bbox.minLat, lte: bbox.maxLat },
+                  longitude: { gte: bbox.minLng, lte: bbox.maxLng },
+                }
+              : {}),
+            ...this.mapFilterWhere(query),
+          },
+          MAINHEAD_POINTS_CAP + 1,
+        );
+        const truncated = rows.length > MAINHEAD_POINTS_CAP;
+        return {
+          poles: truncated ? rows.slice(0, MAINHEAD_POINTS_CAP) : rows,
+          truncated,
+          mainheadWide: true,
+        };
+      }
+      throw new BadRequestException(
+        'The points level requires pencawangId (one Pencawang) or mainheadId (all poles in a Mainhead).',
+      );
     }
     return this.aggregateMap(user, query.level, query);
   }
