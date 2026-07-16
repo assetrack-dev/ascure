@@ -284,7 +284,9 @@ function MapContent() {
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
   const [mainheadOptions, setMainheadOptions] = useState<{ id: string; name: string }[]>([]);
-  const [pencawangOptions, setPencawangOptions] = useState<{ id: string; name: string }[]>([]);
+  const [pencawangOptions, setPencawangOptions] = useState<
+    { id: string; name: string; mainheadId: string | null }[]
+  >([]);
   const [teamOptions, setTeamOptions] = useState<{ id: string; name: string }[]>([]);
   // "Show all poles" overlap view (Mainhead level): render every pole under the
   // Mainhead — viewport-capped, coloured by Pencawang — instead of group bubbles.
@@ -539,7 +541,19 @@ function MapContent() {
   );
 
   const itemsLabel = mode === "points" ? LEVEL_ITEMS.points : LEVEL_ITEMS[level];
-  const itemCount = mode === "bubbles" ? bubbles.length : points.length;
+  // Sum both sets so the render gate never hits 0 mid-transition (e.g. toggling
+  // "show all poles": mode flips to points before the poles arrive). A 0 here
+  // unmounts the map, which loses the camera and resets to the default zoom.
+  const itemCount = bubbles.length + points.length;
+
+  // Scope the Pencawang filter list to the drilled Mainhead (else it lists every
+  // Pencawang in the tenant); falls back to all when not inside a Mainhead.
+  const scopedPencawangOptions = useMemo(() => {
+    const mainheadId = drill.mainhead?.id;
+    return mainheadId
+      ? pencawangOptions.filter((p) => p.mainheadId === mainheadId)
+      : pencawangOptions;
+  }, [pencawangOptions, drill.mainhead]);
   const showMap = Boolean(GOOGLE_MAPS_API_KEY) && !googleFailed;
 
   return (
@@ -886,7 +900,10 @@ function MapContent() {
                 />
                 <FilterCheckGroup
                   label="Pencawang"
-                  options={pencawangOptions.map((p) => ({ value: p.id, label: p.name }))}
+                  options={scopedPencawangOptions.map((p) => ({
+                    value: p.id,
+                    label: p.name,
+                  }))}
                   selected={filters.pencawangIds}
                   onToggle={toggleFilter("pencawangIds")}
                   searchable
