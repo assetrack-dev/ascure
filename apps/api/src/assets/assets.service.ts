@@ -13,6 +13,7 @@ import {
   MaintenanceCategory,
   Prisma,
   SiteVisitStatus,
+  SurveyLifecycleStatus,
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -1313,6 +1314,18 @@ export class AssetsService {
           });
         }
 
+        // Moving a pole to a new Pencawang carries its in-progress survey with
+        // it, so the inspection follows the pole instead of being stranded on the
+        // old Pencawang's visit. `data.substationId` is set only when it changed.
+        if (data.substationId !== undefined) {
+          await this.migrateOpenSurveyOnPencawangChange(tx, {
+            tenantId: user.tenantId,
+            assetId: id,
+            fromSubstationId: asset.substationId,
+            toSubstationId: data.substationId,
+          });
+        }
+
         return tx.asset.findUniqueOrThrow({
           where: { id },
           include: this.assetInclude(),
@@ -1534,6 +1547,119 @@ export class AssetsService {
    * into two passes so a batch caller can create every membership before
    * resolving any fed-from (a parent must already carry its membership).
    */
+  /**
+   * When a pole is moved to a new Pencawang, carry its CURRENT (in-progress)
+   * survey with it: re-home the inspection(s), the visit link, and the
+   * "created during" attribution from the old Pencawang's active visit to the
+   * new Pencawang's active visit.
+   *
+   * Why: an Inspection is bound to `siteVisitId` (never a substation), and a
+   * visit's rollup counts assets from `SiteVisitAsset`, `Asset.createdDuringVisitId`
+   * and `Inspection.siteVisitId`. Without this migration a moved pole's completed
+   * inspection stays on the OLD visit — the old Pencawang keeps showing it as
+   * inspected while the new one shows it as pending (the 2026-07-16 PE KAMPUNG
+   * PANDAN 1 -> PDT ERA GEMILANG incident).
+   *
+   * Safety: only IN-PROGRESS surveys are touched on either side. A finished or
+   * report-frozen survey (status COMPLETED/CANCELLED, or lifecycle
+   * LAPORAN_SELESAI/ARKIB) is never rewritten — its history stands. And if the
+   * new Pencawang has no active visit there is nowhere to migrate to, so the
+   * survey links are left untouched (only the pole's substation moves).
+   */
+  private async migrateOpenSurveyOnPencawangChange(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      assetId: string;
+      fromSubstationId: string;
+      toSubstationId: string;
+    },
+  ): Promise<void> {
+    const { tenantId, assetId, fromSubstationId, toSubstationId } = params;
+
+    // An "open" (still-editable) survey: actively running and not yet
+    // report-frozen. Matches on both the source and destination visit.
+    const openVisitWhere: Prisma.SiteVisitWhereInput = {
+      status: {
+        in: [
+          SiteVisitStatus.ACTIVE,
+          SiteVisitStatus.OPEN,
+          SiteVisitStatus.IN_PROGRESS,
+        ],
+      },
+      OR: [
+        { lifecycleStatus: null },
+        {
+          lifecycleStatus: {
+            notIn: [
+              SurveyLifecycleStatus.LAPORAN_SELESAI,
+              SurveyLifecycleStatus.ARKIB,
+            ],
+          },
+        },
+      ],
+    };
+
+    // Destination: the most recent in-progress visit at the NEW Pencawang.
+    const destVisit = await tx.siteVisit.findFirst({
+      where: { tenantId, substationId: toSubstationId, ...openVisitWhere },
+      orderBy: { startedAt: 'desc' },
+      select: { id: true },
+    });
+
+    if (!destVisit) {
+      // No active survey at the new Pencawang — nothing to migrate onto.
+      return;
+    }
+
+    // The pole's inspections that belong to an in-progress visit at the OLD
+    // Pencawang (never a finished/frozen one). Their visits are the sources.
+    const sourceInspections = await tx.inspection.findMany({
+      where: {
+        tenantId,
+        assetId,
+        siteVisit: { substationId: fromSubstationId, ...openVisitWhere },
+      },
+      select: { siteVisitId: true },
+    });
+    const sourceVisitIds = Array.from(
+      new Set(sourceInspections.map((inspection) => inspection.siteVisitId)),
+    ).filter((visitId) => visitId !== destVisit.id);
+
+    if (sourceVisitIds.length === 0) {
+      return;
+    }
+
+    // 1) Inspections (any completion status) -> the destination visit.
+    await tx.inspection.updateMany({
+      where: { tenantId, assetId, siteVisitId: { in: sourceVisitIds } },
+      data: { siteVisitId: destVisit.id },
+    });
+
+    // 2) "Created during" attribution -> destination, so the old visit's asset
+    //    total drops (the rollup counts createdDuringVisitId too).
+    await tx.asset.updateMany({
+      where: { id: assetId, createdDuringVisitId: { in: sourceVisitIds } },
+      data: { createdDuringVisitId: destVisit.id },
+    });
+
+    // 3) Ensure a link on the destination visit, then drop the old-visit links.
+    await tx.siteVisitAsset.upsert({
+      where: {
+        siteVisitId_assetId: { siteVisitId: destVisit.id, assetId },
+      },
+      create: {
+        siteVisitId: destVisit.id,
+        assetId,
+        source: 'PENCAWANG_CHANGE',
+      },
+      update: {},
+    });
+    await tx.siteVisitAsset.deleteMany({
+      where: { assetId, siteVisitId: { in: sourceVisitIds } },
+    });
+  }
+
   private async syncPoleGraph(
     tx: Prisma.TransactionClient,
     params: { tenantId: string; substationId: string; assetId: string; assetCode: string },
