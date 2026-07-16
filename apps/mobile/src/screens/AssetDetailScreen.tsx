@@ -29,6 +29,7 @@ import {
   Asset,
   AssetDetailImage,
   AssetDetailResponse,
+  ChecklistTemplate,
   InspectionItemResultValue,
   SiteVisit,
 } from '../types';
@@ -138,14 +139,17 @@ export function AssetDetailScreen() {
       setAsset(response);
       setEditableAsset(assetSnapshot ?? assetList?.find((item) => item.id === assetId) ?? null);
 
-      // Warm this asset type's inspection template (same cache key as Start
-      // Inspection) so it can be started offline later, even for a brand-new
-      // asset type not yet seen in the visit's register.
-      if (visitId && !isTempId(assetId)) {
+      // Warm this asset type's inspection template (same SUBSTATION-scoped cache
+      // key as Start Inspection) so it can be started offline later, even for a
+      // brand-new asset type not yet seen in the register — and so an
+      // offline-started (temp) visit at this Pencawang can reuse it.
+      if (visitId && !isTempId(visitId) && !isTempId(assetId)) {
         const warmTypeKey = assetSnapshot?.assetTypeId ?? response.assetTypeId ?? response.assetType;
+        const warmSubstationId =
+          response.substation?.id ?? assetSnapshot?.substationId ?? substationId ?? '';
         void cachedFetch(
           'inspection-template',
-          `${visitId}:${operationalSessionId ?? 'none'}:${warmTypeKey}`,
+          `${warmSubstationId}:${operationalSessionId ?? 'none'}:${warmTypeKey}`,
           () =>
             api.resolveInspectionTemplate(token, {
               assetId,
@@ -213,22 +217,48 @@ export function AssetDetailScreen() {
       setIsStartingInspection(true);
       setActionError(null);
 
-      // Cache the resolved template per visit-scope + asset type. The server
-      // resolves by asset type PLUS the visit's mainhead/branch scope, so a
-      // type-only key could serve the wrong checklist; pinning to visitId (+
-      // session) keeps it correct. Don't send a temp assetId to the resolver —
-      // it would 404 once back online; assetTypeId + visit scope is enough.
+      // Cache the resolved template per SUBSTATION-scope + asset type. The server
+      // resolves by asset type PLUS the Pencawang's MAINHEAD/branch scope, and a
+      // Pencawang belongs to exactly one MAINHEAD (Substation.mainheadId), so the
+      // substation id captures that scope AND lets an offline-started (temp) visit
+      // reuse a template warmed under any real visit at the same Pencawang. Don't
+      // send a temp assetId to the resolver — it would 404 online; assetTypeId +
+      // visit scope is enough.
       const assetTypeKey = editableAsset?.assetTypeId ?? asset.assetTypeId ?? asset.assetType;
-      const templateCacheKey = `${visitId}:${operationalSessionId ?? 'none'}:${assetTypeKey}`;
-      const { value: activeTemplate } = await cachedFetch('inspection-template', templateCacheKey, () =>
-        api.resolveInspectionTemplate(token, {
-          assetId: isTempId(assetId) ? undefined : assetId,
-          assetTypeId: asset.assetTypeId,
-          assetType: asset.assetType,
-          siteVisitId: visitId,
-          operationalSessionId,
-        }),
-      );
+      const templateSubstationId =
+        asset.substation?.id ?? editableAsset?.substationId ?? substationId ?? '';
+      const templateCacheKey = `${templateSubstationId}:${operationalSessionId ?? 'none'}:${assetTypeKey}`;
+
+      let activeTemplate: ChecklistTemplate;
+      if (isTempId(visitId)) {
+        // Offline-created visit: can't reach the server, so the checklist must
+        // already be cached for this Pencawang (warmed by a prior online visit
+        // here or by Prepare for Offline at the depot).
+        const cachedTemplate = await readCache<ChecklistTemplate>(
+          'inspection-template',
+          templateCacheKey,
+        );
+
+        if (!cachedTemplate) {
+          setActionError(
+            "This Pencawang's checklist isn't saved offline yet. Open this Pencawang once with signal, or use Prepare for Offline at the depot.",
+          );
+          return;
+        }
+
+        activeTemplate = cachedTemplate.value;
+      } else {
+        const resolved = await cachedFetch('inspection-template', templateCacheKey, () =>
+          api.resolveInspectionTemplate(token, {
+            assetId: isTempId(assetId) ? undefined : assetId,
+            assetTypeId: asset.assetTypeId,
+            assetType: asset.assetType,
+            siteVisitId: visitId,
+            operationalSessionId,
+          }),
+        );
+        activeTemplate = resolved.value;
+      }
 
       if (activeTemplate.items.length === 0) {
         setActionError(
@@ -245,6 +275,58 @@ export function AssetDetailScreen() {
         inspectionCycle,
       };
 
+      // Mint a temp inspection, cache a synthesized form, queue the create (after
+      // the visit's and/or asset's own create when those are also offline), and
+      // open the form so the crew inspects now and syncs later.
+      const enqueueOfflineInspection = async () => {
+        const tempInspectionId = mintTempId('inspection');
+        const cachedVisit = (await readCache<SiteVisit>('site-visit', visitId))?.value ?? null;
+        const syntheticForm = buildOfflineInspectionForm({
+          inspectionId: tempInspectionId,
+          assetId,
+          detail: asset,
+          snapshot: editableAsset,
+          template: activeTemplate,
+          visit: cachedVisit,
+          visitId,
+          inspectionCycle,
+          operationalSessionId: operationalSessionId ?? null,
+          user,
+          nowIso: new Date().toISOString(),
+        });
+
+        await writeCache('inspection-form', tempInspectionId, syntheticForm);
+        await enqueueMutation({
+          type: 'CREATE_INSPECTION',
+          payload: createInput as Record<string, unknown>,
+          tempId: tempInspectionId,
+          // Gate on EACH temp id independently: the inspection must wait for the
+          // asset AND/OR the visit it belongs to, whichever were created offline.
+          dependsOn: [
+            ...(isTempId(assetId) ? [assetId] : []),
+            ...(isTempId(visitId) ? [visitId] : []),
+          ],
+          ownerUserId: user.id,
+          label: `Inspection · ${asset.assetCode}`,
+          sublabel: asset.assetTypeName ?? asset.assetType,
+        });
+
+        navigation.navigate('InspectionForm', {
+          inspectionId: tempInspectionId,
+          visitId,
+          substationId: substationId ?? '',
+          operationalSessionId,
+        });
+      };
+
+      // An offline-created visit can't accept a server inspection yet — go
+      // straight to the offline mint path (a network create would 400 on the
+      // temp visit id even when signal has returned).
+      if (isTempId(visitId)) {
+        await enqueueOfflineInspection();
+        return;
+      }
+
       try {
         const inspection = await api.createInspection(token, createInput);
         navigation.navigate('InspectionForm', {
@@ -254,41 +336,8 @@ export function AssetDetailScreen() {
           operationalSessionId,
         });
       } catch (createError) {
-        // Offline → mint a temp inspection, cache a synthesized form, queue the
-        // create (after the asset's own create when the asset is also offline),
-        // and open the form so the crew inspects now and syncs later.
         if (createError instanceof ApiError && createError.status === 0) {
-          const tempInspectionId = mintTempId('inspection');
-          const cachedVisit = (await readCache<SiteVisit>('site-visit', visitId))?.value ?? null;
-          const syntheticForm = buildOfflineInspectionForm({
-            inspectionId: tempInspectionId,
-            assetId,
-            detail: asset,
-            snapshot: editableAsset,
-            template: activeTemplate,
-            visit: cachedVisit,
-            inspectionCycle,
-            operationalSessionId: operationalSessionId ?? null,
-            user,
-            nowIso: new Date().toISOString(),
-          });
-
-          await writeCache('inspection-form', tempInspectionId, syntheticForm);
-          await enqueueMutation({
-            type: 'CREATE_INSPECTION',
-            payload: createInput as Record<string, unknown>,
-            tempId: tempInspectionId,
-            dependsOn: isTempId(assetId) ? [assetId] : [],
-            label: `Inspection · ${asset.assetCode}`,
-            sublabel: asset.assetTypeName ?? asset.assetType,
-          });
-
-          navigation.navigate('InspectionForm', {
-            inspectionId: tempInspectionId,
-            visitId,
-            substationId: substationId ?? '',
-            operationalSessionId,
-          });
+          await enqueueOfflineInspection();
           return;
         }
 

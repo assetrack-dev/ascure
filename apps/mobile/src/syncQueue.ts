@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { api, ApiError } from './api';
+import { removeCache, removeFromCachedArray } from './offlineCache';
 import { getInspectionQueueStatusGroup } from './operationalWorkspace';
 import {
   Asset,
@@ -14,6 +15,12 @@ import {
 const QUEUE_STORAGE_KEY = '@ascure/mobile/offline-inspection-queue/v1';
 const OFFLINE_PHOTO_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}ascure-offline-inspection-images/`
+  : null;
+// Separate durable dir for OFFLINE check-in arrival photos (uploaded after the
+// visit reconciles). Kept distinct from inspection photos so each set is cleaned
+// up independently.
+const OFFLINE_SITEVISIT_PHOTO_DIRECTORY = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}ascure-offline-sitevisit-images/`
   : null;
 const COMPLETED_HISTORY_LIMIT = 20;
 
@@ -32,7 +39,19 @@ export type SyncQueueDisplayStatus = SyncQueueStatus | CompletedSyncStatus;
 // inspection-submission keyed on a temp inspectionId) resolves through the same
 // `tempIdMap`.
 
-export type OfflineMutationType = 'CREATE_ASSET' | 'CREATE_INSPECTION';
+export type OfflineMutationType = 'CREATE_ASSET' | 'CREATE_INSPECTION' | 'CREATE_VISIT';
+
+/**
+ * An arrival site photo captured during an OFFLINE check-in. The file is copied
+ * to a durable directory at enqueue time (the raw expo-camera cache URI can be
+ * evicted by the OS before the visit reconciles) and uploaded best-effort once
+ * CREATE_VISIT maps the temp visit id to the real server id.
+ */
+export type OfflineSitePhoto = {
+  id: string;
+  uri: string;
+  timestamp: string;
+};
 
 export type OfflineMutation = {
   id: string;
@@ -54,6 +73,14 @@ export type OfflineMutation = {
   updatedAt: string;
   attemptCount: number;
   errorMessage?: string;
+  // The user who queued this op. The offline write-queue is device-global, so
+  // the reconciler skips (never fails) any op whose owner isn't the currently
+  // signed-in user — a queued CREATE_VISIT must never replay under a different
+  // user's token. Legacy items without this field are treated as matching.
+  ownerUserId?: string;
+  // Only for CREATE_VISIT: arrival photos captured while offline, uploaded after
+  // the visit id reconciles.
+  sitePhotos?: OfflineSitePhoto[];
 };
 
 const TEMP_ID_PREFIX = 'temp_';
@@ -65,7 +92,7 @@ function nextLocalSuffix() {
 }
 
 /** Mint a temp id for an entity created offline. Recognizable via isTempId(). */
-export function mintTempId(entity: 'asset' | 'inspection') {
+export function mintTempId(entity: 'asset' | 'inspection' | 'visit') {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
 
@@ -134,6 +161,7 @@ export type OfflineInspectionQueueItem = {
   lastAttemptAt?: string;
   attemptCount: number;
   errorMessage?: string;
+  ownerUserId?: string;
 };
 
 export type CompletedInspectionSyncRecord = {
@@ -169,6 +197,7 @@ export type OfflineVisitCompletionQueueItem = {
   lastAttemptAt?: string;
   attemptCount: number;
   errorMessage?: string;
+  ownerUserId?: string;
 };
 
 export type CompletedVisitCompletionSyncRecord = {
@@ -300,11 +329,13 @@ export async function enqueueInspectionSubmission({
   payload,
   photos,
   errorMessage,
+  ownerUserId,
 }: {
   form: InspectionFormResponse;
   payload: OfflineInspectionPayload;
   photos: QueueableInspectionPhoto[];
   errorMessage?: string;
+  ownerUserId?: string;
 }) {
   const now = new Date().toISOString();
   const queuedPhotos = await Promise.all(photos.map((photo) => createQueuedPhoto(photo, now)));
@@ -324,6 +355,7 @@ export async function enqueueInspectionSubmission({
       lastAttemptAt: existing?.lastAttemptAt,
       attemptCount: existing?.attemptCount ?? 0,
       errorMessage,
+      ownerUserId: ownerUserId ?? existing?.ownerUserId,
     };
 
     const items =
@@ -344,11 +376,13 @@ export async function enqueueVisitCompletion({
   assets,
   payload,
   errorMessage,
+  ownerUserId,
 }: {
   visit: SiteVisit;
   assets: Asset[];
   payload: VisitCompletionPayload;
   errorMessage?: string;
+  ownerUserId?: string;
 }) {
   const now = new Date().toISOString();
   const summary = createVisitCompletionSummary(visit, assets);
@@ -368,6 +402,7 @@ export async function enqueueVisitCompletion({
       lastAttemptAt: existing?.lastAttemptAt,
       attemptCount: existing?.attemptCount ?? 0,
       errorMessage,
+      ownerUserId: ownerUserId ?? existing?.ownerUserId,
     };
 
     const visitCompletions =
@@ -394,6 +429,8 @@ export async function enqueueMutation(input: {
   dependsOn?: string[];
   label: string;
   sublabel?: string;
+  ownerUserId?: string;
+  sitePhotos?: OfflineSitePhoto[];
 }): Promise<OfflineMutation> {
   const now = new Date().toISOString();
   const mutation: OfflineMutation = {
@@ -408,6 +445,8 @@ export async function enqueueMutation(input: {
     createdAt: now,
     updatedAt: now,
     attemptCount: 0,
+    ownerUserId: input.ownerUserId,
+    sitePhotos: input.sitePhotos,
   };
 
   await updateStoredQueue((queue) => ({
@@ -502,32 +541,55 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
     const payload = resolveTempIdsInPayload(mutation.payload, tempIdMap);
     let realId: string | undefined;
 
-    if (mutation.type === 'CREATE_ASSET') {
-      try {
-        const created = await api.createAsset(
+    switch (mutation.type) {
+      case 'CREATE_ASSET': {
+        try {
+          const created = await api.createAsset(
+            token,
+            payload as unknown as Parameters<typeof api.createAsset>[1],
+          );
+          realId = created.id;
+        } catch (error) {
+          // At-least-once recovery: a prior attempt may have actually created the
+          // asset before its response was lost (timeout). On a duplicate/conflict,
+          // adopt the existing server row so the dependent inspection + its field
+          // data can reconcile instead of being stranded in the queue forever.
+          if (isAlreadyExistsError(error)) {
+            realId = (await findExistingAssetId(token, payload)) ?? undefined;
+          }
+
+          if (!realId) {
+            throw error;
+          }
+        }
+        break;
+      }
+      case 'CREATE_INSPECTION': {
+        const created = await api.createInspection(
           token,
-          payload as unknown as Parameters<typeof api.createAsset>[1],
+          payload as unknown as Parameters<typeof api.createInspection>[1],
         );
         realId = created.id;
-      } catch (error) {
-        // At-least-once recovery: a prior attempt may have actually created the
-        // asset before its response was lost (timeout). On a duplicate/conflict,
-        // adopt the existing server row so the dependent inspection + its field
-        // data can reconcile instead of being stranded in the queue forever.
-        if (isAlreadyExistsError(error)) {
-          realId = (await findExistingAssetId(token, payload)) ?? undefined;
-        }
-
-        if (!realId) {
-          throw error;
-        }
+        break;
       }
-    } else {
-      const created = await api.createInspection(
-        token,
-        payload as unknown as Parameters<typeof api.createInspection>[1],
-      );
-      realId = created.id;
+      case 'CREATE_VISIT': {
+        // A site visit has no natural key, so at-least-once retry after a lost
+        // response can create a DUPLICATE visit (one orphan SiteVisit + its user
+        // rows — visible/cleanable in admin). This is the accepted dup-guard
+        // decision for offline-start; we do not attempt adoption.
+        const created = await api.createSiteVisit(
+          token,
+          payload as unknown as Parameters<typeof api.createSiteVisit>[1],
+        );
+        realId = created.id;
+        break;
+      }
+      default: {
+        // Exhaustiveness: a new OfflineMutationType MUST add a branch above, or
+        // this fails the build (rather than silently mis-routing the create).
+        const exhaustive: never = mutation.type;
+        throw new ApiError(`Unknown offline mutation type: ${String(exhaustive)}`, 0, null);
+      }
     }
 
     if (!realId) {
@@ -535,9 +597,117 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
     }
 
     await completeMutation(mutation.id, mutation.tempId, realId);
+
+    // A reconciled offline visit: drop the synthesized temp entries from the
+    // read-cache (so the real visit — arriving on the next online fetch — never
+    // coexists with its temp twin) and upload any arrival photos captured while
+    // offline, now that the real visit id exists.
+    if (mutation.type === 'CREATE_VISIT') {
+      await evictReconciledVisitCache(mutation.tempId, realId);
+      await uploadOfflineSiteVisitPhotos(token, realId, mutation.sitePhotos ?? []);
+    }
   } catch (error) {
+    // A terminal (permanently-rejected) create — the server will never accept it
+    // (bad data, forbidden, or the parent Pencawang/visit was deleted/reassigned
+    // while the crew was offline). Retrying forever would ALSO block this visit's
+    // completion via hasBlockingWorkForVisit, stranding it "in progress". Drop the
+    // create AND everything that can no longer reconcile without it, so the queue
+    // drains. The field data is lost, but it could never have been created — log
+    // it for support. (Contrast: status 0/408/429/5xx are retryable, 409 is
+    // adopted, 401 aborts the flush for re-auth — none reach here.)
+    if (error instanceof ApiError && isTerminalCreateError(error)) {
+      console.warn(
+        `[offline-sync] dropping terminally-rejected ${mutation.type} "${mutation.label}": ${getErrorMessage(error)}`,
+      );
+      await dropTerminalMutationCascade(mutation.tempId);
+      return;
+    }
+
     await markMutationFailed(mutation.id, getErrorMessage(error));
     throw error;
+  }
+}
+
+/**
+ * A create the server will never accept — bad data, forbidden, or the parent
+ * entity was deleted/reassigned while the crew was offline. Distinct from a
+ * transient/unreachable failure (status 0/408/429/5xx = retryable) and from a 409
+ * duplicate (adopted inside the CREATE_ASSET branch, not dropped). 401 is excluded
+ * — that aborts the whole flush for re-auth, it is not a per-item terminal error.
+ */
+function isTerminalCreateError(error: ApiError) {
+  return error.status === 400 || error.status === 403 || error.status === 404;
+}
+
+/**
+ * Drop a terminally-rejected create and everything that can no longer reconcile
+ * without it: the transitive closure of mutations that (directly or indirectly)
+ * dependsOn it, plus any queued inspection submissions for those temp ids and any
+ * queued visit completion for a doomed (temp) visit. Prevents an unsyncable create
+ * from retrying forever AND from blocking its visit's completion.
+ */
+async function dropTerminalMutationCascade(rootTempId: string) {
+  await updateStoredQueue((queue) => {
+    const doomed = new Set<string>([rootTempId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const mutation of queue.mutations) {
+        if (!doomed.has(mutation.tempId) && mutation.dependsOn.some((dep) => doomed.has(dep))) {
+          doomed.add(mutation.tempId);
+          changed = true;
+        }
+      }
+    }
+
+    return {
+      ...queue,
+      mutations: queue.mutations.filter((mutation) => !doomed.has(mutation.tempId)),
+      items: queue.items.filter(
+        (item) =>
+          !doomed.has(item.summary.inspectionId) && !doomed.has(item.summary.assetId),
+      ),
+      visitCompletions: queue.visitCompletions.filter(
+        (completion) => !doomed.has(completion.summary.siteVisitId),
+      ),
+    };
+  });
+}
+
+/**
+ * On CREATE_VISIT reconcile, evict the temp visit's synthesized read-cache so it
+ * can't linger (or, once the real visit is prepended elsewhere, duplicate). The
+ * real visit repopulates from the next online getActiveSiteVisits fetch.
+ */
+async function evictReconciledVisitCache(tempVisitId: string, _realVisitId: string) {
+  await Promise.all([
+    removeFromCachedArray<SiteVisit>('site-visits-active', undefined, tempVisitId, (v) => v.id),
+    removeCache('site-visit', tempVisitId),
+    removeCache('site-visit-assets', tempVisitId),
+  ]);
+}
+
+/**
+ * Best-effort upload of arrival site photos captured during an offline check-in,
+ * run right after the visit id reconciles. Optional photos: a failed upload
+ * leaves the durable file in place but is not retried (the visit itself is
+ * already reconciled, so we never re-fail the whole mutation over a photo).
+ */
+async function uploadOfflineSiteVisitPhotos(
+  token: string,
+  siteVisitId: string,
+  photos: OfflineSitePhoto[],
+) {
+  for (const photo of photos) {
+    try {
+      await api.uploadSiteVisitImage(token, siteVisitId, {
+        uri: photo.uri,
+        timestamp: photo.timestamp,
+      });
+      await deleteOfflineSiteVisitPhoto(photo.uri);
+    } catch {
+      // Arrival photos are optional; do not fail the reconcile over them.
+    }
   }
 }
 
@@ -589,16 +759,35 @@ export async function dropOfflineAssetCreate(tempAssetId: string) {
   }));
 }
 
-export async function syncQueuedInspections(token: string): Promise<SyncQueueRunResult> {
+export async function syncQueuedInspections(
+  token: string,
+  currentUserId?: string,
+): Promise<SyncQueueRunResult> {
   if (activeSyncPromise) {
     return activeSyncPromise;
   }
 
-  activeSyncPromise = runSyncQueue(token).finally(() => {
+  activeSyncPromise = runSyncQueue(token, currentUserId).finally(() => {
     activeSyncPromise = null;
   });
 
   return activeSyncPromise;
+}
+
+/**
+ * The offline write-queue is device-global, so an op queued by one user must
+ * never replay under a different signed-in user's token (it would 403-storm or
+ * mis-attribute the create). Skip — never fail — a foreign-owner op so its owner
+ * can flush it on their next login. Legacy items with no owner stamp, and calls
+ * with no known current user, are treated as matching (never strand existing
+ * work).
+ */
+function isForeignOwner(ownerUserId: string | undefined, currentUserId: string | undefined) {
+  if (!ownerUserId || !currentUserId) {
+    return false;
+  }
+
+  return ownerUserId !== currentUserId;
 }
 
 export async function cleanupLocalInspectionPhotos(photos: QueueableInspectionPhoto[]) {
@@ -611,7 +800,39 @@ export async function cleanupLocalInspectionPhotos(photos: QueueableInspectionPh
   );
 }
 
-async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
+async function runSyncQueue(
+  token: string,
+  currentUserId?: string,
+): Promise<SyncQueueRunResult> {
+  const total: SyncQueueRunResult = { completed: 0, failed: 0, skipped: 0 };
+  // A dependency chain (visit -> asset -> inspection -> submission -> completion)
+  // reconciles in ONE pass on the happy path, but a transiently-failed mid-chain
+  // op leaves its dependents skipped. Re-run within the same reconnection window
+  // — while a pass both made progress AND left skipped work that the progress may
+  // now unblock — instead of waiting for the next NetInfo event. Capped so a
+  // genuinely-stuck op can't spin.
+  const MAX_PASSES = 6;
+
+  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+    const passResult = await runSyncQueuePass(token, currentUserId);
+    total.completed += passResult.completed;
+    total.failed += passResult.failed;
+    total.skipped = passResult.skipped; // residual still-pending after this pass
+
+    if (passResult.completed === 0 || passResult.skipped === 0) {
+      break;
+    }
+  }
+
+  await pruneTempIdMapIfDrained();
+
+  return total;
+}
+
+async function runSyncQueuePass(
+  token: string,
+  currentUserId?: string,
+): Promise<SyncQueueRunResult> {
   const snapshot = await loadSyncQueueSnapshot();
   const mutationCandidateIds = snapshot.mutations.map((mutation) => mutation.id);
   const candidateIds = snapshot.items.map((item) => item.id);
@@ -628,6 +849,13 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
     const mutation = await getMutationItem(mutationId);
 
     if (!mutation) {
+      result.skipped += 1;
+      continue;
+    }
+
+    // User-scoped queue: leave another user's queued create for that user to
+    // flush (never replay it under this token).
+    if (isForeignOwner(mutation.ownerUserId, currentUserId)) {
       result.skipped += 1;
       continue;
     }
@@ -664,6 +892,11 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
       continue;
     }
 
+    if (isForeignOwner(item.ownerUserId, currentUserId)) {
+      result.skipped += 1;
+      continue;
+    }
+
     const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
     const inspectionId = resolveTempId(tempIdMap, item.summary.inspectionId);
 
@@ -692,13 +925,29 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
       continue;
     }
 
-    if (await hasBlockingInspectionQueueItem(item.summary.siteVisitId)) {
+    if (isForeignOwner(item.ownerUserId, currentUserId)) {
+      result.skipped += 1;
+      continue;
+    }
+
+    // Resolve the (possibly temp) visit id ONCE. If the visit was created
+    // offline and hasn't reconciled yet, skip — never POST a temp id to the
+    // server (/site-visits/:id is @IsUUID() -> 400).
+    const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
+    const resolvedVisitId = resolveTempId(tempIdMap, item.summary.siteVisitId);
+
+    if (isTempId(resolvedVisitId)) {
+      result.skipped += 1;
+      continue;
+    }
+
+    if (await hasBlockingWorkForVisit(item.summary.siteVisitId)) {
       result.skipped += 1;
       continue;
     }
 
     try {
-      await syncVisitCompletionQueueItem(token, item);
+      await syncVisitCompletionQueueItem(token, item, resolvedVisitId);
       result.completed += 1;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -710,6 +959,25 @@ async function runSyncQueue(token: string): Promise<SyncQueueRunResult> {
   }
 
   return result;
+}
+
+/**
+ * Once the queue is fully drained, reset the temp->real id map (it only ever
+ * grows and survives sign-out). Safe only when nothing pending references it.
+ */
+async function pruneTempIdMapIfDrained() {
+  await updateStoredQueue((queue) => {
+    if (
+      queue.mutations.length === 0 &&
+      queue.items.length === 0 &&
+      queue.visitCompletions.length === 0 &&
+      Object.keys(queue.tempIdMap).length > 0
+    ) {
+      return { ...queue, tempIdMap: {} };
+    }
+
+    return queue;
+  });
 }
 
 async function syncQueueItem(
@@ -763,14 +1031,15 @@ async function syncQueueItem(
 async function syncVisitCompletionQueueItem(
   token: string,
   item: OfflineVisitCompletionQueueItem,
+  resolvedVisitId: string,
 ) {
   await markVisitCompletionItemSyncing(item.id);
 
   try {
-    await api.completeSiteVisit(token, item.summary.siteVisitId, item.payload);
+    await api.completeSiteVisit(token, resolvedVisitId, item.payload);
     await completeVisitCompletionQueueItem(item.id);
   } catch (error) {
-    if (await isVisitAlreadyCompleted(token, item, error)) {
+    if (await isVisitAlreadyCompleted(token, resolvedVisitId, error)) {
       await completeVisitCompletionQueueItem(item.id);
       return;
     }
@@ -957,10 +1226,51 @@ async function getVisitCompletionQueueItem(itemId: string) {
   return queue.visitCompletions.find((item) => item.id === itemId) ?? null;
 }
 
-async function hasBlockingInspectionQueueItem(siteVisitId: string) {
+/**
+ * A visit completion must NOT run while any offline-created work for that visit
+ * is still queued — otherwise the server completes the visit before its offline
+ * poles exist, and their CREATE_ASSET then 404s forever (not a 409 → not adopted
+ * → poles permanently lost). "Work" = a queued inspection submission, a
+ * CREATE_ASSET whose createdDuringVisitId is this visit, or a CREATE_INSPECTION
+ * whose siteVisitId is this visit. Match on BOTH the raw temp id and its mapped
+ * real id, since queued payloads keep the temp id even after reconcile.
+ */
+async function hasBlockingWorkForVisit(siteVisitId: string) {
   const queue = await loadSyncQueueSnapshot();
+  const identity = visitIdentitySet(siteVisitId, queue.tempIdMap);
 
-  return queue.items.some((item) => item.summary.siteVisitId === siteVisitId);
+  const inspectionBlocking = queue.items.some(
+    (item) =>
+      identity.has(item.summary.siteVisitId) ||
+      identity.has(resolveTempId(queue.tempIdMap, item.summary.siteVisitId)),
+  );
+
+  if (inspectionBlocking) {
+    return true;
+  }
+
+  return queue.mutations.some((mutation) =>
+    mutationVisitReference(mutation).some(
+      (id) => identity.has(id) || identity.has(resolveTempId(queue.tempIdMap, id)),
+    ),
+  );
+}
+
+/** Every id that denotes a given visit: the id itself + its resolved real id. */
+function visitIdentitySet(siteVisitId: string, tempIdMap: Record<string, string>) {
+  return new Set<string>([siteVisitId, resolveTempId(tempIdMap, siteVisitId)]);
+}
+
+/** The visit id(s) a queued mutation references, if any (before/after reconcile). */
+function mutationVisitReference(mutation: OfflineMutation): string[] {
+  if (mutation.type === 'CREATE_VISIT') {
+    return [mutation.tempId];
+  }
+
+  const key = mutation.type === 'CREATE_ASSET' ? 'createdDuringVisitId' : 'siteVisitId';
+  const value = mutation.payload[key];
+
+  return typeof value === 'string' ? [value] : [];
 }
 
 async function createQueuedPhoto(photo: QueueableInspectionPhoto, queuedAt: string) {
@@ -983,14 +1293,23 @@ async function createQueuedPhoto(photo: QueueableInspectionPhoto, queuedAt: stri
 }
 
 async function persistPhotoUri(uri: string, photoId: string) {
-  if (!OFFLINE_PHOTO_DIRECTORY || uri.startsWith(OFFLINE_PHOTO_DIRECTORY)) {
+  return persistUriToDir(uri, photoId, OFFLINE_PHOTO_DIRECTORY);
+}
+
+/**
+ * Copy a capture URI into a durable directory so it survives OS cache eviction
+ * before the queued upload runs. Returns the durable URI, or the original URI on
+ * any failure (best-effort). No-ops if the URI already lives in that directory.
+ */
+async function persistUriToDir(uri: string, id: string, directory: string | null) {
+  if (!directory || uri.startsWith(directory)) {
     return uri;
   }
 
-  const targetUri = `${OFFLINE_PHOTO_DIRECTORY}${sanitizeFilename(photoId)}.jpg`;
+  const targetUri = `${directory}${sanitizeFilename(id)}.jpg`;
 
   try {
-    await FileSystem.makeDirectoryAsync(OFFLINE_PHOTO_DIRECTORY, { intermediates: true });
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
     await FileSystem.copyAsync({
       from: uri,
       to: targetUri,
@@ -1000,6 +1319,23 @@ async function persistPhotoUri(uri: string, photoId: string) {
   } catch {
     return uri;
   }
+}
+
+/**
+ * Persist an arrival site photo captured during an OFFLINE check-in to the
+ * durable site-visit image dir. Exported for CheckInScreen so the URIs stored on
+ * the queued CREATE_VISIT mutation can't be evicted before the visit reconciles.
+ */
+export async function persistOfflineSiteVisitPhoto(uri: string, photoId: string) {
+  return persistUriToDir(uri, photoId, OFFLINE_SITEVISIT_PHOTO_DIRECTORY);
+}
+
+async function deleteOfflineSiteVisitPhoto(uri: string) {
+  if (!OFFLINE_SITEVISIT_PHOTO_DIRECTORY || !uri.startsWith(OFFLINE_SITEVISIT_PHOTO_DIRECTORY)) {
+    return;
+  }
+
+  await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 
 async function cleanupQueuedPhotoFiles(photos: QueuedInspectionPhoto[]) {
@@ -1303,6 +1639,20 @@ function isSyncQueueStatus(value: unknown): value is SyncQueueStatus {
   return value === 'PENDING_SYNC' || value === 'SYNCING' || value === 'FAILED';
 }
 
+function isOfflineMutationType(value: unknown): value is OfflineMutationType {
+  // NOTE: the build-fail gate for a NEW mutation type is the `never` default in
+  // syncMutationItem's switch. This runtime guard must be kept in sync so a
+  // persisted mutation of that type is not silently dropped on reload.
+  switch (value) {
+    case 'CREATE_ASSET':
+    case 'CREATE_INSPECTION':
+    case 'CREATE_VISIT':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function isOfflineMutation(value: unknown): value is OfflineMutation {
   if (!value || typeof value !== 'object') {
     return false;
@@ -1312,7 +1662,7 @@ function isOfflineMutation(value: unknown): value is OfflineMutation {
 
   return (
     typeof mutation.id === 'string' &&
-    (mutation.type === 'CREATE_ASSET' || mutation.type === 'CREATE_INSPECTION') &&
+    isOfflineMutationType(mutation.type) &&
     isSyncQueueStatus(mutation.status) &&
     typeof mutation.tempId === 'string' &&
     Boolean(mutation.payload) &&
@@ -1322,7 +1672,7 @@ function isOfflineMutation(value: unknown): value is OfflineMutation {
 
 async function isVisitAlreadyCompleted(
   token: string,
-  item: OfflineVisitCompletionQueueItem,
+  resolvedVisitId: string,
   error: unknown,
 ) {
   if (!(error instanceof ApiError) || error.status !== 400) {
@@ -1336,7 +1686,7 @@ async function isVisitAlreadyCompleted(
   }
 
   try {
-    const visit = await api.getSiteVisit(token, item.summary.siteVisitId);
+    const visit = await api.getSiteVisit(token, resolvedVisitId);
 
     return visit.status === 'COMPLETED';
   } catch {

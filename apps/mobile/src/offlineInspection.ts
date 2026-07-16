@@ -63,6 +63,11 @@ export function buildOfflineInspectionForm(params: {
   snapshot: Asset | null;
   template: ChecklistTemplate;
   visit: SiteVisit | null;
+  // The route's visit id (temp or real). Used as the siteVisitId fallback when
+  // the visit cache entry is missing, so the queued submission's summary always
+  // carries the correct visit id — an empty '' would break the completion-block
+  // match and could drop the inspection against a completed visit.
+  visitId: string;
   inspectionCycle: number;
   operationalSessionId: string | null;
   user: SessionUser;
@@ -75,11 +80,14 @@ export function buildOfflineInspectionForm(params: {
     snapshot,
     template,
     visit,
+    visitId,
     inspectionCycle,
     operationalSessionId,
     user,
     nowIso,
   } = params;
+
+  const resolvedVisitId = visit?.id ?? visitId;
 
   const assetType =
     snapshot?.assetType ??
@@ -103,7 +111,7 @@ export function buildOfflineInspectionForm(params: {
     inspection: {
       id: inspectionId,
       tenantId: user.tenantId ?? '',
-      siteVisitId: visit?.id ?? '',
+      siteVisitId: resolvedVisitId,
       assetId,
       templateId: template.id,
       operationalSessionId,
@@ -117,7 +125,7 @@ export function buildOfflineInspectionForm(params: {
       createdAt: nowIso,
       updatedAt: nowIso,
       siteVisit: {
-        id: visit?.id ?? '',
+        id: resolvedVisitId,
         status: visit?.status ?? 'ACTIVE',
         operationMode: visit?.operationMode ?? null,
         operationalScope: visit?.operationalScope ?? null,

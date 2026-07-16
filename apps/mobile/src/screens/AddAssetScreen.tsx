@@ -14,7 +14,7 @@ import Mapbox from '@rnmapbox/maps';
 import { SATELLITE_STYLE } from '../mapbox';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
-import { cachedFetch, prependToCachedArray } from '../offlineCache';
+import { cachedFetch, prependToCachedArray, readCache } from '../offlineCache';
 import { enqueueMutation, isTempId, mintTempId } from '../syncQueue';
 import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
@@ -38,7 +38,7 @@ import {
   TextField,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
-import { Asset, AssetStatus, AssetType, Substation } from '../types';
+import { Asset, AssetStatus, AssetType, SiteVisit, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 import { normalizePoleInput, suggestNextPoleCode } from '../utils/feederSequence';
 import { loadLastPoleCode, storeLastPoleCode } from '../storage';
@@ -104,7 +104,7 @@ export function AddAssetScreen() {
     initialLatitude,
     initialLongitude,
   } = route.params;
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   // Adding/editing an asset is an inspection-scope action — block maintenance
   // accounts (defense in depth; the Map add-asset entry is already hidden).
   const { canInspect, loading: capabilitiesLoading } = useCapabilities();
@@ -392,9 +392,17 @@ export function AddAssetScreen() {
       let visitOperationalScope: string | null = null;
       if (siteVisitId) {
         try {
-          const { value: visit } = await cachedFetch('site-visit', siteVisitId, () =>
-            api.getSiteVisit(token, siteVisitId),
-          );
+          // A temp (offline-created) visit exists only locally — read the
+          // synthesized visit straight from cache; never send its non-UUID id to
+          // the server (it would 400 the moment signal returns, dropping SAVT
+          // scope + KOD TIANG so poles get bare numeric codes).
+          const visit = isTempId(siteVisitId)
+            ? (await readCache<SiteVisit>('site-visit', siteVisitId))?.value ?? null
+            : (
+                await cachedFetch('site-visit', siteVisitId, () =>
+                  api.getSiteVisit(token, siteVisitId),
+                )
+              ).value;
           visitOperationalScope = visit?.operationalScope ?? null;
           setVisitScope(visitOperationalScope);
           setVisitRouteCode(visit?.routeCode ?? null);
@@ -710,59 +718,85 @@ export function AddAssetScreen() {
         createdDuringVisitId: siteVisitId,
       };
 
+      // Queue the create + optimistically open the new pole so field work
+      // continues; it reconciles to a real id on sync. Needs the resolved asset
+      // type (cached) to render the asset.
+      const queueOfflineAssetCreate = async () => {
+        const tempId = mintTempId('asset');
+
+        await enqueueMutation({
+          type: 'CREATE_ASSET',
+          payload: createInput as Record<string, unknown>,
+          tempId,
+          // When the visit itself was created offline, this asset's create must
+          // wait for the visit to reconcile first (createdDuringVisitId is a temp
+          // id resolved via tempIdMap). No-op for a real visit.
+          dependsOn: isTempId(siteVisitId) ? [siteVisitId] : undefined,
+          ownerUserId: user.id,
+          label: composedAssetCode,
+          sublabel: selectedSubstation
+            ? `${selectedSubstation.code} - ${selectedSubstation.name}`
+            : undefined,
+        });
+
+        const optimisticAsset: Asset = {
+          id: tempId,
+          substationId: targetSubstationId,
+          assetTypeId: selectedAssetTypeId,
+          assetCode: composedAssetCode,
+          name: normalizedAssetName ?? null,
+          latitude: parsedLatitude ?? null,
+          longitude: parsedLongitude ?? null,
+          metadata: assetMetadata ?? null,
+          status: targetAssetStatus ?? 'ACTIVE',
+          createdDuringVisitId: siteVisitId ?? null,
+          assetType: selectedAssetType as AssetType,
+          substation: selectedSubstation
+            ? {
+                id: selectedSubstation.id,
+                code: selectedSubstation.code,
+                name: selectedSubstation.name,
+              }
+            : undefined,
+          latestInspection: null,
+        };
+
+        // Surface the new pole in the cached registers (visit asset list + map).
+        await Promise.all([
+          siteVisitId
+            ? prependToCachedArray('site-visit-assets', siteVisitId, optimisticAsset, (a) => a.id)
+            : Promise.resolve(),
+          prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
+        ]);
+
+        await storeLastPoleCode(targetSubstationId, composedAssetCode);
+        proceedAfterSave(optimisticAsset, intent);
+      };
+
+      // The parent visit was created OFFLINE (temp id): never POST
+      // createdDuringVisitId as a non-UUID (@IsUUID -> 400 the moment signal
+      // returns, stranding the pole). Skip the network create and queue directly,
+      // mirroring the AssetDetail Start-Inspection temp-visit guard.
+      if (isTempId(siteVisitId)) {
+        if (!selectedAssetType) {
+          setError(
+            'This pole can’t be saved until the offline visit finishes syncing. Try again once you have signal.',
+          );
+          return;
+        }
+
+        await queueOfflineAssetCreate();
+        return;
+      }
+
       try {
         const savedAsset = await api.createAsset(token, createInput);
         await storeLastPoleCode(targetSubstationId, composedAssetCode);
         proceedAfterSave(savedAsset, intent);
       } catch (createError) {
-        // Offline (server unreachable) → queue the create and optimistically open
-        // the new pole so field work continues; it reconciles to a real id on
-        // sync. Needs the resolved asset type (cached) to render the asset.
+        // Offline (server unreachable, status 0) → queue as above.
         if (createError instanceof ApiError && createError.status === 0 && selectedAssetType) {
-          const tempId = mintTempId('asset');
-
-          await enqueueMutation({
-            type: 'CREATE_ASSET',
-            payload: createInput as Record<string, unknown>,
-            tempId,
-            label: composedAssetCode,
-            sublabel: selectedSubstation
-              ? `${selectedSubstation.code} - ${selectedSubstation.name}`
-              : undefined,
-          });
-
-          const optimisticAsset: Asset = {
-            id: tempId,
-            substationId: targetSubstationId,
-            assetTypeId: selectedAssetTypeId,
-            assetCode: composedAssetCode,
-            name: normalizedAssetName ?? null,
-            latitude: parsedLatitude ?? null,
-            longitude: parsedLongitude ?? null,
-            metadata: assetMetadata ?? null,
-            status: targetAssetStatus ?? 'ACTIVE',
-            createdDuringVisitId: siteVisitId ?? null,
-            assetType: selectedAssetType,
-            substation: selectedSubstation
-              ? {
-                  id: selectedSubstation.id,
-                  code: selectedSubstation.code,
-                  name: selectedSubstation.name,
-                }
-              : undefined,
-            latestInspection: null,
-          };
-
-          // Surface the new pole in the cached registers (visit asset list + map).
-          await Promise.all([
-            siteVisitId
-              ? prependToCachedArray('site-visit-assets', siteVisitId, optimisticAsset, (a) => a.id)
-              : Promise.resolve(),
-            prependToCachedArray('assets', targetSubstationId, optimisticAsset, (a) => a.id),
-          ]);
-
-          await storeLastPoleCode(targetSubstationId, composedAssetCode);
-          proceedAfterSave(optimisticAsset, intent);
+          await queueOfflineAssetCreate();
           return;
         }
 

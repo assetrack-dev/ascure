@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
 import { cachedFetch } from '../offlineCache';
+import { warmVisitOfflineCache } from '../offlineWarm';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
 import type { AppDrawerScreenProps } from '../navigation/types';
@@ -21,6 +22,7 @@ import {
   getFailedQueueCount,
   getPendingQueueCount,
   getSyncingQueueCount,
+  isTempId,
   SyncQueueSnapshot,
 } from '../syncQueue';
 import {
@@ -180,6 +182,15 @@ export function HomeScreen() {
       setCompletedVisits(completedResult.value);
       setCapabilities(capabilitiesResult.value);
 
+      // Warm the Check-In reference data (best-effort, fire-and-forget) so a crew
+      // that opened the app online at the depot can START a new visit offline —
+      // the Check-In pickers populate from these caches.
+      void Promise.all([
+        cachedFetch('teams', undefined, () => api.getTeams(token)),
+        cachedFetch('substations', undefined, () => api.getSubstations(token)),
+        cachedFetch('mainheads', undefined, () => api.getMainheads(token)),
+      ]).catch(() => undefined);
+
       // Identity refresh is best-effort — the session user is already cached by
       // AuthContext, so this must not fail the screen offline; a 401 still
       // bubbles to sign the crew out.
@@ -252,7 +263,9 @@ export function HomeScreen() {
       try {
         setError(null);
 
-        if (isCompletedVisit(visit)) {
+        // A temp (offline-created) visit exists only locally — open it straight
+        // (VisitDetail reads it from cache); never call join with its non-UUID id.
+        if (isTempId(visit.id) || isCompletedVisit(visit)) {
           navigation.navigate('VisitDetail', {
             visitId: visit.id,
             substationId: visit.substationId,
@@ -1058,6 +1071,13 @@ function formatRole(role?: string | null) {
 async function loadVisitDetails(token: string, visits: SiteVisit[]) {
   return Promise.all(
     visits.map(async (visit) => {
+      // A temp (offline-created) visit is already fully in cache (synthesized by
+      // Check-In, poles prepended by Add Asset) — never send its non-UUID id to
+      // the server (getSiteVisit / warm would 400 the moment signal returns).
+      if (isTempId(visit.id)) {
+        return visit;
+      }
+
       let detailed: SiteVisit = visit;
 
       try {
@@ -1082,47 +1102,6 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
       return detailed;
     }),
   );
-}
-
-async function warmVisitOfflineCache(token: string, visit: SiteVisit) {
-  try {
-    const assets = await cachedFetch('site-visit-assets', visit.id, () =>
-      api.getSiteVisitAssets(token, visit.id),
-    )
-      .then((result) => result.value)
-      .catch(() => [] as Asset[]);
-
-    if (visit.substationId) {
-      await cachedFetch('assets', visit.substationId, () =>
-        api.getAssets(token, visit.substationId as string),
-      ).catch(() => undefined);
-    }
-
-    // One inspection template per distinct asset type — keyed exactly like
-    // AssetDetailScreen.handleStartInspection (`visitId:session:assetTypeId`,
-    // session 'none' for SAVR) so offline Start Inspection resolves from cache.
-    const seenTypes = new Set<string>();
-    await Promise.all(
-      assets.map((asset) => {
-        if (!asset.assetTypeId || seenTypes.has(asset.assetTypeId)) {
-          return Promise.resolve(undefined);
-        }
-
-        seenTypes.add(asset.assetTypeId);
-
-        return cachedFetch('inspection-template', `${visit.id}:none:${asset.assetTypeId}`, () =>
-          api.resolveInspectionTemplate(token, {
-            assetId: asset.id,
-            assetTypeId: asset.assetTypeId,
-            assetType: asset.assetType?.name,
-            siteVisitId: visit.id,
-          }),
-        ).catch(() => undefined);
-      }),
-    );
-  } catch {
-    // Best-effort warm — never block or fail Home's load.
-  }
 }
 
 function getAvailableInspectionScopes(

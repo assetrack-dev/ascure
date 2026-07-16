@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import Mapbox from '@rnmapbox/maps';
 import { SATELLITE_STYLE } from '../mapbox';
 import { API_BASE_URL, api, ApiError, isEndpointUnavailableError } from '../api';
-import { cachedFetch } from '../offlineCache';
+import { cachedFetch, readCache } from '../offlineCache';
 import {
   AppButton,
   BottomCTA,
@@ -28,6 +28,7 @@ import {
   enqueueVisitCompletion,
   hasQueuedVisitCompletion,
   isRetryableSyncError,
+  isTempId,
   SyncQueueSnapshot,
 } from '../syncQueue';
 import {
@@ -126,6 +127,31 @@ export function VisitDetailScreen() {
           setIsLoading(true);
         }
 
+        // A temp (offline-created) visit exists only locally — read straight from
+        // cache and NEVER call the server with its non-UUID id. /site-visits/:id
+        // is @IsUUID() so a temp id 400s, and cachedFetch only serves cache on
+        // status 0 (not 400) — so the moment signal returns mid-visit a network
+        // read would blank the whole screen. This is the visit-level analogue of
+        // the 9c517ca temp-inspection fix.
+        if (isTempId(visitId)) {
+          const cachedVisit = (await readCache<SiteVisit>('site-visit', visitId))?.value ?? null;
+
+          if (!cachedVisit) {
+            setError('This offline visit is no longer available on this device.');
+            return;
+          }
+
+          const cachedVisitAssets =
+            (await readCache<Asset[]>('site-visit-assets', visitId))?.value ?? [];
+          const cachedSubstationAssets =
+            (substationId ? (await readCache<Asset[]>('assets', substationId))?.value : null) ?? [];
+
+          setVisit(cachedVisit);
+          setAssets(cachedVisitAssets);
+          setAvailableAssets(createAvailableAssetList(cachedSubstationAssets, cachedVisitAssets));
+          return;
+        }
+
         // Offline-first: serve the cached visit when the server is unreachable.
         const { value: visitResponse } = await cachedFetch('site-visit', visitId, () =>
           api.getSiteVisit(token, visitId),
@@ -195,8 +221,15 @@ export function VisitDetailScreen() {
       completionNotes: combinedNotes,
     };
 
-    if (isOffline) {
-      await queueVisitCompletion(visit, payload, 'Queued while offline.');
+    // A temp (offline-created) visit has no server row yet — always queue its
+    // completion (the reconciler resolves the temp id + waits for the visit's
+    // own create). Never POST /site-visits/temp_.../complete (400).
+    if (isOffline || isTempId(visit.id)) {
+      await queueVisitCompletion(
+        visit,
+        payload,
+        isTempId(visit.id) ? 'Queued — visit is still syncing.' : 'Queued while offline.',
+      );
       return;
     }
 
@@ -250,6 +283,7 @@ export function VisitDetailScreen() {
         assets,
         payload,
         errorMessage,
+        ownerUserId: user.id,
       });
 
       setCompletionNotice('Visit completion saved to Sync Queue.');
@@ -396,7 +430,11 @@ export function VisitDetailScreen() {
   // Show the de-emphasized admin section only when at least one admin card is
   // applicable — mirrors each card's own role/status gate (pure read; the cards
   // still self-hide independently, so this never orphans an empty label).
-  const showAdminSection = visit ? hasAdminSection(user?.role, terminal) : false;
+  // Hide MANAGE VISIT (reassign/edit/delete) for a temp offline visit — those
+  // actions call visit-keyed endpoints that @IsUUID-reject a non-UUID id. They
+  // re-appear once the visit reconciles to a real id.
+  const showAdminSection =
+    visit && !isTempId(visit.id) ? hasAdminSection(user?.role, terminal) : false;
 
   return (
     <Screen
@@ -518,7 +556,13 @@ export function VisitDetailScreen() {
             )}
           </Card>
 
-          {availableAssets.length > 0 && !isVisitTerminal(visit.status) ? (
+          {/* Hidden for a temp offline visit: linking a register pole calls the
+              visit-keyed link endpoint (@IsUUID -> 400) and there is no offline
+              LINK mutation. Poles are added via the guarded Add flow (CREATE_ASSET
+              with createdDuringVisitId), which reconciles correctly. */}
+          {availableAssets.length > 0 &&
+          !isVisitTerminal(visit.status) &&
+          !isTempId(visit.id) ? (
             <Card>
               <View style={styles.assetHeader}>
                 <SectionTitle>Available Assets</SectionTitle>

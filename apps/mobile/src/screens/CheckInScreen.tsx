@@ -17,9 +17,17 @@ import Mapbox from '@rnmapbox/maps';
 import { SATELLITE_STYLE } from '../mapbox';
 import { useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
+import { cachedFetch, prependToCachedArray, writeCache } from '../offlineCache';
+import {
+  enqueueMutation,
+  isTempId,
+  mintTempId,
+  persistOfflineSiteVisitPhoto,
+} from '../syncQueue';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
 import { useSession } from '../context/AuthContext';
+import { useSync } from '../context/SyncContext';
 import { useCapabilities } from '../useCapabilities';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -101,6 +109,7 @@ const MAP_PICKER_ZOOM = 15;
 export function CheckInScreen() {
   const navigation = useNavigation<RootStackScreenProps<'CheckIn'>['navigation']>();
   const { token, user, handleUnauthorized } = useSession();
+  const { isOffline } = useSync();
   // Starting a site visit is an inspection-scope action; block maintenance-only
   // accounts even if some navigation path reaches this screen (defense in depth —
   // the Home "+" entry is already hidden for them).
@@ -224,16 +233,26 @@ export function CheckInScreen() {
             checkInLongitude.trim(),
         ) && gpsAccuracyMeters !== null);
 
+  // Offline, only an EXISTING Pencawang can be started (a new one needs the
+  // server to mint it — see startVisitOffline). Proactively block + hint in NEW
+  // mode when clearly offline; the weak-signal case is caught in createVisit.
+  const offlineNewPencawangBlocked = isOffline && pencawangMode === 'NEW';
+
   const loadOptions = useCallback(async () => {
     try {
       setError(null);
       setIsLoading(true);
       setOptionsLoaded(false);
 
+      // Cache the reference data so the Check-In pickers populate OFFLINE (a crew
+      // that opened the app online at the depot has these warmed). optionsLoaded
+      // becomes true whether the data is fresh or from cache, so an offline load
+      // that DOES have cache shows the pickers, while offline-with-no-cache throws
+      // (below) and shows the "you appear to be offline" cards.
       const [teamList, substationList, mainheadList, activeVisitList] = await Promise.all([
-        api.getTeams(token),
-        api.getSubstations(token),
-        api.getMainheads(token),
+        cachedFetch('teams', undefined, () => api.getTeams(token)).then((r) => r.value),
+        cachedFetch('substations', undefined, () => api.getSubstations(token)).then((r) => r.value),
+        cachedFetch('mainheads', undefined, () => api.getMainheads(token)).then((r) => r.value),
         loadActiveVisitsForWarning(token),
       ]);
 
@@ -502,6 +521,13 @@ export function CheckInScreen() {
   }
 
   async function handleOpenExistingVisit(visit: SiteVisit) {
+    // A temp (offline-created) visit exists only locally — open it straight from
+    // cache; never call join with its non-UUID id (the server would 400).
+    if (isTempId(visit.id)) {
+      goToVisit(visit);
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       setError(null);
@@ -646,6 +672,99 @@ export function CheckInScreen() {
     };
   }
 
+  /**
+   * Start a site visit with ZERO signal: mint a temp visit id, queue the create
+   * (reconciled to a real id on sync), synthesize the visit into the offline
+   * cache and open it so field work continues. EXISTING-Pencawang only in v1 — a
+   * NEW Pencawang has no substationId to reconcile offline-created poles against.
+   */
+  async function startVisitOffline(payload: CreateSiteVisitInput) {
+    if (
+      pencawangMode !== 'EXISTING' ||
+      !selectedSubstation ||
+      !selectedSubstationId ||
+      !selectedTeam
+    ) {
+      setError(
+        'A new Pencawang needs a connection to create. Pick an existing Pencawang, or start this visit at the depot when you have signal.',
+      );
+      return;
+    }
+
+    const tempVisitId = mintTempId('visit');
+
+    // Persist arrival photos to a durable dir + attach to the queued create so
+    // they upload once the visit reconciles (raw camera-cache URIs can be
+    // OS-evicted before then).
+    const persistedPhotos = await Promise.all(
+      sitePhotos.map(async (photo) => ({
+        id: photo.id,
+        uri: await persistOfflineSiteVisitPhoto(photo.uri, photo.id),
+        timestamp: photo.timestamp,
+      })),
+    );
+
+    await enqueueMutation({
+      type: 'CREATE_VISIT',
+      payload: payload as unknown as Record<string, unknown>,
+      tempId: tempVisitId,
+      ownerUserId: user.id,
+      sitePhotos: persistedPhotos,
+      label: `${selectedSubstation.code} - ${selectedSubstation.name}`,
+      sublabel: `${selectedTeam.code} - ${selectedTeam.name}`,
+    });
+
+    const now = new Date().toISOString();
+    // Enumerate the full shape — a missing team{}/substation{} sub-object would
+    // hard-crash VisitDetail render + the completion summary.
+    const syntheticVisit: SiteVisit = {
+      id: tempVisitId,
+      teamId: selectedTeam.id,
+      substationId: selectedSubstation.id,
+      status: 'ACTIVE',
+      lifecycleStatus: 'DALAM_RONDAAN',
+      visitType: payload.visitType ?? visitType,
+      operationalScope: isSavt ? 'SAVT' : 'SAVR',
+      routeCode: payload.routeCode ?? null,
+      mainhead: selectedMainhead?.name ?? null,
+      pencawangCode: payload.pencawangCode ?? selectedSubstation.code,
+      pencawangName: payload.pencawangName ?? selectedSubstation.name,
+      functionalLocation: payload.functionalLocation ?? selectedSubstation.location ?? null,
+      checkInLatitude: payload.checkInLatitude ?? null,
+      checkInLongitude: payload.checkInLongitude ?? null,
+      checkInAccuracyMeters: payload.checkInAccuracyMeters ?? null,
+      checkInCapturedAt: payload.checkInCapturedAt ?? null,
+      startedAt: now,
+      endedAt: null,
+      notes: payload.notes ?? null,
+      team: { id: selectedTeam.id, code: selectedTeam.code, name: selectedTeam.name },
+      substation: {
+        id: selectedSubstation.id,
+        code: selectedSubstation.code,
+        name: selectedSubstation.name,
+        location: selectedSubstation.location ?? null,
+      },
+      inspections: [],
+      totalAssets: 0,
+      inspectedAssets: 0,
+      pendingAssets: 0,
+      defectsFound: 0,
+      completionPercentage: 0,
+    };
+
+    await Promise.all([
+      writeCache('site-visit', tempVisitId, syntheticVisit),
+      prependToCachedArray<SiteVisit>(
+        'site-visits-active',
+        undefined,
+        syntheticVisit,
+        (v) => v.id,
+      ),
+    ]);
+
+    goToVisit(syntheticVisit);
+  }
+
   async function createVisit(payload: CreateSiteVisitInput) {
     // Defense in depth: starting a site visit is inspection-scope. The screen
     // guard already blocks maintenance accounts, but re-assert here to close the
@@ -680,6 +799,22 @@ export function CheckInScreen() {
     } catch (createError) {
       if (createError instanceof ApiError && createError.status === 401) {
         await handleUnauthorized(createError);
+        return;
+      }
+
+      // Server unreachable (offline / forced Work Offline): queue the visit and
+      // open it optimistically so the crew can start work with zero signal; it
+      // reconciles to a real id on sync.
+      if (createError instanceof ApiError && createError.status === 0) {
+        try {
+          await startVisitOffline(payload);
+        } catch (offlineError) {
+          setError(
+            offlineError instanceof Error
+              ? offlineError.message
+              : 'Unable to start the site visit offline.',
+          );
+        }
         return;
       }
 
@@ -771,8 +906,14 @@ export function CheckInScreen() {
             }
             onPress={handleCreateVisit}
             loading={isSubmitting}
-            disabled={!canCreateCheckIn}
-            hint={!canCreateCheckIn ? 'Start Site Visit · complete the required fields' : null}
+            disabled={!canCreateCheckIn || offlineNewPencawangBlocked}
+            hint={
+              offlineNewPencawangBlocked
+                ? 'Offline · a new Pencawang needs signal — pick an existing one or start at the depot'
+                : !canCreateCheckIn
+                  ? 'Start Site Visit · complete the required fields'
+                  : null
+            }
           />
         ) : null
       }
@@ -1305,12 +1446,19 @@ function formatMainheadDescription(mainhead: Mainhead) {
 
 async function loadActiveVisitsForWarning(token: string) {
   try {
-    return await api.getActiveSiteVisits(token);
+    const { value } = await cachedFetch('site-visits-active', undefined, () =>
+      api.getActiveSiteVisits(token),
+    );
+    return value;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       throw error;
     }
 
+    // Offline with no cached active-visit list (or any non-auth failure): return
+    // empty so the remaining Check-In options still load from cache. The
+    // active-visit warning is best-effort; a missed warning at worst lets the
+    // crew start a second visit (server + admin remain the source of truth).
     return [];
   }
 }

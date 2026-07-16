@@ -8,6 +8,7 @@ import { SATELLITE_STYLE, STREET_STYLE } from '../mapbox';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { cachedFetch } from '../offlineCache';
+import { isTempId } from '../syncQueue';
 import { assetMarkerColor } from '../assetDisplay';
 import { MapCrosshair } from '../components/MapCrosshair';
 import { getPositionWithTimeout } from '../location';
@@ -1394,7 +1395,10 @@ function DefectCallout({ defect }: { defect: DefectMapMarker }) {
 async function loadAssetsForMap(token: string, substationId?: string, visitId?: string) {
   // Cache each map's asset set so the map renders its poles offline (serves the
   // last snapshot when the server is unreachable).
-  if (substationId && visitId) {
+  // A temp (offline-created) visit has no server-side asset set — fall through to
+  // the Pencawang register below (which holds the offline-added poles). Never
+  // call getAssetsForVisit with a non-UUID id (it would 400 once signal returns).
+  if (substationId && visitId && !isTempId(visitId)) {
     return (
       await cachedFetch('map-visit-assets', `${visitId}:${substationId}`, () =>
         api.getAssetsForVisit(token, visitId, substationId),

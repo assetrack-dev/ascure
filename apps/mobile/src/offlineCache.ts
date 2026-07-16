@@ -15,14 +15,37 @@ import { isNetworkOffline } from './networkStatus';
 
 const CACHE_PREFIX = '@ascure/mobile/cache/';
 
-// Bound the offline read-cache so it can't grow unbounded over weeks of field
-// use (a key driver of the SQLITE_FULL[13] the DB size cap now backstops). When
-// the entry count exceeds MAX, evict the oldest by cachedAt. Checked only every
-// Nth write (getAllKeys/multiGet aren't free) and run fire-and-forget so it never
-// slows the write that triggered it.
+// Bound the offline read-cache by BOTH entry count AND total bytes so it can't
+// fill the AsyncStorage/SQLite size cap and trip SQLITE_FULL[13] on the next
+// write. Entry-count alone is NOT enough: a few large blobs (a big Pencawang's
+// whole pole register, or the whole-tenant "all assets" map dump) blow the byte
+// budget long before 300 entries. This bites ONLINE crews too — every successful
+// online fetch refreshes (writes) its cache entry, so the store grows from normal
+// online use. Keep the read-cache comfortably under the DB cap so the DURABLE
+// write-queue (a different key prefix, never evicted here) always has room.
+// Checked every Nth write (getAllKeys/multiGet aren't free), fire-and-forget so it
+// never slows the write that triggered it.
 const MAX_CACHE_ENTRIES = 300;
+const MAX_CACHE_BYTES = 30 * 1024 * 1024; // 30MB — well under the 64MB DB cap
+const EVICT_TO_RATIO = 0.8; // when over a limit, evict oldest down to 80% of it
+// Refuse to cache any single value larger than this. Nothing a field screen needs
+// offline is this big EXCEPT the whole-tenant global-map asset dump, which is far
+// too costly (and low-value) to keep offline — skipping it protects every other
+// cached view. A normal per-Pencawang register is well under this.
+const MAX_ENTRY_BYTES = 3 * 1024 * 1024; // 3MB
 const PRUNE_EVERY_N_WRITES = 25;
+// Also prune after this many bytes written since the last prune, so a burst of a
+// few large writes triggers eviction well before it can reach the DB cap (the
+// on-failure self-heal below is the backstop, but this avoids even a transient
+// SQLITE_FULL).
+const PRUNE_BYTES_THRESHOLD = 8 * 1024 * 1024; // 8MB
 let writesSincePrune = 0;
+let bytesSincePrune = 0;
+
+/** Approximate byte size of a stored string (UTF-16 units ≈ bytes for our JSON). */
+function approxBytes(value: string) {
+  return value.length;
+}
 
 type CacheEnvelope<T> = {
   value: T;
@@ -60,41 +83,69 @@ export async function readCache<T>(namespace: string, id?: string): Promise<Cach
 }
 
 export async function writeCache<T>(namespace: string, id: string | undefined, value: T): Promise<void> {
+  const key = cacheKey(namespace, id);
+
+  let serialized: string;
   try {
-    const envelope: CacheEnvelope<T> = {
+    serialized = JSON.stringify({
       value,
       cachedAt: new Date().toISOString(),
-    };
+    } satisfies CacheEnvelope<T>);
+  } catch {
+    return; // unserializable value — nothing to cache
+  }
 
-    await AsyncStorage.setItem(cacheKey(namespace, id), JSON.stringify(envelope));
+  // Don't let one oversized blob dominate the store (and repeatedly trip
+  // SQLITE_FULL). Drop any prior copy so a stale value isn't served, then skip.
+  if (approxBytes(serialized) > MAX_ENTRY_BYTES) {
+    console.warn(
+      `[offlineCache] skipping oversized entry "${namespace}${id ? `/${id}` : ''}" (~${Math.round(
+        approxBytes(serialized) / 1024,
+      )}KB > ${Math.round(MAX_ENTRY_BYTES / 1024)}KB per-entry cap)`,
+    );
+    await AsyncStorage.removeItem(key).catch(() => undefined);
+    return;
+  }
+
+  try {
+    await AsyncStorage.setItem(key, serialized);
 
     writesSincePrune += 1;
-    if (writesSincePrune >= PRUNE_EVERY_N_WRITES) {
+    bytesSincePrune += approxBytes(serialized);
+    if (writesSincePrune >= PRUNE_EVERY_N_WRITES || bytesSincePrune >= PRUNE_BYTES_THRESHOLD) {
       writesSincePrune = 0;
+      bytesSincePrune = 0;
       void pruneCacheIfNeeded();
     }
   } catch {
-    // Best-effort: a full disk / serialization failure must not break the screen.
+    // Write failed (likely SQLITE_FULL). Free space so the NEXT write — including
+    // the durable sync-queue (same DB) — has room, then retry this one once.
+    // Best-effort: an online screen re-fetches + re-caches anyway.
+    await pruneCacheIfNeeded();
+    await AsyncStorage.setItem(key, serialized).catch(() => undefined);
   }
 }
 
 /**
- * Evict the oldest read-cache entries (by cachedAt) when the cache exceeds
- * MAX_CACHE_ENTRIES, down to ~80% of the cap. Best-effort + fire-and-forget from
- * writeCache; only touches the CACHE_PREFIX keys, never the offline write-queue.
+ * Evict the oldest read-cache entries (by cachedAt) when the cache exceeds EITHER
+ * the entry-count OR the byte budget, down to ~80% of whichever limit(s) it broke.
+ * Best-effort + fire-and-forget from writeCache; only touches the CACHE_PREFIX
+ * keys, NEVER the offline write-queue (a different key prefix = durable field work).
  */
 async function pruneCacheIfNeeded(): Promise<void> {
   try {
     const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
       key.startsWith(CACHE_PREFIX),
     );
-    if (keys.length <= MAX_CACHE_ENTRIES) {
+    if (keys.length === 0) {
       return;
     }
 
-    const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
     const entries = await AsyncStorage.multiGet(keys);
+    let totalBytes = 0;
     const dated = entries.map(([key, raw]) => {
+      const bytes = raw ? approxBytes(raw) : 0;
+      totalBytes += bytes;
       let cachedAt = 0;
       try {
         const parsed = raw ? (JSON.parse(raw) as CacheEnvelope<unknown>) : null;
@@ -102,11 +153,32 @@ async function pruneCacheIfNeeded(): Promise<void> {
       } catch {
         cachedAt = 0;
       }
-      return { key, cachedAt };
+      return { key, cachedAt, bytes };
     });
+
+    // Nothing to do while under BOTH limits.
+    if (keys.length <= MAX_CACHE_ENTRIES && totalBytes <= MAX_CACHE_BYTES) {
+      return;
+    }
+
     dated.sort((a, b) => a.cachedAt - b.cachedAt); // oldest first
 
-    const toRemove = dated.slice(0, keys.length - target).map((entry) => entry.key);
+    const entryTarget = Math.floor(MAX_CACHE_ENTRIES * EVICT_TO_RATIO);
+    const byteTarget = Math.floor(MAX_CACHE_BYTES * EVICT_TO_RATIO);
+    const toRemove: string[] = [];
+    let remainingCount = dated.length;
+    let remainingBytes = totalBytes;
+
+    // Evict oldest-first until BOTH the count and byte budgets are satisfied.
+    for (const entry of dated) {
+      if (remainingCount <= entryTarget && remainingBytes <= byteTarget) {
+        break;
+      }
+      toRemove.push(entry.key);
+      remainingCount -= 1;
+      remainingBytes -= entry.bytes;
+    }
+
     if (toRemove.length > 0) {
       await AsyncStorage.multiRemove(toRemove);
     }

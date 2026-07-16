@@ -2,7 +2,8 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
-import { cachedFetch } from '../offlineCache';
+import { cachedFetch, readCache } from '../offlineCache';
+import { isTempId } from '../syncQueue';
 import {
   Card,
   Dropdown,
@@ -72,6 +73,26 @@ export function VisitAssetsScreen() {
         setError(null);
         if (!options?.silent) {
           setIsLoading(true);
+        }
+
+        // Temp (offline-created) visit — read straight from cache, never call the
+        // server with its non-UUID id (would 400 the moment signal returns).
+        if (isTempId(visitId)) {
+          const cachedVisit = (await readCache<SiteVisit>('site-visit', visitId))?.value ?? null;
+
+          if (!cachedVisit) {
+            setError('This offline visit is no longer available on this device.');
+            return;
+          }
+
+          const cachedAssets =
+            (await readCache<Asset[]>('site-visit-assets', visitId))?.value ??
+            (substationId ? (await readCache<Asset[]>('assets', substationId))?.value : null) ??
+            [];
+
+          setVisit(cachedVisit);
+          setAssets(cachedAssets);
+          return;
         }
 
         const { value: visitResponse } = await cachedFetch('site-visit', visitId, () =>

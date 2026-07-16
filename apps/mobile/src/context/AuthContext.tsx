@@ -164,7 +164,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Reset "Work Offline" so a persisted override can't block the login screen
     // (which has no toggle) on the next sign-in.
     resetForceOfflineOnSignOut();
-    await Promise.all([removeStoredToken(), removeStoredUser()]);
+    // Clear the offline READ-cache so the next user on this device is never
+    // served the previous user's cached visits/teams while offline (honors
+    // clearAllCache's documented sign-out contract, which previously only ran on
+    // 401). The offline WRITE-queue is deliberately preserved — unsynced field
+    // work must survive sign-out, and the reconciler is user-scoped (ownerUserId)
+    // so it can't replay under another user.
+    await Promise.all([removeStoredToken(), removeStoredUser(), clearAllCache()]);
     setToken(null);
     setUser(null);
   }, []);

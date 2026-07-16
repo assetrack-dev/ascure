@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import * as Location from 'expo-location';
 import { Feather } from '@expo/vector-icons';
@@ -7,6 +7,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Screen, ErrorBanner, Mono } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { useSync } from '../context/SyncContext';
+import { useSession } from '../context/AuthContext';
+import { prepareAssignedAreasForOffline } from '../prepareForOffline';
 import { getPositionWithTimeout } from '../location';
 import {
   SATELLITE_STYLE,
@@ -38,6 +40,7 @@ export function OfflineMapsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { isOffline } = useSync();
+  const { token } = useSession();
 
   const mapRef = useRef<Mapbox.MapView>(null);
 
@@ -48,6 +51,8 @@ export function OfflineMapsScreen() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [locGranted, setLocGranted] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareStatus, setPrepareStatus] = useState('');
 
   const refreshPacks = useCallback(async () => {
     try {
@@ -145,8 +150,57 @@ export function OfflineMapsScreen() {
     [refreshPacks],
   );
 
+  // Depot one-tap: warm the reference + assigned-visit caches and auto-download a
+  // satellite pack per assigned Pencawang (bbox computed from its poles).
+  const handlePrepare = useCallback(async () => {
+    if (preparing || busy) {
+      return;
+    }
+
+    setError(null);
+    setPreparing(true);
+    setPrepareStatus('Preparing…');
+
+    try {
+      const summary = await prepareAssignedAreasForOffline(token, (update) =>
+        setPrepareStatus(update.message),
+      );
+      await refreshPacks();
+
+      const lines = [
+        `${summary.areasCached} area${summary.areasCached === 1 ? '' : 's'} saved for offline.`,
+        summary.mapsToken
+          ? `${summary.mapsDownloaded} map${summary.mapsDownloaded === 1 ? '' : 's'} downloaded.`
+          : 'Map imagery isn’t configured for this build.',
+      ];
+      if (summary.mapsSkippedNoCoords > 0) {
+        lines.push(
+          `${summary.mapsSkippedNoCoords} area(s) had no pole coordinates yet — frame & download them below.`,
+        );
+      }
+      if (summary.mapsSkippedBudget > 0) {
+        lines.push(
+          `${summary.mapsSkippedBudget} map(s) skipped to stay under the ${OFFLINE_TILE_LIMIT.toLocaleString()}-tile limit.`,
+        );
+      }
+      if (summary.mapsFailed > 0) {
+        lines.push(`${summary.mapsFailed} map download(s) failed — check signal and retry.`);
+      }
+
+      Alert.alert('Ready for offline', lines.join('\n'));
+    } catch (prepareError) {
+      setError(
+        prepareError instanceof Error ? prepareError.message : 'Could not prepare offline data.',
+      );
+    } finally {
+      setPreparing(false);
+      setPrepareStatus('');
+    }
+  }, [preparing, busy, token, refreshPacks]);
+
   const overBudget = estimate != null && estimate > OFFLINE_TILE_LIMIT;
   const downloadDisabled = busy || isOffline || overBudget || !hasMapboxToken();
+  const prepareDisabled = preparing || busy || isOffline;
 
   return (
     <Screen
@@ -193,6 +247,39 @@ export function OfflineMapsScreen() {
       </View>
 
       <View style={styles.panel}>
+        {/* Depot one-tap: save assigned areas + their maps for offline. */}
+        <Pressable
+          accessibilityRole="button"
+          disabled={prepareDisabled}
+          onPress={() => void handlePrepare()}
+          style={({ pressed }) => [
+            styles.prepareBtn,
+            prepareDisabled && styles.prepareBtnDisabled,
+            pressed && !prepareDisabled && styles.prepareBtnPressed,
+          ]}
+        >
+          {preparing ? (
+            <>
+              <ActivityIndicator color={theme.colors.primary} />
+              <Text style={styles.prepareBtnText} numberOfLines={1}>
+                {prepareStatus || 'Preparing…'}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Feather name="hard-drive" size={18} color={theme.colors.primary} />
+              <Text style={styles.prepareBtnText}>
+                {isOffline ? 'Connect to prepare assigned areas' : 'Prepare my assigned areas'}
+              </Text>
+            </>
+          )}
+        </Pressable>
+        <Text style={styles.prepareHint}>
+          Saves your teams, Pencawang list &amp; assigned poles, and downloads their satellite maps —
+          do this at the depot on wifi.
+        </Text>
+        <View style={styles.panelDivider} />
+
         <View style={styles.estimateRow}>
           <Text style={styles.estimateLabel}>This area</Text>
           <Mono size={13} color={overBudget ? theme.colors.danger : theme.colors.textSecondary}>
@@ -302,6 +389,42 @@ const createStyles = (t: Theme) =>
     panel: {
       gap: 10,
       paddingTop: 12,
+    },
+    prepareBtn: {
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.primary,
+      backgroundColor: t.colors.surfaceMuted,
+      paddingHorizontal: 16,
+    },
+    prepareBtnDisabled: {
+      opacity: 0.5,
+    },
+    prepareBtnPressed: {
+      backgroundColor: t.colors.card,
+    },
+    prepareBtnText: {
+      fontSize: 14.5,
+      fontWeight: '700',
+      fontFamily: t.fonts.bodyBold,
+      color: t.colors.primary,
+      flexShrink: 1,
+    },
+    prepareHint: {
+      fontSize: 12,
+      color: t.colors.textSecondary,
+      fontFamily: t.fonts.body,
+      lineHeight: 16,
+    },
+    panelDivider: {
+      height: 1,
+      backgroundColor: t.colors.border,
+      marginVertical: 2,
     },
     estimateRow: {
       flexDirection: 'row',

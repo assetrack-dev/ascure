@@ -67,7 +67,7 @@ type SyncContextValue = {
 const SyncContext = createContext<SyncContextValue | null>(null);
 
 export function SyncProvider({ children }: { children: ReactNode }) {
-  const { token, handleUnauthorized } = useAuth();
+  const { token, user, handleUnauthorized } = useAuth();
   const [snapshot, setSnapshot] = useState<SyncQueueSnapshot>(EMPTY_SYNC_QUEUE_SNAPSHOT);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -144,7 +144,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     try {
       setIsSyncing(true);
 
-      return await syncQueuedInspections(token);
+      // Pass the current user so the reconciler skips (never replays) another
+      // user's queued offline work under this token — see isForeignOwner.
+      return await syncQueuedInspections(token, user?.id);
     } catch (syncError) {
       if (syncError instanceof ApiError && syncError.status === 401) {
         await handleUnauthorized(syncError);
@@ -154,7 +156,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [handleUnauthorized, token]);
+  }, [handleUnauthorized, token, user?.id]);
 
   useEffect(() => {
     runQueueSyncRef.current = runQueueSync;
