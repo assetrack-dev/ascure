@@ -410,10 +410,12 @@ function appendFilters(params: URLSearchParams, filters?: MapFilters): void {
   if (filters.teamIds.length > 0) params.set("teamIds", filters.teamIds.join(","));
 }
 
-/** Scoped Mainhead + Pencawang options for the filter dock. */
+/** Scoped Mainhead + Pencawang options for the filter dock. Each Pencawang
+ *  carries its `mainheadId` so the dock can scope the list to the drilled
+ *  Mainhead. */
 export interface MapFilterOptions {
   mainheads: { id: string; name: string }[];
-  pencawang: { id: string; name: string }[];
+  pencawang: { id: string; name: string; mainheadId: string | null }[];
 }
 
 export async function fetchMapFilterOptions(
@@ -424,17 +426,22 @@ export async function fetchMapFilterOptions(
     string,
     unknown
   >;
-  const norm = (raw: unknown): { id: string; name: string }[] =>
+  const rows = (raw: unknown): Record<string, unknown>[] =>
     Array.isArray(raw)
       ? raw
           .map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>) : null))
           .filter((r): r is Record<string, unknown> => r !== null && typeof r.id === "string")
-          .map((r) => ({
-            id: r.id as string,
-            name: typeof r.name === "string" && r.name ? r.name : "—",
-          }))
       : [];
-  return { mainheads: norm(source.mainheads), pencawang: norm(source.pencawang) };
+  const name = (r: Record<string, unknown>) =>
+    typeof r.name === "string" && r.name ? r.name : "—";
+  return {
+    mainheads: rows(source.mainheads).map((r) => ({ id: r.id as string, name: name(r) })),
+    pencawang: rows(source.pencawang).map((r) => ({
+      id: r.id as string,
+      name: name(r),
+      mainheadId: typeof r.mainheadId === "string" ? r.mainheadId : null,
+    })),
+  };
 }
 
 /** Fetch the count bubbles for one drill-down level. */

@@ -434,7 +434,9 @@ export class AssetsService {
     const mainheads = new Map<string, string>();
     const pencawang = substations.map((s) => {
       if (s.mainhead) mainheads.set(s.mainhead.id, s.mainhead.name);
-      return { id: s.id, name: s.name || s.code };
+      // mainheadId lets the filter dock scope the Pencawang list to the drilled
+      // Mainhead (null = Pencawang has no Mainhead → the "Unassigned" bucket).
+      return { id: s.id, name: s.name || s.code, mainheadId: s.mainhead?.id ?? null };
     });
 
     return {

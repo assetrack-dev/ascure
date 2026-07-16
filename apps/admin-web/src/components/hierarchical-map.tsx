@@ -221,6 +221,40 @@ function pencawangMarkerIcon(name: string): google.maps.Icon {
   return icon;
 }
 
+// Pencawang anchor for the Mainhead-wide overlap view: a rounded square in the
+// PENCAWANG's own colour (so it ties to its coloured pole dots) with the name in
+// a dark pill below. Distinct from the round pole dots. One per Pencawang, drawn
+// at the centroid of its visible poles.
+const pencawangAnchorIconCache = new Map<string, google.maps.Icon>();
+function pencawangAnchorIcon(name: string, color: string): google.maps.Icon {
+  const key = `${color}|${name}`;
+  const cached = pencawangAnchorIconCache.get(key);
+  if (cached) return cached;
+  const box = 20;
+  const label = name.length > 22 ? `${name.slice(0, 21)}…` : name;
+  const nameFs = 11;
+  const pillH = 17;
+  const gap = 4;
+  const pillW = Math.min(220, Math.max(box, label.length * 6.4 + 14));
+  const w = Math.max(box, pillW);
+  const h = box + gap + pillH;
+  const cx = w / 2;
+  const bx = (w - box) / 2;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>` +
+    `<rect x='${bx}' y='0' width='${box}' height='${box}' rx='5' fill='${color}' stroke='#ffffff' stroke-width='2.5'/>` +
+    `<rect x='${(w - pillW) / 2}' y='${box + gap}' width='${pillW}' height='${pillH}' rx='${pillH / 2}' fill='#0b0e12' fill-opacity='0.82'/>` +
+    `<text x='${cx}' y='${box + gap + pillH / 2 + 0.5}' text-anchor='middle' dominant-baseline='central' font-family='system-ui,sans-serif' font-size='${nameFs}' font-weight='700' fill='#ffffff'>${escapeXml(label)}</text>` +
+    `</svg>`;
+  const icon: google.maps.Icon = {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(cx, box / 2),
+  };
+  pencawangAnchorIconCache.set(key, icon);
+  return icon;
+}
+
 function Layers({
   mode,
   bubbles,
@@ -356,6 +390,43 @@ function Layers({
         marker.setMap(map);
         markersRef.current.push(marker);
         positions.push(position);
+      }
+      if (colorByPencawang) {
+        // A labelled anchor per Pencawang at the centroid of its VISIBLE poles,
+        // in the Pencawang's colour — names each cluster and is the "Pencawang
+        // point" for this view. Derived from the loaded poles (no extra fetch).
+        const groups = new Map<
+          string,
+          { name: string; lat: number; lng: number; n: number }
+        >();
+        for (const asset of points) {
+          const id = asset.substation?.id;
+          if (!id) continue;
+          const existing = groups.get(id);
+          if (existing) {
+            existing.lat += asset.latitude;
+            existing.lng += asset.longitude;
+            existing.n += 1;
+          } else {
+            groups.set(id, {
+              name: asset.substation?.name || "Pencawang",
+              lat: asset.latitude,
+              lng: asset.longitude,
+              n: 1,
+            });
+          }
+        }
+        for (const [id, group] of groups) {
+          const marker = new google.maps.Marker({
+            position: { lat: group.lat / group.n, lng: group.lng / group.n },
+            icon: pencawangAnchorIcon(group.name, pencawangColor(id)),
+            title: `Pencawang: ${group.name} (${group.n} pole${group.n === 1 ? "" : "s"} in view)`,
+            optimized: true,
+            zIndex: 50000,
+          });
+          marker.setMap(map);
+          markersRef.current.push(marker);
+        }
       }
       if (pencawang) {
         const position = { lat: pencawang.latitude, lng: pencawang.longitude };
