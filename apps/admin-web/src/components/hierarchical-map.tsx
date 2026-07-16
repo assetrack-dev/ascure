@@ -50,6 +50,10 @@ export interface HierarchicalMapProps {
   /** Fires (on map idle) with the viewport as "minLng,minLat,maxLng,maxLat" so
    *  the parent can refetch the poles in view. */
   onBoundsChange?: (bbox: string) => void;
+  /** Fixed per-Pencawang anchor points for the overlap view (server centroids).
+   *  Rendered as their own lightweight DOM markers, decoupled from the pole layer
+   *  so they don't drift or churn the marker canvas as poles refetch on pan. */
+  pencawangAnchors?: PencawangMarker[];
 }
 
 /** Serialize the map viewport as "minLng,minLat,maxLng,maxLat" (or null). */
@@ -268,9 +272,11 @@ function Layers({
   colorByPencawang,
   suppressAutoFit,
   onBoundsChange,
+  pencawangAnchors,
 }: HierarchicalMapProps) {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const anchorsRef = useRef<google.maps.Marker[]>([]);
   const positionsRef = useRef<google.maps.LatLngLiteral[]>([]);
   const fitKeyRef = useRef<string>("");
   const onDrillRef = useRef(onDrill);
@@ -391,43 +397,6 @@ function Layers({
         markersRef.current.push(marker);
         positions.push(position);
       }
-      if (colorByPencawang) {
-        // A labelled anchor per Pencawang at the centroid of its VISIBLE poles,
-        // in the Pencawang's colour — names each cluster and is the "Pencawang
-        // point" for this view. Derived from the loaded poles (no extra fetch).
-        const groups = new Map<
-          string,
-          { name: string; lat: number; lng: number; n: number }
-        >();
-        for (const asset of points) {
-          const id = asset.substation?.id;
-          if (!id) continue;
-          const existing = groups.get(id);
-          if (existing) {
-            existing.lat += asset.latitude;
-            existing.lng += asset.longitude;
-            existing.n += 1;
-          } else {
-            groups.set(id, {
-              name: asset.substation?.name || "Pencawang",
-              lat: asset.latitude,
-              lng: asset.longitude,
-              n: 1,
-            });
-          }
-        }
-        for (const [id, group] of groups) {
-          const marker = new google.maps.Marker({
-            position: { lat: group.lat / group.n, lng: group.lng / group.n },
-            icon: pencawangAnchorIcon(group.name, pencawangColor(id)),
-            title: `Pencawang: ${group.name} (${group.n} pole${group.n === 1 ? "" : "s"} in view)`,
-            optimized: true,
-            zIndex: 50000,
-          });
-          marker.setMap(map);
-          markersRef.current.push(marker);
-        }
-      }
       if (pencawang) {
         const position = { lat: pencawang.latitude, lng: pencawang.longitude };
         const marker = new google.maps.Marker({
@@ -462,6 +431,34 @@ function Layers({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, mode, bubbles, points, colorMode, pencawang, colorByPencawang, suppressAutoFit]);
+
+  // Pencawang anchors (overlap view): their OWN marker layer, rebuilt only when
+  // the anchor set / mode changes — NOT on every pole refetch, so panning doesn't
+  // churn them. `optimized:false` renders them as DOM overlays off the pole
+  // canvas (the pole layer kept the WebGL renderer redrawing), and the fixed
+  // server centroids mean they never drift.
+  useEffect(() => {
+    for (const marker of anchorsRef.current) marker.setMap(null);
+    anchorsRef.current = [];
+    if (!map || !colorByPencawang || !pencawangAnchors) {
+      return;
+    }
+    for (const anchor of pencawangAnchors) {
+      const marker = new google.maps.Marker({
+        position: { lat: anchor.latitude, lng: anchor.longitude },
+        icon: pencawangAnchorIcon(anchor.name, pencawangColor(anchor.id)),
+        title: `Pencawang: ${anchor.name}`,
+        optimized: false,
+        zIndex: 50000,
+      });
+      marker.setMap(map);
+      anchorsRef.current.push(marker);
+    }
+    return () => {
+      for (const marker of anchorsRef.current) marker.setMap(null);
+      anchorsRef.current = [];
+    };
+  }, [map, colorByPencawang, pencawangAnchors]);
 
   return null;
 }
