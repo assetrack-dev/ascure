@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -11,6 +12,7 @@ import {
   DefectStatus,
   InspectionCompletionStatus,
   MaintenanceCategory,
+  OperationalScope,
   Prisma,
   SiteVisitStatus,
   SurveyLifecycleStatus,
@@ -18,6 +20,10 @@ import {
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
+import {
+  inferOperationalScopeFromAssetTypeCode,
+  isNetworkScope,
+} from '../common/operational-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildScopeContext } from '../common/authorization/scope-context';
 import {
@@ -91,6 +97,8 @@ function parseBbox(
 
 @Injectable()
 export class AssetsService {
+  private readonly logger = new Logger(AssetsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -786,6 +794,8 @@ export class AssetsService {
       },
       select: {
         id: true,
+        code: true,
+        operationalScope: true,
       },
     });
 
@@ -793,7 +803,9 @@ export class AssetsService {
       throw new NotFoundException('Asset type not found.');
     }
 
-    let linkedSiteVisit: { id: string } | null = null;
+    let linkedSiteVisit:
+      | { id: string; operationalScope: OperationalScope | null }
+      | null = null;
 
     if (dto.createdDuringVisitId) {
       const siteVisit = await this.prisma.siteVisit.findFirst({
@@ -808,6 +820,7 @@ export class AssetsService {
         },
         select: {
           id: true,
+          operationalScope: true,
         },
       });
 
@@ -817,6 +830,15 @@ export class AssetsService {
 
       linkedSiteVisit = siteVisit;
     }
+
+    // A pole created during a SAVR/SAVT survey must carry that survey's asset type,
+    // or its inspection binds to the wrong checklist template and its answers are
+    // rejected on sync. Offline clients can send the wrong type when they can't read
+    // the visit scope, so the server self-corrects here.
+    const effectiveAssetTypeId = await this.resolveScopedAssetTypeId(user, {
+      requestedAssetType: assetType,
+      visitScope: linkedSiteVisit?.operationalScope ?? null,
+    });
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -839,7 +861,7 @@ export class AssetsService {
           data: {
             tenantId: user.tenantId,
             substationId: dto.substationId,
-            assetTypeId: dto.assetTypeId,
+            assetTypeId: effectiveAssetTypeId,
             assetCode,
             name: this.normalizeOperationalString(dto.name),
             latitude: dto.latitude,
@@ -897,6 +919,74 @@ export class AssetsService {
 
       throw error;
     }
+  }
+
+  /**
+   * A pole created during a network survey (SAVR/SAVT) must carry that survey's
+   * asset type — otherwise its inspection binds to the wrong checklist template and
+   * its answers are rejected on sync (the SAVT-answer-on-a-SAVR-pole incident). That
+   * happens when an offline client can't read the visit scope and defaults the type
+   * to the first one in its list. The server self-heals: when the creation visit is
+   * scope-locked (SAVR/SAVT) and the requested asset type's scope differs, swap in
+   * the canonical asset type for the visit's scope. The requested type is left
+   * untouched when the visit isn't scope-locked, already matches, or has no
+   * scope-matching asset type.
+   */
+  private async resolveScopedAssetTypeId(
+    user: RequestUser,
+    input: {
+      requestedAssetType: {
+        id: string;
+        code: string;
+        operationalScope: OperationalScope | null;
+      };
+      visitScope: OperationalScope | null;
+    },
+  ): Promise<string> {
+    const { requestedAssetType, visitScope } = input;
+
+    // Only the network survey scopes (SAVR/SAVT) drive a distinct checklist
+    // template, so a type/scope mismatch only causes a failure there.
+    if (!visitScope || !isNetworkScope(visitScope)) {
+      return requestedAssetType.id;
+    }
+
+    const requestedScope =
+      requestedAssetType.operationalScope ??
+      inferOperationalScopeFromAssetTypeCode(requestedAssetType.code);
+
+    if (requestedScope === visitScope) {
+      return requestedAssetType.id;
+    }
+
+    // Find the canonical asset type for the visit's scope. Prefer an explicit
+    // operationalScope match; fall back to the code keyword (mirrors the mobile's
+    // pickDefaultAssetTypeId) so this still works when asset types carry a null
+    // operationalScope and only encode their scope in the code (e.g. "SAVT_POLE").
+    const candidates = await this.prisma.assetType.findMany({
+      where: { tenantId: user.tenantId, isActive: true },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, code: true, operationalScope: true },
+    });
+    const scopeAssetType =
+      candidates.find((type) => type.operationalScope === visitScope) ??
+      candidates.find(
+        (type) => inferOperationalScopeFromAssetTypeCode(type.code) === visitScope,
+      ) ??
+      null;
+
+    if (!scopeAssetType) {
+      // No canonical type for this scope — keep the requested one rather than fail.
+      return requestedAssetType.id;
+    }
+
+    this.logger.warn(
+      `Coerced asset type on create: requested "${requestedAssetType.code}" ` +
+        `(scope ${requestedScope ?? 'none'}) inside a ${visitScope} visit — ` +
+        `using the ${visitScope} asset type ${scopeAssetType.id} instead.`,
+    );
+
+    return scopeAssetType.id;
   }
 
   async getById(user: RequestUser, id: string) {
