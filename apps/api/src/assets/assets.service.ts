@@ -28,6 +28,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { buildScopeContext } from '../common/authorization/scope-context';
 import {
   assetAccessWhere,
+  assetOversightWhere,
   siteVisitMapWhere,
 } from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -1438,10 +1439,11 @@ export class AssetsService {
   async delete(user: RequestUser, id: string) {
     this.assertCanMutate(user);
 
-    // Only assets within the caller's mutation scope (own team / own org; ADMIN
-    // tenant-wide). Out-of-scope assets 404 exactly like a non-existent one, so a
-    // field crew can delete their own poles but not another team's.
-    const scope = await this.mutableAssetScope(user);
+    // Only assets within the caller's DELETE scope (own team / own org; ADMIN
+    // tenant-wide; a MAIN_CONTRACTOR manager also its subcontractor subtree).
+    // Out-of-scope assets 404 exactly like a non-existent one, so a field crew can
+    // delete their own poles but not another team's.
+    const scope = await this.deletableAssetScope(user);
     const asset = await this.prisma.asset.findFirst({
       where: { id, tenantId: user.tenantId, ...scope },
       select: { id: true },
@@ -1467,9 +1469,10 @@ export class AssetsService {
       throw new BadRequestException('At least one asset id is required.');
     }
 
-    // Restrict to assets the caller may mutate (own team / own org; ADMIN
-    // tenant-wide). Out-of-scope ids fall through to `notFound`, never deleted.
-    const scope = await this.mutableAssetScope(user);
+    // Restrict to assets the caller may delete (own team / own org; ADMIN
+    // tenant-wide; a MAIN_CONTRACTOR manager also its subcontractor subtree).
+    // Out-of-scope ids fall through to `notFound`, never deleted.
+    const scope = await this.deletableAssetScope(user);
     const assets = await this.prisma.asset.findMany({
       where: { id: { in: uniqueIds }, tenantId: user.tenantId, ...scope },
       select: { id: true },
@@ -2028,6 +2031,23 @@ export class AssetsService {
   ): Promise<Prisma.AssetWhereInput> {
     const ctx = await buildScopeContext(this.prisma, user);
     return assetAccessWhere(user, ctx);
+  }
+
+  /**
+   * Prisma filter restricting an Asset query to assets the caller may DELETE.
+   * Same as {@link mutableAssetScope} (strict own-team/org; ADMIN tenant-wide)
+   * EXCEPT a MAIN_CONTRACTOR manager may ALSO delete its active subcontractor
+   * subtree's assets ({@link assetOversightWhere} — self-limiting, so identical to
+   * the strict scope for every other role/manager). Deliberately WIDER than
+   * mutableAssetScope, which stays strict: a main contractor may VIEW + DELETE, but
+   * not EDIT, a subcontractor's poles. Delete is intentional bulk cleanup of
+   * delegated work; edit would silently alter another company's survey data.
+   */
+  private async deletableAssetScope(
+    user: RequestUser,
+  ): Promise<Prisma.AssetWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return assetOversightWhere(user, ctx);
   }
 
   private activeSiteVisitStatuses() {

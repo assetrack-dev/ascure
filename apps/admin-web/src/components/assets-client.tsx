@@ -377,7 +377,12 @@ function AssetsContent() {
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
-  const isReadOnly = session?.user?.role !== "ADMIN";
+  const isAdmin = session?.user?.role === "ADMIN";
+  // ADMIN, or a Main Contractor manager (server-provided flag) who may delete
+  // across their own org + active subcontractor subtree. The API enforces the
+  // exact scope, so an out-of-scope id just falls through to "not found".
+  const canDeleteAssets =
+    isAdmin || session?.user?.canOverseeSubcontractors === true;
 
   function handleSort(nextSortKey: SortKey) {
     if (nextSortKey === sortKey) {
@@ -469,7 +474,11 @@ function AssetsContent() {
               <>
                 <Chip tone="neutral">
                   <ShieldCheck size={13} />
-                  {isReadOnly ? "Read-only" : "Full access"}
+                  {isAdmin
+                    ? "Full access"
+                    : canDeleteAssets
+                      ? "Delete access"
+                      : "Read-only"}
                 </Chip>
                 <Chip tone="neutral">{assets.length} total</Chip>
               </>
@@ -604,7 +613,7 @@ function AssetsContent() {
                       sit under it. The design puts a single "Bulk delete" in the page
                       header — but there are three flows here, and parking three red
                       buttons next to Refresh invites a misclick. */}
-                  {!isReadOnly ? (
+                  {canDeleteAssets ? (
                     <div className="flex flex-wrap items-center gap-2.5 border-b border-[var(--line2)] bg-[var(--danger-tint)] px-[18px] py-3">
                       <span className="mr-1 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--critical-text)]">
                         Danger zone
@@ -627,6 +636,11 @@ function AssetsContent() {
                         Delete selected{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
                       </Tbtn>
 
+                      {/* Bulk wipes (by Pencawang / by session) hit ADMIN-only API
+                          endpoints, so keep them ADMIN-only in the UI too — a Main
+                          Contractor manager gets "Delete selected" (scoped) only. */}
+                      {isAdmin ? (
+                        <>
                       <Tbtn
                         variant="danger"
                         disabled={pencawangFilter === "ALL" || pencawangAssets.length === 0}
@@ -701,6 +715,8 @@ function AssetsContent() {
                         <Trash2 size={15} />
                         Delete session assets
                       </Tbtn>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -714,7 +730,7 @@ function AssetsContent() {
                     <table className="min-w-full text-left">
                       <thead>
                         <tr className={`${tableHeadClass} border-b border-[var(--line2)]`}>
-                          {!isReadOnly ? (
+                          {canDeleteAssets ? (
                             <th className="w-10 px-3.5 py-2.5">
                               <input
                                 type="checkbox"
@@ -808,7 +824,7 @@ function AssetsContent() {
                             className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--panel-muted)]`}
                             aria-label={`Open asset ${asset.assetCode}`}
                           >
-                            {!isReadOnly ? (
+                            {canDeleteAssets ? (
                               <td
                                 className="px-3.5 py-3 align-middle"
                                 onClick={(event) => event.stopPropagation()}

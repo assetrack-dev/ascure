@@ -18,6 +18,7 @@ export interface ApiUser {
   canManageMaintenance?: boolean;
   canReviewSurvey?: boolean;
   canDeleteSurvey?: boolean;
+  canOverseeSubcontractors?: boolean;
 }
 
 export interface AuthUser {
@@ -94,6 +95,13 @@ export interface AuthUser {
   canReviewSurvey?: boolean;
   /** ADMIN or MANAGER — can hard-delete a survey / Pencawang (API scopes a MANAGER to own company). */
   canDeleteSurvey?: boolean;
+  /**
+   * MAIN_CONTRACTOR manager overseeing an active subcontractor subtree. The
+   * Assets page shows such a manager the subcontractor subtree's assets AND the
+   * delete controls (the API scopes both to own org + that subtree). False for
+   * everyone else, incl. a manager with no subcontractors.
+   */
+  canOverseeSubcontractors?: boolean;
 }
 
 export interface AuthSession {

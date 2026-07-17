@@ -186,3 +186,33 @@ export function assetAccessWhere(
     ],
   };
 }
+
+/**
+ * Oversight variant of {@link assetAccessWhere}: identical, but the transitive
+ * site-visit scope widens to {@link siteVisitOversightWhere}, so a MAIN_CONTRACTOR
+ * manager also sees the assets of its active SUBCONTRACTOR subtree
+ * (`ctx.maintenanceOrgIds`). Self-limiting — for any role other than a MANAGER, or
+ * a MANAGER with no subcontractors, this returns exactly the same filter as
+ * assetAccessWhere.
+ *
+ * Feeds the /assets table read scope (MasterDataService.listAssets) and the
+ * cross-org DELETE scope (AssetsService.deletableAssetScope). The strict
+ * {@link assetAccessWhere} still guards asset EDIT (AssetsService.mutableAssetScope):
+ * a main contractor may VIEW + DELETE, but not EDIT, a subcontractor's poles.
+ */
+export function assetOversightWhere(
+  user: RequestUser,
+  ctx?: ScopeContext,
+): Prisma.AssetWhereInput {
+  if (user.role === UserRole.ADMIN || ctx?.isAdmin) {
+    return {};
+  }
+  const scopeWhere = siteVisitOversightWhere(user, ctx);
+  return {
+    OR: [
+      { createdByUserId: user.id },
+      { inspections: { some: { siteVisit: scopeWhere } } },
+      { createdDuringVisit: scopeWhere },
+    ],
+  };
+}

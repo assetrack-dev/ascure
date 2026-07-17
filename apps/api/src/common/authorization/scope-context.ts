@@ -191,7 +191,7 @@ async function resolveCrossTeamMainheadIds(
  * orgs (mirrors the delegate-target rules) and de-duplicated, so a malformed
  * org graph can't loop or widen the set beyond contractors.
  */
-async function resolveMaintenanceOrgIds(
+export async function resolveMaintenanceOrgIds(
   prisma: PrismaService,
   user: RequestUser,
 ): Promise<string[]> {

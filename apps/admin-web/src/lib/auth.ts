@@ -40,6 +40,10 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
       "canReviewSurvey" in user ? user.canReviewSurvey : undefined,
     canDeleteSurvey:
       "canDeleteSurvey" in user ? user.canDeleteSurvey : undefined,
+    canOverseeSubcontractors:
+      "canOverseeSubcontractors" in user
+        ? user.canOverseeSubcontractors
+        : undefined,
   };
 }
 
