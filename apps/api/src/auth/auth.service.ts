@@ -5,6 +5,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { resolveCanImport } from '../common/authorization/import-actor';
+import { resolveMaintenanceOrgIds } from '../common/authorization/scope-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
@@ -103,6 +104,8 @@ export class AuthService {
     const canManageMaintenance = this.resolveCanManageMaintenance(requestUser);
     const canReviewSurvey = this.resolveCanReviewSurvey(requestUser);
     const canDeleteSurvey = this.resolveCanDeleteSurvey(requestUser);
+    const canOverseeSubcontractors =
+      await this.resolveCanOverseeSubcontractors(requestUser);
 
     return {
       access_token: accessToken,
@@ -124,6 +127,7 @@ export class AuthService {
         canManageMaintenance,
         canReviewSurvey,
         canDeleteSurvey,
+        canOverseeSubcontractors,
       },
     };
   }
@@ -160,6 +164,24 @@ export class AuthService {
       user.role === UserRole.MANAGER ||
       user.role === UserRole.SUPERVISOR
     );
+  }
+
+  /**
+   * Whether this user is a MAIN_CONTRACTOR manager overseeing an active
+   * subcontractor subtree — a MANAGER whose maintenance-org set spans more than
+   * their own org (resolveMaintenanceOrgIds = own org + active contractor
+   * descendants). Drives the admin-web's cross-org asset visibility + delete
+   * affordances. Self-limiting: false for non-managers and for a manager with no
+   * active subcontractors.
+   */
+  private async resolveCanOverseeSubcontractors(
+    user: RequestUser,
+  ): Promise<boolean> {
+    if (user.role !== UserRole.MANAGER) {
+      return false;
+    }
+    const orgIds = await resolveMaintenanceOrgIds(this.prisma, user);
+    return orgIds.length > 1;
   }
 
   /**
@@ -251,6 +273,8 @@ export class AuthService {
     const canManageMaintenance = this.resolveCanManageMaintenance(user);
     const canReviewSurvey = this.resolveCanReviewSurvey(user);
     const canDeleteSurvey = this.resolveCanDeleteSurvey(user);
+    const canOverseeSubcontractors =
+      await this.resolveCanOverseeSubcontractors(user);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -265,6 +289,7 @@ export class AuthService {
       canManageMaintenance,
       canReviewSurvey,
       canDeleteSurvey,
+      canOverseeSubcontractors,
     };
   }
 
