@@ -179,6 +179,9 @@ export interface ChecklistColumn {
   key: string;
   label: string;
   section: string | null;
+  /** The item's input type (NUMBER/BOOLEAN/DATE/…) so the Linked-Assets editor
+   *  renders a type-aware input; absent falls back to a text field. */
+  inputType?: string;
 }
 
 export interface SiteVisitSensorPhoto {

@@ -52,6 +52,7 @@ import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
   correctKelegaanReading,
+  editChecklistValue,
   deleteSiteVisit,
   fetchCycleDelta,
   fetchSiteVisitContributions,
@@ -2703,17 +2704,48 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     {formatNullable(link.checklist?.catitan)}
                                   </td>
                                   {activeChecklistColumns.map((column) => {
-                                    const raw = link.checklistValues?.[column.key]?.trim();
+                                    // Number-ish items get the decimal keypad; every
+                                    // other non-IMAGE type edits as free text (the
+                                    // server coerces to the item's stored type).
+                                    const decimalInput =
+                                      column.inputType === "NUMBER" ||
+                                      column.inputType === "READING" ||
+                                      column.inputType === "OCR";
                                     return (
                                       <td
                                         key={`${CHECKLIST_SORT_PREFIX}${column.key}`}
                                         className={`${tableCellClass} min-w-32`}
                                       >
-                                        {raw ? (
-                                          raw
-                                        ) : (
-                                          <span className="text-[var(--muted-2)]">—</span>
-                                        )}
+                                        <EditableCell
+                                          value={link.checklistValues?.[column.key] ?? null}
+                                          canEdit={
+                                            canEditLinkedAssets &&
+                                            Boolean(link.asset.latestInspectionId)
+                                          }
+                                          inputMode={decimalInput ? "decimal" : "text"}
+                                          ariaLabel={`${column.label} for ${link.asset.assetCode}`}
+                                          onSave={async (next) => {
+                                            const token = session?.token;
+                                            const inspectionId =
+                                              link.asset.latestInspectionId;
+                                            if (!token) {
+                                              throw new Error("Your session has expired.");
+                                            }
+                                            if (!inspectionId) {
+                                              throw new Error(
+                                                "No submitted inspection to edit.",
+                                              );
+                                            }
+                                            await editChecklistValue(
+                                              token,
+                                              inspectionId,
+                                              column.key,
+                                              next,
+                                              siteVisitId,
+                                            );
+                                            await loadVisit(token, false);
+                                          }}
+                                        />
                                       </td>
                                     );
                                   })}

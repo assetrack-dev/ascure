@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
+import { EditChecklistResultDto } from './dto/edit-checklist-result.dto';
 import { DeclareEmergencyDto } from './dto/declare-emergency.dto';
 import { SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
 import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
@@ -85,6 +86,17 @@ export class InspectionsController {
     @Body() dto: CorrectReadingDto,
   ) {
     return this.inspectionsService.correctKelegaanReading(user, params.id, dto);
+  }
+
+  // In-place edit of ANY recorded checklist value (generalizes kelegaan-reading)
+  // — ADMIN / QA actor / the managing MANAGER (own teams + subcontractor subtree).
+  @Patch(':id/checklist-result')
+  editChecklistResult(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionIdParamDto,
+    @Body() dto: EditChecklistResultDto,
+  ) {
+    return this.inspectionsService.editChecklistResult(user, params.id, dto);
   }
 
   @Post(':id/amend')
