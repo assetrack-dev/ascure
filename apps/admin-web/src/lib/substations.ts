@@ -7,6 +7,33 @@ export function fetchSubstationsForAdmin(token: string) {
   });
 }
 
+/** A MAINHEAD option for the Pencawang "assign Mainhead" dropdown. */
+export interface MainheadOption {
+  id: string;
+  name: string;
+  code?: string | null;
+}
+
+export function fetchMainheadOptions(token: string) {
+  // `/enterprise/mainheads` returns richer objects; we only read id/name/code.
+  return apiRequest<MainheadOption[]>("/enterprise/mainheads", { token });
+}
+
+export function assignSubstationMainhead(
+  token: string,
+  substationId: string,
+  mainheadId: string | null,
+) {
+  return apiRequest<ManagedSubstation>(
+    `/substations/${encodeURIComponent(substationId)}/mainhead`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ mainheadId }),
+    },
+  );
+}
+
 export function updateSubstationStatus(
   token: string,
   substationId: string,

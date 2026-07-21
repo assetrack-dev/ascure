@@ -7,11 +7,14 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
 import {
+  assignSubstationMainhead,
   deletePencawangCascade,
   deleteSubstation,
+  fetchMainheadOptions,
   fetchSubstationsForAdmin,
   previewDeletePencawang,
   updateSubstationStatus,
+  type MainheadOption,
   type PencawangDeletePreview,
 } from "@/lib/substations";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
@@ -24,6 +27,8 @@ const searchControlClassName =
   "h-10 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const selectClassName =
   "h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
+const mainheadSelectClassName =
+  "h-9 w-full max-w-[190px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const rowActionButtonClassName =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
 const dangerActionButtonClassName =
@@ -67,12 +72,14 @@ function PencawangContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [substations, setSubstations] = useState<ManagedSubstation[]>([]);
+  const [mainheads, setMainheads] = useState<MainheadOption[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [mainheadActionId, setMainheadActionId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [cascadePreview, setCascadePreview] =
     useState<PencawangDeletePreview | null>(null);
@@ -88,8 +95,15 @@ function PencawangContent() {
       setError("");
 
       try {
-        const nextSubstations = await fetchSubstationsForAdmin(token);
+        const [nextSubstations, nextMainheads] = await Promise.all([
+          fetchSubstationsForAdmin(token),
+          // Best-effort: without the options the assign dropdown just falls back
+          // to showing the current value, so a mainheads failure shouldn't block
+          // the page.
+          fetchMainheadOptions(token).catch(() => [] as MainheadOption[]),
+        ]);
         setSubstations(sortSubstations(nextSubstations));
+        setMainheads(nextMainheads);
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           handleLogout();
@@ -136,7 +150,12 @@ function PencawangContent() {
         (statusFilter === "ACTIVE" ? substation.isActive : !substation.isActive);
       const matchesSearch =
         !normalizedSearch ||
-        [substation.name, substation.code, substation.location]
+        [
+          substation.name,
+          substation.code,
+          substation.location,
+          substation.mainhead?.name,
+        ]
           .filter(Boolean)
           .some((value) => value!.toLowerCase().includes(normalizedSearch));
 
@@ -183,6 +202,52 @@ function PencawangContent() {
         setError(requestErrorMessage(toggleError, "Unable to update Pencawang."));
       } finally {
         setActionId(null);
+      }
+    },
+    [handleLogout, session?.token],
+  );
+
+  const handleAssignMainhead = useCallback(
+    async (substation: ManagedSubstation, rawMainheadId: string) => {
+      const token = session?.token;
+      if (!token) {
+        return;
+      }
+
+      const nextMainheadId = rawMainheadId === "" ? null : rawMainheadId;
+      if ((substation.mainheadId ?? null) === nextMainheadId) {
+        return; // no change
+      }
+
+      setMainheadActionId(substation.id);
+      setError("");
+      setNotice("");
+
+      try {
+        const updated = await assignSubstationMainhead(
+          token,
+          substation.id,
+          nextMainheadId,
+        );
+        setSubstations((current) =>
+          sortSubstations(
+            current.map((item) => (item.id === updated.id ? updated : item)),
+          ),
+        );
+        setNotice(
+          updated.mainhead
+            ? `${updated.name} is now under ${updated.mainhead.name}.`
+            : `${updated.name} is now unassigned.`,
+        );
+      } catch (assignError) {
+        if (assignError instanceof ApiError && assignError.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        setError(requestErrorMessage(assignError, "Unable to assign the Mainhead."));
+      } finally {
+        setMainheadActionId(null);
       }
     },
     [handleLogout, session?.token],
@@ -313,7 +378,7 @@ function PencawangContent() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               className={searchControlClassName}
-              placeholder="Search by name, code, or location"
+              placeholder="Search by name, code, location, or Mainhead"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -336,6 +401,7 @@ function PencawangContent() {
                 <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Location</th>
+                <th className="px-4 py-3">Mainhead</th>
                 <th className="px-4 py-3 text-right">Poles</th>
                 <th className="px-4 py-3 text-right">Visits</th>
                 <th className="px-4 py-3">Status</th>
@@ -345,13 +411,13 @@ function PencawangContent() {
             <tbody className="divide-y divide-slate-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                     Loading Pencawang...
                   </td>
                 </tr>
               ) : filteredSubstations.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                     No Pencawang match your filters.
                   </td>
                 </tr>
@@ -381,6 +447,37 @@ function PencawangContent() {
                       <td className="px-4 py-3 text-slate-700">{substation.name}</td>
                       <td className="px-4 py-3 text-slate-500">
                         {substation.location || "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <select
+                          className={mainheadSelectClassName}
+                          value={substation.mainheadId ?? ""}
+                          disabled={isBusy || mainheadActionId === substation.id}
+                          aria-label={`Mainhead for ${substation.name}`}
+                          title={
+                            substation.mainheadId
+                              ? "Change this Pencawang's Mainhead"
+                              : "Unassigned — pick a Mainhead so it groups on the map"
+                          }
+                          onChange={(event) =>
+                            void handleAssignMainhead(substation, event.target.value)
+                          }
+                        >
+                          <option value="">— Unassigned —</option>
+                          {/* A current mainhead that isn't in the fetched options
+                              (e.g. inactive) still renders so the value shows. */}
+                          {substation.mainhead &&
+                          !mainheads.some((m) => m.id === substation.mainheadId) ? (
+                            <option value={substation.mainhead.id}>
+                              {substation.mainhead.name}
+                            </option>
+                          ) : null}
+                          {mainheads.map((mainhead) => (
+                            <option key={mainhead.id} value={mainhead.id}>
+                              {mainhead.name}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-700">
                         {poleCount}

@@ -1,3 +1,9 @@
+export interface ManagedSubstationMainhead {
+  id: string;
+  name: string;
+  code?: string | null;
+}
+
 export interface ManagedSubstation {
   id: string;
   tenantId?: string;
@@ -5,6 +11,9 @@ export interface ManagedSubstation {
   name: string;
   location?: string | null;
   isActive: boolean;
+  /** The MAINHEAD this Pencawang rolls up under on the map (null = Unassigned). */
+  mainheadId?: string | null;
+  mainhead?: ManagedSubstationMainhead | null;
   assetCount?: number;
   visitCount?: number;
   createdAt?: string;
