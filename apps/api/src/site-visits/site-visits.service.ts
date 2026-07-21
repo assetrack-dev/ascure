@@ -35,6 +35,7 @@ import {
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
 import { describeInspectionRecency } from '../common/inspection-cadence';
+import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import {
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
@@ -448,7 +449,32 @@ type ChecklistColumnDef = {
   // The item's input type, so the admin renders a type-aware editor
   // (number / boolean / date vs free text). IMAGE items are excluded upstream.
   inputType: InspectionItemInputType;
+  // Dropdown options for the editor, matching the checklist template: SELECT items
+  // expose their configured options; BOOLEAN gets a synthetic Yes/No; null = the
+  // editor stays a free-text/number/date input.
+  options: { label: string; value: string }[] | null;
 };
+
+/** Dropdown options for a checklist column's inline editor, mirroring how the
+ *  checklist template defines the item: a SELECT exposes its configured options
+ *  (via the canonical template parser), a BOOLEAN gets a synthetic Yes/No, and
+ *  every other type has none (edits as free text / number / date). */
+function checklistColumnOptions(
+  inputType: InspectionItemInputType,
+  optionsJson: Prisma.JsonValue | null,
+): { label: string; value: string }[] | null {
+  if (inputType === InspectionItemInputType.BOOLEAN) {
+    return [
+      { label: 'Yes', value: 'Yes' },
+      { label: 'No', value: 'No' },
+    ];
+  }
+  if (inputType === InspectionItemInputType.SELECT) {
+    const parsed = normalizeTemplateSelectOptions(optionsJson);
+    return parsed ? parsed.map((o) => ({ label: o.label, value: o.value })) : null;
+  }
+  return null;
+}
 
 type SiteVisitRollup = {
   totalAssets: number;
@@ -2686,7 +2712,13 @@ export class SiteVisitsService {
             isActive: true,
             inputType: { not: InspectionItemInputType.IMAGE },
           },
-          select: { label: true, sortOrder: true, sectionId: true, inputType: true },
+          select: {
+            label: true,
+            sortOrder: true,
+            sectionId: true,
+            inputType: true,
+            optionsJson: true,
+          },
         },
       },
     });
@@ -2709,6 +2741,7 @@ export class SiteVisitsService {
           label: item.label,
           section: section?.title ?? null,
           inputType: item.inputType,
+          options: checklistColumnOptions(item.inputType, item.optionsJson),
           s: section?.sortOrder ?? 0,
           i: item.sortOrder,
         });
@@ -2716,11 +2749,12 @@ export class SiteVisitsService {
     }
 
     columns.sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label));
-    return columns.map(({ key, label, section, inputType }) => ({
+    return columns.map(({ key, label, section, inputType, options }) => ({
       key,
       label,
       section,
       inputType,
+      options,
     }));
   }
 

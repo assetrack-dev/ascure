@@ -473,6 +473,27 @@ function normalizeChecklistValues(
   return out;
 }
 
+/** Parse a checklist column's dropdown options (SELECT/BOOLEAN), dropping any
+ *  entry missing a label/value. */
+function normalizeChecklistOptions(
+  raw: unknown,
+): { label: string; value: string }[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const options: { label: string; value: string }[] = [];
+  for (const entry of raw) {
+    const record = asRecord(entry);
+    const label = firstString(record, ["label"]);
+    const value = firstString(record, ["value"]);
+    if (!label || !value) {
+      continue;
+    }
+    options.push({ label, value });
+  }
+  return options.length > 0 ? options : undefined;
+}
+
 /** The visit's toggleable checklist columns (template order), dropping any entry
  *  missing a key/label. */
 function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
@@ -492,6 +513,7 @@ function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
       label,
       section: firstString(record, ["section"]) ?? null,
       inputType: firstString(record, ["inputType"]) ?? undefined,
+      options: normalizeChecklistOptions(record?.options),
     });
   }
   return columns;
