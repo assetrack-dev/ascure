@@ -182,6 +182,10 @@ export interface ChecklistColumn {
   /** The item's input type (NUMBER/BOOLEAN/DATE/…) so the Linked-Assets editor
    *  renders a type-aware input; absent falls back to a text field. */
   inputType?: string;
+  /** Dropdown options (SELECT items expose their configured options; BOOLEAN gets
+   *  Yes/No) so the editor renders a dropdown matching the checklist template.
+   *  Absent → the editor stays a free-text/number/date input. */
+  options?: { label: string; value: string }[];
 }
 
 export interface SiteVisitSensorPhoto {

@@ -1677,6 +1677,80 @@ function EditableCell({
 }
 
 /**
+ * Linked-Assets cell for a checklist column whose item is a dropdown (a SELECT's
+ * configured options, or a BOOLEAN's Yes/No) — mirrors the checklist template so
+ * a manager picks a value instead of typing. Always-visible when editable; the
+ * leading "N/A" clears the value. Changing it saves immediately. stopPropagation
+ * keeps the row's navigate-to-asset click quiet.
+ */
+function ChecklistSelectCell({
+  value,
+  options,
+  canEdit,
+  ariaLabel,
+  onSave,
+}: {
+  value: string | null;
+  options: { label: string; value: string }[];
+  canEdit: boolean;
+  ariaLabel: string;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const current = value ?? "";
+
+  if (!canEdit) {
+    return <span>{formatNullable(value)}</span>;
+  }
+
+  // A stored value that isn't one of the current template options still renders,
+  // so the cell shows the truth instead of silently dropping to N/A.
+  const knownValue =
+    current === "" || options.some((option) => option.value === current);
+
+  const handleChange = async (next: string) => {
+    if (next === current) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(next);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+      <select
+        value={current}
+        disabled={saving}
+        aria-label={ariaLabel}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        onChange={(event) => void handleChange(event.target.value)}
+        className="h-8 w-full min-w-28 rounded-[var(--radius-control)] border border-[var(--line-strong)] bg-[var(--panel)] px-2 text-[13px] text-[var(--foreground)] outline-none transition focus:border-[var(--brand)] disabled:opacity-50"
+      >
+        <option value="">— N/A —</option>
+        {!knownValue ? <option value={current}>{current}</option> : null}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {error ? (
+        <span className="text-[11px] text-[var(--critical-text)]">{error}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * Linked-Assets cell for the Smart Sensor photo behind a Bacaan Kelegaan 1
  * reading. Shows a thumbnail that opens the full-size viewer; a muted dash when
  * no item-tagged photo was captured. Stops click/keyboard events from bubbling
@@ -2705,47 +2779,58 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   </td>
                                   {activeChecklistColumns.map((column) => {
                                     // Number-ish items get the decimal keypad; every
-                                    // other non-IMAGE type edits as free text (the
-                                    // server coerces to the item's stored type).
+                                    // other non-IMAGE, non-option type edits as free
+                                    // text (the server coerces to the item's type).
                                     const decimalInput =
                                       column.inputType === "NUMBER" ||
                                       column.inputType === "READING" ||
                                       column.inputType === "OCR";
+                                    const canEditCell =
+                                      canEditLinkedAssets &&
+                                      Boolean(link.asset.latestInspectionId);
+                                    const cellValue =
+                                      link.checklistValues?.[column.key] ?? null;
+                                    const cellAriaLabel = `${column.label} for ${link.asset.assetCode}`;
+                                    const saveCell = async (next: string) => {
+                                      const token = session?.token;
+                                      const inspectionId = link.asset.latestInspectionId;
+                                      if (!token) {
+                                        throw new Error("Your session has expired.");
+                                      }
+                                      if (!inspectionId) {
+                                        throw new Error("No submitted inspection to edit.");
+                                      }
+                                      await editChecklistValue(
+                                        token,
+                                        inspectionId,
+                                        column.key,
+                                        next,
+                                        siteVisitId,
+                                      );
+                                      await loadVisit(token, false);
+                                    };
                                     return (
                                       <td
                                         key={`${CHECKLIST_SORT_PREFIX}${column.key}`}
                                         className={`${tableCellClass} min-w-32`}
                                       >
-                                        <EditableCell
-                                          value={link.checklistValues?.[column.key] ?? null}
-                                          canEdit={
-                                            canEditLinkedAssets &&
-                                            Boolean(link.asset.latestInspectionId)
-                                          }
-                                          inputMode={decimalInput ? "decimal" : "text"}
-                                          ariaLabel={`${column.label} for ${link.asset.assetCode}`}
-                                          onSave={async (next) => {
-                                            const token = session?.token;
-                                            const inspectionId =
-                                              link.asset.latestInspectionId;
-                                            if (!token) {
-                                              throw new Error("Your session has expired.");
-                                            }
-                                            if (!inspectionId) {
-                                              throw new Error(
-                                                "No submitted inspection to edit.",
-                                              );
-                                            }
-                                            await editChecklistValue(
-                                              token,
-                                              inspectionId,
-                                              column.key,
-                                              next,
-                                              siteVisitId,
-                                            );
-                                            await loadVisit(token, false);
-                                          }}
-                                        />
+                                        {column.options && column.options.length > 0 ? (
+                                          <ChecklistSelectCell
+                                            value={cellValue}
+                                            options={column.options}
+                                            canEdit={canEditCell}
+                                            ariaLabel={cellAriaLabel}
+                                            onSave={saveCell}
+                                          />
+                                        ) : (
+                                          <EditableCell
+                                            value={cellValue}
+                                            canEdit={canEditCell}
+                                            inputMode={decimalInput ? "decimal" : "text"}
+                                            ariaLabel={cellAriaLabel}
+                                            onSave={saveCell}
+                                          />
+                                        )}
                                       </td>
                                     );
                                   })}
