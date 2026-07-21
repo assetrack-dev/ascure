@@ -441,7 +441,14 @@ type SiteVisitDetail = Prisma.SiteVisitGetPayload<{
 /** A checklist field the DC can toggle on as a Linked-Assets column. `key` is the
  *  normalized (upper, single-spaced) label used to match recorded values; `label`
  *  is shown as-is; `section` is the template group for the picker. */
-type ChecklistColumnDef = { key: string; label: string; section: string | null };
+type ChecklistColumnDef = {
+  key: string;
+  label: string;
+  section: string | null;
+  // The item's input type, so the admin renders a type-aware editor
+  // (number / boolean / date vs free text). IMAGE items are excluded upstream.
+  inputType: InspectionItemInputType;
+};
 
 type SiteVisitRollup = {
   totalAssets: number;
@@ -2679,7 +2686,7 @@ export class SiteVisitsService {
             isActive: true,
             inputType: { not: InspectionItemInputType.IMAGE },
           },
-          select: { label: true, sortOrder: true, sectionId: true },
+          select: { label: true, sortOrder: true, sectionId: true, inputType: true },
         },
       },
     });
@@ -2701,6 +2708,7 @@ export class SiteVisitsService {
           key,
           label: item.label,
           section: section?.title ?? null,
+          inputType: item.inputType,
           s: section?.sortOrder ?? 0,
           i: item.sortOrder,
         });
@@ -2708,7 +2716,12 @@ export class SiteVisitsService {
     }
 
     columns.sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label));
-    return columns.map(({ key, label, section }) => ({ key, label, section }));
+    return columns.map(({ key, label, section, inputType }) => ({
+      key,
+      label,
+      section,
+      inputType,
+    }));
   }
 
   private serializeSiteVisitDetail(

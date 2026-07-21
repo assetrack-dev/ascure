@@ -51,6 +51,7 @@ import { normalizeTemplateSelectOptions } from '../templates/template-builder.co
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
+import { EditChecklistResultDto } from './dto/edit-checklist-result.dto';
 import { isQaActor } from '../common/authorization/qa-actor';
 import {
   SaveInspectionItemResultDto,
@@ -557,8 +558,12 @@ export class InspectionsService {
     // Scope with the FULL ScopeContext so a QA/DC actor — who governs by mainhead,
     // not team membership — can actually reach the inspection (mirrors the defects
     // path). Without ctx the QA branch is skipped and every DC edit 404s.
+    // { oversight: true } widens a main-contractor MANAGER to its subcontractor
+    // subtree, matching the generalized checklist edit (owner-approved 2026-07-21).
     const ctx = await buildScopeContext(this.prisma, user);
-    const inspection = await this.getAccessibleInspection(inspectionId, user, ctx);
+    const inspection = await this.getAccessibleInspection(inspectionId, user, ctx, {
+      oversight: true,
+    });
 
     // A cancelled visit is closed data — never mutate its readings.
     if (inspection.siteVisit.status === SiteVisitStatus.CANCELLED) {
@@ -640,6 +645,213 @@ export class InspectionsService {
     );
 
     return { ok: true, value: newValue };
+  }
+
+  /**
+   * In-place edit of ANY recorded checklist value on a submitted inspection —
+   * the generalization of correctKelegaanReading. Targets the checklist item
+   * whose normalized label === dto.columnKey (the Linked-Assets column key),
+   * coerces the free-text value to that item's typed InspectionResult column, and
+   * upserts (create-or-update, so a not-yet-filled item is created). Same
+   * governance model as the kelegaan correction: ADMIN / MANAGER / QA actor only,
+   * oversight-scoped (own teams + subcontractor subtree), bypasses the submitted
+   * lock, blocked only on a CANCELLED visit, old->new logged (owner chose
+   * log-only, no DB audit, 2026-07-21).
+   */
+  async editChecklistResult(
+    user: RequestUser,
+    inspectionId: string,
+    dto: EditChecklistResultDto,
+  ) {
+    if (
+      user.role !== UserRole.ADMIN &&
+      user.role !== UserRole.MANAGER &&
+      !(await isQaActor(this.prisma, user))
+    ) {
+      throw new ForbiddenException(
+        'Only an admin, manager, or QA actor can edit a recorded checklist value.',
+      );
+    }
+
+    const ctx = await buildScopeContext(this.prisma, user);
+    const inspection = await this.getAccessibleInspection(inspectionId, user, ctx, {
+      oversight: true,
+    });
+
+    if (inspection.siteVisit.status === SiteVisitStatus.CANCELLED) {
+      throw new BadRequestException(
+        'This visit is cancelled — its checklist values cannot be edited.',
+      );
+    }
+
+    // Reject an edit whose inspection belongs to a DIFFERENT survey cycle than the
+    // visit on screen (a re-surveyed pole's latest submitted inspection may be a
+    // newer cycle) — mirrors correctKelegaanReading.
+    if (dto.siteVisitId && inspection.siteVisitId !== dto.siteVisitId) {
+      throw new BadRequestException(
+        'This value was recorded in a different survey cycle — open that visit to edit it.',
+      );
+    }
+
+    // Resolve the item by normalized label — the same key resolveChecklistColumns
+    // builds the Linked-Assets columns from. IMAGE items have no text column and
+    // are never editable this way.
+    const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
+    const columnKey = norm(dto.columnKey);
+    const item = inspection.template.sections
+      .flatMap((section) => section.items)
+      .find(
+        (templateItem) =>
+          templateItem.inputType !== InspectionItemInputType.IMAGE &&
+          norm(templateItem.label) === columnKey,
+      );
+
+    if (!item) {
+      throw new BadRequestException(
+        'This inspection has no editable checklist item matching that column.',
+      );
+    }
+
+    const existing = inspection.results.find(
+      (result) => result.templateItemId === item.id,
+    );
+    const oldValue = this.stringifyResultValue(existing ?? {});
+
+    const data = this.coerceInspectionResultValue(item.inputType, dto.value ?? '');
+
+    await this.prisma.inspectionResult.upsert({
+      where: {
+        inspectionId_templateItemId: {
+          inspectionId: inspection.id,
+          templateItemId: item.id,
+        },
+      },
+      create: { inspectionId: inspection.id, templateItemId: item.id, ...data },
+      update: data,
+    });
+
+    const newValue = this.stringifyResultValue(data);
+
+    this.logger.warn(
+      `Checklist item "${item.label}" edited on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}"`,
+    );
+
+    return { ok: true, value: newValue };
+  }
+
+  /**
+   * Coerce a free-text edit into the correct typed InspectionResult column for a
+   * checklist item's inputType. Empty clears every value column. NUMBER parses
+   * strictly; READING/OCR (ground clearance) parse numerically but keep a
+   * non-numeric sentinel like "LO" as text; BOOLEAN accepts yes/no/true/false/
+   * 1/0; DATE/DATETIME parse a date; everything else (TEXT/SELECT/GPS/…) stores
+   * text. Throws BadRequest on a malformed value.
+   */
+  private coerceInspectionResultValue(
+    inputType: InspectionItemInputType,
+    rawInput: string,
+  ): {
+    valueText: string | null;
+    valueNumber: number | null;
+    valueBoolean: boolean | null;
+    valueDate: Date | null;
+    valueDateTime: Date | null;
+    valueJson: typeof Prisma.DbNull;
+  } {
+    const raw = rawInput.trim();
+    const cleared = {
+      valueText: null as string | null,
+      valueNumber: null as number | null,
+      valueBoolean: null as boolean | null,
+      valueDate: null as Date | null,
+      valueDateTime: null as Date | null,
+      valueJson: Prisma.DbNull,
+    };
+    if (raw === '') {
+      return cleared;
+    }
+
+    const asNumber = () => {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        throw new BadRequestException('This item expects a number.');
+      }
+      // valueNumber is Decimal(18,4) — reject an overflow rather than a Postgres 500.
+      if (Math.abs(parsed) >= 1e14) {
+        throw new BadRequestException('Value is out of range.');
+      }
+      return parsed;
+    };
+
+    switch (inputType) {
+      case InspectionItemInputType.NUMBER:
+        return { ...cleared, valueNumber: asNumber() };
+      case InspectionItemInputType.READING:
+      case InspectionItemInputType.OCR: {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) {
+          if (Math.abs(parsed) >= 1e14) {
+            throw new BadRequestException('Value is out of range.');
+          }
+          return { ...cleared, valueNumber: parsed };
+        }
+        return { ...cleared, valueText: raw.toUpperCase() };
+      }
+      case InspectionItemInputType.BOOLEAN: {
+        const lowered = raw.toLowerCase();
+        if (['true', 'yes', 'ya', '1'].includes(lowered)) {
+          return { ...cleared, valueBoolean: true };
+        }
+        if (['false', 'no', 'tidak', '0'].includes(lowered)) {
+          return { ...cleared, valueBoolean: false };
+        }
+        throw new BadRequestException('This item expects Yes or No.');
+      }
+      case InspectionItemInputType.DATE: {
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new BadRequestException('This item expects a date.');
+        }
+        return { ...cleared, valueDate: parsed };
+      }
+      case InspectionItemInputType.DATETIME: {
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new BadRequestException('This item expects a date/time.');
+        }
+        return { ...cleared, valueDateTime: parsed };
+      }
+      default:
+        // TEXT, SELECT, MULTI_SELECT, JSON, GPS, … → store as free text.
+        return { ...cleared, valueText: raw };
+    }
+  }
+
+  /** Render a stored/prepared InspectionResult value as one string for the edit
+   *  log (first non-empty typed column wins; mirrors the serializer's valueOf). */
+  private stringifyResultValue(v: {
+    valueText?: string | null;
+    valueNumber?: Prisma.Decimal | number | null;
+    valueBoolean?: boolean | null;
+    valueDate?: Date | null;
+    valueDateTime?: Date | null;
+  }): string | null {
+    if (v.valueText != null && v.valueText.trim() !== '') {
+      return v.valueText;
+    }
+    if (v.valueNumber != null) {
+      return v.valueNumber.toString();
+    }
+    if (v.valueBoolean != null) {
+      return v.valueBoolean ? 'Yes' : 'No';
+    }
+    if (v.valueDate != null) {
+      return v.valueDate.toISOString().slice(0, 10);
+    }
+    if (v.valueDateTime != null) {
+      return v.valueDateTime.toISOString();
+    }
+    return null;
   }
 
   /** Map templateItemId → chosen option value(s) from the structured `results`
@@ -1161,12 +1373,24 @@ export class InspectionsService {
     inspectionId: string,
     user: RequestUser,
     ctx?: ScopeContext,
+    opts?: { oversight?: boolean },
   ) {
+    // The in-place VALUE-CORRECTION paths (kelegaan + the generalized checklist
+    // edit) pass { oversight: true } so a MANAGER can fix a recorded value on
+    // their own teams' AND — when they are a main contractor — their active
+    // subcontractor subtree's inspections (owner-approved 2026-07-21). This is a
+    // DELIBERATE, narrow exception to inspectionOversightScope's "reads only"
+    // rule: it covers value corrections only; amend/submit/save stay strict on
+    // inspectionAccessScope. Falls back to strict if no ctx was resolved.
+    const scope =
+      opts?.oversight && ctx
+        ? this.inspectionOversightScope(user, ctx)
+        : this.inspectionAccessScope(user, ctx);
     const inspection = await this.prisma.inspection.findFirst({
       where: {
         id: inspectionId,
         tenantId: user.tenantId,
-        ...this.inspectionAccessScope(user, ctx),
+        ...scope,
       },
       include: {
         ...this.inspectionInclude(),

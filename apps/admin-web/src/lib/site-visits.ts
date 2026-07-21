@@ -487,7 +487,12 @@ function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
     if (!key || !label) {
       continue;
     }
-    columns.push({ key, label, section: firstString(record, ["section"]) ?? null });
+    columns.push({
+      key,
+      label,
+      section: firstString(record, ["section"]) ?? null,
+      inputType: firstString(record, ["inputType"]) ?? undefined,
+    });
   }
   return columns;
 }
@@ -917,6 +922,31 @@ export async function correctKelegaanReading(
       // siteVisitId lets the server reject a cross-cycle correction (the shown
       // reading is the pole's latest submitted inspection, maybe a newer cycle).
       body: JSON.stringify({ value, siteVisitId }),
+    },
+  );
+}
+
+/**
+ * In-place edit of ANY recorded checklist value on a pole's latest submitted
+ * inspection (generalizes {@link correctKelegaanReading}). `columnKey` is the
+ * Linked-Assets column key (the item's normalized label); `value` is free text
+ * — the server coerces it to the item's typed column and "" clears it. Allowed
+ * for ADMIN / DC / the managing manager (own teams + subcontractor subtree); the
+ * API re-enforces scope on each write.
+ */
+export async function editChecklistValue(
+  token: string,
+  inspectionId: string,
+  columnKey: string,
+  value: string,
+  siteVisitId: string,
+): Promise<void> {
+  await apiRequest<unknown>(
+    `/inspections/${encodeURIComponent(inspectionId)}/checklist-result`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ columnKey, value, siteVisitId }),
     },
   );
 }
