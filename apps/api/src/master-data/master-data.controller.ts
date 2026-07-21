@@ -24,6 +24,7 @@ import {
   UpdateAssetTypeStatusDto,
 } from './dto/manage-asset-type.dto';
 import {
+  AssignSubstationMainheadDto,
   ListSubstationsQueryDto,
   SubstationIdParamDto,
   UpdateSubstationStatusDto,
@@ -56,6 +57,20 @@ export class MasterDataController {
       user,
       params.id,
       dto.isActive,
+    );
+  }
+
+  @Patch('substations/:id/mainhead')
+  @Roles(UserRole.ADMIN)
+  assignSubstationMainhead(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+    @Body() dto: AssignSubstationMainheadDto,
+  ) {
+    return this.masterDataService.assignSubstationMainhead(
+      user,
+      params.id,
+      dto.mainheadId,
     );
   }
 

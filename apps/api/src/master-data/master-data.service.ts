@@ -44,6 +44,13 @@ type AssetTypeRecord = Prisma.AssetTypeGetPayload<{
 }>;
 
 const substationCountInclude = {
+  mainhead: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+    },
+  },
   _count: {
     select: {
       assets: true,
@@ -90,6 +97,37 @@ export class MasterDataService {
     const substation = await this.prisma.substation.update({
       where: { id },
       data: { isActive },
+      include: substationCountInclude,
+    });
+
+    return this.serializeSubstation(substation);
+  }
+
+  // Link a Pencawang to its MAINHEAD (or clear the link with `null`). This is the
+  // manual counterpart to the auto-link on check-in — it lets an admin fix a
+  // Pencawang that fell into the map's "Unassigned" bucket without touching the DB
+  // directly. MAINHEAD is a shared (tenant-agnostic) reference table, so we only
+  // check that the target exists.
+  async assignSubstationMainhead(
+    user: RequestUser,
+    id: string,
+    mainheadId: string | null,
+  ) {
+    await this.findSubstationOrThrow(user.tenantId, id);
+
+    if (mainheadId) {
+      const mainhead = await this.prisma.mainhead.findUnique({
+        where: { id: mainheadId },
+        select: { id: true },
+      });
+      if (!mainhead) {
+        throw new NotFoundException('Mainhead not found.');
+      }
+    }
+
+    const substation = await this.prisma.substation.update({
+      where: { id },
+      data: { mainheadId },
       include: substationCountInclude,
     });
 
@@ -334,6 +372,16 @@ export class MasterDataService {
       name: substation.name,
       location: substation.location,
       isActive: substation.isActive,
+      // The MAINHEAD this Pencawang rolls up under on the hierarchical map
+      // (null = "Unassigned"). Editable via assignSubstationMainhead.
+      mainheadId: substation.mainheadId,
+      mainhead: substation.mainhead
+        ? {
+            id: substation.mainhead.id,
+            name: substation.mainhead.name,
+            code: substation.mainhead.code,
+          }
+        : null,
       createdAt: substation.createdAt,
       updatedAt: substation.updatedAt,
       assetCount: substation._count.assets,
