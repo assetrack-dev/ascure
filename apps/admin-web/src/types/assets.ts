@@ -1,3 +1,5 @@
+import type { ChecklistColumn, SiteVisitSensorPhoto } from "@/types/site-visits";
+
 export type AssetInspectionStatus = "COMPLETED" | "PENDING";
 
 export interface AssetListItem {
@@ -41,12 +43,27 @@ export interface InspectionResultItem {
   severity: string | null;
 }
 
+/**
+ * The inspection's checklist as columns + recorded values — the same shape the
+ * Site Visit Linked-Assets table uses, so a value shown (or edited) here matches
+ * what that table shows. `values` and an IMAGE column's photo are keyed the way
+ * the API keys them: values by normalized label, images by templateItemId.
+ */
+export interface AssetChecklist {
+  columns: ChecklistColumn[];
+  values: Record<string, string | null>;
+  images: Record<string, SiteVisitSensorPhoto>;
+}
+
 export interface AssetDetail extends AssetListItem {
   name: string | null;
   latitude: number | null;
   longitude: number | null;
   latestInspection: {
     id: string;
+    /** The visit the inspection was recorded in — passed on a checklist edit so
+     *  the API can reject one aimed at a different survey cycle. */
+    siteVisitId: string | null;
     cycleNumber: number | null;
     status: string | null;
     submittedAt: string | null;
@@ -54,5 +71,6 @@ export interface AssetDetail extends AssetListItem {
     totalDefects?: number;
     items?: InspectionResultItem[];
     images?: InspectionEvidenceImage[];
+    checklist?: AssetChecklist;
   } | null;
 }

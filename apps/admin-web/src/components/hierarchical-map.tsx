@@ -304,6 +304,7 @@ function Layers({
       zoomOut: () => map.setZoom((map.getZoom() ?? 7) - 1),
       recenter: () => fitToPositions(map),
       getBounds: () => boundsToBbox(map),
+      panTo: (latitude, longitude) => map.panTo({ lat: latitude, lng: longitude }),
     };
     return () => {
       if (controlsRef) controlsRef.current = null;

@@ -11,6 +11,7 @@ import {
   DefectSeverity,
   DefectStatus,
   InspectionCompletionStatus,
+  InspectionItemInputType,
   MaintenanceCategory,
   OperationalScope,
   Prisma,
@@ -37,6 +38,14 @@ import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { MapQueryDto } from './dto/map-query.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
 import { buildInspectionImagePath } from '../common/uploads.constants';
+import {
+  checklistColumnOptions,
+  checklistResultValue,
+  normalizeChecklistLabel,
+  type ChecklistColumnDef,
+  type ChecklistImage,
+  type ChecklistResultValueRow,
+} from '../common/checklist-columns';
 import {
   buildNormalizedKey,
   formatBranchSuffix,
@@ -1049,11 +1058,38 @@ export class AssetsService {
                 longitude: true,
                 timestamp: true,
                 createdAt: true,
+                // Which checklist item the photo was captured against, so an
+                // IMAGE column in the asset panel can resolve its photo.
+                templateItemId: true,
+              },
+            },
+            // The template behind this inspection — drives the panel's checklist
+            // columns (label / input type / options), the same way the Site Visit
+            // Linked-Assets table builds its toggleable columns.
+            template: {
+              select: {
+                sections: { select: { id: true, title: true, sortOrder: true } },
+                items: {
+                  where: { isActive: true },
+                  select: {
+                    id: true,
+                    label: true,
+                    sortOrder: true,
+                    sectionId: true,
+                    inputType: true,
+                    optionsJson: true,
+                  },
+                },
               },
             },
             results: {
               select: {
                 valueText: true,
+                valueNumber: true,
+                valueBoolean: true,
+                valueDate: true,
+                valueDateTime: true,
+                templateItemId: true,
                 templateItem: {
                   select: {
                     key: true,
@@ -1108,11 +1144,19 @@ export class AssetsService {
       latestInspection: latestInspection
         ? {
             id: latestInspection.id,
+            // The visit the inspection was recorded in — an in-place checklist
+            // edit passes it so the API can reject an edit aimed at a value
+            // recorded in a different survey cycle.
+            siteVisitId: latestInspection.siteVisitId,
             cycleNumber: latestInspection.inspectionCycle,
             status: latestInspection.completionStatus,
             submittedAt: latestInspection.submittedAt?.toISOString() ?? '',
             createdAt: latestInspection.createdAt.toISOString(),
             remarks: this.extractRemarks(latestInspection.results),
+            // Every checklist field of the inspection's template with its
+            // recorded value, so the asset panel can show (and a manager edit)
+            // the full checklist rather than only the pass/fail item results.
+            checklist: this.buildAssetChecklist(latestInspection),
             totalDefects: latestInspection.itemResults.filter((item) => item.isDefect).length,
             items: latestInspection.itemResults.map((item) => ({
               id: item.id,
@@ -1995,6 +2039,126 @@ export class AssetsService {
     });
 
     return remarkResult?.valueText?.trim() ?? '';
+  }
+
+  /**
+   * The inspection's checklist as columns + recorded values, mirroring the Site
+   * Visit Linked-Assets table so the two read identically and a value edited in
+   * one shows up in the other. Columns come from the template (so a field nobody
+   * filled still appears, blank); values are keyed by the same normalized label
+   * that `PATCH /inspections/:id/checklist-result` resolves an edit against.
+   */
+  private buildAssetChecklist(inspection: {
+    template: {
+      sections: { id: string; title: string; sortOrder: number }[];
+      items: {
+        id: string;
+        label: string;
+        sortOrder: number;
+        sectionId: string;
+        inputType: InspectionItemInputType;
+        optionsJson: Prisma.JsonValue | null;
+      }[];
+    } | null;
+    results: Array<
+      ChecklistResultValueRow & {
+        templateItemId: string;
+        templateItem: { key: string; label: string } | null;
+      }
+    >;
+    inspectionImages: Array<{
+      url: string;
+      filename: string;
+      latitude: number | null;
+      longitude: number | null;
+      timestamp: Date | null;
+      createdAt: Date;
+      templateItemId: string | null;
+    }>;
+  }): {
+    columns: ChecklistColumnDef[];
+    values: Record<string, string | null>;
+    images: Record<string, ChecklistImage>;
+  } {
+    const sectionById = new Map(
+      (inspection.template?.sections ?? []).map((section) => [section.id, section]),
+    );
+
+    // Dedupe by normalized label — the same label can appear twice in a template
+    // (e.g. split across sections); the first definition wins and later item ids
+    // join it, so an item-tagged photo recorded under either still resolves.
+    const byKey = new Map<string, ChecklistColumnDef & { s: number; i: number }>();
+    for (const item of inspection.template?.items ?? []) {
+      const key = normalizeChecklistLabel(item.label);
+      if (!key) {
+        continue;
+      }
+      const existing = byKey.get(key);
+      if (existing) {
+        if (!existing.templateItemIds.includes(item.id)) {
+          existing.templateItemIds.push(item.id);
+        }
+        continue;
+      }
+      const section = sectionById.get(item.sectionId) ?? null;
+      byKey.set(key, {
+        key,
+        label: item.label,
+        section: section?.title ?? null,
+        inputType: item.inputType,
+        options: checklistColumnOptions(item.inputType, item.optionsJson),
+        templateItemIds: [item.id],
+        s: section?.sortOrder ?? 0,
+        i: item.sortOrder,
+      });
+    }
+
+    const columns = Array.from(byKey.values())
+      .sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label))
+      .map(({ key, label, section, inputType, options, templateItemIds }) => ({
+        key,
+        label,
+        section,
+        inputType,
+        options,
+        templateItemIds,
+      }));
+
+    // The first non-empty value wins for a label, so a later blank row can never
+    // clobber a recorded one; a label present but unfilled maps to null.
+    const values: Record<string, string | null> = {};
+    for (const column of columns) {
+      values[column.key] = null;
+    }
+    for (const row of inspection.results) {
+      const label = row.templateItem?.label;
+      if (!label) {
+        continue;
+      }
+      const key = normalizeChecklistLabel(label);
+      if (values[key] == null) {
+        values[key] = checklistResultValue(row);
+      }
+    }
+
+    // Item-tagged photos keyed by templateItemId, so an IMAGE column renders its
+    // capture. The first photo recorded for an item wins.
+    const images: Record<string, ChecklistImage> = {};
+    for (const image of inspection.inspectionImages) {
+      if (!image.templateItemId || images[image.templateItemId]) {
+        continue;
+      }
+      images[image.templateItemId] = {
+        url: image.url,
+        filename: image.filename,
+        latitude: image.latitude,
+        longitude: image.longitude,
+        timestamp: image.timestamp?.toISOString() ?? null,
+        createdAt: image.createdAt.toISOString(),
+      };
+    }
+
+    return { columns, values, images };
   }
 
   private assertCanMutate(user: RequestUser) {

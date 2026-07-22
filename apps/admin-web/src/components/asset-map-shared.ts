@@ -10,6 +10,9 @@ export interface MapControls {
    *  Used to seed the Mainhead-wide "show all poles" viewport query. Optional —
    *  only the hierarchical (Google) renderer implements it. */
   getBounds?(): string | null;
+  /** Centre on a pole without changing the zoom — used when stepping through the
+   *  asset panel so the pole under review is always on screen. Optional. */
+  panTo?(latitude: number, longitude: number): void;
 }
 
 /** The contract both the Google and Leaflet renderers implement. */

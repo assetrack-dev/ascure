@@ -12,9 +12,9 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { AssetMapPanel } from "@/components/asset-map-panel";
 import { AuthGuard } from "@/components/auth-guard";
 import { Eyebrow, Seg, Tbtn, type SegOption } from "@/components/ui";
 import type { MapControls } from "@/components/asset-map-shared";
@@ -551,6 +551,34 @@ function MapContent() {
     [points],
   );
 
+  // The asset panel steps through the poles in the same order the in-view list
+  // shows them, so ‹ › and the list agree on what "next" means.
+  const selectedIndex = selected
+    ? pointRows.findIndex((asset) => asset.id === selected.id)
+    : -1;
+
+  // Selecting from the panel also centres the map on that pole (zoom untouched),
+  // so stepping never leaves the pole under review off screen.
+  const selectAt = useCallback(
+    (index: number) => {
+      const asset = pointRows[index];
+      if (!asset) {
+        return;
+      }
+      setSelected(asset);
+      controlsRef.current?.panTo?.(asset.latitude, asset.longitude);
+    },
+    [pointRows],
+  );
+
+  // In-place checklist editing in the panel — ADMIN, DC (canGovernQa), or the
+  // managing MANAGER (canReviewSurvey). MANAGER collapses to VIEWER client-side,
+  // so we mirror the server's flags; the API re-enforces scope on every write.
+  const canEditChecklist =
+    session?.user?.role === "ADMIN" ||
+    session?.user?.canGovernQa === true ||
+    session?.user?.canReviewSurvey === true;
+
   const itemsLabel = mode === "points" ? LEVEL_ITEMS.points : LEVEL_ITEMS[level];
   // Sum both sets so the render gate never hits 0 mid-transition (e.g. toggling
   // "show all poles": mode flips to points before the poles arrive). A 0 here
@@ -802,46 +830,25 @@ function MapContent() {
             </button>
           </div>
 
-          {/* Selected pole card (leaf) */}
+          {/* Selected pole — the full record in a side panel, with ‹ › stepping
+              through the poles currently on the map. */}
           {selected ? (
-            <div className="absolute bottom-3 left-1/2 z-20 w-[300px] -translate-x-1/2 rounded-[12px] border border-[var(--line)] bg-[var(--panel)] p-3.5 shadow-[var(--shadow-card)]">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-[13px] font-bold text-[var(--foreground)]">
-                    {selected.assetCode}
-                  </p>
-                  {selected.name ? (
-                    <p className="truncate text-[12px] text-[var(--muted)]">{selected.name}</p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  onClick={() => setSelected(null)}
-                  className="text-[var(--muted)] transition hover:text-[var(--foreground)]"
-                >
-                  <X size={15} />
-                </button>
-              </div>
-              <div className="mt-2 space-y-0.5 text-[12px] text-[var(--foreground-soft)]">
-                <p>{selected.substation?.name || selected.substation?.code || "—"}</p>
-                <p>
-                  {isMapAssetInspected(selected) ? "Inspected" : "Not inspected"}
-                  {selected.openDefectCount > 0
-                    ? ` · ${selected.openDefectCount} open${selected.hasEmergencyDefect ? " · emergency" : ""}`
-                    : ""}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(`/assets/${encodeURIComponent(selected.id)}?from=${encodeURIComponent("/map")}`)
-                }
-                className="mt-2.5 text-[12px] font-semibold text-[var(--brand)] transition hover:underline"
-              >
-                Open asset →
-              </button>
-            </div>
+            <AssetMapPanel
+              asset={selected}
+              token={session?.token ?? null}
+              canEdit={canEditChecklist}
+              index={selectedIndex}
+              total={pointRows.length}
+              onPrev={() => selectAt(selectedIndex - 1)}
+              onNext={() => selectAt(selectedIndex + 1)}
+              onClose={() => setSelected(null)}
+              onOpenFullPage={() =>
+                router.push(
+                  `/assets/${encodeURIComponent(selected.id)}?from=${encodeURIComponent("/map")}`,
+                )
+              }
+              onUnauthorized={handleLogout}
+            />
           ) : null}
 
           {/* Left auto-hide dock — filters */}

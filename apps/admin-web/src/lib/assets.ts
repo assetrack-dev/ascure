@@ -1,11 +1,13 @@
 import { ApiError, apiRequest } from "@/lib/api";
 import type {
+  AssetChecklist,
   AssetDetail,
   AssetInspectionStatus,
   AssetListItem,
   InspectionEvidenceImage,
   InspectionResultItem,
 } from "@/types/assets";
+import type { ChecklistColumn, SiteVisitSensorPhoto } from "@/types/site-visits";
 
 type ApiRecord = Record<string, unknown>;
 
@@ -248,6 +250,87 @@ function normalizeAsset(rawAsset: unknown, index: number): AssetListItem | null 
   };
 }
 
+/**
+ * The checklist block on an asset's latest inspection: template-defined columns
+ * plus the recorded value per column. Mirrors the Site Visit Linked-Assets
+ * normalizer — a column with no matching value stays present (blank) so the
+ * panel shows the whole checklist, not only what was filled in.
+ */
+function normalizeAssetChecklist(raw: unknown): AssetChecklist | undefined {
+  const record = asRecord(raw);
+
+  if (!record) {
+    return undefined;
+  }
+
+  const columns = (Array.isArray(record.columns) ? record.columns : [])
+    .map((rawColumn): ChecklistColumn | null => {
+      const columnRecord = asRecord(rawColumn);
+      const key = readString(columnRecord, "key");
+      const label = readString(columnRecord, "label");
+
+      if (!key || !label) {
+        return null;
+      }
+
+      const rawOptions = columnRecord?.options;
+      const rawItemIds = columnRecord?.templateItemIds;
+
+      return {
+        key,
+        label,
+        section: readString(columnRecord, "section"),
+        inputType: readString(columnRecord, "inputType") ?? undefined,
+        options: Array.isArray(rawOptions)
+          ? rawOptions
+              .map((rawOption) => {
+                const optionRecord = asRecord(rawOption);
+                const value = readString(optionRecord, "value");
+                return value
+                  ? { value, label: readString(optionRecord, "label") ?? value }
+                  : null;
+              })
+              .filter((option): option is { label: string; value: string } =>
+                Boolean(option),
+              )
+          : undefined,
+        templateItemIds: Array.isArray(rawItemIds)
+          ? rawItemIds.filter((id): id is string => typeof id === "string")
+          : undefined,
+      };
+    })
+    .filter((column): column is ChecklistColumn => Boolean(column));
+
+  const rawValues = asRecord(record.values);
+  const values: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(rawValues ?? {})) {
+    values[key] = typeof value === "string" ? value : null;
+  }
+
+  const rawImages = asRecord(record.images);
+  const images: Record<string, SiteVisitSensorPhoto> = {};
+  for (const [templateItemId, rawImage] of Object.entries(rawImages ?? {})) {
+    const imageRecord = asRecord(rawImage);
+    const url = readString(imageRecord, "url");
+
+    if (!url) {
+      continue;
+    }
+
+    images[templateItemId] = {
+      url,
+      filename: readString(imageRecord, "filename"),
+      // The capture time when the device recorded one, else the upload time.
+      timestamp:
+        readString(imageRecord, "timestamp") ?? readString(imageRecord, "createdAt"),
+      latitude: readNumber(imageRecord, "latitude"),
+      longitude: readNumber(imageRecord, "longitude"),
+    };
+  }
+
+  return { columns, values, images };
+}
+
 function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null {
   const record = asRecord(rawAsset);
   const baseAsset = normalizeAsset(rawAsset, index);
@@ -310,6 +393,8 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
     latestInspection: latestInspection
       ? {
           id: firstString(latestInspection, ["id", "inspectionId"]) ?? "latest-inspection",
+          siteVisitId: firstString(latestInspection, ["siteVisitId"]),
+          checklist: normalizeAssetChecklist(latestInspection.checklist),
           cycleNumber: readNumber(latestInspection, "cycleNumber") ?? readNumber(latestInspection, "inspectionCycle"),
           status:
             firstString(latestInspection, ["status", "completionStatus", "inspectionStatus"]) ??

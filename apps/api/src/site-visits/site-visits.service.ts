@@ -12,7 +12,6 @@ import { extname, resolve } from 'path';
 import {
   AssetStatus,
   InspectionCompletionStatus,
-  InspectionItemInputType,
   Prisma,
   SiteVisitStatus,
   SiteVisitType,
@@ -35,7 +34,11 @@ import {
   parseOperationalOverdueThresholdHours,
 } from '../common/operational-health';
 import { describeInspectionRecency } from '../common/inspection-cadence';
-import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
+import {
+  checklistColumnOptions,
+  type ChecklistColumnDef,
+  type ChecklistImage,
+} from '../common/checklist-columns';
 import {
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
@@ -438,58 +441,6 @@ type SiteVisitAssetLink = Prisma.SiteVisitAssetGetPayload<{
 type SiteVisitDetail = Prisma.SiteVisitGetPayload<{
   include: typeof SITE_VISIT_DETAIL_INCLUDE;
 }>;
-
-/** A checklist field the DC can toggle on as a Linked-Assets column. `key` is the
- *  normalized (upper, single-spaced) label used to match recorded values; `label`
- *  is shown as-is; `section` is the template group for the picker. */
-type ChecklistColumnDef = {
-  key: string;
-  label: string;
-  section: string | null;
-  // The item's input type, so the admin renders a type-aware editor
-  // (number / boolean / date vs free text). IMAGE items are excluded upstream.
-  inputType: InspectionItemInputType;
-  // Dropdown options for the editor, matching the checklist template: SELECT items
-  // expose their configured options; BOOLEAN gets a synthetic Yes/No; null = the
-  // editor stays a free-text/number/date input.
-  options: { label: string; value: string }[] | null;
-  // Every template item id behind this column (>1 when several of the visit's
-  // templates define the same label). An IMAGE column resolves its photo by
-  // looking these up in the link's `checklistImages` map.
-  templateItemIds: string[];
-};
-
-/** Dropdown options for a checklist column's inline editor, mirroring how the
- *  checklist template defines the item: a SELECT exposes its configured options
- *  (via the canonical template parser), a BOOLEAN gets a synthetic Yes/No, and
- *  every other type has none (edits as free text / number / date). */
-function checklistColumnOptions(
-  inputType: InspectionItemInputType,
-  optionsJson: Prisma.JsonValue | null,
-): { label: string; value: string }[] | null {
-  if (inputType === InspectionItemInputType.BOOLEAN) {
-    return [
-      { label: 'Yes', value: 'Yes' },
-      { label: 'No', value: 'No' },
-    ];
-  }
-  if (inputType === InspectionItemInputType.SELECT) {
-    const parsed = normalizeTemplateSelectOptions(optionsJson);
-    return parsed ? parsed.map((o) => ({ label: o.label, value: o.value })) : null;
-  }
-  return null;
-}
-
-/** A photo captured against a specific checklist item, as surfaced on a
- *  Linked-Assets IMAGE column (same shape as the pinned Gambar Kelegaan cell). */
-type ChecklistImage = {
-  url: string;
-  filename: string;
-  latitude: number | null;
-  longitude: number | null;
-  timestamp: string | null;
-  createdAt: string;
-};
 
 type SiteVisitRollup = {
   totalAssets: number;
