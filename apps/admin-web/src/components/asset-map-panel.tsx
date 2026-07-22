@@ -8,6 +8,8 @@ import {
   ChevronRight,
   ClipboardList,
   ExternalLink,
+  Eye,
+  EyeOff,
   ImageOff,
   Pencil,
   RefreshCw,
@@ -301,6 +303,9 @@ export function AssetMapPanel({
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  // The checklist shows only recorded fields by default; this reveals the whole
+  // template (and is how you fill in a field that was left blank).
+  const [showAllChecklist, setShowAllChecklist] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -362,22 +367,6 @@ export function AssetMapPanel({
     [inspection],
   );
 
-  // Group the checklist by its template section so the panel reads the way the
-  // crew filled it in. Items with no section fall into one unnamed group.
-  const grouped = useMemo(() => {
-    const groups: { section: string | null; columns: ChecklistColumn[] }[] = [];
-    for (const column of checklist?.columns ?? []) {
-      const section = column.section ?? null;
-      const last = groups[groups.length - 1];
-      if (last && last.section === section) {
-        last.columns.push(column);
-      } else {
-        groups.push({ section, columns: [column] });
-      }
-    }
-    return groups;
-  }, [checklist]);
-
   const photoUrlFor = useCallback(
     (column: ChecklistColumn): string | null => {
       for (const templateItemId of column.templateItemIds ?? []) {
@@ -390,6 +379,42 @@ export function AssetMapPanel({
     },
     [checklist],
   );
+
+  // The checklist starts curated — only fields the crew actually recorded (an
+  // IMAGE field counts when a photo was captured). "See all" reveals the rest of
+  // the template, which is also how you fill in a field left blank. Mirrors the
+  // asset-detail page's Inspection Result toggle.
+  const hasValue = useCallback(
+    (column: ChecklistColumn): boolean =>
+      isImageColumn(column)
+        ? photoUrlFor(column) !== null
+        : (checklist?.values?.[column.key] ?? "") !== "",
+    [checklist, photoUrlFor],
+  );
+
+  const filledColumns = useMemo(
+    () => (checklist?.columns ?? []).filter(hasValue),
+    [checklist, hasValue],
+  );
+  const totalColumns = checklist?.columns?.length ?? 0;
+  const hiddenColumnCount = totalColumns - filledColumns.length;
+  const displayedColumns = showAllChecklist ? (checklist?.columns ?? []) : filledColumns;
+
+  // Group the shown fields by their template section so the panel reads the way
+  // the crew filled it in. Fields with no section fall into one unnamed group.
+  const grouped = useMemo(() => {
+    const groups: { section: string | null; columns: ChecklistColumn[] }[] = [];
+    for (const column of displayedColumns) {
+      const section = column.section ?? null;
+      const last = groups[groups.length - 1];
+      if (last && last.section === section) {
+        last.columns.push(column);
+      } else {
+        groups.push({ section, columns: [column] });
+      }
+    }
+    return groups;
+  }, [displayedColumns]);
 
   const saveValue = useCallback(
     async (column: ChecklistColumn, next: string) => {
@@ -534,18 +559,45 @@ export function AssetMapPanel({
                   <ClipboardList size={14} className="text-[var(--brand)]" />
                   Checklist
                 </span>
-                <span className="text-[11px] text-[var(--muted)]">
-                  {canEdit ? "Click a value to edit" : "Read-only"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[var(--muted)]">
+                    {canEdit ? "Click a value to edit" : "Read-only"}
+                  </span>
+                  {hiddenColumnCount > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllChecklist((value) => !value)}
+                      aria-pressed={showAllChecklist}
+                      title={
+                        showAllChecklist
+                          ? "Show only the fields that were recorded"
+                          : `Show all ${totalColumns} checklist fields, including the ${hiddenColumnCount} left blank`
+                      }
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
+                        showAllChecklist
+                          ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
+                          : "border-[var(--line)] bg-[var(--panel)] text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+                      }`}
+                    >
+                      {showAllChecklist ? <EyeOff size={11} /> : <Eye size={11} />}
+                      {showAllChecklist ? "Recorded" : `See all (${totalColumns})`}
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               {!inspection ? (
                 <p className="px-3.5 pb-3 text-[12px] text-[var(--muted)]">
                   This pole has no submitted inspection yet.
                 </p>
-              ) : grouped.length === 0 ? (
+              ) : totalColumns === 0 ? (
                 <p className="px-3.5 pb-3 text-[12px] text-[var(--muted)]">
                   No checklist fields on this inspection&apos;s template.
+                </p>
+              ) : grouped.length === 0 ? (
+                <p className="px-3.5 pb-3 text-[12px] text-[var(--muted)]">
+                  Nothing was recorded against this checklist. Use “See all” to
+                  view the {totalColumns} available fields.
                 </p>
               ) : (
                 grouped.map((group, groupIndex) => (

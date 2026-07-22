@@ -54,6 +54,10 @@ export interface HierarchicalMapProps {
    *  Rendered as their own lightweight DOM markers, decoupled from the pole layer
    *  so they don't drift or churn the marker canvas as poles refetch on pan. */
   pencawangAnchors?: PencawangMarker[];
+  /** The pole open in the asset panel. Drawn as a halo on its OWN marker layer —
+   *  centring alone is easy to lose in a dense cluster. Kept off the pole layer
+   *  so changing the selection never rebuilds (and repaints) the pole canvas. */
+  selectedPoint?: MapAsset | null;
 }
 
 /** Serialize the map viewport as "minLng,minLat,maxLng,maxLat" (or null). */
@@ -259,6 +263,26 @@ function pencawangAnchorIcon(name: string, color: string): google.maps.Icon {
   return icon;
 }
 
+// The halo marking the pole open in the asset panel: a hollow ring wide enough
+// to read against a dense cluster, with a white outline so it stands out over
+// both the satellite imagery and any pole colour. Drawn UNDER nothing — it sits
+// above every other layer — and centred on the pole's own dot.
+const SELECTED_HALO_COLOR = "#facc15"; // amber-400 — unused by any status palette
+function selectedHaloIcon(): google.maps.Icon {
+  const size = 40;
+  const c = size / 2;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
+    `<circle cx='${c}' cy='${c}' r='${c - 3}' fill='none' stroke='#ffffff' stroke-width='6' stroke-opacity='0.55'/>` +
+    `<circle cx='${c}' cy='${c}' r='${c - 3}' fill='none' stroke='${SELECTED_HALO_COLOR}' stroke-width='3'/>` +
+    `</svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(c, c),
+  };
+}
+
 function Layers({
   mode,
   bubbles,
@@ -273,10 +297,12 @@ function Layers({
   suppressAutoFit,
   onBoundsChange,
   pencawangAnchors,
+  selectedPoint,
 }: HierarchicalMapProps) {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
   const anchorsRef = useRef<google.maps.Marker[]>([]);
+  const haloRef = useRef<google.maps.Marker | null>(null);
   const positionsRef = useRef<google.maps.LatLngLiteral[]>([]);
   const fitKeyRef = useRef<string>("");
   const onDrillRef = useRef(onDrill);
@@ -460,6 +486,32 @@ function Layers({
       anchorsRef.current = [];
     };
   }, [map, colorByPencawang, pencawangAnchors]);
+
+  // Halo on the pole open in the asset panel. Its OWN single-marker layer keyed
+  // only on the selected pole, so stepping through poles never rebuilds the pole
+  // canvas (the Deploy-89 repaint lesson); `optimized:false` renders it as a DOM
+  // overlay above the pole layer.
+  useEffect(() => {
+    haloRef.current?.setMap(null);
+    haloRef.current = null;
+    if (!map || !selectedPoint) {
+      return;
+    }
+    const marker = new google.maps.Marker({
+      position: { lat: selectedPoint.latitude, lng: selectedPoint.longitude },
+      icon: selectedHaloIcon(),
+      // Not clickable — the pole's own dot underneath keeps handling clicks.
+      clickable: false,
+      optimized: false,
+      zIndex: 200000,
+    });
+    marker.setMap(map);
+    haloRef.current = marker;
+    return () => {
+      marker.setMap(null);
+      haloRef.current = null;
+    };
+  }, [map, selectedPoint]);
 
   return null;
 }

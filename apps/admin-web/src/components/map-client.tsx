@@ -98,6 +98,67 @@ type ArrayFilterKey =
 type IdName = { id: string; name: string };
 type DrillState = { region?: IdName; mainhead?: IdName; pencawang?: IdName };
 
+/**
+ * Where the user was on the map, remembered for the browser session so opening
+ * a pole's full page and coming back lands on the same view instead of resetting
+ * to the whole country. Session-scoped (like the Site Visits filters) — a new
+ * tab always starts at the top level.
+ */
+const MAP_VIEW_STORAGE_KEY = "ascure.map.view";
+
+type StoredMapView = {
+  drill: DrillState;
+  filters: MapFilters;
+  showAllPoles: boolean;
+  /** The pole whose panel was open, reopened once its points load. */
+  selectedId: string | null;
+};
+
+function readStoredMapView(): StoredMapView | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(MAP_VIEW_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredMapView>;
+    const drill = (parsed.drill ?? {}) as DrillState;
+    // A stored step is only usable with both an id and a name (the breadcrumb
+    // renders the name); anything malformed falls back to the top level.
+    const step = (value: unknown): IdName | undefined => {
+      const record = value as IdName | undefined;
+      return record && typeof record.id === "string" && typeof record.name === "string"
+        ? { id: record.id, name: record.name }
+        : undefined;
+    };
+    return {
+      drill: {
+        region: step(drill.region),
+        mainhead: step(drill.mainhead),
+        pencawang: step(drill.pencawang),
+      },
+      filters: { ...EMPTY_MAP_FILTERS, ...(parsed.filters ?? {}) },
+      showAllPoles: parsed.showAllPoles === true,
+      selectedId: typeof parsed.selectedId === "string" ? parsed.selectedId : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMapView(view: StoredMapView): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify(view));
+  } catch {
+    // A full / blocked sessionStorage must never break the map.
+  }
+}
+
 function levelFor(drill: DrillState): MapLevel {
   if (drill.pencawang) return "points";
   if (drill.mainhead) return "pencawang";
@@ -296,6 +357,13 @@ function MapContent() {
   // from the server) — set on a structural load, NOT on every pan refetch, so
   // the anchors stay put and don't churn the marker layer.
   const [pencawangAnchors, setPencawangAnchors] = useState<PencawangMarker[]>([]);
+  // Gate the first load until the stored view is restored, so returning from a
+  // pole's full page fetches the remembered level once instead of loading the
+  // top level and then immediately re-loading the restored one.
+  const [viewRestored, setViewRestored] = useState(false);
+  // The pole to reopen once its points arrive (from the stored view). Cleared as
+  // soon as it's matched, so a later manual close doesn't get undone.
+  const pendingSelectRef = useRef<string | null>(null);
   const controlsRef = useRef<MapControls | null>(null);
   // Debounces the viewport-driven pole refetch as the map is panned/zoomed.
   const bboxTimerRef = useRef<number | null>(null);
@@ -447,9 +515,49 @@ function MapContent() {
     [token, showAllPoles, drill, filters, applyMainheadPoints],
   );
 
+  // Restore the remembered view once, before the first fetch. Runs on the client
+  // only (sessionStorage), so the prerendered HTML always matches the top level.
   useEffect(() => {
-    if (token) void load(token, drill, filters, showAllPoles);
-  }, [token, drill, filters, showAllPoles, load]);
+    const stored = readStoredMapView();
+    if (stored) {
+      setDrill(stored.drill);
+      setFilters(stored.filters);
+      setShowAllPoles(stored.showAllPoles);
+      pendingSelectRef.current = stored.selectedId;
+    }
+    setViewRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (token && viewRestored) void load(token, drill, filters, showAllPoles);
+  }, [token, viewRestored, drill, filters, showAllPoles, load]);
+
+  // Remember where the user is, so a trip to a pole's full page comes back here.
+  useEffect(() => {
+    if (!viewRestored) {
+      return;
+    }
+    writeStoredMapView({
+      drill,
+      filters,
+      showAllPoles,
+      selectedId: selected?.id ?? null,
+    });
+  }, [viewRestored, drill, filters, showAllPoles, selected]);
+
+  // Reopen the panel on the pole that was open before the round-trip, once its
+  // points have loaded.
+  useEffect(() => {
+    const pendingId = pendingSelectRef.current;
+    if (!pendingId || points.length === 0) {
+      return;
+    }
+    pendingSelectRef.current = null;
+    const match = points.find((asset) => asset.id === pendingId);
+    if (match) {
+      setSelected(match);
+    }
+  }, [points]);
 
   // Filter-dock option lists (fetched once).
   useEffect(() => {
@@ -713,6 +821,7 @@ function MapContent() {
               suppressAutoFit={mainheadWide}
               onBoundsChange={handleBoundsChange}
               pencawangAnchors={pencawangAnchors}
+              selectedPoint={selected}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
