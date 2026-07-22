@@ -814,6 +814,11 @@ export class DashboardService {
         value: assets.size,
       }));
 
+    // Distinct assets inspected so far TODAY — the same reporting-day bucket the
+    // trend's last point uses, so the KPI and the chart can never disagree.
+    const inspectedToday =
+      trendBuckets.get(reportingTodayStart.getTime())?.size ?? 0;
+
     // --- Additive range-scoped derivations ---
     const inspectedThisPeriod = new Set(
       periodInspections.map((row) => row.assetId),
@@ -918,6 +923,7 @@ export class DashboardService {
           reportingTodayStart.getTime(),
         ),
       },
+      inspectedToday,
       inspectedThisPeriod,
       inspectedPrevPeriod,
       assetsInScope: totalAssets,

@@ -205,6 +205,7 @@ export async function fetchDashboardMetrics(
     range: normalizeRange(dashboard.range),
     // `assetsInScope` echoes totalAssets on a ranged API; fall back so a
     // pre-range API still populates the KPI.
+    inspectedToday: numberOrZero(dashboard.inspectedToday),
     inspectedThisPeriod: numberOrZero(dashboard.inspectedThisPeriod),
     inspectedPrevPeriod: numberOrZero(dashboard.inspectedPrevPeriod),
     assetsInScope: numberOrZero(dashboard.assetsInScope ?? dashboard.totalAssets),
