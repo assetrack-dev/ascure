@@ -395,7 +395,7 @@ function OverviewSections({ metrics }: { metrics: DashboardMetrics }) {
       </div>
 
       {/* Analytics row */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         <SeverityDonut
           title="Defects by severity"
           data={metrics.defectsBySeverity}
@@ -407,12 +407,24 @@ function OverviewSections({ metrics }: { metrics: DashboardMetrics }) {
             <Gauge value={metrics.slaOnTimePct ?? 0} caption={metrics.slaOnTimePct === null ? "No due dates" : "on-time"} />
           </div>
         </Panel>
+      </div>
+
+      {/* Where the assets are — Mainhead first, then the Pencawang beneath it,
+          matching the drill order of the map and the org hierarchy. */}
+      <div className="grid gap-4 lg:grid-cols-2">
         <SimpleBarChart
-          title="Assets by substation"
-          data={metrics.assetsBySubstation}
-          emptyLabel="No assets attributed to a substation yet."
+          title="Assets by Mainhead"
+          data={metrics.assetsByMainhead}
+          emptyLabel="No assets attributed to a Mainhead yet."
           tone="teal"
-          maxRows={5}
+          maxRows={6}
+        />
+        <SimpleBarChart
+          title="Assets by Pencawang"
+          data={metrics.assetsBySubstation}
+          emptyLabel="No assets attributed to a Pencawang yet."
+          tone="teal"
+          maxRows={6}
         />
       </div>
 
@@ -482,8 +494,8 @@ function InspectionSections({ metrics }: { metrics: DashboardMetrics }) {
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <SeverityDonut title="Defects by severity" data={metrics.defectsBySeverity} centerCaption="defects" emptyLabel="No defects recorded yet." />
-        <SimpleBarChart title="Assets by substation" data={metrics.assetsBySubstation} emptyLabel="No assets attributed yet." tone="teal" maxRows={5} />
-        <SimpleBarChart title="Total assets by mainhead" data={metrics.assetsByMainhead} emptyLabel="No mainhead counts yet." tone="teal" maxRows={5} />
+        <SimpleBarChart title="Assets by Mainhead" data={metrics.assetsByMainhead} emptyLabel="No assets attributed to a Mainhead yet." tone="teal" maxRows={5} />
+        <SimpleBarChart title="Assets by Pencawang" data={metrics.assetsBySubstation} emptyLabel="No assets attributed to a Pencawang yet." tone="teal" maxRows={5} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <NeedsAttention defects={metrics.criticalOverdueAlerts} />
