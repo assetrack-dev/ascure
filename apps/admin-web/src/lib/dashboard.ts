@@ -35,7 +35,18 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-function normalizeChartData(input: unknown): ChartDatum[] {
+/**
+ * Chart labels arrive as two different things: enum tokens the API never means
+ * to be read raw (`IN_PROGRESS`), and names a human typed (`Pencawang N-B-1`,
+ * `SAVR MAINHEAD`). Title-casing is right for the first and destructive for the
+ * second — it splits on hyphens and underscores, so a Pencawang code came out
+ * as "Pencawang N B 1" and a mainhead as "Savr Mainhead". Series that carry
+ * names pass `preserveLabels` and are shown exactly as stored.
+ */
+function normalizeChartData(
+  input: unknown,
+  preserveLabels = false,
+): ChartDatum[] {
   if (Array.isArray(input)) {
     return input
       .map((item) => {
@@ -51,7 +62,7 @@ function normalizeChartData(input: unknown): ChartDatum[] {
         }
 
         return {
-          label: titleCase(label),
+          label: preserveLabels ? label : titleCase(label),
           value: numberOrZero(record.value ?? record.count ?? record.total),
         };
       })
@@ -60,7 +71,7 @@ function normalizeChartData(input: unknown): ChartDatum[] {
 
   if (input && typeof input === "object") {
     return Object.entries(input as Record<string, unknown>).map(([label, value]) => ({
-      label: titleCase(label),
+      label: preserveLabels ? label : titleCase(label),
       value: numberOrZero(value),
     }));
   }
@@ -218,22 +229,22 @@ export async function fetchDashboardMetrics(
     defectFlow: normalizeDefectFlow(dashboard.defectFlow),
     avgCloseHours: numberOrZero(dashboard.avgCloseHours),
     netBacklogChange: numberOrZero(dashboard.netBacklogChange),
-    assetsBySubstation: normalizeChartData(dashboard.assetsBySubstation),
+    assetsBySubstation: normalizeChartData(dashboard.assetsBySubstation, true),
     slaOnTimePct: nullableNumber(dashboard.slaOnTimePct),
     slaOnTimePctPrev: nullableNumber(dashboard.slaOnTimePctPrev),
     defectsBySeverity,
     defectsByCategory: normalizeChartData(dashboard.defectsByCategory),
     defectsByStatus: normalizeChartData(dashboard.defectsByStatus),
-    defectsByAssignee: normalizeChartData(dashboard.defectsByAssignee),
-    defectsByTeam: normalizeChartData(dashboard.defectsByTeam),
+    defectsByAssignee: normalizeChartData(dashboard.defectsByAssignee, true),
+    defectsByTeam: normalizeChartData(dashboard.defectsByTeam, true),
     defectsBySlaState,
     dailyInspectionTrend: normalizeTrend(dashboard.dailyInspectionTrend),
     visitsByStatus: normalizeChartData(dashboard.visitsByStatus),
     visitsByValidationStatus: normalizeChartData(dashboard.visitsByValidationStatus),
     visitsByType: normalizeChartData(dashboard.visitsByType),
-    activeVisitsByTeam: normalizeChartData(dashboard.activeVisitsByTeam),
+    activeVisitsByTeam: normalizeChartData(dashboard.activeVisitsByTeam, true),
     visitsByOperationalHealth: normalizeChartData(dashboard.visitsByOperationalHealth),
-    assetsByMainhead: normalizeChartData(dashboard.assetsByMainhead),
+    assetsByMainhead: normalizeChartData(dashboard.assetsByMainhead, true),
     recentDefects: Array.isArray(dashboard.recentDefects) ? dashboard.recentDefects : [],
     criticalOverdueAlerts: Array.isArray(dashboard.criticalOverdueAlerts)
       ? dashboard.criticalOverdueAlerts
