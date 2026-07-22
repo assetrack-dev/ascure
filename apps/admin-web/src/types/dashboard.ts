@@ -83,6 +83,9 @@ export interface DashboardMetrics {
   latestVisitActivityAt?: string | null;
   // --- Range-aware additions (all optional; a pre-range API omits them) ---
   range: DashboardRange | null;
+  /** Distinct assets inspected so far today (same reporting-day bucket as the
+   *  trend chart's last point, so the KPI and the chart always agree). */
+  inspectedToday: number;
   inspectedThisPeriod: number;
   inspectedPrevPeriod: number;
   assetsInScope: number;
@@ -129,6 +132,7 @@ export interface DashboardApiResponse {
   operationalOverdueThresholdHours?: number;
   latestVisitActivityAt?: string | null;
   range?: unknown;
+  inspectedToday?: number;
   inspectedThisPeriod?: number;
   inspectedPrevPeriod?: number;
   assetsInScope?: number;

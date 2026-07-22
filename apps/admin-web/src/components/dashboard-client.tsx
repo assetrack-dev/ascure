@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Archive,
   Bug,
+  CalendarCheck,
   CheckCircle2,
   ClipboardCheck,
   ClipboardList,
@@ -287,7 +288,7 @@ function OverviewSections({ metrics }: { metrics: DashboardMetrics }) {
   return (
     <div className="space-y-4">
       {/* KPI strip */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <KpiCard
           label="Assets in scope"
           value={metrics.assetsInScope}
@@ -297,6 +298,19 @@ function OverviewSections({ metrics }: { metrics: DashboardMetrics }) {
               <DeltaChip current={metrics.assetsInScope} previous={metrics.assetsInScopePrev} />
               vs. prev.
             </span>
+          }
+        />
+        {/* Today's progress — the number the field team is judged on during the
+            day, and the only KPI here that ignores the range selector. */}
+        <KpiCard
+          label="Inspected today"
+          value={metrics.inspectedToday}
+          icon={CalendarCheck}
+          tone="info"
+          context={
+            metrics.inspectedToday > 0
+              ? "distinct poles submitted today"
+              : "nothing submitted yet today"
           }
         />
         <KpiCard
@@ -442,7 +456,18 @@ function InspectionSections({ metrics }: { metrics: DashboardMetrics }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <KpiCard
+          label="Inspected today"
+          value={metrics.inspectedToday}
+          icon={CalendarCheck}
+          tone="info"
+          context={
+            metrics.inspectedToday > 0
+              ? "distinct poles submitted today"
+              : "nothing submitted yet today"
+          }
+        />
         <KpiCard label={`Inspected · ${periodLabel}`} value={metrics.inspectedThisPeriod} icon={ClipboardCheck} tone="info" context={<span className="inline-flex items-center gap-1.5"><DeltaChip current={metrics.inspectedThisPeriod} previous={metrics.inspectedPrevPeriod} />vs. prev.</span>} />
         <KpiCard label="Active visits" value={metrics.activeVisits} icon={Activity} tone={metrics.overdueVisits > 0 ? "warning" : "neutral"} context={`Overdue threshold ${overdueThreshold}h`} />
         <KpiCard label="Completed visits" value={metrics.completedVisits} icon={CheckCircle2} tone="success" context={`${metrics.completionRate}% completion`} />
