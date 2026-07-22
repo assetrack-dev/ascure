@@ -453,6 +453,10 @@ type ChecklistColumnDef = {
   // expose their configured options; BOOLEAN gets a synthetic Yes/No; null = the
   // editor stays a free-text/number/date input.
   options: { label: string; value: string }[] | null;
+  // Every template item id behind this column (>1 when several of the visit's
+  // templates define the same label). An IMAGE column resolves its photo by
+  // looking these up in the link's `checklistImages` map.
+  templateItemIds: string[];
 };
 
 /** Dropdown options for a checklist column's inline editor, mirroring how the
@@ -475,6 +479,17 @@ function checklistColumnOptions(
   }
   return null;
 }
+
+/** A photo captured against a specific checklist item, as surfaced on a
+ *  Linked-Assets IMAGE column (same shape as the pinned Gambar Kelegaan cell). */
+type ChecklistImage = {
+  url: string;
+  filename: string;
+  latitude: number | null;
+  longitude: number | null;
+  timestamp: string | null;
+  createdAt: string;
+};
 
 type SiteVisitRollup = {
   totalAssets: number;
@@ -2673,9 +2688,11 @@ export class SiteVisitsService {
    * Linked-Assets columns, in template order (section, then item). Sourced from
    * the templates the visit's SUBMITTED inspections actually ran, so it tracks
    * the live checklist and includes fields not yet filled on any pole. IMAGE
-   * items are skipped (they need a photo cell, not a text column), and labels
-   * already shown as fixed columns (the Kelegaan reading/photo, Catitan) are
-   * excluded so the picker never offers a duplicate. Deduped by normalized label.
+   * items ARE included — the client renders them as a read-only photo cell (their
+   * photo resolves via templateItemIds against the link's `checklistImages`).
+   * Labels already shown as fixed columns (the Kelegaan reading/photo, Catitan)
+   * are excluded so the picker never offers a duplicate. Deduped by normalized
+   * label, collecting every matching item id across the visit's templates.
    */
   private async resolveChecklistColumns(
     siteVisit: SiteVisitDetail,
@@ -2708,11 +2725,9 @@ export class SiteVisitsService {
       select: {
         sections: { select: { id: true, title: true, sortOrder: true } },
         items: {
-          where: {
-            isActive: true,
-            inputType: { not: InspectionItemInputType.IMAGE },
-          },
+          where: { isActive: true },
           select: {
+            id: true,
             label: true,
             sortOrder: true,
             sectionId: true,
@@ -2724,38 +2739,53 @@ export class SiteVisitsService {
     });
 
     const columns: (ChecklistColumnDef & { s: number; i: number })[] = [];
-    const seen = new Set<string>();
+    const byKey = new Map<string, (typeof columns)[number]>();
     for (const template of templates) {
       const sectionById = new Map(
         template.sections.map((section) => [section.id, section]),
       );
       for (const item of template.items) {
         const key = norm(item.label);
-        if (!key || PINNED.has(key) || seen.has(key)) {
+        if (!key || PINNED.has(key)) {
           continue;
         }
-        seen.add(key);
+        const existing = byKey.get(key);
+        if (existing) {
+          // Same label in another of the visit's templates: keep the first column
+          // definition but collect this item's id too, so an item-tagged photo
+          // recorded under either template still resolves for the IMAGE cell.
+          if (!existing.templateItemIds.includes(item.id)) {
+            existing.templateItemIds.push(item.id);
+          }
+          continue;
+        }
         const section = sectionById.get(item.sectionId) ?? null;
-        columns.push({
+        const column = {
           key,
           label: item.label,
           section: section?.title ?? null,
           inputType: item.inputType,
           options: checklistColumnOptions(item.inputType, item.optionsJson),
+          templateItemIds: [item.id],
           s: section?.sortOrder ?? 0,
           i: item.sortOrder,
-        });
+        };
+        byKey.set(key, column);
+        columns.push(column);
       }
     }
 
     columns.sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label));
-    return columns.map(({ key, label, section, inputType, options }) => ({
-      key,
-      label,
-      section,
-      inputType,
-      options,
-    }));
+    return columns.map(
+      ({ key, label, section, inputType, options, templateItemIds }) => ({
+        key,
+        label,
+        section,
+        inputType,
+        options,
+        templateItemIds,
+      }),
+    );
   }
 
   private serializeSiteVisitDetail(
@@ -2932,6 +2962,25 @@ export class SiteVisitsService {
       }
     }
 
+    // Item-tagged photos for this pole, keyed by templateItemId, so the client can
+    // render an IMAGE checklist column as a read-only photo cell (the column
+    // carries its templateItemIds). Same source as the pinned Gambar Kelegaan
+    // cell; the first photo recorded for an item wins.
+    const checklistImages: Record<string, ChecklistImage> = {};
+    for (const img of latest?.inspectionImages ?? []) {
+      if (!img.templateItemId || checklistImages[img.templateItemId]) {
+        continue;
+      }
+      checklistImages[img.templateItemId] = {
+        url: img.url,
+        filename: img.filename,
+        latitude: img.latitude,
+        longitude: img.longitude,
+        timestamp: img.timestamp?.toISOString() ?? null,
+        createdAt: img.createdAt.toISOString(),
+      };
+    }
+
     return {
       id: link.id,
       siteVisitId: link.siteVisitId,
@@ -2974,6 +3023,8 @@ export class SiteVisitsService {
       },
       // Generic per-field values for the DC's toggleable checklist columns.
       checklistValues,
+      // Item-tagged photos, keyed by templateItemId, for IMAGE checklist columns.
+      checklistImages,
     };
   }
 

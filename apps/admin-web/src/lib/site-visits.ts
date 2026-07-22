@@ -494,6 +494,25 @@ function normalizeChecklistOptions(
   return options.length > 0 ? options : undefined;
 }
 
+/** Coerce the API's per-pole item-tagged photo map (templateItemId → photo) into
+ *  normalized sensor photos, dropping any entry without a usable url. */
+function normalizeChecklistImages(
+  raw: unknown,
+): Record<string, SiteVisitSensorPhoto> | undefined {
+  const record = asRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const images: Record<string, SiteVisitSensorPhoto> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const photo = normalizeSensorPhoto(value);
+    if (photo) {
+      images[key] = photo;
+    }
+  }
+  return Object.keys(images).length > 0 ? images : undefined;
+}
+
 /** The visit's toggleable checklist columns (template order), dropping any entry
  *  missing a key/label. */
 function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
@@ -508,12 +527,16 @@ function normalizeChecklistColumns(raw: unknown): ChecklistColumn[] {
     if (!key || !label) {
       continue;
     }
+    const rawItemIds = record?.templateItemIds;
     columns.push({
       key,
       label,
       section: firstString(record, ["section"]) ?? null,
       inputType: firstString(record, ["inputType"]) ?? undefined,
       options: normalizeChecklistOptions(record?.options),
+      templateItemIds: Array.isArray(rawItemIds)
+        ? rawItemIds.filter((id): id is string => typeof id === "string")
+        : undefined,
     });
   }
   return columns;
@@ -564,6 +587,7 @@ function normalizeAssetLink(rawLink: unknown, index: number): SiteVisitAssetLink
       catitan: firstString(nestedRecord(record, "checklist"), ["catitan"]),
     },
     checklistValues: normalizeChecklistValues(record.checklistValues),
+    checklistImages: normalizeChecklistImages(record.checklistImages),
   };
 }
 
