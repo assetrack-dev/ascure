@@ -1169,6 +1169,10 @@ export class AssetsService {
             images: latestInspection.inspectionImages.map((image) => ({
               id: image.id,
               inspectionId: image.inspectionId,
+              // The checklist item this photo was captured against (null for a
+              // general inspection photo) — lets the client caption it with the
+              // field name instead of a bare "Image 3".
+              templateItemId: image.templateItemId,
               url: image.url,
               path: buildInspectionImagePath(image.inspectionId, image.filename),
               filename: image.filename,

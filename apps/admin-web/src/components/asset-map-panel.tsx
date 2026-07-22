@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Camera,
   Check,
   ChevronLeft,
@@ -15,14 +16,15 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import type { RondaanCheckIssue } from "@ascure/shared-utils";
 
 import {
-  EvidenceImageGrid,
+  EvidenceLightbox,
   buildEvidenceEntries,
-  getImageSourceUrl,
+  type EvidenceImageEntry,
 } from "@/components/inspection-evidence-grid";
 import { ApiError } from "@/lib/api";
-import { fetchAssetDetail } from "@/lib/assets";
+import { fetchAssetDetail, updateAssetCode } from "@/lib/assets";
 import { isMapAssetInspected, type MapAsset } from "@/lib/map";
 import { editChecklistValue } from "@/lib/site-visits";
 import type { AssetDetail } from "@/types/assets";
@@ -66,7 +68,9 @@ function inputTypeFor(column: ChecklistColumn): string {
   }
 }
 
-/** IMAGE items record a photo, not a value — their cell is read-only. */
+/** IMAGE items record a photo, not a value. They're dropped from the checklist
+ *  entirely — every photo lives in the strip above it instead, captioned with
+ *  the field it was captured against. */
 function isImageColumn(column: ChecklistColumn): boolean {
   return column.inputType === "IMAGE";
 }
@@ -84,33 +88,53 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** The photo recorded against an IMAGE checklist item — a thumbnail that opens
- *  the full frame in a new tab, or a placeholder when nothing was captured. */
-function ChecklistPhotoCell({ url }: { url: string | null }) {
-  if (!url) {
+/**
+ * Every photo on the inspection as one horizontally swipeable row — scroll or
+ * drag through them at a glance without opening anything; click one to open the
+ * full-size viewer, which pages with its own arrows, ← / → or a swipe. Each
+ * thumbnail is captioned with the checklist field it was captured against.
+ */
+function PhotoStrip({
+  entries,
+  onOpen,
+}: {
+  entries: EvidenceImageEntry[];
+  onOpen: (index: number) => void;
+}) {
+  if (entries.length === 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[12px] text-[var(--muted)]">
+      <p className="inline-flex items-center gap-1.5 text-[12px] text-[var(--muted)]">
         <ImageOff size={13} />
-        No photo
-      </span>
+        No photos captured for this inspection.
+      </p>
     );
   }
+
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--brand)] hover:underline"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt=""
-        className="h-9 w-9 rounded-md border border-[var(--line)] object-cover"
-      />
-      View
-      <ExternalLink size={12} />
-    </a>
+    <div className="-mx-3.5 overflow-x-auto px-3.5 [scrollbar-width:thin]">
+      <div className="flex snap-x snap-mandatory gap-2 pb-1">
+        {entries.map(({ image, sourceUrl }, index) => (
+          <button
+            type="button"
+            key={`${image.id ?? "photo"}-${index}`}
+            onClick={() => onOpen(index)}
+            title={image.note ?? undefined}
+            className="group w-[124px] shrink-0 snap-start overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel-muted)] text-left outline-none transition hover:border-[var(--brand)] focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={sourceUrl}
+              alt={image.note ?? image.filename ?? "Inspection photo"}
+              loading="lazy"
+              className="h-[86px] w-full object-cover"
+            />
+            <span className="block truncate px-1.5 py-1 text-[10.5px] font-semibold text-[var(--foreground-soft)]">
+              {image.note ?? `Photo ${index + 1}`}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -123,13 +147,11 @@ function ChecklistPhotoCell({ url }: { url: string | null }) {
 function ChecklistRow({
   column,
   value,
-  photoUrl,
   canEdit,
   onSave,
 }: {
   column: ChecklistColumn;
   value: string | null;
-  photoUrl: string | null;
   canEdit: boolean;
   onSave: (next: string) => Promise<void>;
 }) {
@@ -146,7 +168,7 @@ function ChecklistRow({
   }, [value, column.key]);
 
   const options = column.options ?? [];
-  const editable = canEdit && !isImageColumn(column);
+  const editable = canEdit;
 
   const commit = useCallback(async () => {
     if (draft === (value ?? "")) {
@@ -174,9 +196,7 @@ function ChecklistRow({
       </p>
 
       <div className="min-w-0">
-        {isImageColumn(column) ? (
-          <ChecklistPhotoCell url={photoUrl} />
-        ) : editing ? (
+        {editing ? (
           <div className="flex items-center gap-1.5">
             {options.length > 0 ? (
               <select
@@ -271,6 +291,161 @@ function ChecklistRow({
   );
 }
 
+/**
+ * The pole's NO TIANG RONDAAN (its asset code), inline-editable by the same
+ * people who may edit a checklist value. When the rondaan pre-check flags this
+ * pole the code turns red and the reason sits under it, so a manager reviewing
+ * the map can spot a bad number and fix it on the spot rather than discovering
+ * it at visit-completion.
+ */
+function RondaanCode({
+  code,
+  issues,
+  canEdit,
+  onSave,
+}: {
+  code: string;
+  issues: RondaanCheckIssue[];
+  canEdit: boolean;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(code);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDraft(code);
+    setEditing(false);
+    setError("");
+  }, [code]);
+
+  const hasError = issues.some((issue) => issue.severity === "error");
+  // A one-tap correction when the check knows the canonical form.
+  const suggestion = issues.find((issue) => issue.suggestedCode)?.suggestedCode;
+
+  const commit = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      if (!next || next === code) {
+        setEditing(false);
+        setDraft(code);
+        return;
+      }
+      setSaving(true);
+      setError("");
+      try {
+        await onSave(next);
+        setEditing(false);
+      } catch (saveError) {
+        setError(
+          saveError instanceof Error ? saveError.message : "Unable to save this code.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    },
+    [code, onSave],
+  );
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <input
+          autoFocus
+          value={draft}
+          disabled={saving}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void commit(draft);
+            if (event.key === "Escape") {
+              setDraft(code);
+              setEditing(false);
+            }
+          }}
+          className="min-w-0 flex-1 rounded-md border border-[var(--brand)] bg-[var(--panel)] px-2 py-1 font-mono text-[13px] font-bold text-[var(--foreground)]"
+        />
+        <button
+          type="button"
+          aria-label="Save"
+          onClick={() => void commit(draft)}
+          disabled={saving}
+          className="rounded-md p-1 text-[var(--brand)] transition hover:bg-[var(--panel-muted)] disabled:opacity-50"
+        >
+          {saving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+        </button>
+        <button
+          type="button"
+          aria-label="Cancel"
+          onClick={() => {
+            setDraft(code);
+            setEditing(false);
+            setError("");
+          }}
+          disabled={saving}
+          className="rounded-md p-1 text-[var(--muted)] transition hover:bg-[var(--panel-muted)] disabled:opacity-50"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        disabled={!canEdit}
+        onClick={() => setEditing(true)}
+        title={canEdit ? "Edit NO TIANG RONDAAN" : undefined}
+        className={`group flex w-full items-center gap-1.5 rounded-md text-left font-mono text-[14px] font-bold ${
+          hasError ? "text-[var(--critical-text)]" : "text-[var(--foreground)]"
+        } ${canEdit ? "cursor-text transition hover:bg-[var(--panel-muted)]" : "cursor-default"}`}
+      >
+        <span className="min-w-0 flex-1 truncate">{code}</span>
+        {canEdit ? (
+          <Pencil
+            size={11}
+            className="shrink-0 text-[var(--muted-2)] opacity-0 transition group-hover:opacity-100"
+          />
+        ) : null}
+      </button>
+
+      {issues.length > 0 ? (
+        <ul className="mt-1 space-y-0.5">
+          {issues.map((issue, index) => (
+            <li
+              key={index}
+              className={`flex items-start gap-1 text-[11px] leading-snug ${
+                issue.severity === "error"
+                  ? "text-[var(--critical-text)]"
+                  : "text-[var(--medium-text)]"
+              }`}
+            >
+              <AlertTriangle size={11} className="mt-[2px] shrink-0" />
+              <span className="min-w-0">{issue.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {suggestion && canEdit ? (
+        <button
+          type="button"
+          onClick={() => void commit(suggestion)}
+          className="mt-1 text-[11px] font-semibold text-[var(--brand)] transition hover:underline"
+        >
+          Fix to “{suggestion}”
+        </button>
+      ) : null}
+
+      {error ? (
+        <p className="mt-1 text-[11px] text-[var(--critical-text)]">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export interface AssetMapPanelProps {
   /** The pole clicked on the map — its marker data seeds the header instantly
    *  while the full record loads. */
@@ -278,6 +453,12 @@ export interface AssetMapPanelProps {
   token: string | null;
   /** ADMIN / DC / the managing MANAGER — the API re-enforces its own scope. */
   canEdit: boolean;
+  /** Rondaan pre-check issues anchored to THIS pole (bad format, duplicate,
+   *  spacing). Computed across the whole loaded pole set by the map. */
+  rondaanIssues: RondaanCheckIssue[];
+  /** Refetch the map's poles after the pole's code changed, so the list, the
+   *  marker labels and the rondaan check all catch up. */
+  onAssetCodeChanged: () => void;
   /** Position within the poles currently on the map, for the ‹ N of M › stepper. */
   index: number;
   total: number;
@@ -292,6 +473,8 @@ export function AssetMapPanel({
   asset,
   token,
   canEdit,
+  rondaanIssues,
+  onAssetCodeChanged,
   index,
   total,
   onPrev,
@@ -306,6 +489,8 @@ export function AssetMapPanel({
   // The checklist shows only recorded fields by default; this reveals the whole
   // template (and is how you fill in a field that was left blank).
   const [showAllChecklist, setShowAllChecklist] = useState(false);
+  // Which photo is open in the full-size viewer (null = closed).
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -332,7 +517,9 @@ export function AssetMapPanel({
 
   useEffect(() => {
     void load();
-    // Stepping to another pole should start at the top of its record.
+    // Stepping to another pole should start at the top of its record, with any
+    // open photo viewer closed (it belongs to the pole we just left).
+    setLightboxIndex(null);
     scrollRef.current?.scrollTo({ top: 0 });
   }, [load]);
 
@@ -362,43 +549,48 @@ export function AssetMapPanel({
   const inspection = detail?.latestInspection ?? null;
   const checklist = inspection?.checklist ?? null;
 
-  const photos = useMemo(
-    () => buildEvidenceEntries(inspection?.images ?? []),
-    [inspection],
-  );
-
-  const photoUrlFor = useCallback(
-    (column: ChecklistColumn): string | null => {
+  // Every photo on the inspection, each captioned (via `note`, which the strip
+  // and the lightbox both render) with the checklist field it was captured
+  // against — that label is why the IMAGE rows can leave the checklist without
+  // losing which photo is which.
+  const photos = useMemo(() => {
+    const labelByItemId = new Map<string, string>();
+    for (const column of checklist?.columns ?? []) {
       for (const templateItemId of column.templateItemIds ?? []) {
-        const photo = checklist?.images?.[templateItemId];
-        if (photo) {
-          return getImageSourceUrl(photo);
-        }
+        labelByItemId.set(templateItemId, column.label);
       }
-      return null;
-    },
+    }
+    return buildEvidenceEntries(
+      (inspection?.images ?? []).map((image) => {
+        const label = image.templateItemId
+          ? labelByItemId.get(image.templateItemId)
+          : undefined;
+        return label ? { ...image, note: label } : image;
+      }),
+    );
+  }, [inspection, checklist]);
+
+  // IMAGE fields are dropped from the checklist — their photos live in the strip
+  // above, captioned with the field name, so the checklist stays a list of
+  // values you can read (and edit) in one pass.
+  const valueColumns = useMemo(
+    () => (checklist?.columns ?? []).filter((column) => !isImageColumn(column)),
     [checklist],
   );
 
-  // The checklist starts curated — only fields the crew actually recorded (an
-  // IMAGE field counts when a photo was captured). "See all" reveals the rest of
-  // the template, which is also how you fill in a field left blank. Mirrors the
-  // asset-detail page's Inspection Result toggle.
-  const hasValue = useCallback(
-    (column: ChecklistColumn): boolean =>
-      isImageColumn(column)
-        ? photoUrlFor(column) !== null
-        : (checklist?.values?.[column.key] ?? "") !== "",
-    [checklist, photoUrlFor],
-  );
-
+  // The checklist starts curated — only fields the crew actually recorded.
+  // "See all" reveals the rest of the template, which is also how you fill in a
+  // field left blank. Mirrors the asset-detail Inspection Result toggle.
   const filledColumns = useMemo(
-    () => (checklist?.columns ?? []).filter(hasValue),
-    [checklist, hasValue],
+    () =>
+      valueColumns.filter(
+        (column) => (checklist?.values?.[column.key] ?? "") !== "",
+      ),
+    [valueColumns, checklist],
   );
-  const totalColumns = checklist?.columns?.length ?? 0;
+  const totalColumns = valueColumns.length;
   const hiddenColumnCount = totalColumns - filledColumns.length;
-  const displayedColumns = showAllChecklist ? (checklist?.columns ?? []) : filledColumns;
+  const displayedColumns = showAllChecklist ? valueColumns : filledColumns;
 
   // Group the shown fields by their template section so the panel reads the way
   // the crew filled it in. Fields with no section fall into one unnamed group.
@@ -435,6 +627,20 @@ export function AssetMapPanel({
     [token, inspection?.id, inspection?.siteVisitId, load],
   );
 
+  const saveAssetCode = useCallback(
+    async (next: string) => {
+      if (!token) {
+        throw new Error("Your session has expired.");
+      }
+      await updateAssetCode(token, asset.id, next);
+      // The code is the marker label AND the rondaan check's input, so refresh
+      // the map's poles rather than only this panel.
+      onAssetCodeChanged();
+      await load();
+    },
+    [token, asset.id, onAssetCodeChanged, load],
+  );
+
   const defectItems = (inspection?.items ?? []).filter((item) => item.isDefect);
 
   return (
@@ -442,10 +648,13 @@ export function AssetMapPanel({
       {/* Header — code + the ‹ N of M › stepper. */}
       <div className="shrink-0 border-b border-[var(--line)] px-3.5 py-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-mono text-[14px] font-bold text-[var(--foreground)]">
-              {asset.assetCode}
-            </p>
+          <div className="min-w-0 flex-1">
+            <RondaanCode
+              code={asset.assetCode}
+              issues={rondaanIssues}
+              canEdit={canEdit}
+              onSave={saveAssetCode}
+            />
             <p className="truncate text-[12px] text-[var(--muted)]">
               {asset.substation?.name || asset.substation?.code || "—"}
             </p>
@@ -552,6 +761,21 @@ export function AssetMapPanel({
               </div>
             </div>
 
+            {/* Photos — above the checklist so the evidence reads first, and
+                swipeable in place without opening anything. */}
+            <section className="border-b border-[var(--line)] px-3.5 py-3">
+              <div className="flex items-center justify-between gap-2 pb-2">
+                <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--foreground)]">
+                  <Camera size={14} className="text-[var(--brand)]" />
+                  Photos
+                </span>
+                <span className="text-[11px] text-[var(--muted)]">
+                  {photos.length > 0 ? `${photos.length} · swipe to browse` : "0"}
+                </span>
+              </div>
+              <PhotoStrip entries={photos} onOpen={setLightboxIndex} />
+            </section>
+
             {/* Checklist */}
             <section className="border-b border-[var(--line)]">
               <div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
@@ -612,7 +836,6 @@ export function AssetMapPanel({
                         key={column.key}
                         column={column}
                         value={checklist?.values?.[column.key] ?? null}
-                        photoUrl={photoUrlFor(column)}
                         canEdit={canEdit}
                         onSave={(next) => saveValue(column, next)}
                       />
@@ -647,26 +870,19 @@ export function AssetMapPanel({
               </section>
             ) : null}
 
-            {/* Photos */}
-            <section className="px-3.5 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--foreground)]">
-                  <Camera size={14} className="text-[var(--brand)]" />
-                  Photos
-                </span>
-                <span className="text-[11px] text-[var(--muted)]">{photos.length}</span>
-              </div>
-              <div className="mt-2.5">
-                <EvidenceImageGrid
-                  entries={photos}
-                  emptyText="No photos captured for this inspection."
-                  titlePrefix="Inspection Image"
-                />
-              </div>
-            </section>
           </>
         ) : null}
       </div>
+
+      {lightboxIndex !== null && photos[lightboxIndex] ? (
+        <EvidenceLightbox
+          entries={photos}
+          index={lightboxIndex}
+          titlePrefix="Photo"
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      ) : null}
     </aside>
   );
 }

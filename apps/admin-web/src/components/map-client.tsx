@@ -13,6 +13,11 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
+import {
+  checkRondaanForCompletion,
+  type AssetLike,
+  type RondaanCheckIssue,
+} from "@ascure/shared-utils";
 import { AppShell } from "@/components/app-shell";
 import { AssetMapPanel } from "@/components/asset-map-panel";
 import { AuthGuard } from "@/components/auth-guard";
@@ -559,6 +564,20 @@ function MapContent() {
     }
   }, [points]);
 
+  // Re-point the open panel at the freshly loaded copy of its pole. Without this
+  // the panel keeps rendering the pole as it was when clicked — so editing its
+  // NO TIANG RONDAAN left the header showing the OLD code while the rondaan
+  // check (recomputed from the new points) already showed the new one.
+  useEffect(() => {
+    setSelected((current) => {
+      if (!current) {
+        return current;
+      }
+      const fresh = points.find((asset) => asset.id === current.id);
+      return fresh ?? current;
+    });
+  }, [points]);
+
   // Filter-dock option lists (fetched once).
   useEffect(() => {
     if (!token) return;
@@ -658,6 +677,46 @@ function MapContent() {
     () => [...points].sort((a, b) => mapAssetPriority(b) - mapAssetPriority(a)),
     [points],
   );
+
+  // The SAME NO TIANG RONDAAN pre-check the inspector runs before completing a
+  // visit and the DC sees on the Site Visit page, re-run over the poles on the
+  // map so the panel can flag a bad number where a manager can fix it. Issues
+  // are indexed by asset so the panel only shows the ones for its pole. Gaps sit
+  // BETWEEN poles and carry no assetId, so they're not surfaced per-pole here.
+  const rondaanIssuesByAsset = useMemo(() => {
+    const byAsset = new Map<string, RondaanCheckIssue[]>();
+    if (points.length === 0) {
+      return byAsset;
+    }
+    const result = checkRondaanForCompletion(
+      points.map(
+        (asset): AssetLike => ({
+          id: asset.id,
+          name: asset.name,
+          assetCode: asset.assetCode,
+          noTiangRondaan: asset.assetCode,
+        }),
+      ),
+    );
+    const add = (assetId: string, issue: RondaanCheckIssue) => {
+      const list = byAsset.get(assetId);
+      if (list) {
+        list.push(issue);
+      } else {
+        byAsset.set(assetId, [issue]);
+      }
+    };
+    for (const issue of result.issues) {
+      if (issue.assetId) {
+        add(issue.assetId, issue);
+      }
+      // A duplicate names every pole sharing the code — flag all of them.
+      for (const assetId of issue.assetIds ?? []) {
+        add(assetId, issue);
+      }
+    }
+    return byAsset;
+  }, [points]);
 
   // The asset panel steps through the poles in the same order the in-view list
   // shows them, so ‹ › and the list agree on what "next" means.
@@ -946,6 +1005,10 @@ function MapContent() {
               asset={selected}
               token={session?.token ?? null}
               canEdit={canEditChecklist}
+              rondaanIssues={rondaanIssuesByAsset.get(selected.id) ?? []}
+              onAssetCodeChanged={() => {
+                if (token) void load(token, drill, filters, showAllPoles);
+              }}
               index={selectedIndex}
               total={pointRows.length}
               onPrev={() => selectAt(selectedIndex - 1)}

@@ -372,6 +372,7 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
       return {
         id: readString(imageRecord, "id") ?? url,
         inspectionId: readString(imageRecord, "inspectionId") ?? "",
+        templateItemId: readString(imageRecord, "templateItemId"),
         url,
         path: readString(imageRecord, "path"),
         filename: readString(imageRecord, "filename"),
