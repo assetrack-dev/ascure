@@ -171,6 +171,10 @@ export interface SiteVisitAssetLink {
    *  keyed by normalized (upper, single-spaced) label. Feeds the DC's toggleable
    *  columns — match a {@link ChecklistColumn.key} against this map. */
   checklistValues?: Record<string, string | null>;
+  /** Item-tagged photos for this pole's latest submitted inspection, keyed by
+   *  templateItemId. An IMAGE {@link ChecklistColumn} resolves its photo by
+   *  looking up its `templateItemIds` in this map. */
+  checklistImages?: Record<string, SiteVisitSensorPhoto>;
 }
 
 /** A template-defined checklist field the DC can turn on as a Linked-Assets
@@ -186,6 +190,9 @@ export interface ChecklistColumn {
    *  Yes/No) so the editor renders a dropdown matching the checklist template.
    *  Absent → the editor stays a free-text/number/date input. */
   options?: { label: string; value: string }[];
+  /** Every template item id behind this column. An IMAGE column looks these up in
+   *  {@link SiteVisitAssetLink.checklistImages} to find the pole's photo. */
+  templateItemIds?: string[];
 }
 
 export interface SiteVisitSensorPhoto {

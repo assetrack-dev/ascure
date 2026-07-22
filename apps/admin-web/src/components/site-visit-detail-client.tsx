@@ -1271,6 +1271,9 @@ interface SensorPhotoView {
   photo: SiteVisitSensorPhoto;
   reading: string | null;
   poleCode: string;
+  /** What the photo is — the pinned Kelegaan cell keeps the Smart Sensor wording;
+   *  a template IMAGE column passes its own field label. */
+  label?: string;
 }
 
 /**
@@ -1343,7 +1346,7 @@ function SensorPhotoLightbox({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Smart Sensor photo for ${view.poleCode}`}
+        aria-label={`${view.label ?? "Smart Sensor photo"} for ${view.poleCode}`}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] outline-none"
@@ -1354,12 +1357,19 @@ function SensorPhotoLightbox({
               {view.poleCode}
             </p>
             <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Recorded Bacaan Kelegaan 1:{" "}
-              <span className="font-semibold text-[var(--foreground-soft)]">
-                {view.reading ?? "Not recorded"}
-              </span>{" "}
-              — compare against the LCD in the photo.
+              {view.label ?? "Smart Sensor photo"}
             </p>
+            {/* The reading comparison only makes sense for the Smart Sensor cell;
+                a template IMAGE column opens with no reading. */}
+            {view.reading !== null ? (
+              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+                Recorded Bacaan Kelegaan 1:{" "}
+                <span className="font-semibold text-[var(--foreground-soft)]">
+                  {view.reading}
+                </span>{" "}
+                — compare against the LCD in the photo.
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -1375,7 +1385,10 @@ function SensorPhotoLightbox({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={src}
-              alt={view.photo.filename ?? `Smart Sensor photo for ${view.poleCode}`}
+              alt={
+                view.photo.filename ??
+                `${view.label ?? "Smart Sensor photo"} for ${view.poleCode}`
+              }
               onError={() => setBroken(true)}
               className="max-h-[70vh] w-auto max-w-full rounded-[var(--radius-control)] object-contain"
             />
@@ -1761,11 +1774,15 @@ function SensorPhotoCell({
   reading,
   poleCode,
   onOpen,
+  label = "Smart Sensor photo",
 }: {
   photo: SiteVisitSensorPhoto | null;
   reading: string | null;
   poleCode: string;
   onOpen: (view: SensorPhotoView) => void;
+  /** What this photo is, for the a11y label — the pinned Kelegaan cell keeps the
+   *  Smart Sensor wording; a template IMAGE column passes its own field label. */
+  label?: string;
 }) {
   const [broken, setBroken] = useState(false);
   const src = photo ? getImageSourceUrl({ url: photo.url }) : null;
@@ -1781,7 +1798,7 @@ function SensorPhotoCell({
     return (
       <span
         className="inline-flex items-center gap-1 text-[var(--muted-2)]"
-        title="Sensor photo unavailable"
+        title={`${label} unavailable`}
       >
         <ImageOff size={14} /> N/A
       </span>
@@ -1793,7 +1810,7 @@ function SensorPhotoCell({
       type="button"
       onClick={(event) => {
         event.stopPropagation();
-        onOpen({ photo, reading, poleCode });
+        onOpen({ photo, reading, poleCode, label });
       }}
       onKeyDown={(event) => {
         // Keep Enter/Space from bubbling to the row (which navigates to the
@@ -1802,7 +1819,7 @@ function SensorPhotoCell({
           event.stopPropagation();
         }
       }}
-      aria-label={`View Smart Sensor photo for ${poleCode}`}
+      aria-label={`View ${label} for ${poleCode}`}
       className="group block h-10 w-14 overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2791,6 +2808,15 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     const cellValue =
                                       link.checklistValues?.[column.key] ?? null;
                                     const cellAriaLabel = `${column.label} for ${link.asset.assetCode}`;
+                                    // An IMAGE column renders the pole's item-tagged
+                                    // photo, READ-ONLY (capture happens on mobile) —
+                                    // resolved via any of the column's item ids.
+                                    const checklistPhoto =
+                                      column.inputType === "IMAGE"
+                                        ? ((column.templateItemIds ?? [])
+                                            .map((id) => link.checklistImages?.[id])
+                                            .find((photo) => Boolean(photo)) ?? null)
+                                        : null;
                                     const saveCell = async (next: string) => {
                                       const token = session?.token;
                                       const inspectionId = link.asset.latestInspectionId;
@@ -2814,7 +2840,15 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                         key={`${CHECKLIST_SORT_PREFIX}${column.key}`}
                                         className={`${tableCellClass} min-w-32`}
                                       >
-                                        {column.options && column.options.length > 0 ? (
+                                        {column.inputType === "IMAGE" ? (
+                                          <SensorPhotoCell
+                                            photo={checklistPhoto}
+                                            reading={null}
+                                            poleCode={link.asset.assetCode}
+                                            label={column.label}
+                                            onOpen={setSensorPhotoView}
+                                          />
+                                        ) : column.options && column.options.length > 0 ? (
                                           <ChecklistSelectCell
                                             value={cellValue}
                                             options={column.options}
