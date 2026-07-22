@@ -18,6 +18,9 @@ export interface AssetListItem {
 export interface InspectionEvidenceImage {
   id: string;
   inspectionId: string;
+  /** The checklist item this photo was captured against, or null for a general
+   *  inspection photo. Lets a viewer caption it with the field name. */
+  templateItemId?: string | null;
   url: string;
   path?: string | null;
   filename?: string | null;

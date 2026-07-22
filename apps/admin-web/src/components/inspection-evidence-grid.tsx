@@ -174,7 +174,7 @@ export function EvidenceImageGrid({
  * through the set with the on-screen arrows, ← / → keys, or a touch swipe, and
  * closes on the X, a backdrop click, or Escape. Focus is trapped and restored.
  */
-function EvidenceLightbox({
+export function EvidenceLightbox({
   entries,
   index,
   titlePrefix,
