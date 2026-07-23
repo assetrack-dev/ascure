@@ -79,10 +79,6 @@ interface AppShellProps {
 // reveals Teams (otherwise adminOnly) and hides everything not in the list
 // (Network, the Operations Board QA surface, the org/region/asset-type admin
 // tools). Reports is the one exception — added back in the filter when canReport.
-// A CLIENT viewer (TNB) sees exactly one page: their progress view. Everything
-// else in this console is contractor operations and is not theirs to see.
-const CLIENT_NAV_HREFS = new Set<string>(["/progress"]);
-
 const MANAGER_NAV_HREFS = new Set<string>([
   "/dashboard",
   "/maintenance-workspace",
@@ -94,6 +90,13 @@ const MANAGER_NAV_HREFS = new Set<string>([
   "/users",
   "/teams",
 ]);
+
+// A CLIENT viewer (TNB) sees exactly two pages: their progress view and the
+// asset map — both server-scoped to the Mainheads assigned to their
+// organization. Everything else here is contractor operations, not theirs.
+// ⚠ This allow-list also OVERRIDES the /map item's own `roles` gate (which lists
+// only ADMIN/MANAGER/SUPERVISOR), so the client branch must run before it.
+const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/map"]);
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
