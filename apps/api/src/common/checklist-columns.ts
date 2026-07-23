@@ -61,7 +61,13 @@ export function checklistColumnOptions(
       { label: 'No', value: 'No' },
     ];
   }
-  if (inputType === InspectionItemInputType.SELECT) {
+  // SELECT and MULTI_SELECT both draw from the template's configured options.
+  // MULTI_SELECT was omitted here, so its rows fell back to a free-text box with
+  // no options at all — the editor could not offer what the crew picked from.
+  if (
+    inputType === InspectionItemInputType.SELECT ||
+    inputType === InspectionItemInputType.MULTI_SELECT
+  ) {
     const parsed = normalizeTemplateSelectOptions(optionsJson);
     return parsed ? parsed.map((o) => ({ label: o.label, value: o.value })) : null;
   }
@@ -75,12 +81,20 @@ export type ChecklistResultValueRow = {
   valueBoolean: boolean | null;
   valueDate: Date | null;
   valueDateTime: Date | null;
+  /** MULTI_SELECT stores its picks here as a string array — nowhere else. */
+  valueJson?: Prisma.JsonValue | null;
 };
 
 /**
  * The displayed value of a recorded checklist result, reading the typed columns
  * in the same priority the Download Checklist / Linked-Assets table use: text
- * first (readings like "LO" are stored as text), then number, boolean, date.
+ * first (readings like "LO" are stored as text), then number, boolean, date,
+ * and finally the MULTI_SELECT picks.
+ *
+ * ⚠ `valueJson` MUST be read here. MULTI_SELECT writes its answer ONLY to
+ * valueJson (see inspections.service coerce), so omitting it made every
+ * multi-select item render BLANK everywhere this function feeds — the map's
+ * asset panel and the Site Visit Linked-Assets table both.
  */
 export function checklistResultValue(
   row: ChecklistResultValueRow | null | undefined,
@@ -89,6 +103,12 @@ export function checklistResultValue(
     return null;
   }
   const text = row.valueText?.trim();
+  const picks = readMultiSelectPicks(row.valueJson);
+  if (picks) {
+    // An item that allows "Other (free text)" keeps that answer in valueText
+    // alongside the validated picks — show both rather than dropping one.
+    return text ? `${picks}, ${text}` : picks;
+  }
   if (text) {
     return text;
   }
@@ -105,4 +125,16 @@ export function checklistResultValue(
     return row.valueDateTime.toISOString();
   }
   return null;
+}
+
+/** MULTI_SELECT picks as a readable list, or null when there are none. */
+function readMultiSelectPicks(value: Prisma.JsonValue | null | undefined): string | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const picks = value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return picks.length > 0 ? picks.join(', ') : null;
 }

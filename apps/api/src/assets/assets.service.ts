@@ -1136,6 +1136,8 @@ export class AssetsService {
                 valueNumber: true,
                 valueBoolean: true,
                 valueDate: true,
+                // MULTI_SELECT keeps its picks ONLY here.
+                valueJson: true,
                 valueDateTime: true,
                 templateItemId: true,
                 templateItem: {

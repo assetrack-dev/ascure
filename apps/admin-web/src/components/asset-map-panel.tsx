@@ -167,8 +167,34 @@ function ChecklistRow({
     setError("");
   }, [value, column.key]);
 
-  const options = column.options ?? [];
-  const editable = canEdit;
+  const templateOptions = column.options ?? [];
+  // MULTI_SELECT holds several picks in one value; a single-value editor would
+  // write the wrong column and silently drop the real answer, so it reads only
+  // (the API refuses it too). Everything else follows the caller's permission.
+  const editable = canEdit && column.inputType !== "MULTI_SELECT";
+
+  // A recorded value that is NOT among the template's current options (the
+  // template was edited after the survey, or the answer predates it) would leave
+  // the dropdown blank — and saving from there would silently discard what the
+  // crew recorded. Keep it as an extra choice so it stays visible and selected.
+  const options = useMemo(() => {
+    const current = value?.trim();
+    if (!current || templateOptions.some((option) => option.value === current)) {
+      return templateOptions;
+    }
+    return [...templateOptions, { value: current, label: `${current} (not in list)` }];
+  }, [templateOptions, value]);
+
+  // Show what the crew PICKED, not the stored code: a SELECT stores the option
+  // value ("A") while the template's label carries the meaning ("A - Super
+  // Critical"). Falls back to the raw value when there is no matching option.
+  const displayValue = useMemo(() => {
+    if (!value) {
+      return value;
+    }
+    const match = templateOptions.find((option) => option.value === value);
+    return match ? match.label : value;
+  }, [templateOptions, value]);
 
   const commit = useCallback(async () => {
     if (draft === (value ?? "")) {
@@ -271,8 +297,11 @@ function ChecklistRow({
                 : "cursor-default text-[var(--foreground)]"
             }`}
           >
-            <span className={`min-w-0 flex-1 truncate ${value ? "" : "text-[var(--muted)]"}`}>
-              {value || "—"}
+            <span
+              title={displayValue ?? undefined}
+              className={`min-w-0 flex-1 truncate ${value ? "" : "text-[var(--muted)]"}`}
+            >
+              {displayValue || "—"}
             </span>
             {editable ? (
               <Pencil
