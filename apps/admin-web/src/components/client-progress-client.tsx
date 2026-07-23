@@ -71,6 +71,20 @@ function lifecycleLabel(status: string | null): string {
   }
 }
 
+/** Maintenance category → the words TNB uses, not our enum token. */
+function formatCategory(category: string): string {
+  switch (category.toUpperCase()) {
+    case "RENTIS":
+      return "Rentis";
+    case "CAT_TIANG":
+      return "Cat Tiang";
+    case "SELENGGARAAN":
+      return "Selenggaraan";
+    default:
+      return category;
+  }
+}
+
 function severityTone(severity: string | null): string {
   switch (severity?.toUpperCase()) {
     case "CRITICAL":
@@ -164,6 +178,26 @@ function ClientProgressContent() {
           fetchClientSurveys(token),
           fetchClientMainheads(token),
         ]);
+
+        // Most clients are in charge of ONE Mainhead. Listing it as a single row
+        // and asking them to click through is a wasted level (and leaves the
+        // coverage card mostly blank), so drop straight to its Pencawang and
+        // treat that Mainhead as the root — `singleMainhead` then hides the
+        // now-meaningless "All Mainheads" crumb.
+        if (
+          targetMainheadId === null &&
+          nextProgress.level === "mainhead" &&
+          nextProgress.groups.length === 1
+        ) {
+          const only = nextProgress.groups[0];
+          setMainheadId(only.id);
+          setMainheadName(only.name);
+          setSurveys(nextSurveys);
+          setMainheads(nextMainheads);
+          setProgress(await fetchClientProgress(token, only.id));
+          return;
+        }
+
         setProgress(nextProgress);
         setSurveys(nextSurveys);
         setMainheads(nextMainheads);
@@ -239,6 +273,9 @@ function ClientProgressContent() {
     setPoles(null);
   }, []);
 
+  // With one assigned Mainhead there is no level above it to return to.
+  const singleMainhead = mainheads.length === 1;
+
   const severityTotal = useMemo(
     () => progress?.defects.bySeverity.reduce((sum, row) => sum + row.value, 0) ?? 0,
     [progress],
@@ -253,20 +290,24 @@ function ClientProgressContent() {
             <div className="min-w-0">
               <Eyebrow>Survey Progress</Eyebrow>
               <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px]">
-                <button
-                  type="button"
-                  onClick={goToTop}
-                  className={
-                    mainheadId
-                      ? "font-semibold text-[var(--brand)] hover:underline"
-                      : "font-semibold text-[var(--foreground)]"
-                  }
-                >
-                  All Mainheads
-                </button>
+                {singleMainhead ? null : (
+                  <button
+                    type="button"
+                    onClick={goToTop}
+                    className={
+                      mainheadId
+                        ? "font-semibold text-[var(--brand)] hover:underline"
+                        : "font-semibold text-[var(--foreground)]"
+                    }
+                  >
+                    All Mainheads
+                  </button>
+                )}
                 {mainheadId ? (
                   <>
-                    <ChevronRight size={13} className="text-[var(--muted-2)]" />
+                    {singleMainhead ? null : (
+                      <ChevronRight size={13} className="text-[var(--muted-2)]" />
+                    )}
                     <button
                       type="button"
                       onClick={goToMainhead}
@@ -510,6 +551,30 @@ function ClientProgressContent() {
                         )}
                       </div>
                     </Card>
+
+                    {progress.defects.byCategory.length > 0 ? (
+                      <Card>
+                        <CardHead
+                          title="Work type"
+                          hint="Open defects by category"
+                        />
+                        <div className="space-y-2.5 px-4 pb-4">
+                          {progress.defects.byCategory.map((row) => (
+                            <div
+                              key={row.label}
+                              className="flex items-center justify-between gap-3 text-[12.5px]"
+                            >
+                              <span className="min-w-0 truncate text-[var(--foreground-soft)]">
+                                {formatCategory(row.label)}
+                              </span>
+                              <span className="shrink-0 font-semibold tabular-nums text-[var(--foreground)]">
+                                {row.value.toLocaleString()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    ) : null}
 
                     <Card>
                       <CardHead title="Recent surveys" hint="Completed work" />
