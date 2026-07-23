@@ -187,7 +187,15 @@ function ChecklistRow({
   // template was edited after the survey, or the answer predates it) would leave
   // the dropdown blank — and saving from there would silently discard what the
   // crew recorded. Keep it as an extra choice so it stays visible and selected.
+  //
+  // ⚠ ONLY for a column that genuinely HAS options. Without that guard this
+  // synthesised a one-item list for every NUMBER/TEXT field carrying a value,
+  // which turned their typed inputs into a bogus "<value> (not in list)"
+  // dropdown — i.e. they could no longer be edited at all.
   const options = useMemo(() => {
+    if (templateOptions.length === 0) {
+      return templateOptions;
+    }
     const current = value?.trim();
     if (!current || templateOptions.some((option) => option.value === current)) {
       return templateOptions;
