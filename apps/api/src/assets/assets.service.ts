@@ -26,7 +26,10 @@ import {
   isNetworkScope,
 } from '../common/operational-scope';
 import { PrismaService } from '../prisma/prisma.service';
-import { buildScopeContext } from '../common/authorization/scope-context';
+import {
+  buildScopeContext,
+  type ScopeContext,
+} from '../common/authorization/scope-context';
 import {
   assetAccessWhere,
   assetOversightWhere,
@@ -125,6 +128,41 @@ export class AssetsService {
    * Distinct from MasterDataService.listAssets (GET /assets), which is tenant-
    * scoped only and feeds the mobile inspection flow + the assets table.
    */
+  /**
+   * The map's per-role asset visibility clause — the single definition every map
+   * query spreads, so the bubble counts, the Pencawang list and the pole layer
+   * can never disagree about what a caller may see.
+   *
+   * ADMIN: everything. CONTRACTORS: transitive through the visits they may see
+   * (an Asset row carries no team/mainhead column) — i.e. scoped by WHO DID THE
+   * WORK. CLIENT VIEWERS: scoped by WHOSE NETWORK IT IS — poles whose Pencawang
+   * sits under a Mainhead assigned to their organization, matching the client
+   * progress view exactly. Using the contractor's transitive rule for a client
+   * would under-count badly: a pole nobody has surveyed yet has no visit to
+   * reach it through, so the map would show 1 pole where progress counts 88.
+   */
+  private mapScopeWhere(
+    user: RequestUser,
+    ctx: ScopeContext,
+    scopeWhere: Prisma.SiteVisitWhereInput,
+  ): Prisma.AssetWhereInput {
+    if (ctx.isAdmin) {
+      return {};
+    }
+
+    if (ctx.isClientViewer) {
+      // Fails closed: an empty assignment list matches no Pencawang.
+      return { substation: { mainheadId: { in: ctx.clientMainheadIds } } };
+    }
+
+    return {
+      OR: [
+        { inspections: { some: { siteVisit: scopeWhere } } },
+        { createdDuringVisit: scopeWhere },
+      ],
+    };
+  }
+
   private async loadMapAssets(
     user: RequestUser,
     extraWhere?: Prisma.AssetWhereInput,
@@ -140,17 +178,11 @@ export class AssetsService {
       tenantId: user.tenantId,
       latitude: { not: null },
       longitude: { not: null },
-      // ADMIN / QA-admin: every located asset in the tenant. Everyone else:
-      // assets reachable through a site visit they may see.
-      ...(ctx.isAdmin
-        ? {}
-        : {
-            OR: [
-              { inspections: { some: { siteVisit: scopeWhere } } },
-              { createdDuringVisit: scopeWhere },
-            ],
-          }),
-      ...extraWhere,
+      // AND rather than spread: `extraWhere` can also constrain `substation`
+      // (the Mainhead-wide points view does), and a client viewer's scope is a
+      // substation filter too — spreading both would let one silently replace
+      // the other. See the same guard in aggregateMap.
+      AND: [this.mapScopeWhere(user, ctx, scopeWhere), extraWhere ?? {}],
     };
 
     const assets = await this.prisma.asset.findMany({
@@ -430,14 +462,7 @@ export class AssetsService {
       tenantId: user.tenantId,
       latitude: { not: null },
       longitude: { not: null },
-      ...(ctx.isAdmin
-        ? {}
-        : {
-            OR: [
-              { inspections: { some: { siteVisit: scopeWhere } } },
-              { createdDuringVisit: scopeWhere },
-            ],
-          }),
+      ...this.mapScopeWhere(user, ctx, scopeWhere),
     };
 
     const substations = await this.prisma.substation.findMany({
@@ -602,17 +627,18 @@ export class AssetsService {
       tenantId: user.tenantId,
       latitude: { not: null },
       longitude: { not: null },
-      ...(ctx.isAdmin
-        ? {}
-        : {
-            OR: [
-              { inspections: { some: { siteVisit: scopeWhere } } },
-              { createdDuringVisit: scopeWhere },
-            ],
-          }),
-      ...(Object.keys(substationFilter).length > 0
-        ? { substation: substationFilter }
-        : {}),
+      // ⚠ The scope clause and the drill-down filter can BOTH constrain
+      // `substation` (a client viewer is scoped by substation.mainheadId; the
+      // region/mainhead drill filters on it too). Spreading both would let the
+      // later key silently REPLACE the earlier one — which dropped the client
+      // scope entirely and showed a TNB user another Mainhead's poles. AND-ing
+      // them keeps both constraints.
+      AND: [
+        this.mapScopeWhere(user, ctx, scopeWhere),
+        ...(Object.keys(substationFilter).length > 0
+          ? [{ substation: substationFilter }]
+          : []),
+      ],
       ...this.mapFilterWhere(query),
     };
 

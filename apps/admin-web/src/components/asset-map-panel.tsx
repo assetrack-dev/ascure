@@ -453,6 +453,9 @@ export interface AssetMapPanelProps {
   token: string | null;
   /** ADMIN / DC / the managing MANAGER — the API re-enforces its own scope. */
   canEdit: boolean;
+  /** A network-owner (TNB) viewer: read-only, and a blocked pole means its
+   *  survey hasn't been completed yet rather than a genuine error. */
+  isClientViewer?: boolean;
   /** Rondaan pre-check issues anchored to THIS pole (bad format, duplicate,
    *  spacing). Computed across the whole loaded pole set by the map. */
   rondaanIssues: RondaanCheckIssue[];
@@ -473,6 +476,7 @@ export function AssetMapPanel({
   asset,
   token,
   canEdit,
+  isClientViewer = false,
   rondaanIssues,
   onAssetCodeChanged,
   index,
@@ -507,13 +511,22 @@ export function AssetMapPanel({
         return;
       }
       setDetail(null);
-      setError(
-        loadError instanceof Error ? loadError.message : "Unable to load this asset.",
-      );
+      // A client viewer only ever reaches a pole in their own Mainheads, so the
+      // one failure they can hit is the evidence gate — the survey hasn't left
+      // the field yet. Say that instead of a bare "unable to load".
+      if (isClientViewer && loadError instanceof ApiError && loadError.status === 404) {
+        setError(
+          "This pole's survey is still in progress. Its details appear once the crew completes it.",
+        );
+      } else {
+        setError(
+          loadError instanceof Error ? loadError.message : "Unable to load this asset.",
+        );
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [token, asset.id, onUnauthorized]);
+  }, [token, asset.id, isClientViewer, onUnauthorized]);
 
   useEffect(() => {
     void load();

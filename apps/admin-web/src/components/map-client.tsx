@@ -1005,7 +1005,15 @@ function MapContent() {
               asset={selected}
               token={session?.token ?? null}
               canEdit={canEditChecklist}
-              rondaanIssues={rondaanIssuesByAsset.get(selected.id) ?? []}
+              isClientViewer={session?.user?.isClientViewer === true}
+              rondaanIssues={
+                // Rondaan lint is an INTERNAL data-quality note for our own
+                // crews — never surface "bad pole-number format" to the client
+                // whose network it is.
+                session?.user?.isClientViewer === true
+                  ? []
+                  : (rondaanIssuesByAsset.get(selected.id) ?? [])
+              }
               onAssetCodeChanged={() => {
                 if (token) void load(token, drill, filters, showAllPoles);
               }}

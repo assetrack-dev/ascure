@@ -39,6 +39,7 @@ const C = {
   outsideAsset: '70000000-0000-4000-8000-0000000000f2',
   inspection: '80000000-0000-4000-8000-0000000000f1',
   assignment: 'f0000000-0000-4000-8000-000000000001',
+  region: 'd0000000-0000-4000-8000-000000000001',
   email: 'client.tnb@authz.test',
 };
 
@@ -77,10 +78,31 @@ describe('Authz · client (TNB) progress view', () => {
         organizationId: C.org,
       },
     });
+    // Both Mainheads share ONE region, so drilling that region is exactly the
+    // case where the substation-filter collision used to leak the unassigned one.
+    await prisma.operationalRegion.create({
+      data: {
+        id: C.region,
+        tenantId: IDS.tenant.t1,
+        name: 'Client Region',
+        code: 'CLR',
+        isActive: true,
+      },
+    });
     await prisma.mainhead.createMany({
       data: [
-        { id: C.mainhead, name: 'CLIENT MH IN', isActive: true },
-        { id: C.otherMainhead, name: 'CLIENT MH OUT', isActive: true },
+        {
+          id: C.mainhead,
+          name: 'CLIENT MH IN',
+          isActive: true,
+          operationalRegionId: C.region,
+        },
+        {
+          id: C.otherMainhead,
+          name: 'CLIENT MH OUT',
+          isActive: true,
+          operationalRegionId: C.region,
+        },
       ],
     });
     await prisma.substation.createMany({
@@ -178,6 +200,7 @@ describe('Authz · client (TNB) progress view', () => {
     await prisma.mainhead.deleteMany({
       where: { id: { in: [C.mainhead, C.otherMainhead] } },
     });
+    await prisma.operationalRegion.deleteMany({ where: { id: C.region } });
     await prisma.user.deleteMany({ where: { id: C.user } });
     await prisma.organization.deleteMany({ where: { id: C.org } });
     await app?.close();
@@ -229,6 +252,40 @@ describe('Authz · client (TNB) progress view', () => {
 
     it('a pole outside the assigned Mainhead is NOT readable via /assets/:id', () =>
       http(app, token.client).get(`/api/v1/assets/${C.outsideAsset}`).expect(404));
+
+    // The map applies the client scope as a `substation` filter, and the
+    // drill-down levels filter on `substation` too. Spreading both into one
+    // where-clause let the later key REPLACE the client scope, so drilling a
+    // region showed a TNB user Mainheads they were never assigned. These pin
+    // the AND-ing that fixes it.
+    describe('map scope survives the drill-down filters', () => {
+      it('the Mainhead roll-up lists only the assigned Mainhead', async () => {
+        const res = await http(app, token.client).get(
+          '/api/v1/assets/map?level=mainhead',
+        );
+        expect(res.status).toBe(200);
+        const names = res.body.map((b: { name: string }) => b.name);
+        expect(names).toContain('CLIENT MH IN');
+        expect(names).not.toContain('CLIENT MH OUT');
+      });
+
+      it('and still does when drilled into a region', async () => {
+        const res = await http(app, token.client).get(
+          `/api/v1/assets/map?level=mainhead&regionId=${C.region}`,
+        );
+        expect(res.status).toBe(200);
+        const names = res.body.map((b: { name: string }) => b.name);
+        expect(names).not.toContain('CLIENT MH OUT');
+      });
+
+      it('the Mainhead-wide pole layer refuses an unassigned Mainhead', async () => {
+        const res = await http(app, token.client).get(
+          `/api/v1/assets/map?level=points&mainheadId=${C.otherMainhead}`,
+        );
+        expect(res.status).toBe(200);
+        expect(res.body.poles).toHaveLength(0);
+      });
+    });
 
     describe('evidence is gated on the survey leaving the field', () => {
       it('an in-progress survey exposes NO poles', async () => {
