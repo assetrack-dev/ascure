@@ -156,7 +156,9 @@ export interface SiteVisitAssetLink {
     } | null;
     substation?: SiteVisitSubstation | null;
     /** Latest SUBMITTED inspection for this pole — the edit target for an
-     *  in-place Bacaan Kelegaan 1 correction. Null when never submitted. */
+     *  in-place Bacaan Kelegaan 1 correction. Null when never submitted; a pole
+     *  sent back for re-inspection keeps its (now DRAFT) inspection here so its
+     *  recorded answers stay on the table. */
     latestInspectionId?: string | null;
   };
   /** Latest-inspection checklist readings surfaced as columns for DC checking. */
@@ -214,6 +216,10 @@ export interface SiteVisitInspection {
   completionStatus: string;
   cycleNumber: number | null;
   submittedAt: string | null;
+  /** Set while this pole is sent back for re-inspection — the reason the crew
+   *  sees. Both are cleared when they re-submit. */
+  reinspectionReason: string | null;
+  reinspectionRequestedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   imageCount: number;

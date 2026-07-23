@@ -138,6 +138,12 @@ describe('Authz · send a pole back for re-inspection', () => {
         valueText: '5.98',
       },
     });
+    // The pole as the DC sees it — a Linked Assets row of the survey, which is
+    // where the send-back button lives and whose recorded values must not
+    // vanish when the pole is flagged.
+    await prisma.siteVisitAsset.create({
+      data: { siteVisitId: R.visit, assetId: R.asset, source: 'INSPECTION' },
+    });
 
     token.mgrA = await login(app, EMAILS.mgrA);
     token.techA = await login(app, EMAILS.techA);
@@ -145,6 +151,7 @@ describe('Authz · send a pole back for re-inspection', () => {
   }, 60000);
 
   afterAll(async () => {
+    await prisma.siteVisitAsset.deleteMany({ where: { siteVisitId: R.visit } });
     await prisma.inspectionResult.deleteMany({
       where: { inspectionId: R.inspection },
     });
@@ -243,6 +250,39 @@ describe('Authz · send a pole back for re-inspection', () => {
       expect(inspection.completionStatus).toBe('SUBMITTED');
       expect(inspection.reinspectionReason).toBeNull();
       expect(inspection.reinspectionRequestedAt).toBeNull();
+    });
+  });
+
+  describe('the Linked Assets row the DC is looking at', () => {
+    beforeEach(() => resetToSubmitted('ACTIVE'));
+
+    const linkedRow = async () => {
+      const res = await http(app, token.mgrA)
+        .get(`/api/v1/site-visits/${R.visit}`)
+        .expect(200);
+      return res.body.linkedAssets.find(
+        (link: { assetId: string }) => link.assetId === R.asset,
+      );
+    };
+
+    it('keeps its recorded answers after the pole is sent back', async () => {
+      const before = await linkedRow();
+      expect(before.checklistValues['POLE CONDITION']).toBe('5.98');
+
+      await http(app, token.mgrA)
+        .post(`/api/v1/inspections/${R.inspection}/request-reinspection`)
+        .send({ reason: 'Kelegaan 5.98 m contradicts the photo' })
+        .expect(201);
+
+      // The row still reads exactly as before — the values, and the inspection
+      // behind them, are only hidden if the serializer drops a sent-back DRAFT.
+      // Blanking every column here is what would read as data loss to the DC.
+      const after = await linkedRow();
+      expect(after.checklistValues['POLE CONDITION']).toBe('5.98');
+      expect(after.asset.latestInspection.id).toBe(R.inspection);
+      // …but it now reports as unsubmitted, which is what turns the pole red.
+      expect(after.asset.latestInspection.status).toBe('DRAFT');
+      expect(after.asset.latestInspection.submittedAt).toBeNull();
     });
   });
 
