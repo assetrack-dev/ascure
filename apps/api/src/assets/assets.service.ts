@@ -1079,7 +1079,13 @@ export class AssetsService {
         },
         inspections: {
           where: {
-            completionStatus: InspectionCompletionStatus.SUBMITTED,
+            OR: [
+              { completionStatus: InspectionCompletionStatus.SUBMITTED },
+              // A pole sent back for re-inspection is DRAFT again, but its
+              // captured answers and photos are exactly what the manager needs
+              // to keep seeing — and the reason belongs on this page.
+              { reinspectionRequestedAt: { not: null } },
+            ],
           },
           take: 1,
           orderBy: [
@@ -1203,6 +1209,11 @@ export class AssetsService {
             submittedAt: latestInspection.submittedAt?.toISOString() ?? '',
             createdAt: latestInspection.createdAt.toISOString(),
             remarks: this.extractRemarks(latestInspection.results),
+            // Sent back for re-inspection: the pole reads "not inspected" until
+            // the crew re-submits, and this is why.
+            reinspectionReason: latestInspection.reinspectionReason,
+            reinspectionRequestedAt:
+              latestInspection.reinspectionRequestedAt?.toISOString() ?? null,
             // Every checklist field of the inspection's template with its
             // recorded value, so the asset panel can show (and a manager edit)
             // the full checklist rather than only the pass/fail item results.

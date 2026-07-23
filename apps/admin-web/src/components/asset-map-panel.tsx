@@ -14,6 +14,7 @@ import {
   ImageOff,
   Pencil,
   RefreshCw,
+  RotateCcw,
   X,
 } from "lucide-react";
 import type { RondaanCheckIssue } from "@ascure/shared-utils";
@@ -26,7 +27,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { fetchAssetDetail, updateAssetCode } from "@/lib/assets";
 import { isMapAssetInspected, type MapAsset } from "@/lib/map";
-import { editChecklistValue } from "@/lib/site-visits";
+import { editChecklistValue, requestReinspection } from "@/lib/site-visits";
 import type { AssetDetail } from "@/types/assets";
 import type { ChecklistColumn } from "@/types/site-visits";
 
@@ -579,6 +580,10 @@ export function AssetMapPanel({
   const [showAllChecklist, setShowAllChecklist] = useState(false);
   // Which photo is open in the full-size viewer (null = closed).
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // The "send this pole back" prompt — open, the typed reason, and in-flight.
+  const [sendBackOpen, setSendBackOpen] = useState(false);
+  const [sendBackReason, setSendBackReason] = useState("");
+  const [sendingBack, setSendingBack] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -738,6 +743,31 @@ export function AssetMapPanel({
     [token, asset.id, onAssetCodeChanged, load],
   );
 
+  const sendBack = useCallback(async () => {
+    if (!token || !inspection?.id) {
+      return;
+    }
+    setSendingBack(true);
+    setError("");
+    try {
+      await requestReinspection(token, inspection.id, sendBackReason.trim());
+      setSendBackOpen(false);
+      setSendBackReason("");
+      // The pole now reads "not inspected" — refresh the panel AND the map so
+      // its marker turns red immediately.
+      onAssetCodeChanged();
+      await load();
+    } catch (sendError) {
+      setError(
+        sendError instanceof Error
+          ? sendError.message
+          : "Unable to send this pole back.",
+      );
+    } finally {
+      setSendingBack(false);
+    }
+  }, [token, inspection?.id, sendBackReason, onAssetCodeChanged, load]);
+
   const defectItems = (inspection?.items ?? []).filter((item) => item.isDefect);
 
   return (
@@ -842,6 +872,24 @@ export function AssetMapPanel({
                 ) : null}
               </div>
 
+              {/* Sent back for re-inspection — the crew sees this pole as
+                  not-inspected until they re-submit it. */}
+              {inspection?.reinspectionReason ? (
+                <div className="mt-2.5 rounded-md border border-[var(--medium-border)] bg-[var(--medium-bg)] px-2.5 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--medium-text)]">
+                    Sent back for re-inspection
+                  </p>
+                  <p className="mt-0.5 text-[12px] leading-snug text-[var(--medium-text)]">
+                    {inspection.reinspectionReason}
+                  </p>
+                  {inspection.reinspectionRequestedAt ? (
+                    <p className="mt-0.5 text-[11px] text-[var(--medium-text)] opacity-80">
+                      {formatDate(inspection.reinspectionRequestedAt)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
                 <Field label="Asset type" value={detail.assetType || "—"} />
                 <Field label="Feeder" value={detail.feeder || "—"} />
@@ -857,6 +905,71 @@ export function AssetMapPanel({
                 />
               </div>
             </div>
+
+            {/* Send this pole back for re-inspection. Only offered to someone
+                who may govern the data, on a pole that is actually submitted —
+                and never twice. */}
+            {canEdit && inspection && !inspection.reinspectionReason ? (
+              <div className="border-b border-[var(--line)] px-3.5 py-3">
+                {sendBackOpen ? (
+                  <div>
+                    <label className="block text-[12px] font-semibold text-[var(--foreground)]">
+                      Why does this pole need re-inspecting?
+                    </label>
+                    <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                      The crew sees this. The recorded answers and photos are
+                      kept — the pole simply reads as not inspected until they
+                      redo it.
+                    </p>
+                    <textarea
+                      autoFocus
+                      rows={3}
+                      value={sendBackReason}
+                      disabled={sendingBack}
+                      onChange={(event) => setSendBackReason(event.target.value)}
+                      placeholder="e.g. Kelegaan reading 5.98 m does not match the photo — please re-measure"
+                      className="mt-1.5 w-full rounded-md border border-[var(--line)] bg-[var(--panel)] px-2 py-1.5 text-[12px] text-[var(--foreground)]"
+                    />
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void sendBack()}
+                        disabled={sendingBack || sendBackReason.trim().length === 0}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--brand)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--on-brand)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {sendingBack ? (
+                          <RefreshCw size={13} className="animate-spin" />
+                        ) : (
+                          <RotateCcw size={13} />
+                        )}
+                        Send back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSendBackOpen(false);
+                          setSendBackReason("");
+                        }}
+                        disabled={sendingBack}
+                        className="text-[12px] font-semibold text-[var(--muted)] transition hover:text-[var(--foreground)]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setSendBackOpen(true)}
+                    title="Mark this pole as needing re-inspection, keeping the recorded data"
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--foreground-soft)] transition hover:text-[var(--brand)]"
+                  >
+                    <RotateCcw size={13} />
+                    Send back for re-inspection
+                  </button>
+                )}
+              </div>
+            ) : null}
 
             {/* Photos — above the checklist so the evidence reads first, and
                 swipeable in place without opening anything. */}

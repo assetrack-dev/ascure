@@ -71,6 +71,10 @@ export interface AssetDetail extends AssetListItem {
     status: string | null;
     submittedAt: string | null;
     remarks?: string | null;
+    /** Set when a manager/DC sent this pole back — the pole reads "not
+     *  inspected" until the crew re-submits, and this is why. */
+    reinspectionReason?: string | null;
+    reinspectionRequestedAt?: string | null;
     totalDefects?: number;
     items?: InspectionResultItem[];
     images?: InspectionEvidenceImage[];

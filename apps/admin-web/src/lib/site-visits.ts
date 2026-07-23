@@ -1133,3 +1133,21 @@ export async function fetchSiteVisitContributions(
       .filter((entry): entry is ReassignmentRecord => Boolean(entry)),
   };
 }
+
+/**
+ * Send ONE pole back for re-inspection. Keeps every recorded answer and photo,
+ * but returns the inspection to DRAFT — so the pole reads "not inspected" again
+ * (turning it red on the crew's map and dropping it from coverage) and the form
+ * becomes editable so they can re-capture it. The reason is required and is what
+ * the crew sees. ADMIN / DC / the managing manager; the API re-enforces scope.
+ */
+export async function requestReinspection(
+  token: string,
+  inspectionId: string,
+  reason: string,
+): Promise<{ ok: boolean; reopenedSurvey: boolean }> {
+  return apiRequest<{ ok: boolean; reopenedSurvey: boolean }>(
+    `/inspections/${encodeURIComponent(inspectionId)}/request-reinspection`,
+    { method: "POST", token, body: JSON.stringify({ reason }) },
+  );
+}

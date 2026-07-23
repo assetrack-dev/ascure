@@ -20,6 +20,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { EditChecklistResultDto } from './dto/edit-checklist-result.dto';
+import { RequestReinspectionDto } from './dto/request-reinspection.dto';
 import { DeclareEmergencyDto } from './dto/declare-emergency.dto';
 import { SaveInspectionResultsDto } from './dto/save-inspection-results.dto';
 import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
@@ -97,6 +98,18 @@ export class InspectionsController {
     @Body() dto: EditChecklistResultDto,
   ) {
     return this.inspectionsService.editChecklistResult(user, params.id, dto);
+  }
+
+  // Send ONE pole back for re-inspection — keeps every captured answer/photo but
+  // returns the inspection to DRAFT, so the pole reads "not inspected" again for
+  // the crew (and for coverage). ADMIN / QA actor / the managing MANAGER.
+  @Post(':id/request-reinspection')
+  requestReinspection(
+    @CurrentUser() user: RequestUser,
+    @Param() params: InspectionIdParamDto,
+    @Body() dto: RequestReinspectionDto,
+  ) {
+    return this.inspectionsService.requestReinspection(user, params.id, dto);
   }
 
   @Post(':id/amend')
