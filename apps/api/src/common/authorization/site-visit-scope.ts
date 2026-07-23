@@ -88,6 +88,17 @@ function buildSiteVisitScope(
     };
   }
 
+  // CLIENT VIEWER (TNB / CLIENT org): scoped by WHOSE NETWORK IT IS, not by who
+  // did the work — every survey on their assigned MAINHEADs, whichever company
+  // performed it. Fails closed: an empty assignment list yields `in: []`, which
+  // matches nothing (the team filter below would have matched nothing anyway,
+  // since a client user belongs to no crew team).
+  if (ctx?.isClientViewer) {
+    return {
+      mainheadId: { in: ctx.clientMainheadIds },
+    };
+  }
+
   // Every actor at minimum sees visits of teams they actively belong to.
   const ownTeamMembership: Prisma.TeamWhereInput = {
     members: {

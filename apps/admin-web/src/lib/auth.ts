@@ -44,6 +44,7 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
       "canOverseeSubcontractors" in user
         ? user.canOverseeSubcontractors
         : undefined,
+    isClientViewer: "isClientViewer" in user ? user.isClientViewer : undefined,
   };
 }
 

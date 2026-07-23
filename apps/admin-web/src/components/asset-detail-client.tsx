@@ -61,6 +61,9 @@ function backLabel(href: string): string {
   if (href.startsWith("/map")) {
     return "Map";
   }
+  if (href.startsWith("/progress")) {
+    return "Progress";
+  }
   return "Assets";
 }
 

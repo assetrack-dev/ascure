@@ -45,7 +45,30 @@ export interface ScopeContext {
    * work queue + every mutation stay strict own-team.
    */
   crossTeamMainheadIds: string[];
+  /**
+   * The caller is a CLIENT viewer — a user in a TNB / CLIENT organization, i.e.
+   * the party who OWNS the network rather than one of the companies working it.
+   */
+  isClientViewer: boolean;
+  /**
+   * MAINHEAD IDs a client viewer may see, from their organization's active
+   * {@link OrganizationMainhead} assignments.
+   *
+   * ⚠ Client scope is orthogonal to contractor scope: a contractor is scoped by
+   * WHO DID THE WORK (team / organization), a client by WHOSE NETWORK IT IS
+   * (Mainhead) — so TNB sees every survey on its own lines no matter which
+   * subcontractor performed it. Only populated when isClientViewer is true;
+   * EMPTY means the client org has no Mainhead assigned and must see NOTHING
+   * (fail closed — never widen to the tenant).
+   */
+  clientMainheadIds: string[];
 }
+
+/** Organization types that OWN the network rather than work it. */
+const CLIENT_ORG_TYPES: ReadonlySet<OrganizationType> = new Set([
+  OrganizationType.TNB,
+  OrganizationType.CLIENT,
+]);
 
 export async function buildScopeContext(
   prisma: PrismaService,
@@ -60,14 +83,18 @@ export async function buildScopeContext(
       qaMainheadIds: [],
       maintenanceOrgIds: [],
       crossTeamMainheadIds: [],
+      isClientViewer: false,
+      clientMainheadIds: [],
     };
   }
 
-  const [maintenanceOrgIds, crossTeamMainheadIds, isQa] = await Promise.all([
-    resolveMaintenanceOrgIds(prisma, user),
-    resolveCrossTeamMainheadIds(prisma, user),
-    isQaActor(prisma, user),
-  ]);
+  const [maintenanceOrgIds, crossTeamMainheadIds, isQa, client] =
+    await Promise.all([
+      resolveMaintenanceOrgIds(prisma, user),
+      resolveCrossTeamMainheadIds(prisma, user),
+      isQaActor(prisma, user),
+      resolveClientScope(prisma, user),
+    ]);
 
   if (!isQa) {
     return {
@@ -76,6 +103,7 @@ export async function buildScopeContext(
       qaMainheadIds: [],
       maintenanceOrgIds,
       crossTeamMainheadIds,
+      ...client,
     };
   }
 
@@ -127,6 +155,53 @@ export async function buildScopeContext(
     qaMainheadIds: Array.from(mainheadIds),
     maintenanceOrgIds,
     crossTeamMainheadIds,
+    ...client,
+  };
+}
+
+/**
+ * Client (network-owner) scope: the MAINHEADs assigned to the caller's TNB /
+ * CLIENT organization. Any other org type is not a client viewer and gets the
+ * empty result, so this can be resolved unconditionally.
+ *
+ * ⚠ FAILS CLOSED. A client org with no active Mainhead assignment yields an
+ * EMPTY list, and every consumer must read that as "see nothing" — never as
+ * "unscoped". Assignments are managed through the existing ADMIN
+ * Company↔MAINHEAD screen.
+ */
+async function resolveClientScope(
+  prisma: PrismaService,
+  user: RequestUser,
+): Promise<{ isClientViewer: boolean; clientMainheadIds: string[] }> {
+  if (!user.organizationId) {
+    return { isClientViewer: false, clientMainheadIds: [] };
+  }
+
+  // Look up by id only — `Organization.tenantId` is NULLABLE and real rows carry
+  // null, so filtering on it silently matches nothing. Safe without the filter:
+  // the id comes from the caller's OWN user row, which the JWT strategy already
+  // loaded tenant-scoped. Matches how dashboard/defects read an organization.
+  const organization = await prisma.organization.findUnique({
+    where: { id: user.organizationId },
+    select: { type: true },
+  });
+
+  if (!organization || !CLIENT_ORG_TYPES.has(organization.type)) {
+    return { isClientViewer: false, clientMainheadIds: [] };
+  }
+
+  const assignments = await prisma.organizationMainhead.findMany({
+    where: {
+      organizationId: user.organizationId,
+      isActive: true,
+      mainhead: { isActive: true },
+    },
+    select: { mainheadId: true },
+  });
+
+  return {
+    isClientViewer: true,
+    clientMainheadIds: assignments.map((row) => row.mainheadId),
   };
 }
 

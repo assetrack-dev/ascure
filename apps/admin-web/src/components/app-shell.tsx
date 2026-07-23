@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Tags,
   Upload,
+  TrendingUp,
   Users,
   Waypoints,
   Wrench,
@@ -56,6 +57,8 @@ type NavItem = {
   requiresReporting?: boolean;
   requiresImport?: boolean;
   requiresManageUsers?: boolean;
+  /** Only a CLIENT-org viewer (or ADMIN, previewing) sees this. */
+  requiresClientViewer?: boolean;
   /** Gated to QA governors (canGovernQa) + ADMIN — e.g. the defect Operations Board. */
   requiresGovernQa?: boolean;
   /** Admin config surface — collapsed under the "Setup" group in the sidebar. */
@@ -76,6 +79,10 @@ interface AppShellProps {
 // reveals Teams (otherwise adminOnly) and hides everything not in the list
 // (Network, the Operations Board QA surface, the org/region/asset-type admin
 // tools). Reports is the one exception — added back in the filter when canReport.
+// A CLIENT viewer (TNB) sees exactly one page: their progress view. Everything
+// else in this console is contractor operations and is not theirs to see.
+const CLIENT_NAV_HREFS = new Set<string>(["/progress"]);
+
 const MANAGER_NAV_HREFS = new Set<string>([
   "/dashboard",
   "/maintenance-workspace",
@@ -121,6 +128,15 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       roles: ["ADMIN", "MANAGER", "SUPERVISOR"],
     },
     { href: "/network", label: "Network", icon: Waypoints, section: "operations" },
+    // The network owner's (TNB / CLIENT) read-only view. Gated to client orgs +
+    // ADMIN (who can preview it); CLIENT_NAV_HREFS makes it their ONLY page.
+    {
+      href: "/progress",
+      label: "Progress",
+      icon: TrendingUp,
+      section: "operations",
+      requiresClientViewer: true,
+    },
     // Insights — reporting + analytics.
     {
       href: "/crew-performance",
@@ -169,6 +185,21 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const visibleNavItems = navItems.filter((item) => {
     // Hidden pages stay in code but never appear in the nav.
     if (item.hidden) {
+      return false;
+    }
+
+    // CLIENT VIEWER (TNB): closed allow-list — the progress view only.
+    if (user?.isClientViewer === true && user?.role !== "ADMIN") {
+      return CLIENT_NAV_HREFS.has(item.href);
+    }
+
+    // The Progress view itself is only offered to a client org (or ADMIN, to
+    // preview what the client sees).
+    if (
+      item.requiresClientViewer &&
+      user?.isClientViewer !== true &&
+      user?.role !== "ADMIN"
+    ) {
       return false;
     }
 

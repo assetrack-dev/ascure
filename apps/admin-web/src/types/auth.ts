@@ -19,6 +19,12 @@ export interface ApiUser {
   canReviewSurvey?: boolean;
   canDeleteSurvey?: boolean;
   canOverseeSubcontractors?: boolean;
+  /**
+   * The user belongs to a network-OWNER organization (TNB / CLIENT). They get
+   * the read-only client Progress view instead of the contractor console; every
+   * /client endpoint re-checks this server-side.
+   */
+  isClientViewer?: boolean;
 }
 
 export interface AuthUser {
@@ -102,6 +108,8 @@ export interface AuthUser {
    * everyone else, incl. a manager with no subcontractors.
    */
   canOverseeSubcontractors?: boolean;
+  /** Network-OWNER org (TNB / CLIENT) → the read-only client Progress view. */
+  isClientViewer?: boolean;
 }
 
 export interface AuthSession {

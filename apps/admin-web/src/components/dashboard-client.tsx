@@ -562,12 +562,22 @@ function DashboardContent() {
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
+    // A CLIENT viewer (TNB) owns the network but not the operation — this
+    // console's crew/SLA metrics aren't theirs to read, so send them to their
+    // own progress view rather than rendering it behind a nav they can't see.
+    if (
+      storedSession?.user?.isClientViewer === true &&
+      storedSession.user.role !== "ADMIN"
+    ) {
+      router.replace("/progress");
+      return;
+    }
     if (storedSession?.token) {
       void loadDashboard(storedSession.token, range);
     }
     // Only on mount — range changes are handled by onRangeChange.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadDashboard]);
+  }, [loadDashboard, router]);
 
   useEffect(() => {
     if (!autoRefresh || !session?.token) {
