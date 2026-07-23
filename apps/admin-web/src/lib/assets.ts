@@ -404,6 +404,11 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
             firstString(latestInspection, ["submittedAt", "completedAt", "date", "createdAt"]) ??
             null,
           remarks: firstString(latestInspection, ["remarks", "remark", "notes"]),
+          reinspectionReason: readString(latestInspection, "reinspectionReason"),
+          reinspectionRequestedAt: readString(
+            latestInspection,
+            "reinspectionRequestedAt",
+          ),
           totalDefects:
             readNumber(latestInspection, "totalDefects") ??
             items.filter((item) => item.isDefect).length,

@@ -669,34 +669,34 @@ model OperationalRegion {
 }
 
 model Mainhead {
-  id                    String               @id @default(uuid()) @db.Uuid
-  branchId              String?              @db.Uuid
-  operationalRegionId   String?              @db.Uuid
+  id                        String                 @id @default(uuid()) @db.Uuid
+  branchId                  String?                @db.Uuid
+  operationalRegionId       String?                @db.Uuid
   // The maintenance company registered for this MAINHEAD (maintenance handoff
   // Phase 2). At LAPORAN SELESAI a survey's defects release + auto-route to this
   // org's pool; the org (a MAIN_CONTRACTOR/SUBCONTRACTOR) self-assigns internally
   // or subcontracts. One maintainer per MAINHEAD; a company can maintain many.
-  maintenanceOrganizationId String?          @db.Uuid
-  name                  String
-  code                  String?
-  description           String?
-  isActive              Boolean              @default(true)
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
-  branch                Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  operationalRegion     OperationalRegion?   @relation(fields: [operationalRegionId], references: [id], onDelete: SetNull)
-  maintenanceOrganization Organization?      @relation("MainheadMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
-  teams                 Team[]
-  assignedUsers         User[]               @relation("UserOperationalMainhead")
-  userAccesses          UserMainheadAccess[]
-  organizationAssignments OrganizationMainhead[]
-  capabilityAssignments MainheadCapability[]
-  substations           Substation[]
-  projects              Project[]
-  workPackages          WorkPackage[]
-  siteVisits            SiteVisit[]
-  inspectionTemplates   InspectionTemplate[]
-  operationalSessions   OperationalSession[]
+  maintenanceOrganizationId String?                @db.Uuid
+  name                      String
+  code                      String?
+  description               String?
+  isActive                  Boolean                @default(true)
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+  branch                    Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  operationalRegion         OperationalRegion?     @relation(fields: [operationalRegionId], references: [id], onDelete: SetNull)
+  maintenanceOrganization   Organization?          @relation("MainheadMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
+  teams                     Team[]
+  assignedUsers             User[]                 @relation("UserOperationalMainhead")
+  userAccesses              UserMainheadAccess[]
+  organizationAssignments   OrganizationMainhead[]
+  capabilityAssignments     MainheadCapability[]
+  substations               Substation[]
+  projects                  Project[]
+  workPackages              WorkPackage[]
+  siteVisits                SiteVisit[]
+  inspectionTemplates       InspectionTemplate[]
+  operationalSessions       OperationalSession[]
 
   @@index([branchId])
   @@index([operationalRegionId])
@@ -1322,61 +1322,68 @@ model InspectionTemplateSection {
 }
 
 model InspectionTemplateItem {
-  id              String                    @id @default(uuid()) @db.Uuid
-  templateId      String                    @db.Uuid
-  sectionId       String                    @db.Uuid
-  key             String
-  label           String
-  helperText      String?
-  inputType       InspectionItemInputType
-  isRequired      Boolean                   @default(false)
-  isActive        Boolean                   @default(true)
-  isDefectTrigger Boolean                   @default(true)
-  severity        DefectSeverity            @default(MEDIUM)
+  id                  String                    @id @default(uuid()) @db.Uuid
+  templateId          String                    @db.Uuid
+  sectionId           String                    @db.Uuid
+  key                 String
+  label               String
+  helperText          String?
+  inputType           InspectionItemInputType
+  isRequired          Boolean                   @default(false)
+  isActive            Boolean                   @default(true)
+  isDefectTrigger     Boolean                   @default(true)
+  severity            DefectSeverity            @default(MEDIUM)
   // Maintenance work-type for defects from this item. Null = SELENGGARAAN
   // (default). Admin tags the RENTIS / CAT_TIANG item(s); a template may have
   // more than one item per category (e.g. KUANTAN has 2 RENTIS items).
   maintenanceCategory MaintenanceCategory?
-  sortOrder       Int                       @default(0)
-  optionsJson     Json?
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
-  template        InspectionTemplate        @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  section         InspectionTemplateSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  results         InspectionResult[]
+  sortOrder           Int                       @default(0)
+  optionsJson         Json?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  template            InspectionTemplate        @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  section             InspectionTemplateSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  results             InspectionResult[]
 
   @@unique([templateId, key])
   @@index([sectionId, sortOrder])
 }
 
 model Inspection {
-  id                   String                     @id @default(uuid()) @db.Uuid
-  tenantId             String                     @db.Uuid
-  siteVisitId          String                     @db.Uuid
-  assetId              String                     @db.Uuid
-  templateId           String                     @db.Uuid
-  operationalSessionId String?                    @db.Uuid
-  createdByUserId      String                     @db.Uuid
-  inspectionCycle      Int                        @default(1)
-  completionStatus     InspectionCompletionStatus @default(DRAFT)
-  operationMode        OperationMode?
-  operationalScope     OperationalScope?
-  requiresQAQC         Boolean?
-  reportingGroup       String?
-  externalRef          String?
-  submittedAt          DateTime?
-  createdAt            DateTime                   @default(now())
-  updatedAt            DateTime                   @updatedAt
-  tenant               Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  siteVisit            SiteVisit                  @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
-  asset                Asset                      @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  template             InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  operationalSession   OperationalSession?        @relation(fields: [operationalSessionId], references: [id], onDelete: SetNull)
-  createdBy            User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  results              InspectionResult[]
-  itemResults          InspectionItemResult[]
-  images               Image[]
-  inspectionImages     InspectionImage[]
+  id                        String                     @id @default(uuid()) @db.Uuid
+  tenantId                  String                     @db.Uuid
+  siteVisitId               String                     @db.Uuid
+  assetId                   String                     @db.Uuid
+  templateId                String                     @db.Uuid
+  operationalSessionId      String?                    @db.Uuid
+  createdByUserId           String                     @db.Uuid
+  inspectionCycle           Int                        @default(1)
+  completionStatus          InspectionCompletionStatus @default(DRAFT)
+  operationMode             OperationMode?
+  operationalScope          OperationalScope?
+  requiresQAQC              Boolean?
+  reportingGroup            String?
+  externalRef               String?
+  submittedAt               DateTime?
+  // Manager/DC "send this pole back" — the survey answers are kept, but the
+  // inspection returns to DRAFT so the crew can re-capture it (which also turns
+  // the pole red again on the mobile map and drops it from coverage). The reason
+  // travels to whoever re-does it; all three clear on the next submit.
+  reinspectionReason        String?
+  reinspectionRequestedAt   DateTime?
+  reinspectionRequestedById String?                    @db.Uuid
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  tenant                    Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit                 SiteVisit                  @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
+  asset                     Asset                      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  template                  InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  operationalSession        OperationalSession?        @relation(fields: [operationalSessionId], references: [id], onDelete: SetNull)
+  createdBy                 User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  results                   InspectionResult[]
+  itemResults               InspectionItemResult[]
+  images                    Image[]
+  inspectionImages          InspectionImage[]
 
   @@unique([tenantId, externalRef])
   @@index([tenantId])
@@ -1413,77 +1420,77 @@ model InspectionImage {
 }
 
 model InspectionItemResult {
-  id              String                    @id @default(uuid()) @db.Uuid
-  inspectionId    String                    @db.Uuid
-  checklistItemId String?                   @db.Uuid
-  label           String
-  result          InspectionItemResultValue
-  remark          String?
-  isDefect        Boolean                   @default(false)
-  isEmergency     Boolean                   @default(false)
-  severity        DefectSeverity?
+  id                  String                    @id @default(uuid()) @db.Uuid
+  inspectionId        String                    @db.Uuid
+  checklistItemId     String?                   @db.Uuid
+  label               String
+  result              InspectionItemResultValue
+  remark              String?
+  isDefect            Boolean                   @default(false)
+  isEmergency         Boolean                   @default(false)
+  severity            DefectSeverity?
   // Denormalized from the template item at save (mirrors severity/isEmergency)
   // so every defect-creation path can stamp the defect without a re-lookup.
   maintenanceCategory MaintenanceCategory?
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
-  inspection      Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
-  defect          Defect?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  inspection          Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  defect              Defect?
 
   @@index([inspectionId])
   @@index([checklistItemId])
 }
 
 model Defect {
-  id                       String                 @id @default(uuid()) @db.Uuid
-  inspectionItemResultId   String                 @unique @db.Uuid
-  assignedUserId           String?                @db.Uuid
-  assignedTeamId           String?                @db.Uuid
-  assignedToUserId         String?                @db.Uuid
-  assignedToTeamId         String?                @db.Uuid
-  verifiedByUserId         String?                @db.Uuid
-  maintainedByUserId       String?                @db.Uuid
-  closureVerifiedByUserId  String?                @db.Uuid
+  id                        String                 @id @default(uuid()) @db.Uuid
+  inspectionItemResultId    String                 @unique @db.Uuid
+  assignedUserId            String?                @db.Uuid
+  assignedTeamId            String?                @db.Uuid
+  assignedToUserId          String?                @db.Uuid
+  assignedToTeamId          String?                @db.Uuid
+  verifiedByUserId          String?                @db.Uuid
+  maintainedByUserId        String?                @db.Uuid
+  closureVerifiedByUserId   String?                @db.Uuid
   // The maintenance company this defect was routed to on release (maintenance
   // handoff Phase 3). Stamped from the MAINHEAD's registered maintenance org at
   // LAPORAN SELESAI (emergencies at inspection submit). Grants the maintenance
   // company's users cross-company visibility of their pool (Phase 4) even when
   // they are not on the inspecting team. Null = not yet released / no registry.
-  maintenanceOrganizationId String?               @db.Uuid
-  status                   DefectStatus           @default(OPEN)
-  severity                 DefectSeverity         @default(MEDIUM)
+  maintenanceOrganizationId String?                @db.Uuid
+  status                    DefectStatus           @default(OPEN)
+  severity                  DefectSeverity         @default(MEDIUM)
   // Work-type for maintenance packaging/filtering, stamped at materialization
   // from the item result (null on legacy rows = treated as SELENGGARAAN).
-  maintenanceCategory      MaintenanceCategory?
-  isEmergency              Boolean                @default(false)
-  lifecycleStatus          DefectLifecycleStatus?
-  resolutionOutcome        ResolutionOutcome?
-  actionRemark             String?
-  dueDate                  DateTime?
-  resolvedAt               DateTime?
-  closedAt                 DateTime?
-  assignedAt               DateTime?
-  verifiedAt               DateTime?
-  maintainedAt             DateTime?
-  verificationRemarks      String?
-  verificationNotes        String?
-  maintenanceNotes         String?
-  closureVerifiedAt        DateTime?
-  closureRemarks           String?
-  closureVerificationNotes String?
-  createdAt                DateTime               @default(now())
-  updatedAt                DateTime               @updatedAt
-  inspectionItemResult     InspectionItemResult   @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
-  assignedUser             User?                  @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  assignedTeam             Team?                  @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
-  assignedToUser           User?                  @relation("DefectAssignedToUser", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  assignedToTeam           Team?                  @relation("DefectAssignedToTeam", fields: [assignedToTeamId], references: [id], onDelete: SetNull)
-  verifiedByUser           User?                  @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
-  maintainedByUser         User?                  @relation("DefectMaintainedByUser", fields: [maintainedByUserId], references: [id], onDelete: SetNull)
-  closureVerifiedByUser    User?                  @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
-  maintenanceOrganization  Organization?          @relation("DefectMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
-  evidenceImages           DefectEvidenceImage[]
-  timelineEntries          DefectTimelineEntry[]
+  maintenanceCategory       MaintenanceCategory?
+  isEmergency               Boolean                @default(false)
+  lifecycleStatus           DefectLifecycleStatus?
+  resolutionOutcome         ResolutionOutcome?
+  actionRemark              String?
+  dueDate                   DateTime?
+  resolvedAt                DateTime?
+  closedAt                  DateTime?
+  assignedAt                DateTime?
+  verifiedAt                DateTime?
+  maintainedAt              DateTime?
+  verificationRemarks       String?
+  verificationNotes         String?
+  maintenanceNotes          String?
+  closureVerifiedAt         DateTime?
+  closureRemarks            String?
+  closureVerificationNotes  String?
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+  inspectionItemResult      InspectionItemResult   @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
+  assignedUser              User?                  @relation("DefectAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeam              Team?                  @relation("DefectAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  assignedToUser            User?                  @relation("DefectAssignedToUser", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToTeam            Team?                  @relation("DefectAssignedToTeam", fields: [assignedToTeamId], references: [id], onDelete: SetNull)
+  verifiedByUser            User?                  @relation("DefectVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  maintainedByUser          User?                  @relation("DefectMaintainedByUser", fields: [maintainedByUserId], references: [id], onDelete: SetNull)
+  closureVerifiedByUser     User?                  @relation("DefectClosureVerifiedByUser", fields: [closureVerifiedByUserId], references: [id], onDelete: SetNull)
+  maintenanceOrganization   Organization?          @relation("DefectMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
+  evidenceImages            DefectEvidenceImage[]
+  timelineEntries           DefectTimelineEntry[]
 
   @@index([assignedUserId])
   @@index([assignedTeamId])
@@ -1625,21 +1632,21 @@ model Feeder {
 }
 
 model PoleFeederMembership {
-  id            String   @id @default(uuid()) @db.Uuid
-  assetId       String   @db.Uuid
-  feederId      String   @db.Uuid
-  sequenceIndex Int
-  branchSuffix  String   @default("")
+  id             String   @id @default(uuid()) @db.Uuid
+  assetId        String   @db.Uuid
+  feederId       String   @db.Uuid
+  sequenceIndex  Int
+  branchSuffix   String   @default("")
   // The parent pole ON THIS FEEDER (per-feeder topology). A multi-feeder pole has
   // one parent per feeder, so the single Asset.fedFromAssetId can't represent it;
   // this is what the network graph + isolation traverse. Null at the feeder head
   // or when no parent could be resolved.
-  fedFromAssetId String? @db.Uuid
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  asset         Asset    @relation("PoleMembership", fields: [assetId], references: [id], onDelete: Cascade)
-  feeder        Feeder   @relation(fields: [feederId], references: [id], onDelete: Cascade)
-  fedFromAsset  Asset?   @relation("MembershipFedFrom", fields: [fedFromAssetId], references: [id], onDelete: SetNull)
+  fedFromAssetId String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  asset          Asset    @relation("PoleMembership", fields: [assetId], references: [id], onDelete: Cascade)
+  feeder         Feeder   @relation(fields: [feederId], references: [id], onDelete: Cascade)
+  fedFromAsset   Asset?   @relation("MembershipFedFrom", fields: [fedFromAssetId], references: [id], onDelete: SetNull)
 
   @@unique([feederId, sequenceIndex, branchSuffix])
   @@unique([assetId, feederId])

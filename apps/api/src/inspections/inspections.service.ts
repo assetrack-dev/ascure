@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { extname, resolve } from 'path';
 import {
   DefectSeverity,
+  SurveyLifecycleStatus,
   InspectionCompletionStatus,
   InspectionItemInputType,
   InspectionItemResultValue,
@@ -53,6 +54,7 @@ import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
 import { EditChecklistResultDto } from './dto/edit-checklist-result.dto';
+import { RequestReinspectionDto } from './dto/request-reinspection.dto';
 import { isQaActor } from '../common/authorization/qa-actor';
 import {
   SaveInspectionItemResultDto,
@@ -539,6 +541,128 @@ export class InspectionsService {
     ]);
 
     return this.reloadForm(user, inspectionId);
+  }
+
+  /**
+   * Manager/DC "send this pole back for re-inspection".
+   *
+   * The crew captured something the office can see is wrong but cannot correct
+   * from a desk — a Smart-Sensor clearance the photo contradicts is the case
+   * this exists for. Nobody in the office knows the true measurement, so the
+   * pole has to be walked again.
+   *
+   * WHAT IT DOES: returns the inspection to DRAFT and records why. That single
+   * flip does three useful things at once — the pole turns RED again on the
+   * crew's map (mobile colours by `latestInspection.status`/`submittedAt`, so no
+   * app change is needed), the form becomes editable so they can re-capture, and
+   * the pole drops out of every "inspected" count including TNB's coverage.
+   *
+   * WHAT IT KEEPS: every recorded answer, photo and defect. The crew opens the
+   * pole and corrects the bad value rather than starting from a blank form, and
+   * findings are not lost if they never return. Stale defects are reconciled on
+   * re-submit, not here.
+   *
+   * ⚠ Unlike {@link amendInspection} this deliberately works AFTER the visit is
+   * completed — that is the moment a manager reviews, so refusing then would
+   * make the feature useless. When the survey has already left the field it is
+   * also returned to PERLU_PINDAAN, otherwise the crew would have no open visit
+   * to reach the red pole through.
+   */
+  async requestReinspection(
+    user: RequestUser,
+    inspectionId: string,
+    dto: RequestReinspectionDto,
+  ) {
+    if (
+      user.role !== UserRole.ADMIN &&
+      user.role !== UserRole.MANAGER &&
+      !(await isQaActor(this.prisma, user))
+    ) {
+      throw new ForbiddenException(
+        'Only an admin, manager, or QA actor can send a pole back for re-inspection.',
+      );
+    }
+
+    const ctx = await buildScopeContext(this.prisma, user);
+    const inspection = await this.getAccessibleInspection(inspectionId, user, ctx, {
+      oversight: true,
+    });
+
+    if (inspection.siteVisit.status === SiteVisitStatus.CANCELLED) {
+      throw new BadRequestException(
+        'This visit is cancelled — its poles cannot be sent back.',
+      );
+    }
+
+    if (inspection.completionStatus !== InspectionCompletionStatus.SUBMITTED) {
+      throw new BadRequestException(
+        'This pole has not been submitted, so there is nothing to send back.',
+      );
+    }
+
+    // A defect already picked up by a maintenance crew must not be pulled out
+    // from under them — same guard the amend path uses.
+    const itemResultIds = inspection.itemResults.map((item) => item.id);
+    if (itemResultIds.length > 0) {
+      const maintainedDefect = await this.prisma.defect.findFirst({
+        where: {
+          inspectionItemResultId: { in: itemResultIds },
+          lifecycleStatus: { in: MAINTENANCE_LOCKED_DEFECT_STATUSES },
+        },
+        select: { id: true },
+      });
+      if (maintainedDefect) {
+        throw new BadRequestException(
+          'A defect from this pole is already in maintenance. Resolve it before sending the pole back.',
+        );
+      }
+    }
+
+    const reason = dto.reason.trim();
+    // A survey that has left the field has no open visit for the crew to work
+    // in, so reopen it. One still being walked is already reachable.
+    const reopenVisit =
+      inspection.siteVisit.lifecycleStatus != null &&
+      inspection.siteVisit.lifecycleStatus !== SurveyLifecycleStatus.DALAM_RONDAAN;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.inspection.update({
+        where: { id: inspection.id },
+        data: {
+          completionStatus: InspectionCompletionStatus.DRAFT,
+          submittedAt: null,
+          reinspectionReason: reason,
+          reinspectionRequestedAt: new Date(),
+          reinspectionRequestedById: user.id,
+        },
+      });
+
+      if (reopenVisit) {
+        await tx.siteVisit.update({
+          where: { id: inspection.siteVisitId },
+          data: {
+            lifecycleStatus: SurveyLifecycleStatus.PERLU_PINDAAN,
+            // ⚠ The lifecycle alone is NOT enough. The crew presses "Complete
+            // Visit" before review, which sets status=COMPLETED — and
+            // assertVisitEditable then blocks every save/submit path, so the
+            // pole would go red with no way to redo it. Restore an active
+            // status and clear the completion stamps, exactly as the DC's
+            // requestAmendment does (survey-lifecycle.service).
+            status: SiteVisitStatus.IN_PROGRESS,
+            completedAt: null,
+            endedAt: null,
+            amendmentRequestedAt: new Date(),
+            amendmentRemark: `Pole ${inspection.asset?.assetCode ?? ''} sent back: ${reason}`.trim(),
+          },
+        });
+      }
+    });
+
+    this.logger.warn(
+      `Pole ${inspection.asset?.assetCode ?? inspection.assetId} sent back for re-inspection on visit ${inspection.siteVisitId} by ${user.email} (${user.role}): "${reason}"${reopenVisit ? ' — survey returned to PERLU_PINDAAN' : ''}`,
+    );
+
+    return { ok: true, reopenedSurvey: reopenVisit };
   }
 
   /**
@@ -1127,9 +1251,31 @@ export class InspectionsService {
       data: {
         completionStatus: InspectionCompletionStatus.SUBMITTED,
         submittedAt: new Date(),
+        // A re-inspection request is answered by this submit — clear it so the
+        // pole stops reading "sent back" once the crew has redone it.
+        reinspectionReason: null,
+        reinspectionRequestedAt: null,
+        reinspectionRequestedById: null,
       },
       include: this.inspectionInclude(),
     });
+
+    // Re-submitting a pole that was sent back keeps its earlier defects (nothing
+    // is deleted when it is flagged, so findings survive if the crew never
+    // returns). Any whose answer is no longer a defect must go now, or a
+    // corrected false positive would linger for ever. Defects already in
+    // maintenance are left alone — someone is working them.
+    const clearedDefectItemResultIds = inspection.itemResults
+      .filter((item) => !item.isDefect)
+      .map((item) => item.id);
+    if (clearedDefectItemResultIds.length > 0) {
+      await this.prisma.defect.deleteMany({
+        where: {
+          inspectionItemResultId: { in: clearedDefectItemResultIds },
+          lifecycleStatus: { notIn: MAINTENANCE_LOCKED_DEFECT_STATUSES },
+        },
+      });
+    }
 
     if (defectCreateData.length === 0) {
       return submitInspection;
@@ -1671,6 +1817,9 @@ export class InspectionsService {
         select: {
           id: true,
           status: true,
+          // Needed by requestReinspection to decide whether the survey has left
+          // the field and must be reopened (PERLU_PINDAAN).
+          lifecycleStatus: true,
           operationMode: true,
           operationalScope: true,
           sessionKind: true,
