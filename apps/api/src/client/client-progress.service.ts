@@ -12,13 +12,35 @@ import { CLIENT_VISIBLE_LIFECYCLE } from '../common/client-visibility';
 /** Open defect statuses — mirrors the map/dashboard definition of "open". */
 const OPEN_DEFECT_STATUSES = ['OPEN', 'IN_PROGRESS', 'MONITORING'] as const;
 
+/**
+ * What "surveyed" means to a client: the pole has a SUBMITTED inspection AND the
+ * survey it belongs to has left the field ({@link CLIENT_VISIBLE_LIFECYCLE}).
+ *
+ * ⚠ ONE definition for the whole page. Counting bare submissions here while the
+ * evidence drill-down required a completed survey produced a contradiction the
+ * client could see: a Pencawang reading 44/44 = 100% that opened to "no
+ * completed surveys yet". A pole inside a survey still being walked can still be
+ * amended and its defects can still change, so it is not finished work.
+ */
+const SURVEYED_INSPECTION: Prisma.InspectionWhereInput = {
+  completionStatus: InspectionCompletionStatus.SUBMITTED,
+  siteVisit: { lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE } },
+};
+
+/** Defects raised by a survey the client may see — same gate as the counts. */
+const SURVEYED_DEFECT_SOURCE = {
+  isDefect: true,
+  inspection: SURVEYED_INSPECTION,
+} as const;
+
 
 type ProgressGroup = {
   id: string;
   name: string;
   /** Poles registered under this group (the denominator we can honestly claim). */
   total: number;
-  /** Poles with a SUBMITTED inspection. */
+  /** Poles surveyed — see {@link SURVEYED_INSPECTION} (submitted AND the
+   *  survey completed). */
   inspected: number;
   /** 0-100, rounded. */
   percent: number;
@@ -106,22 +128,14 @@ export class ClientProgressService {
     const [total, inspected, groups, defects, lastActivity] = await Promise.all([
       this.prisma.asset.count({ where }),
       this.prisma.asset.count({
-        where: {
-          ...where,
-          inspections: {
-            some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
-          },
-        },
+        where: { ...where, inspections: { some: SURVEYED_INSPECTION } },
       }),
       mainheadId
         ? this.groupByPencawang(where)
         : this.groupByMainhead(user, mainheadIds),
       this.defectSummary(where),
       this.prisma.inspection.findFirst({
-        where: {
-          asset: where,
-          completionStatus: InspectionCompletionStatus.SUBMITTED,
-        },
+        where: { asset: where, ...SURVEYED_INSPECTION },
         orderBy: { submittedAt: 'desc' },
         select: { submittedAt: true },
       }),
@@ -196,17 +210,15 @@ export class ClientProgressService {
     const [total, inspected, defectRows] = await Promise.all([
       this.prisma.asset.count({ where }),
       this.prisma.asset.count({
-        where: {
-          ...where,
-          inspections: {
-            some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
-          },
-        },
+        where: { ...where, inspections: { some: SURVEYED_INSPECTION } },
       }),
       this.prisma.defect.findMany({
         where: {
           status: { in: [...OPEN_DEFECT_STATUSES] },
-          inspectionItemResult: { isDefect: true, inspection: { asset: where } },
+          inspectionItemResult: {
+            ...SURVEYED_DEFECT_SOURCE,
+            inspection: { ...SURVEYED_INSPECTION, asset: where },
+          },
         },
         select: { isEmergency: true },
       }),
@@ -226,7 +238,10 @@ export class ClientProgressService {
     const rows = await this.prisma.defect.findMany({
       where: {
         status: { in: [...OPEN_DEFECT_STATUSES] },
-        inspectionItemResult: { isDefect: true, inspection: { asset: scope } },
+        inspectionItemResult: {
+          ...SURVEYED_DEFECT_SOURCE,
+          inspection: { ...SURVEYED_INSPECTION, asset: scope },
+        },
       },
       select: { severity: true, maintenanceCategory: true, isEmergency: true },
     });

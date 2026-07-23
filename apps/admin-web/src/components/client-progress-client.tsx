@@ -392,8 +392,10 @@ function ClientProgressContent() {
               {/* The honest denominator — say what "registered" means. */}
               <p className="flex items-start gap-1.5 text-[12px] text-[var(--muted)]">
                 <Info size={13} className="mt-0.5 shrink-0" />
-                Coverage is measured against poles recorded in ASCURE for your
-                Mainheads. Poles not yet registered by a survey are not counted.
+                A pole counts as surveyed once its survey is complete, so these
+                figures reflect finished work. Coverage is measured against poles
+                recorded in ASCURE for your Mainheads — poles not yet registered
+                by a survey are not counted.
               </p>
 
               {poles ? (
