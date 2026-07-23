@@ -86,8 +86,6 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-const norm = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
-
 /** Metres between two lat/lng points (haversine). */
 function distanceMeters(
   a: { latitude: number; longitude: number },
@@ -195,8 +193,20 @@ async function main() {
       farPhotoToPole: { pole: string; meters: number }[];
       clearanceGeos: Geo[];
       poleGeos: Geo[];
+      // Inspections where DIST↔ph could actually be computed (clearance photo
+      // had geo AND there was a pole photo to compare it to) — the denominator
+      // for the "what fraction is off" proportion, so 1-of-400 reads as noise
+      // and 151-of-278 reads as systematic.
+      comparable: number;
     };
     const visits = new Map<string, VisitAgg>();
+
+    // Data-coverage counters — resolve WHY a signal did or didn't fire. If few
+    // photos carry a device timestamp, the TIME signal simply had nothing to
+    // work with (a data gap, not an all-clear).
+    let imgTotal = 0;
+    let imgWithTimestamp = 0;
+    let imgWithGeo = 0;
 
     for (const insp of inspections) {
       const v = insp.siteVisit;
@@ -216,10 +226,17 @@ async function main() {
           farPhotoToPole: [],
           clearanceGeos: [],
           poleGeos: [],
+          comparable: 0,
         };
         visits.set(key, agg);
       }
       agg.poleCount += 1;
+
+      for (const img of insp.inspectionImages) {
+        imgTotal += 1;
+        if (img.timestamp) imgWithTimestamp += 1;
+        if (hasGeo(img)) imgWithGeo += 1;
+      }
 
       const clearancePhotos = insp.inspectionImages.filter(
         (img) => img.templateItemId && kelegaanItemIds.has(img.templateItemId),
@@ -247,6 +264,7 @@ async function main() {
         // Signal 2 — clearance vs this inspection's pole photos.
         const poleCentroid = centroid(poleGeos);
         if (poleCentroid) {
+          agg.comparable += 1;
           const d = distanceMeters(cCentroid, poleCentroid);
           if (d >= PHOTO_TO_PHOTO_FLAG_M) {
             agg.farPhotoToPhoto.push({ pole: insp.asset.assetCode, meters: Math.round(d) });
@@ -294,10 +312,29 @@ async function main() {
           (v.farPhotoToPole.length > 0 ? 1 : 0) +
           (clusterNote ? 1 : 0);
 
-        return { v, clearanceSpan, poleSpan, batched, clusterNote, signals };
+        // Fraction of comparable inspections whose clearance photo is off. This is
+        // what separates systematic (54% of 278) from a stray fix (1 of 404).
+        const proportion =
+          v.comparable > 0 ? v.farPhotoToPhoto.length / v.comparable : 0;
+        // STRONG = a pattern, not an outlier: many far photos AND a real share of
+        // the visit, or the time/cluster signature fired outright.
+        const strong =
+          batched ||
+          !!clusterNote ||
+          (v.farPhotoToPhoto.length >= 5 && proportion >= 0.15);
+
+        return { v, clearanceSpan, poleSpan, batched, clusterNote, signals, proportion, strong };
       })
       .filter((r) => r.signals > 0)
-      .sort((a, b) => b.signals - a.signals || b.v.farPhotoToPhoto.length - a.v.farPhotoToPhoto.length);
+      .sort(
+        (a, b) =>
+          Number(b.strong) - Number(a.strong) ||
+          b.proportion - a.proportion ||
+          b.v.farPhotoToPhoto.length - a.v.farPhotoToPhoto.length,
+      );
+
+    const strongList = flagged.filter((r) => r.strong);
+    const weakList = flagged.filter((r) => !r.strong);
 
     if (args.json) {
       console.log(JSON.stringify(flagged, null, 2));
@@ -317,28 +354,40 @@ async function main() {
     console.log(`  Scope   : ${scanScope}`);
     console.log(`  Window  : last ${args.days} days (since ${since.toISOString().slice(0, 10)})`);
     console.log(`  Scanned : ${inspections.length} inspections across ${visits.size} visits`);
-    console.log(`  Flagged : ${flagged.length} visits with ≥1 signal`);
+    const pct = (n: number) => (imgTotal > 0 ? Math.round((n / imgTotal) * 100) : 0);
+    console.log(
+      `  Photos  : ${imgTotal} total · ${pct(imgWithGeo)}% geotagged · ${pct(imgWithTimestamp)}% with a capture time`,
+    );
+    if (imgWithTimestamp === 0) {
+      console.log('            ⚠ NO capture times stored → the TIME / batch signal cannot run on this data.');
+    }
+    console.log(
+      `  Flagged : ${strongList.length} STRONG (systematic) + ${weakList.length} weak/low-confidence`,
+    );
     console.log('');
 
-    // Per-team rollup so the outlier crew is obvious.
-    const byTeam = new Map<string, { team: string; code: string; visits: number; signals: number }>();
+    // Per-team rollup so the outlier crew is obvious — STRONG visits only, since
+    // those are the ones worth a conversation.
+    const byTeam = new Map<string, { team: string; code: string; strong: number; weak: number }>();
     for (const r of flagged) {
       const k = r.v.team;
-      const t = byTeam.get(k) ?? { team: r.v.team, code: r.v.teamCode, visits: 0, signals: 0 };
-      t.visits += 1;
-      t.signals += r.signals;
+      const t = byTeam.get(k) ?? { team: r.v.team, code: r.v.teamCode, strong: 0, weak: 0 };
+      if (r.strong) t.strong += 1;
+      else t.weak += 1;
       byTeam.set(k, t);
     }
     if (byTeam.size > 0) {
-      console.log('  ── Flagged visits by team (worst first) ─────────────────────');
-      for (const t of [...byTeam.values()].sort((a, b) => b.signals - a.signals)) {
-        console.log(`   • ${t.team} (${t.code}) — ${t.visits} visit(s), ${t.signals} signal(s)`);
+      console.log('  ── By team (strong-signal visits first) ─────────────────────');
+      for (const t of [...byTeam.values()].sort((a, b) => b.strong - a.strong || b.weak - a.weak)) {
+        console.log(`   • ${t.team} (${t.code}) — ${t.strong} strong, ${t.weak} weak`);
       }
       console.log('');
     }
 
-    for (const r of flagged) {
+    const printVisit = (r: (typeof flagged)[number]) => {
       const v = r.v;
+      const share =
+        v.comparable > 0 ? ` (${Math.round(r.proportion * 100)}% of ${v.comparable} measured)` : '';
       console.log('  ──────────────────────────────────────────────────────────────');
       console.log(`  ${v.team} (${v.teamCode})  ·  ${v.mainhead}  ·  ${v.pencawang}`);
       console.log(`  Visit ${v.visitId}  —  ${v.poleCount} poles`);
@@ -354,7 +403,7 @@ async function main() {
       if (v.farPhotoToPhoto.length > 0) {
         const worst = [...v.farPhotoToPhoto].sort((a, b) => b.meters - a.meters).slice(0, 6);
         console.log(
-          `   ⚠ DIST↔ph  ${v.farPhotoToPhoto.length} clearance photo(s) ≥${PHOTO_TO_PHOTO_FLAG_M} m from their pole photos:`,
+          `   ⚠ DIST↔ph  ${v.farPhotoToPhoto.length} clearance photo(s) ≥${PHOTO_TO_PHOTO_FLAG_M} m from their pole photos${share}:`,
         );
         console.log(`             ${worst.map((f) => `${f.pole} (${f.meters} m)`).join(', ')}`);
       }
@@ -365,8 +414,27 @@ async function main() {
         );
         console.log(`             ${worst.map((f) => `${f.pole} (${f.meters} m)`).join(', ')}`);
       }
+    };
+
+    if (strongList.length > 0) {
+      console.log('  ══ STRONG — systematic, worth acting on ═════════════════════');
+      strongList.forEach(printVisit);
+      console.log('');
     }
-    console.log('');
+    if (weakList.length > 0) {
+      console.log('  ══ WEAK / low-confidence — a few stray photos, likely noise ═');
+      console.log('  (Shown so nothing is hidden; a lone far fix is usually bad GPS,');
+      console.log('   not fraud. Do NOT act on these without eyeballing them.)');
+      for (const r of weakList) {
+        const worst = r.v.farPhotoToPhoto.concat(r.v.farPhotoToPole).sort((a, b) => b.meters - a.meters)[0];
+        console.log(
+          `   • ${r.v.team} (${r.v.teamCode}) · ${r.v.mainhead} · ${r.v.pencawang} — ` +
+            `${r.v.farPhotoToPhoto.length} far of ${r.v.comparable}` +
+            (worst ? `, worst ${worst.pole} (${worst.meters} m)` : ''),
+        );
+      }
+      console.log('');
+    }
     console.log('  Legend: TIME/CLUSTER/DIST↔ph are GPS-error-robust; DIST↔pole is a');
     console.log('  softer backstop (pole coord source not yet stored). Tune thresholds');
     console.log('  at the top of this file against what you see here.');
