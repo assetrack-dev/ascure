@@ -36,6 +36,7 @@ import {
 import { describeInspectionRecency } from '../common/inspection-cadence';
 import {
   checklistColumnOptions,
+  checklistResultValue,
   type ChecklistColumnDef,
   type ChecklistImage,
 } from '../common/checklist-columns';
@@ -298,6 +299,9 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
               valueBoolean: true,
               valueDate: true,
               valueDateTime: true,
+              // MULTI_SELECT keeps its picks ONLY here — without it every
+              // multi-select column renders blank.
+              valueJson: true,
               templateItem: { select: { label: true } },
             },
           },
@@ -2850,16 +2854,11 @@ export class SiteVisitsService {
     // Recorded value of a checklist result — text/OCR fields use valueText;
     // numeric readings fall back to valueNumber. Same source as the Download
     // Checklist.
-    const valueOf = (match: ResultRow | null): string | null => {
-      if (!match) return null;
-      const text = match.valueText?.trim();
-      if (text) return text;
-      if (match.valueNumber != null) return match.valueNumber.toString();
-      if (match.valueBoolean != null) return match.valueBoolean ? 'Yes' : 'No';
-      if (match.valueDate != null) return match.valueDate.toISOString().slice(0, 10);
-      if (match.valueDateTime != null) return match.valueDateTime.toISOString();
-      return null;
-    };
+    // Delegates to the SHARED reader rather than repeating the column priority —
+    // this was a copy that had drifted (it never read valueJson, so every
+    // MULTI_SELECT answer rendered blank here just as it did on the map panel).
+    const valueOf = (match: ResultRow | null): string | null =>
+      checklistResultValue(match);
     // Results matching any of the given label aliases, in alias priority order.
     const matchRows = (...labels: string[]): ResultRow[] => {
       const rows: ResultRow[] = [];

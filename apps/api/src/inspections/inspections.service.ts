@@ -698,11 +698,16 @@ export class InspectionsService {
     // are never editable this way.
     const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
     const columnKey = norm(dto.columnKey);
+    // IMAGE carries a photo, not a value. MULTI_SELECT keeps its picks in
+    // valueJson as an array — a single free-text edit would write valueText and
+    // leave the real answer untouched, so it stays read-only until there is a
+    // proper multi-pick editor.
     const item = inspection.template.sections
       .flatMap((section) => section.items)
       .find(
         (templateItem) =>
           templateItem.inputType !== InspectionItemInputType.IMAGE &&
+          templateItem.inputType !== InspectionItemInputType.MULTI_SELECT &&
           norm(templateItem.label) === columnKey,
       );
 
