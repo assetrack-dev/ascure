@@ -234,7 +234,10 @@ describe('Authz · client (TNB) progress view', () => {
       const res = await http(app, token.client).get('/api/v1/client/progress');
       expect(res.status).toBe(200);
       expect(res.body.total).toBe(1);
-      expect(res.body.inspected).toBe(1);
+      // The pole IS submitted, but its survey is still being walked — coverage
+      // counts finished work only, matching the evidence gate. A page that
+      // reported 100% here would open to "no completed surveys yet".
+      expect(res.body.inspected).toBe(0);
       const names = res.body.groups.map((g: { name: string }) => g.name);
       expect(names).toContain('CLIENT MH IN');
       expect(names).not.toContain('CLIENT MH OUT');
@@ -313,6 +316,13 @@ describe('Authz · client (TNB) progress view', () => {
         expect(res.body.poles[0].assetCode).toBe('CL-POLE-1');
 
         await http(app, token.client).get(`/api/v1/assets/${C.asset}`).expect(200);
+
+        // ...and coverage moves WITH it — the headline and the drill-down agree.
+        const progress = await http(app, token.client).get(
+          '/api/v1/client/progress',
+        );
+        expect(progress.body.inspected).toBe(1);
+        expect(progress.body.percent).toBe(100);
       });
     });
   });
