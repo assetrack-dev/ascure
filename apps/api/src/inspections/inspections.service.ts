@@ -48,6 +48,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
+import { checklistResultValue } from '../common/checklist-columns';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
@@ -348,7 +349,16 @@ export class InspectionsService {
         },
         results: {
           select: {
+            templateItemId: true,
             valueText: true,
+            // The typed columns too, so an edit's audit line reports the real
+            // previous value instead of a blank for anything non-text (a
+            // MULTI_SELECT keeps its picks in valueJson).
+            valueNumber: true,
+            valueBoolean: true,
+            valueDate: true,
+            valueDateTime: true,
+            valueJson: true,
             templateItem: {
               select: {
                 key: true,
@@ -698,16 +708,14 @@ export class InspectionsService {
     // are never editable this way.
     const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
     const columnKey = norm(dto.columnKey);
-    // IMAGE carries a photo, not a value. MULTI_SELECT keeps its picks in
-    // valueJson as an array — a single free-text edit would write valueText and
-    // leave the real answer untouched, so it stays read-only until there is a
-    // proper multi-pick editor.
+    // IMAGE carries a photo, not a value, so it is the only type excluded here.
+    // MULTI_SELECT IS editable — its picks round-trip through valueJson (see the
+    // MULTI_SELECT branch of coerceInspectionResultValue).
     const item = inspection.template.sections
       .flatMap((section) => section.items)
       .find(
         (templateItem) =>
           templateItem.inputType !== InspectionItemInputType.IMAGE &&
-          templateItem.inputType !== InspectionItemInputType.MULTI_SELECT &&
           norm(templateItem.label) === columnKey,
       );
 
@@ -722,7 +730,11 @@ export class InspectionsService {
     );
     const oldValue = this.stringifyResultValue(existing ?? {});
 
-    const data = this.coerceInspectionResultValue(item.inputType, dto.value ?? '');
+    const data = this.coerceInspectionResultValue(
+      item.inputType,
+      dto.value ?? '',
+      item.optionsJson,
+    );
 
     await this.prisma.inspectionResult.upsert({
       where: {
@@ -735,7 +747,12 @@ export class InspectionsService {
       update: data,
     });
 
-    const newValue = this.stringifyResultValue(data);
+    const newValue = this.stringifyResultValue({
+      ...data,
+      // `data.valueJson` is Prisma's DbNull sentinel when cleared — the reader
+      // wants a plain JSON value, so normalize the sentinel to null.
+      valueJson: Array.isArray(data.valueJson) ? data.valueJson : null,
+    });
 
     this.logger.warn(
       `Checklist item "${item.label}" edited on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}"`,
@@ -755,13 +772,14 @@ export class InspectionsService {
   private coerceInspectionResultValue(
     inputType: InspectionItemInputType,
     rawInput: string,
+    optionsJson?: Prisma.JsonValue | null,
   ): {
     valueText: string | null;
     valueNumber: number | null;
     valueBoolean: boolean | null;
     valueDate: Date | null;
     valueDateTime: Date | null;
-    valueJson: typeof Prisma.DbNull;
+    valueJson: typeof Prisma.DbNull | Prisma.InputJsonArray;
   } {
     const raw = rawInput.trim();
     const cleared = {
@@ -774,6 +792,38 @@ export class InspectionsService {
     };
     if (raw === '') {
       return cleared;
+    }
+
+    // MULTI_SELECT keeps its picks as an ARRAY in valueJson — writing them to
+    // valueText would leave the real answer untouched. The wire format is a
+    // comma-separated list of OPTION VALUES; each is validated against the
+    // template so a stale or mistyped pick is rejected rather than stored.
+    if (inputType === InspectionItemInputType.MULTI_SELECT) {
+      const allowed = normalizeTemplateSelectOptions(optionsJson ?? null);
+      if (!allowed) {
+        throw new BadRequestException(
+          'This item has no configured options to choose from.',
+        );
+      }
+      const allowedValues = new Set(allowed.map((option) => option.value));
+      const picks = Array.from(
+        new Set(
+          raw
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+        ),
+      );
+      const unknown = picks.find((pick) => !allowedValues.has(pick));
+      if (unknown) {
+        throw new BadRequestException(
+          `"${unknown}" is not one of this item's options.`,
+        );
+      }
+      return {
+        ...cleared,
+        valueJson: picks as Prisma.InputJsonArray,
+      };
     }
 
     const asNumber = () => {
@@ -834,29 +884,27 @@ export class InspectionsService {
 
   /** Render a stored/prepared InspectionResult value as one string for the edit
    *  log (first non-empty typed column wins; mirrors the serializer's valueOf). */
+  /**
+   * The human-readable form of a recorded value, for the edit audit line.
+   * Delegates to the SHARED reader so it cannot drift — this used to omit
+   * valueJson, which logged every MULTI_SELECT edit as an empty value.
+   */
   private stringifyResultValue(v: {
     valueText?: string | null;
     valueNumber?: Prisma.Decimal | number | null;
     valueBoolean?: boolean | null;
     valueDate?: Date | null;
     valueDateTime?: Date | null;
+    valueJson?: Prisma.JsonValue | null;
   }): string | null {
-    if (v.valueText != null && v.valueText.trim() !== '') {
-      return v.valueText;
-    }
-    if (v.valueNumber != null) {
-      return v.valueNumber.toString();
-    }
-    if (v.valueBoolean != null) {
-      return v.valueBoolean ? 'Yes' : 'No';
-    }
-    if (v.valueDate != null) {
-      return v.valueDate.toISOString().slice(0, 10);
-    }
-    if (v.valueDateTime != null) {
-      return v.valueDateTime.toISOString();
-    }
-    return null;
+    return checklistResultValue({
+      valueText: v.valueText ?? null,
+      valueNumber: v.valueNumber ?? null,
+      valueBoolean: v.valueBoolean ?? null,
+      valueDate: v.valueDate ?? null,
+      valueDateTime: v.valueDateTime ?? null,
+      valueJson: v.valueJson ?? null,
+    });
   }
 
   /** Map templateItemId → chosen option value(s) from the structured `results`
