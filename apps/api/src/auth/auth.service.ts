@@ -5,7 +5,10 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { resolveCanImport } from '../common/authorization/import-actor';
-import { resolveMaintenanceOrgIds } from '../common/authorization/scope-context';
+import {
+  buildScopeContext,
+  resolveMaintenanceOrgIds,
+} from '../common/authorization/scope-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
@@ -106,6 +109,7 @@ export class AuthService {
     const canDeleteSurvey = this.resolveCanDeleteSurvey(requestUser);
     const canOverseeSubcontractors =
       await this.resolveCanOverseeSubcontractors(requestUser);
+    const isClientViewer = await this.resolveIsClientViewer(requestUser);
 
     return {
       access_token: accessToken,
@@ -128,6 +132,7 @@ export class AuthService {
         canReviewSurvey,
         canDeleteSurvey,
         canOverseeSubcontractors,
+        isClientViewer,
       },
     };
   }
@@ -182,6 +187,17 @@ export class AuthService {
     }
     const orgIds = await resolveMaintenanceOrgIds(this.prisma, user);
     return orgIds.length > 1;
+  }
+
+  /**
+   * The caller belongs to a network-OWNER organization (TNB / CLIENT) and so
+   * gets the read-only client progress view instead of the contractor console.
+   * Exposed as a flag because the admin web can't tell a client org from a
+   * contractor one by role alone; every /client endpoint re-checks server-side.
+   */
+  private async resolveIsClientViewer(user: RequestUser): Promise<boolean> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return ctx.isClientViewer;
   }
 
   /**
@@ -275,6 +291,7 @@ export class AuthService {
     const canDeleteSurvey = this.resolveCanDeleteSurvey(user);
     const canOverseeSubcontractors =
       await this.resolveCanOverseeSubcontractors(user);
+    const isClientViewer = await this.resolveIsClientViewer(user);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -290,6 +307,7 @@ export class AuthService {
       canReviewSurvey,
       canDeleteSurvey,
       canOverseeSubcontractors,
+      isClientViewer,
     };
   }
 

@@ -13,6 +13,18 @@ import {
   readStoredSession,
 } from "@/lib/auth";
 
+/**
+ * Where a signed-in user lands. A CLIENT viewer (TNB) owns the network but not
+ * the operation, so they go to their progress view — /dashboard is the
+ * contractor console and isn't theirs to read.
+ */
+function landingPath(user: { mustChangePassword?: boolean; isClientViewer?: boolean } | null): string {
+  if (user?.mustChangePassword) {
+    return "/change-password";
+  }
+  return user?.isClientViewer ? "/progress" : "/dashboard";
+}
+
 export function LoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -25,9 +37,7 @@ export function LoginForm() {
     setEmail(readLastLoginEmail());
 
     if (session?.token) {
-      router.replace(
-        session.user?.mustChangePassword ? "/change-password" : "/dashboard",
-      );
+      router.replace(landingPath(session.user));
     }
   }, [router]);
 
@@ -51,9 +61,7 @@ export function LoginForm() {
         user: normalizedUser,
       });
 
-      router.replace(
-        normalizedUser?.mustChangePassword ? "/change-password" : "/dashboard",
-      );
+      router.replace(landingPath(normalizedUser));
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed.");
     } finally {

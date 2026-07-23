@@ -38,6 +38,7 @@ import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { MapQueryDto } from './dto/map-query.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
 import { buildInspectionImagePath } from '../common/uploads.constants';
+import { CLIENT_VISIBLE_LIFECYCLE } from '../common/client-visibility';
 import {
   checklistColumnOptions,
   checklistResultValue,
@@ -1000,10 +1001,31 @@ export class AssetsService {
   }
 
   async getById(user: RequestUser, id: string) {
+    // A CLIENT viewer (TNB) is an EXTERNAL party, so tenant scope alone is not
+    // enough here: narrow to poles in their assigned Mainheads whose survey has
+    // left the field. Without this they could read any pole in the tenant by id,
+    // bypassing the client progress view's own scoping.
+    const ctx = await buildScopeContext(this.prisma, user);
+    const clientWhere: Prisma.AssetWhereInput =
+      ctx.isClientViewer && !ctx.isAdmin
+        ? {
+            substation: { mainheadId: { in: ctx.clientMainheadIds } },
+            inspections: {
+              some: {
+                completionStatus: InspectionCompletionStatus.SUBMITTED,
+                siteVisit: {
+                  lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE },
+                },
+              },
+            },
+          }
+        : {};
+
     const asset = await this.prisma.asset.findFirst({
       where: {
         id,
         tenantId: user.tenantId,
+        ...clientWhere,
       },
       include: {
         assetType: {
