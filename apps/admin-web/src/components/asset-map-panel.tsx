@@ -168,10 +168,20 @@ function ChecklistRow({
   }, [value, column.key]);
 
   const templateOptions = column.options ?? [];
-  // MULTI_SELECT holds several picks in one value; a single-value editor would
-  // write the wrong column and silently drop the real answer, so it reads only
-  // (the API refuses it too). Everything else follows the caller's permission.
-  const editable = canEdit && column.inputType !== "MULTI_SELECT";
+  const isMulti = column.inputType === "MULTI_SELECT";
+  const editable = canEdit;
+
+  // MULTI_SELECT rides the wire as a comma-separated list of option VALUES (the
+  // API validates each against the template and stores them as a valueJson
+  // array), so the draft splits and rejoins on that.
+  const draftPicks = useMemo(
+    () =>
+      draft
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    [draft],
+  );
 
   // A recorded value that is NOT among the template's current options (the
   // template was edited after the survey, or the answer predates it) would leave
@@ -192,9 +202,16 @@ function ChecklistRow({
     if (!value) {
       return value;
     }
-    const match = templateOptions.find((option) => option.value === value);
-    return match ? match.label : value;
-  }, [templateOptions, value]);
+    const labelFor = (raw: string) =>
+      templateOptions.find((option) => option.value === raw)?.label ?? raw;
+    // A multi-select's stored value is the joined picks — label each one.
+    return isMulti
+      ? value
+          .split(",")
+          .map((entry) => labelFor(entry.trim()))
+          .join(", ")
+      : labelFor(value);
+  }, [templateOptions, value, isMulti]);
 
   const commit = useCallback(async () => {
     if (draft === (value ?? "")) {
@@ -223,8 +240,38 @@ function ChecklistRow({
 
       <div className="min-w-0">
         {editing ? (
-          <div className="flex items-center gap-1.5">
-            {options.length > 0 ? (
+          <div className="flex items-start gap-1.5">
+            {isMulti && templateOptions.length > 0 ? (
+              <div className="min-w-0 flex-1 rounded-md border border-[var(--brand)] bg-[var(--panel)] p-1.5">
+                <div className="max-h-40 space-y-1 overflow-y-auto">
+                  {templateOptions.map((option) => {
+                    const checked = draftPicks.includes(option.value);
+                    return (
+                      <label
+                        key={option.value}
+                        className="flex cursor-pointer items-start gap-1.5 text-[12px] text-[var(--foreground)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={saving}
+                          onChange={() =>
+                            setDraft(
+                              (checked
+                                ? draftPicks.filter((pick) => pick !== option.value)
+                                : [...draftPicks, option.value]
+                              ).join(", "),
+                            )
+                          }
+                          className="mt-0.5 shrink-0"
+                        />
+                        <span className="min-w-0">{option.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : options.length > 0 ? (
               <select
                 autoFocus
                 value={draft}
