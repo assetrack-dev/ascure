@@ -619,6 +619,8 @@ function normalizeInspection(rawInspection: unknown, index: number): SiteVisitIn
     cycleNumber:
       readNumber(record, "inspectionCycle") ?? readNumber(record, "cycleNumber"),
     submittedAt: firstString(record, ["submittedAt"]),
+    reinspectionReason: firstString(record, ["reinspectionReason"]),
+    reinspectionRequestedAt: firstString(record, ["reinspectionRequestedAt"]),
     createdAt: firstString(record, ["createdAt"]),
     updatedAt: firstString(record, ["updatedAt"]),
     imageCount: images.length,

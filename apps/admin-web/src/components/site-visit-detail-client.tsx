@@ -20,6 +20,7 @@ import {
   Pencil,
   Radio,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -64,6 +65,7 @@ import {
   markRondaanSelesai,
   openNextCycle,
   reassignSiteVisit,
+  requestReinspection,
   requestSurveyAmendment,
   type SurveyDeletePreview,
 } from "@/lib/site-visits";
@@ -86,6 +88,7 @@ import type {
   SiteVisitAssetLink,
   SiteVisitContributions,
   SiteVisitDetail,
+  SiteVisitInspection,
   SiteVisitSensorPhoto,
   SiteVisitStatus,
   SiteVisitValidationStatus,
@@ -1834,6 +1837,127 @@ function SensorPhotoCell({
   );
 }
 
+/** The pole a "send back for re-inspection" prompt is open for. */
+type SendBackTarget = { inspectionId: string; assetCode: string };
+
+/**
+ * Prompt for sending ONE pole back for re-inspection from the Linked Assets
+ * table — the same action the Asset Map panel offers, asked for in a dialog
+ * because a table row has nowhere to expand. The reason is required and is what
+ * the crew sees; nothing is deleted, the pole simply reads as not inspected
+ * until they redo it. `onSubmit` does the API write + refetch and its error is
+ * shown here rather than closing over a lost edit.
+ */
+function SendBackDialog({
+  target,
+  onClose,
+  onSubmit,
+}: {
+  target: SendBackTarget;
+  onClose: () => void;
+  onSubmit: (inspectionId: string, reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const commit = async () => {
+    const trimmed = reason.trim();
+    if (saving || !trimmed) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSubmit(target.inspectionId, trimmed);
+      onClose();
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "Unable to send this pole back.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Send ${target.assetCode} back for re-inspection`}
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-lg rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]"
+      >
+        <p
+          className="text-[14.5px] font-semibold text-[var(--foreground)]"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          Send{" "}
+          <span className="font-mono">{target.assetCode}</span> back for
+          re-inspection
+        </p>
+        <p className="mt-1 text-[12.5px] leading-snug text-[var(--muted)]">
+          The crew sees your reason. Every recorded answer, photo and defect is
+          kept — the pole simply reads as not inspected until they redo it.
+        </p>
+
+        <label className="mt-4 block font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--medium-text)]">
+          Why does this pole need re-inspecting? (required)
+        </label>
+        <textarea
+          autoFocus
+          rows={3}
+          value={reason}
+          disabled={saving}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="e.g. Kelegaan reading 5.98 m does not match the photo — please re-measure"
+          className={`${filterControlClass} mt-1.5 !h-auto w-full resize-none py-2`}
+        />
+
+        {error ? (
+          <p className="mt-2 text-[12.5px] text-[var(--critical-text)]">{error}</p>
+        ) : null}
+
+        <div className="mt-4 flex gap-2">
+          <Tbtn
+            variant="secondary"
+            disabled={saving || reason.trim().length === 0}
+            onClick={() => void commit()}
+            className="!border-[var(--medium-border)] !bg-[var(--medium-bg)] !text-[var(--medium-text)] hover:!opacity-90"
+          >
+            {saving ? (
+              <RefreshCw size={15} className="animate-spin" />
+            ) : (
+              <RotateCcw size={15} />
+            )}
+            Send back
+          </Tbtn>
+          <Tbtn variant="secondary" disabled={saving} onClick={onClose}>
+            Cancel
+          </Tbtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Fixed Linked-Assets columns shown before / after the DC's toggleable checklist
 // columns. The extras slot between Catitan and Type so every checklist-derived
 // field clusters together, ahead of the asset/link metadata.
@@ -1992,6 +2116,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   // Stable identity so the lightbox's focus effect isn't torn down/re-run (and
   // focus yanked back) by the 60s auto-refresh re-render while it's open.
   const closeSensorPhoto = useCallback(() => setSensorPhotoView(null), []);
+  // The pole whose "send back for re-inspection" prompt is open (null = closed).
+  // Stable callbacks for the same reason as the lightbox above.
+  const [sendBackTarget, setSendBackTarget] = useState<SendBackTarget | null>(null);
+  const closeSendBack = useCallback(() => setSendBackTarget(null), []);
   const [assetSortKey, setAssetSortKey] = useState<AssetSortKey>("rondaan");
   const [assetSortDirection, setAssetSortDirection] =
     useState<AssetSortDirection>("asc");
@@ -2208,6 +2336,24 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     void runLifecycle("archive", () => archiveSurvey(token, siteVisitId));
   }, [runLifecycle, session?.token, siteVisitId]);
 
+  // Send ONE pole back for re-inspection from its Linked Assets row. The reason
+  // is required (the crew reads it) and nothing is deleted — the pole returns to
+  // DRAFT, so it turns red on the crew's map and drops out of coverage until
+  // they re-submit. The API re-enforces authority and its own guards (already in
+  // maintenance / not submitted / cancelled visit); those errors surface in the
+  // dialog.
+  const handleSendBack = useCallback(
+    async (inspectionId: string, reason: string) => {
+      const token = session?.token;
+      if (!token) {
+        throw new Error("Your session has expired.");
+      }
+      await requestReinspection(token, inspectionId, reason);
+      await loadVisit(token, false);
+    },
+    [session?.token, loadVisit],
+  );
+
   const [downloadingReport, setDownloadingReport] = useState(false);
   const handleDownloadReport = useCallback(async () => {
     const token = session?.token;
@@ -2261,6 +2407,50 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     () => visit?.inspections.filter((inspection) => inspection.completionStatus === "SUBMITTED") ?? [],
     [visit],
   );
+
+  // THIS visit's inspection per pole — what a Linked-Assets row's "send back"
+  // acts on. Deliberately NOT link.asset.latestInspectionId: that is the pole's
+  // globally latest submitted inspection, which for a re-surveyed pole belongs
+  // to a NEWER cycle. The checklist edits get away with it because they pass
+  // siteVisitId and the API refuses a cross-cycle write; request-reinspection
+  // has no such guard, so it would silently send back another cycle's
+  // inspection. Also covers a row that exists only because an inspection
+  // references it (no link row) — those never had a latestInspectionId at all.
+  //
+  // ⚠ One pole can hold SEVERAL inspections in one visit (a leftover draft
+  // beside the real submission — the demo data has exactly that), so this picks
+  // the meaningful one rather than the first: already sent back > submitted >
+  // anything else, newest within a tier.
+  const visitInspectionByAssetId = useMemo(() => {
+    const rank = (inspection: SiteVisitInspection) =>
+      inspection.reinspectionReason
+        ? 2
+        : inspection.completionStatus === "SUBMITTED"
+          ? 1
+          : 0;
+    const recency = (inspection: SiteVisitInspection) => {
+      const time = new Date(
+        inspection.submittedAt ?? inspection.createdAt ?? 0,
+      ).getTime();
+      return Number.isFinite(time) ? time : 0;
+    };
+
+    const byAssetId = new Map<string, SiteVisitInspection>();
+    for (const inspection of visit?.inspections ?? []) {
+      if (!inspection.assetId) {
+        continue;
+      }
+      const current = byAssetId.get(inspection.assetId);
+      if (
+        !current ||
+        rank(inspection) > rank(current) ||
+        (rank(inspection) === rank(current) && recency(inspection) > recency(current))
+      ) {
+        byAssetId.set(inspection.assetId, inspection);
+      }
+    }
+    return byAssetId;
+  }, [visit?.inspections]);
   const operationalAssetRows = useMemo(() => {
     if (!visit) {
       return [];
@@ -2706,6 +2896,13 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     />
                                   </th>
                                 ))}
+                                {/* Per-pole send-back action — only for someone
+                                    who may govern the data. */}
+                                {canEditLinkedAssets ? (
+                                  <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                                    Re-inspect
+                                  </th>
+                                ) : null}
                               </tr>
                             </thead>
                             <tbody>
@@ -2715,6 +2912,8 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                 const assetHref = `/assets/${link.assetId}?from=${encodeURIComponent(
                                   `/site-visits/${siteVisitId}`,
                                 )}`;
+                                const rowInspection =
+                                  visitInspectionByAssetId.get(link.assetId) ?? null;
                                 return (
                                 <tr
                                   key={link.id}
@@ -2877,6 +3076,45 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatDateTime(link.addedAt)}
                                   </td>
+                                  {/* Send this pole back for re-inspection —
+                                      the same action the Asset Map panel
+                                      offers, on the row the DC is reading. Only
+                                      on a pole that is actually submitted, and
+                                      never twice (the flag clears when the crew
+                                      re-submits). */}
+                                  {canEditLinkedAssets ? (
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {rowInspection?.reinspectionReason ? (
+                                        <span
+                                          title={`Sent back: ${rowInspection.reinspectionReason}`}
+                                          className="inline-flex items-center gap-1 rounded-full border border-[var(--medium-border)] bg-[var(--medium-bg)] px-2 py-[3px] text-[11px] font-semibold text-[var(--medium-text)]"
+                                        >
+                                          <RotateCcw size={12} />
+                                          Sent back
+                                        </span>
+                                      ) : rowInspection?.completionStatus === "SUBMITTED" ? (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setSendBackTarget({
+                                              inspectionId: rowInspection.id,
+                                              assetCode: link.asset.assetCode,
+                                            });
+                                          }}
+                                          onKeyDown={(event) => event.stopPropagation()}
+                                          title="Send this pole back for re-inspection — the recorded data is kept"
+                                          aria-label={`Send ${link.asset.assetCode} back for re-inspection`}
+                                          className="inline-flex items-center gap-1 rounded-[var(--radius-control)] border border-[var(--line)] px-2 py-[3px] text-[11px] font-semibold text-[var(--foreground-soft)] outline-none transition hover:border-[var(--medium-border)] hover:text-[var(--medium-text)] focus-visible:ring-1 focus-visible:ring-[var(--brand)]"
+                                        >
+                                          <RotateCcw size={12} />
+                                          Send back
+                                        </button>
+                                      ) : (
+                                        <span className="text-[var(--muted-2)]">—</span>
+                                      )}
+                                    </td>
+                                  ) : null}
                                 </tr>
                                 );
                               })}
@@ -3009,6 +3247,13 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
       </main>
       {sensorPhotoView ? (
         <SensorPhotoLightbox view={sensorPhotoView} onClose={closeSensorPhoto} />
+      ) : null}
+      {sendBackTarget ? (
+        <SendBackDialog
+          target={sendBackTarget}
+          onClose={closeSendBack}
+          onSubmit={handleSendBack}
+        />
       ) : null}
     </AppShell>
   );

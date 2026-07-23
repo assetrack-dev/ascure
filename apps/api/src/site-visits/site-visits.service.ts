@@ -275,7 +275,16 @@ const SITE_VISIT_ASSET_INCLUDE = Prisma.validator<Prisma.SiteVisitAssetInclude>(
       // SUBMITTED so an amended-to-DRAFT or newer-cycle draft cannot mask a
       // real submission and leave an inspected pole red.
       inspections: {
-        where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+        where: {
+          OR: [
+            { completionStatus: InspectionCompletionStatus.SUBMITTED },
+            // A pole sent back for re-inspection is DRAFT again, but its captured
+            // answers and photos are exactly what the DC must keep seeing on the
+            // Linked Assets table — dropping it here would blank the row's every
+            // checklist column and read as data loss (mirrors assets.service).
+            { reinspectionRequestedAt: { not: null } },
+          ],
+        },
         take: 1,
         orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
         select: {
