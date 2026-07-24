@@ -446,15 +446,19 @@ async function main() {
         const impossible = v.farTiming.filter((t) => t.kmh > IMPOSSIBLE_KMH).length;
         const relocated = v.farTiming.filter((t) => t.gapSec >= RELOCATE_GAP_SEC).length;
         const medGap = median(v.farTiming.map((t) => t.gapSec)) ?? 0;
+        // The median gap is the robust call. Hours between the two photos = time
+        // to travel = deliberate off-site capture. Minutes = the crew could not
+        // have been km away and back, so the coordinate is wrong, not the crew.
+        const medGapMin = medGap / 60;
         const lean =
-          impossible / total >= 0.7
-            ? '→ IMPOSSIBLE speeds dominate: looks like a GPS-capture bug, NOT relocation'
-            : relocated / total >= 0.5
-              ? '→ time to travel present: consistent with OFF-SITE capture (fraud)'
-              : '→ mixed — eyeball a sample before concluding';
+          medGapMin >= RELOCATE_GAP_SEC / 60
+            ? '→ FRAUD-consistent: hours between the two photos — time to travel to capture off-site'
+            : medGapMin <= 5
+              ? '→ GPS-BUG-consistent: far but only minutes apart — no time to get there, so the fix is wrong, NOT the crew'
+              : '→ MIXED — eyeball a sample before concluding';
         console.log(
           `   ⌚ TIMING   median gap clearance↔pole ${fmtDuration(medGap * 1000)}; ` +
-            `${impossible}/${total} imply >${IMPOSSIBLE_KMH} km/h, ${relocated}/${total} ≥${Math.round(RELOCATE_GAP_SEC / 60)} min apart`,
+            `${relocated}/${total} ≥${Math.round(RELOCATE_GAP_SEC / 60)} min apart, ${impossible}/${total} imply >${IMPOSSIBLE_KMH} km/h`,
         );
         console.log(`             ${lean}`);
       }
