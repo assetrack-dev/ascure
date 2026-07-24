@@ -64,6 +64,13 @@ const PHOTO_TO_POLE_FLAG_M = 300;
 const BATCH_MIN_CLEARANCE_PHOTOS = 4;
 const BATCH_MAX_SPAN_MIN = 15;
 const BATCH_SPAN_CONTRAST = 6;
+// Fraud-vs-bug discriminator on a far clearance photo: the implied travel speed
+// to cover the gap in the time between the two photos. Above this, no human did
+// it — the coordinate is wrong (capture bug), not the crew's location.
+const IMPOSSIBLE_KMH = 120;
+// Enough time between the two photos that the crew could have physically gone
+// elsewhere — i.e. consistent with a deliberate off-site capture.
+const RELOCATE_GAP_SEC = 20 * 60;
 
 type Args = {
   mainhead?: string;
@@ -114,6 +121,13 @@ const hasGeo = (p: {
   Number.isFinite(p.longitude) &&
   // A 0/0 fix is the null-island sentinel, never a real Malaysian pole.
   !(p.latitude === 0 && p.longitude === 0);
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
 
 function centroid(points: Geo[]): Geo | null {
   if (points.length === 0) return null;
@@ -191,6 +205,12 @@ async function main() {
       poleTimes: number[];
       farPhotoToPhoto: { pole: string; meters: number }[];
       farPhotoToPole: { pole: string; meters: number }[];
+      // For each far pole: how far AND how long between the clearance photo and
+      // the pole photo. This is the fraud-vs-bug discriminator — going somewhere
+      // else costs TIME, a stale GPS fix costs none. km/h = implied travel speed
+      // to cover the gap in that time; >120 is physically impossible → the fix is
+      // wrong, not the crew.
+      farTiming: { meters: number; gapSec: number; kmh: number }[];
       clearanceGeos: Geo[];
       poleGeos: Geo[];
       // Inspections where DIST↔ph could actually be computed (clearance photo
@@ -224,6 +244,7 @@ async function main() {
           poleTimes: [],
           farPhotoToPhoto: [],
           farPhotoToPole: [],
+          farTiming: [],
           clearanceGeos: [],
           poleGeos: [],
           comparable: 0,
@@ -268,6 +289,16 @@ async function main() {
           const d = distanceMeters(cCentroid, poleCentroid);
           if (d >= PHOTO_TO_PHOTO_FLAG_M) {
             agg.farPhotoToPhoto.push({ pole: insp.asset.assetCode, meters: Math.round(d) });
+            // Time gap between the clearance photo and the pole photo of THIS
+            // pole — the fraud-vs-bug tell. Guard a 0 s gap (same instant, km
+            // apart) as an infinite implied speed.
+            const cT = median(clearancePhotos.filter((p) => p.timestamp).map((p) => p.timestamp!.getTime()));
+            const pT = median(polePhotos.filter((p) => p.timestamp).map((p) => p.timestamp!.getTime()));
+            if (cT != null && pT != null) {
+              const gapSec = Math.abs(cT - pT) / 1000;
+              const kmh = gapSec > 0 ? (d / 1000 / (gapSec / 3600)) : Infinity;
+              agg.farTiming.push({ meters: Math.round(d), gapSec, kmh });
+            }
           }
         }
 
@@ -406,6 +437,26 @@ async function main() {
           `   ⚠ DIST↔ph  ${v.farPhotoToPhoto.length} clearance photo(s) ≥${PHOTO_TO_PHOTO_FLAG_M} m from their pole photos${share}:`,
         );
         console.log(`             ${worst.map((f) => `${f.pole} (${f.meters} m)`).join(', ')}`);
+      }
+      // Fraud-vs-bug: does the clearance photo sit far AND long after the pole
+      // photo (time to travel → off-site capture), or far in NO time (impossible
+      // speed → the GPS fix is wrong, not the crew)?
+      if (v.farTiming.length > 0) {
+        const total = v.farTiming.length;
+        const impossible = v.farTiming.filter((t) => t.kmh > IMPOSSIBLE_KMH).length;
+        const relocated = v.farTiming.filter((t) => t.gapSec >= RELOCATE_GAP_SEC).length;
+        const medGap = median(v.farTiming.map((t) => t.gapSec)) ?? 0;
+        const lean =
+          impossible / total >= 0.7
+            ? '→ IMPOSSIBLE speeds dominate: looks like a GPS-capture bug, NOT relocation'
+            : relocated / total >= 0.5
+              ? '→ time to travel present: consistent with OFF-SITE capture (fraud)'
+              : '→ mixed — eyeball a sample before concluding';
+        console.log(
+          `   ⌚ TIMING   median gap clearance↔pole ${fmtDuration(medGap * 1000)}; ` +
+            `${impossible}/${total} imply >${IMPOSSIBLE_KMH} km/h, ${relocated}/${total} ≥${Math.round(RELOCATE_GAP_SEC / 60)} min apart`,
+        );
+        console.log(`             ${lean}`);
       }
       if (v.farPhotoToPole.length > 0) {
         const worst = [...v.farPhotoToPole].sort((a, b) => b.meters - a.meters).slice(0, 6);
