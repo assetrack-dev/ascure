@@ -479,6 +479,10 @@ export interface InspectionFormResponse {
     requiresQAQC?: boolean | null;
     reportingGroup?: string | null;
     submittedAt: string | null;
+    // Set while a manager/DC has sent this pole back for re-inspection — the
+    // reason the crew must see (and when). Cleared on re-submit.
+    reinspectionReason?: string | null;
+    reinspectionRequestedAt?: string | null;
     createdAt: string;
     updatedAt: string;
     siteVisit: {

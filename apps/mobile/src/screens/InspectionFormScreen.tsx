@@ -1180,6 +1180,13 @@ export function InspectionFormScreen() {
                 : photoUploadNotice
             }
           />
+          {/* A manager/DC sent this pole back for re-inspection — show WHY, so
+              the crew knows what to fix rather than just seeing it go red. */}
+          {form.inspection.reinspectionReason ? (
+            <WarningBanner
+              message={`Manager sent this pole back: ${form.inspection.reinspectionReason}`}
+            />
+          ) : null}
           {isVisitClosed ? (
             <WarningBanner message="This site visit is complete — the inspection is now read-only." />
           ) : isSubmitted ? (
