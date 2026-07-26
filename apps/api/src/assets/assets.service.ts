@@ -1229,18 +1229,22 @@ export class AssetsService {
             checklist: checklist!,
             totalDefects: latestInspection.itemResults.filter((item) => item.isDefect).length,
             items: latestInspection.itemResults.map((item) => {
-              // Overlay the LIVE checklist value for value (non-pass/fail) items so
-              // a manager's checklist edit reflects here, instead of the stale
-              // submit-time remark. A live value exists exactly for items with an
-              // InspectionResult row (incl. one cleared to blank); pass/fail items
-              // have no such value and keep their genuine remark/note.
-              const isPassFail = item.result === 'PASS' || item.result === 'FAIL';
+              // The Remark column shows the recorded VALUE, which lives in
+              // InspectionResult — itemResult.remark is a stale copy from submit
+              // that a manager edit never updates. Overlay the live value whenever
+              // the item has an InspectionResult row (a real value, or blank when
+              // cleared); items with no such row keep their remark. NOT guarded on
+              // PASS/FAIL — a value item is very often ALSO marked PASS (e.g.
+              // "PVC (SPAN) - 7 /044" = 1, PASS), and its value still lives in
+              // InspectionResult. Every remark on this table is a recorded answer,
+              // not a free note, so there is nothing to protect — and this matches
+              // what the map panel and the download already show.
               const liveValue = checklist?.values[normalizeChecklistLabel(item.label)];
               return {
                 id: item.id,
                 label: item.label,
                 result: item.result,
-                remark: !isPassFail && liveValue != null ? liveValue : item.remark,
+                remark: liveValue != null ? liveValue : item.remark,
                 isDefect: item.isDefect,
                 severity: item.severity,
               };
