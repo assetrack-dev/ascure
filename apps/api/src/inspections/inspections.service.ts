@@ -2436,6 +2436,11 @@ export class InspectionsService {
         requiresQAQC: inspection.requiresQAQC,
         reportingGroup: inspection.reportingGroup,
         submittedAt: inspection.submittedAt,
+        // Why this pole was sent back, so the crew opening the reopened form sees
+        // what to fix — not just that it went red. Set while flagged, cleared on
+        // re-submit. (Field app surfaces it as a banner.)
+        reinspectionReason: inspection.reinspectionReason,
+        reinspectionRequestedAt: inspection.reinspectionRequestedAt,
         createdAt: inspection.createdAt,
         updatedAt: inspection.updatedAt,
         siteVisit: inspection.siteVisit,
