@@ -11,6 +11,19 @@
  * to expose every row regardless of canonical status so legacy records remain
  * visible and editable from the Capabilities page.
  */
+/**
+ * Workspace Access codes gate which mobile workspaces (Inspection /
+ * Maintenance) a user may enter. Unlike other groups, a DIRECT user-level
+ * assignment of any of these codes is an explicit per-user workspace
+ * selection: it OVERRIDES workspace codes inherited from Team / Branch /
+ * Organization (most-specific wins). Users with no direct workspace
+ * assignment still inherit as before.
+ */
+export const WORKSPACE_CAPABILITY_CODES: ReadonlySet<string> = new Set([
+  'INSPECTION',
+  'MAINTENANCE',
+]);
+
 export const CANONICAL_CAPABILITY_CODES: ReadonlySet<string> = new Set([
   // Workspace Access
   'INSPECTION',

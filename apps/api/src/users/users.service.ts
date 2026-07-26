@@ -13,6 +13,7 @@ import {
   assertMainheadsInOwnCompany,
   filterNonGovernanceCapabilityIds,
 } from '../common/authorization/manager-grant-scope';
+import { WORKSPACE_CAPABILITY_CODES } from '../common/canonical-capabilities';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
@@ -968,11 +969,27 @@ export class UsersService {
       });
     };
 
+    // Workspace Access override — a direct user-level INSPECTION/MAINTENANCE
+    // assignment is an explicit per-user workspace selection, so inherited
+    // Team/Branch/Organization workspace codes are suppressed for that user
+    // (most-specific wins). Users with no direct workspace assignment keep
+    // inheriting the full union as before.
+    const isWorkspaceCode = (code: string) =>
+      WORKSPACE_CAPABILITY_CODES.has(code.trim().toUpperCase());
+    const hasDirectWorkspaceSelection = userCapabilities.some((row) =>
+      isWorkspaceCode(row.capability.code),
+    );
+    const isInheritedWorkspaceSuppressed = (code: string) =>
+      hasDirectWorkspaceSelection && isWorkspaceCode(code);
+
     for (const row of userCapabilities) {
       recordSource(row.capability, { scope: 'USER' });
     }
 
     for (const row of teamCapabilities) {
+      if (isInheritedWorkspaceSuppressed(row.capability.code)) {
+        continue;
+      }
       recordSource(row.capability, {
         scope: 'TEAM',
         scopeId: row.team.id,
@@ -981,6 +998,9 @@ export class UsersService {
     }
 
     for (const row of branchCapabilities) {
+      if (isInheritedWorkspaceSuppressed(row.capability.code)) {
+        continue;
+      }
       recordSource(row.capability, {
         scope: 'BRANCH',
         scopeId: row.branch.id,
@@ -989,6 +1009,9 @@ export class UsersService {
     }
 
     for (const row of organizationCapabilities) {
+      if (isInheritedWorkspaceSuppressed(row.capability.code)) {
+        continue;
+      }
       recordSource(row.capability, {
         scope: 'ORGANIZATION',
         scopeId: row.organization.id,
