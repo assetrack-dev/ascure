@@ -24,6 +24,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import { Eyebrow, Seg, Tbtn, type SegOption } from "@/components/ui";
 import type { MapControls } from "@/components/asset-map-shared";
 import { ApiError } from "@/lib/api";
+import { storeAssetNavContext } from "@/lib/asset-nav";
 import {
   clearStoredSession,
   readStoredSession,
@@ -1022,11 +1023,18 @@ function MapContent() {
               onPrev={() => selectAt(selectedIndex - 1)}
               onNext={() => selectAt(selectedIndex + 1)}
               onClose={() => setSelected(null)}
-              onOpenFullPage={() =>
+              onOpenFullPage={() => {
+                // Stash the in-view pole order so the full page keeps the
+                // same Prev/Next stepping as this panel.
+                storeAssetNavContext(
+                  pointRows.map((row) => row.id),
+                  "/map",
+                  selected.id,
+                );
                 router.push(
                   `/assets/${encodeURIComponent(selected.id)}?from=${encodeURIComponent("/map")}`,
-                )
-              }
+                );
+              }}
               onUnauthorized={handleLogout}
             />
           ) : null}

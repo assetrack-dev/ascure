@@ -35,6 +35,7 @@ import {
   tableRowClass,
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
+import { storeAssetNavContext } from "@/lib/asset-nav";
 import {
   bulkDeleteAssets,
   deleteAssetsBySession,
@@ -404,6 +405,13 @@ function AssetsContent() {
   }
 
   function openAsset(assetId: string) {
+    // Stash the full filtered+sorted list (not just the current page) so the
+    // detail page's Prev/Next can walk every pole this view contains.
+    storeAssetNavContext(
+      sortedAssets.map((asset) => asset.id),
+      "",
+      assetId,
+    );
     router.push(`/assets/${encodeURIComponent(assetId)}`);
   }
 
