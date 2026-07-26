@@ -17,6 +17,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { Card, CardHead, Eyebrow, KpiCard, Tbtn } from "@/components/ui";
 import { ApiError } from "@/lib/api";
+import { storeAssetNavContext } from "@/lib/asset-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   fetchClientMainheads,
@@ -422,11 +423,18 @@ function ClientProgressContent() {
                         <button
                           key={pole.id}
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            // Stash the substation's pole order so the detail
+                            // page can step Prev/Next through it.
+                            storeAssetNavContext(
+                              poles.poles.map((row) => row.id),
+                              "/progress",
+                              pole.id,
+                            );
                             router.push(
                               `/assets/${encodeURIComponent(pole.id)}?from=${encodeURIComponent("/progress")}`,
-                            )
-                          }
+                            );
+                          }}
                           className="flex w-full items-center gap-3 border-b border-[var(--line2)] px-4 py-3 text-left transition last:border-b-0 hover:bg-[var(--panel-muted)]"
                         >
                           <span className="min-w-0 flex-1">

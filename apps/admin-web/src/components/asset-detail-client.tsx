@@ -6,6 +6,8 @@ import {
   ArrowLeft,
   CalendarDays,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Eye,
   EyeOff,
@@ -21,6 +23,7 @@ import {
   buildEvidenceEntries,
 } from "@/components/inspection-evidence-grid";
 import { ApiError } from "@/lib/api";
+import { readAssetNavContext } from "@/lib/asset-nav";
 import { fetchAssetDetail } from "@/lib/assets";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { downloadAssetReportPreview } from "@/lib/report-templates";
@@ -136,6 +139,13 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   // return path (e.g. set when opening an asset from a Site Visit) takes over so
   // the user goes back where they came from.
   const [backHref, setBackHref] = useState("/assets");
+  // The raw ?from= value ("" when absent) — preserved on Prev/Next navigation
+  // and used to match the sibling-list context stored by the entry point.
+  const [fromParam, setFromParam] = useState("");
+  // Ordered sibling asset ids stashed by the list the user came from; powers
+  // the Prev/Next pole stepping. Null when opened without a list context
+  // (deep link, marker popup) — the stepper simply doesn't render then.
+  const [navIds, setNavIds] = useState<string[] | null>(null);
   // The Inspection Result table starts curated (only rows that carry meaning);
   // this reveals every checklist item, including informational readings that
   // recorded N/A with no remark.
@@ -183,8 +193,62 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     // external URLs, so `from` can't be used as an open redirect).
     if (from && from.startsWith("/") && !from.startsWith("//")) {
       setBackHref(from);
+      setFromParam(from);
     }
+
+    setNavIds(readAssetNavContext(from ?? "")?.ids ?? null);
   }, []);
+
+  const navIndex = navIds ? navIds.indexOf(assetId) : -1;
+
+  const goToSibling = useCallback(
+    (offset: number) => {
+      if (!navIds || navIndex < 0) {
+        return;
+      }
+
+      const targetId = navIds[navIndex + offset];
+
+      if (!targetId) {
+        return;
+      }
+
+      const query = fromParam ? `?from=${encodeURIComponent(fromParam)}` : "";
+      router.push(`/assets/${encodeURIComponent(targetId)}${query}`);
+    },
+    [fromParam, navIds, navIndex, router],
+  );
+
+  // Arrow keys step between sibling poles, matching the map side panel.
+  // Ignored while the focus is in a form control so text editing keeps its
+  // native caret movement.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        goToSibling(-1);
+      } else if (event.key === "ArrowRight") {
+        goToSibling(1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [goToSibling]);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
   const canReport =
@@ -273,6 +337,35 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {navIds && navIndex >= 0 && navIds.length > 1 ? (
+                <div className="inline-flex h-10 items-stretch overflow-hidden rounded-md border border-slate-300 bg-white shadow-[var(--shadow-soft)]">
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(-1)}
+                    disabled={navIndex <= 0}
+                    title="Previous pole (←)"
+                    aria-label="Previous pole"
+                    className="inline-flex items-center gap-1 px-3 text-sm font-semibold text-slate-700 transition hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-300"
+                  >
+                    <ChevronLeft size={16} />
+                    Prev
+                  </button>
+                  <span className="inline-flex items-center border-x border-slate-200 px-3 text-xs font-semibold tabular-nums text-slate-500">
+                    {navIndex + 1} / {navIds.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(1)}
+                    disabled={navIndex >= navIds.length - 1}
+                    title="Next pole (→)"
+                    aria-label="Next pole"
+                    className="inline-flex items-center gap-1 px-3 text-sm font-semibold text-slate-700 transition hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-300"
+                  >
+                    Next
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              ) : null}
               {canReport ? (
                 <button
                   type="button"

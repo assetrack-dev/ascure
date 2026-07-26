@@ -49,6 +49,7 @@ import {
   type Tone,
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
+import { storeAssetNavContext } from "@/lib/asset-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
@@ -2912,17 +2913,28 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                 const assetHref = `/assets/${link.assetId}?from=${encodeURIComponent(
                                   `/site-visits/${siteVisitId}`,
                                 )}`;
+                                const openLinkedAsset = () => {
+                                  // Stash the table's current order so the
+                                  // detail page can step Prev/Next through
+                                  // this visit's poles.
+                                  storeAssetNavContext(
+                                    sortedAssetRows.map((row) => row.assetId),
+                                    `/site-visits/${siteVisitId}`,
+                                    link.assetId,
+                                  );
+                                  router.push(assetHref);
+                                };
                                 const rowInspection =
                                   visitInspectionByAssetId.get(link.assetId) ?? null;
                                 return (
                                 <tr
                                   key={link.id}
                                   tabIndex={0}
-                                  onClick={() => router.push(assetHref)}
+                                  onClick={openLinkedAsset}
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter" || event.key === " ") {
                                       event.preventDefault();
-                                      router.push(assetHref);
+                                      openLinkedAsset();
                                     }
                                   }}
                                   className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--brand-tint)]`}
