@@ -622,6 +622,14 @@ export function AddAssetScreen() {
       return;
     }
 
+    // NO TIANG LAMA is required on every pole (SAVR + SAVT). A pole with no
+    // painted old number is not a blank — the crew is trained to enter "TNT"
+    // (Tiada No Tiang), so there is always a valid value to record.
+    if (isPoleSurvey && !normalizedAssetName) {
+      setError('Please enter NO TIANG LAMA (put "TNT" if the pole has no number).');
+      return;
+    }
+
     // SAVT poles store the full identity = route KOD TIANG + No. Tiang
     // (e.g. "MI - KUK 1") so they stay unique per Pencawang across routes. The
     // field holds only the No. Tiang; prefix it here, guarding against a value
@@ -1046,7 +1054,7 @@ export function AddAssetScreen() {
               label={assetNameLabel}
               value={assetName}
               onChangeText={(nextValue) => setAssetName(normalizeOperationalText(nextValue))}
-              placeholder={isPoleSurvey ? 'Masukkan No Tiang Lama jika ada' : 'Enter a readable asset name'}
+              placeholder={isPoleSurvey ? 'No Tiang Lama (atau TNT jika tiada)' : 'Enter a readable asset name'}
               autoCapitalize="characters"
             />
           </Card>
