@@ -7,7 +7,7 @@ export default {
     scheme: 'ascure',
     // NOTE: the native build does NOT run expo prebuild — the REAL versionCode /
     // versionName live in android/app/build.gradle. Kept in sync here for docs.
-    version: '2.0.1',
+    version: '2.0.2',
     orientation: 'portrait',
     userInterfaceStyle: 'automatic',
     icon: './assets/brand/monogram.png',
@@ -71,7 +71,7 @@ export default {
 
     android: {
       package: 'local.ascure.field',
-      versionCode: 24, // mirror of build.gradle (source of truth)
+      versionCode: 25, // mirror of build.gradle (source of truth)
       usesCleartextTraffic: true,
       adaptiveIcon: {
         foregroundImage: './assets/brand/adaptive-foreground.png',
