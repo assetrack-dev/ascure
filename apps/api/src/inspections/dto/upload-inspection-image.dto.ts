@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsNumber,
   IsOptional,
@@ -41,4 +42,23 @@ export class UploadInspectionImageDto {
   @IsString()
   @MaxLength(64)
   type?: string;
+
+  // Fix-quality provenance for the photo's coordinate (see the mobile
+  // InspectionImageUploadInput): the GPS ± radius, the fix's own acquisition
+  // time, and Android's mock-location flag. Optional so older APKs still upload.
+  @IsOptional()
+  @Transform(emptyStringToUndefined)
+  @Type(() => Number)
+  @IsNumber()
+  accuracyMeters?: number;
+
+  @IsOptional()
+  @Transform(emptyStringToUndefined)
+  @IsDateString()
+  capturedFixAt?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  mocked?: boolean;
 }

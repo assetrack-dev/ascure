@@ -1441,6 +1441,9 @@ export class InspectionsService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         timestamp: dto.timestamp ? new Date(dto.timestamp) : null,
+        accuracyMeters: dto.accuracyMeters ?? null,
+        capturedFixAt: dto.capturedFixAt ? new Date(dto.capturedFixAt) : null,
+        mocked: dto.mocked ?? null,
       },
     });
 

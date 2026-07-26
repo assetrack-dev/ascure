@@ -1411,6 +1411,15 @@ model InspectionImage {
   latitude       Float?
   longitude      Float?
   timestamp      DateTime?
+  // Fix-quality provenance for the coordinate above, so a poor/stale/faked GPS
+  // fix is visible in the evidence record rather than indistinguishable from a
+  // good one. accuracyMeters = the fix's reported ± radius; capturedFixAt = the
+  // fix's own acquisition time (a large gap from `timestamp` means a stale fix);
+  // mocked = Android's simulated-location flag. All nullable — older APKs and
+  // pre-existing rows simply carry null.
+  accuracyMeters Float?
+  capturedFixAt  DateTime?
+  mocked         Boolean?
   createdAt      DateTime   @default(now())
   inspection     Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
 
