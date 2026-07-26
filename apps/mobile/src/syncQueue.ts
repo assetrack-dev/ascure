@@ -1283,6 +1283,12 @@ async function createQueuedPhoto(photo: QueueableInspectionPhoto, queuedAt: stri
     latitude: photo.latitude,
     longitude: photo.longitude,
     timestamp: photo.timestamp,
+    // Fix-quality provenance MUST survive the offline queue — an offline capture
+    // (no-signal forest) is exactly where a stale/low-quality fix happens, so
+    // dropping these here would blind the audit precisely where it matters most.
+    accuracyMeters: photo.accuracyMeters,
+    capturedFixAt: photo.capturedFixAt,
+    mocked: photo.mocked,
     type: photo.type,
     templateItemId: photo.templateItemId,
     uploadedImageId: photo.uploadedImageId,

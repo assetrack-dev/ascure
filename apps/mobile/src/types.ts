@@ -583,6 +583,14 @@ export interface InspectionImageUploadInput {
   // The checklist item this photo belongs to (e.g. an OCR Smart Sensor reading),
   // so the API can link it to that result for the visual report. (#4)
   templateItemId?: string;
+  // Fix-quality provenance for the photo's coordinate, so a poor/stale/faked fix
+  // is visible in the record instead of being indistinguishable from a good one.
+  // accuracyMeters: the GPS fix's reported ± radius. capturedFixAt: the fix's own
+  // acquisition time (NOT the capture time) — a large gap from `timestamp` means
+  // a stale fix. mocked: Android's faked-location flag.
+  accuracyMeters?: number | null;
+  capturedFixAt?: string | null;
+  mocked?: boolean;
 }
 
 export interface SiteVisitImageUploadInput {

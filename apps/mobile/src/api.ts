@@ -1292,6 +1292,18 @@ function createUploadParameters(photo: InspectionImageUploadInput) {
     parameters.timestamp = photo.timestamp;
   }
 
+  if (typeof photo.accuracyMeters === 'number' && Number.isFinite(photo.accuracyMeters)) {
+    parameters.accuracyMeters = String(photo.accuracyMeters);
+  }
+
+  if (photo.capturedFixAt) {
+    parameters.capturedFixAt = photo.capturedFixAt;
+  }
+
+  if (photo.mocked === true) {
+    parameters.mocked = 'true';
+  }
+
   const type = photo.type?.trim();
 
   if (type) {

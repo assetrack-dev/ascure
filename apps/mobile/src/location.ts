@@ -20,6 +20,13 @@ const DEFAULT_GPS_TIMEOUT_MS = 8000;
 export async function getPositionWithTimeout(options?: {
   accuracy?: Location.Accuracy;
   timeoutMs?: number;
+  // Bound the last-known fallback. When set, a cached fix OLDER than this (ms) is
+  // rejected — getPositionWithTimeout returns null instead of silently handing
+  // back a stale coordinate. Evidence photos pass this so a cold/no-signal fix
+  // (forest, inside a truck) can't inherit a fix from hours and kilometres ago —
+  // the defect that mislocated clearance photos without the crew moving. Absent
+  // = the old unbounded behaviour, fine for non-evidence UI hints.
+  maxLastKnownAgeMs?: number;
 }): Promise<LocationFix | null> {
   const accuracy = options?.accuracy ?? Location.Accuracy.Balanced;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GPS_TIMEOUT_MS;
@@ -37,8 +44,14 @@ export async function getPositionWithTimeout(options?: {
 
   // Fresh fix timed out or failed — fall back to the device's last-known fix so
   // the UI still gets a sensible coordinate instead of hanging or staying empty.
+  // With maxLastKnownAgeMs, expo returns null when the cached fix is too old, so
+  // the caller can fail clearly rather than record a stale location.
   try {
-    return await Location.getLastKnownPositionAsync();
+    return await Location.getLastKnownPositionAsync(
+      options?.maxLastKnownAgeMs != null
+        ? { maxAge: options.maxLastKnownAgeMs }
+        : undefined,
+    );
   } catch {
     return null;
   }

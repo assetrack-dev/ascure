@@ -315,20 +315,28 @@ export function VisitDetailScreen() {
     // Pre-check NO TIANG RONDAAN sequencing/format before it ever reaches DC.
     // Errors block; gaps open the sheet for the inspector to confirm. A clean
     // rondaan falls through to the normal completion confirmation below.
-    const rondaanCheck = checkRondaanForCompletion(
-      assets.map(
-        (asset): AssetLike => ({
-          id: asset.id,
-          name: asset.name,
-          assetCode: asset.assetCode,
-          noTiangRondaan: asset.assetCode,
-          latitude: asset.latitude,
-          longitude: asset.longitude,
-        }),
-      ),
-    );
+    //
+    // SAVT route surveys number poles as KOD TIANG <n>, NOT the SAVR branching
+    // feeder grammar this check parses — so every SAVT pole would come back as an
+    // invalid code and hard-block "Complete Visit" with no way through. Skip the
+    // gate for SAVT; a SAVT-specific sequence check is a separate future task.
+    const isSavtSurvey = visit.operationalScope === 'SAVT';
+    const rondaanCheck = isSavtSurvey
+      ? null
+      : checkRondaanForCompletion(
+          assets.map(
+            (asset): AssetLike => ({
+              id: asset.id,
+              name: asset.name,
+              assetCode: asset.assetCode,
+              noTiangRondaan: asset.assetCode,
+              latitude: asset.latitude,
+              longitude: asset.longitude,
+            }),
+          ),
+        );
 
-    if (!rondaanCheck.ok) {
+    if (rondaanCheck && !rondaanCheck.ok) {
       setError(null);
       setRondaanResult(rondaanCheck);
       setRondaanSheetVisible(true);

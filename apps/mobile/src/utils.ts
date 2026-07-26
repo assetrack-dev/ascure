@@ -186,6 +186,35 @@ export function getDraftValue(itemId: string, draftValues: DraftValues) {
   return draftValues[itemId];
 }
 
+/**
+ * Per-field IMAGE config, read from `optionsJson.image` — the same block the
+ * admin builder writes and the API persists (ChecklistImageConfig). Only the
+ * two flags mobile acts on are surfaced (we are camera-only + always overlay, so
+ * cameraOnly / galleryAllowed / timestampOverlayRequired need no runtime read).
+ * Defaults preserve today's behaviour: a photo is required only when the flag is
+ * explicitly set, and multiple photos stay allowed unless it is explicitly false
+ * — so unconfigured fields behave exactly as before.
+ */
+export function readImageConfig(optionsJson: unknown): {
+  requiredPhoto: boolean;
+  allowMultiplePhotos: boolean;
+} {
+  const image =
+    optionsJson &&
+    typeof optionsJson === 'object' &&
+    !Array.isArray(optionsJson) &&
+    'image' in optionsJson &&
+    optionsJson.image &&
+    typeof optionsJson.image === 'object'
+      ? (optionsJson.image as Record<string, unknown>)
+      : null;
+
+  return {
+    requiredPhoto: image?.requiredPhoto === true,
+    allowMultiplePhotos: image?.allowMultiplePhotos !== false,
+  };
+}
+
 export function normalizeSelectOptions(optionsJson: unknown): SelectOption[] {
   const rawOptions = Array.isArray(optionsJson)
     ? optionsJson
@@ -613,11 +642,19 @@ function collectSectionIssues(
         missingRequired.push(item.label);
         continue;
       }
+    }
 
-      if (inputType === 'IMAGE' && !photoItemIds.has(item.id)) {
+    // IMAGE fields store their answer as photos (tagged by templateItemId), not
+    // in draftValues. A photo is required when the field is required OR its
+    // per-field `requiredPhoto` flag is set (optionsJson.image) — the flag is
+    // honoured independently of the generic isRequired.
+    if (inputType === 'IMAGE') {
+      const requiresPhoto =
+        item.isRequired || readImageConfig(item.optionsJson).requiredPhoto;
+      if (requiresPhoto && !photoItemIds.has(item.id)) {
         missingRequired.push(item.label);
-        continue;
       }
+      continue;
     }
 
     if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {

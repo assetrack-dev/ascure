@@ -6,6 +6,7 @@ import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   LayoutChangeEvent,
   Modal,
@@ -45,6 +46,7 @@ import {
   normalizeInspectionInputType,
   normalizeOperationalText,
   normalizeSelectOptions,
+  readImageConfig,
   OTHER_VALUE_PREFIX,
   readMultiSelectAllowOther,
   countAnsweredInspectionItems,
@@ -174,7 +176,17 @@ export function InspectionFormScreen() {
       // Rebuild as a partial (keyless) state so we can append the new map route
       // without minting a route key by hand; React Navigation rehydrates it.
       const routes = [
-        ...baseRoutes.map((route) => ({ name: route.name, params: route.params })),
+        ...baseRoutes.map((route) => ({
+          name: route.name,
+          params: route.params,
+          // Carry each base route's nested navigator state forward. Without it
+          // the reset rebuilds keyless routes with no inner state, so the
+          // AppDrawer snaps back to its initial tab (Home) if the crew backs all
+          // the way out past the visit. `route.state` is a resolved
+          // NavigationState, which isn't structurally a PartialState, hence the
+          // cast (the value round-trips fine — React Navigation rehydrates it).
+          state: route.state as never,
+        })),
         {
           name: 'VisitAssetMap',
           // focusAssetId zooms the map onto the pole just inspected (the map
@@ -642,14 +654,36 @@ export function InspectionFormScreen() {
 
     const capturedAt = new Date();
     const photoTimestamp = capturedAt.toISOString();
-    // Bounded GPS (falls back to last-known) so a cold fix can't hang the photo
-    // capture forever; the overlay needs coordinates, so fail clearly if none.
+    // Evidence-grade fix: HIGH accuracy, and reject a last-known fallback older
+    // than 60 s so a cold/no-signal fix can't stamp a stale coordinate from far
+    // away (the defect that mislocated clearance photos without the crew moving).
     const position = await getPositionWithTimeout({
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
+      maxLastKnownAgeMs: 60_000,
     });
 
     if (!position) {
-      throw new Error('Could not get a GPS fix for the photo. Move to open sky and try again.');
+      throw new Error(
+        'Could not get a fresh GPS fix for the photo. Move to open sky and try again.',
+      );
+    }
+
+    // Fix-quality provenance carried with the photo (see InspectionImageUploadInput).
+    const accuracyMeters =
+      typeof position.coords.accuracy === 'number' ? position.coords.accuracy : null;
+    const capturedFixAt =
+      typeof position.timestamp === 'number'
+        ? new Date(position.timestamp).toISOString()
+        : null;
+    const mocked = position.mocked === true;
+
+    // A faked-location app is a fraud signal the crew shouldn't be able to pass
+    // off silently — surface it at capture (still recorded either way).
+    if (mocked) {
+      Alert.alert(
+        'Mock location detected',
+        'This device is reporting a simulated GPS location. Turn off any mock-location app and recapture.',
+      );
     }
 
     const photoId = createLocalPhotoId(photoTimestamp);
@@ -672,6 +706,9 @@ export function InspectionFormScreen() {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
       timestamp: photoTimestamp,
+      accuracyMeters,
+      capturedFixAt,
+      mocked,
     });
 
     return {
@@ -681,6 +718,9 @@ export function InspectionFormScreen() {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         timestamp: photoTimestamp,
+        accuracyMeters,
+        capturedFixAt,
+        mocked,
         uploadState: 'uploading',
       } satisfies CapturedInspectionPhoto,
       // The original (pre-overlay) capture is the clean source for OCR — the
@@ -1904,6 +1944,7 @@ function ChecklistItemCard({
           photos={itemPhotos}
           capturing={capturing}
           disabled={disabled}
+          allowMultiple={readImageConfig(item.optionsJson).allowMultiplePhotos}
           onCapture={onCapturePhoto}
           onRemove={onRemovePhoto}
           onPreview={onPreviewPhoto}
@@ -2121,6 +2162,7 @@ function ImageCaptureField({
   photos,
   capturing,
   disabled,
+  allowMultiple = true,
   onCapture,
   onRemove,
   onPreview,
@@ -2128,6 +2170,9 @@ function ImageCaptureField({
   photos: CapturedInspectionPhoto[];
   capturing: boolean;
   disabled: boolean;
+  // When false, only ONE photo is allowed — the add affordance disappears once a
+  // photo exists (per-field allowMultiplePhotos from the template).
+  allowMultiple?: boolean;
   onCapture: () => void;
   onRemove: (photoId: string) => void;
   onPreview: (uri: string) => void;
@@ -2208,7 +2253,9 @@ function ImageCaptureField({
           Camera only · timestamp &amp; GPS added automatically.
         </Text>
       )}
-      {!disabled ? (
+      {/* Hide the add affordance once a photo exists when the field is
+          single-photo only; the empty state still captures the first one. */}
+      {!disabled && (allowMultiple || !hasPhotos) ? (
         <Pressable
           accessibilityRole="button"
           disabled={capturing}
