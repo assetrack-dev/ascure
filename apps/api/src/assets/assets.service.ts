@@ -1177,6 +1177,15 @@ export class AssetsService {
     }
 
     const latestInspection = asset.inspections[0];
+    // Live checklist values (InspectionResult, keyed by normalized label). Reused
+    // for the checklist block AND to overlay the Inspection Result table's Remark
+    // below: that table renders itemResult.remark — a denormalized copy frozen at
+    // submit — so a manager's later checklist edit (which writes InspectionResult,
+    // not the itemResult) never showed there. Overlaying the live value fixes both
+    // the already-drifted rows and future edits, and keeps every view consistent.
+    const checklist = latestInspection
+      ? this.buildAssetChecklist(latestInspection)
+      : null;
 
     return {
       id: asset.id,
@@ -1217,16 +1226,25 @@ export class AssetsService {
             // Every checklist field of the inspection's template with its
             // recorded value, so the asset panel can show (and a manager edit)
             // the full checklist rather than only the pass/fail item results.
-            checklist: this.buildAssetChecklist(latestInspection),
+            checklist: checklist!,
             totalDefects: latestInspection.itemResults.filter((item) => item.isDefect).length,
-            items: latestInspection.itemResults.map((item) => ({
-              id: item.id,
-              label: item.label,
-              result: item.result,
-              remark: item.remark,
-              isDefect: item.isDefect,
-              severity: item.severity,
-            })),
+            items: latestInspection.itemResults.map((item) => {
+              // Overlay the LIVE checklist value for value (non-pass/fail) items so
+              // a manager's checklist edit reflects here, instead of the stale
+              // submit-time remark. A live value exists exactly for items with an
+              // InspectionResult row (incl. one cleared to blank); pass/fail items
+              // have no such value and keep their genuine remark/note.
+              const isPassFail = item.result === 'PASS' || item.result === 'FAIL';
+              const liveValue = checklist?.values[normalizeChecklistLabel(item.label)];
+              return {
+                id: item.id,
+                label: item.label,
+                result: item.result,
+                remark: !isPassFail && liveValue != null ? liveValue : item.remark,
+                isDefect: item.isDefect,
+                severity: item.severity,
+              };
+            }),
             images: latestInspection.inspectionImages.map((image) => ({
               id: image.id,
               inspectionId: image.inspectionId,
