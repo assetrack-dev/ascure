@@ -168,6 +168,15 @@ export function HomeScreen() {
       setError(null);
       setIsLoading(true);
 
+      // Identity refresh runs concurrently with the list fetches (it used to be
+      // serialized after them, adding a full round-trip to the skeleton time).
+      // Best-effort — the session user is already cached by AuthContext, so it
+      // must not fail the screen offline; a 401 still signs the crew out below.
+      const mePromise = api.getMe(token).then(
+        (me) => ({ ok: true as const, me }),
+        (meError) => ({ ok: false as const, meError }),
+      );
+
       // Offline-first: each read serves its last cached value when the server is
       // unreachable (cachedFetch), so the Home queue still renders offline and an
       // In-Progress visit can be re-opened from the field.
@@ -191,16 +200,14 @@ export function HomeScreen() {
         cachedFetch('mainheads', undefined, () => api.getMainheads(token)),
       ]).catch(() => undefined);
 
-      // Identity refresh is best-effort — the session user is already cached by
-      // AuthContext, so this must not fail the screen offline; a 401 still
-      // bubbles to sign the crew out.
-      try {
-        const me = await api.getMe(token);
-        setUser(me);
-      } catch (meError) {
-        if (meError instanceof ApiError && meError.status === 401) {
-          throw meError;
-        }
+      const meResult = await mePromise;
+      if (meResult.ok) {
+        setUser(meResult.me);
+      } else if (
+        meResult.meError instanceof ApiError &&
+        meResult.meError.status === 401
+      ) {
+        throw meResult.meError;
       }
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
@@ -1097,7 +1104,11 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
       // Warm the visit's asset register + per-type inspection templates while
       // online, so an In-Progress visit can be opened AND inspected offline
       // after just loading Home online (not only after opening it online).
-      await warmVisitOfflineCache(token, detailed);
+      // Fire-and-forget: the warm (full asset register + substation assets +
+      // one template per asset type) is by far the heaviest part of the Home
+      // load — it must not hold the skeleton; it keeps filling the offline
+      // caches in the background after the queue paints.
+      void warmVisitOfflineCache(token, detailed);
 
       return detailed;
     }),
