@@ -34,7 +34,7 @@ export const KEYBOARD_AVOIDING_BEHAVIOR: 'padding' | undefined =
   Platform.OS === 'android' && (Platform.Version as number) < 30 ? undefined : 'padding';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
-type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add';
+type HeaderIconName = 'back' | 'menu' | 'refresh' | 'close' | 'add' | 'share';
 
 type HeaderAction = {
   icon: HeaderIconName;
@@ -158,6 +158,7 @@ const HEADER_ICON_GLYPHS: Record<HeaderIconName, keyof typeof Feather.glyphMap> 
   refresh: 'refresh-cw',
   close: 'x',
   add: 'plus',
+  share: 'share-2',
 };
 
 function HeaderIcon({ name }: { name: HeaderIconName }) {

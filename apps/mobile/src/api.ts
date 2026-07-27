@@ -559,6 +559,17 @@ export const api = {
     return request<AssetInspectionHistoryItem[]>(`/assets/${assetId}/inspections`, { token });
   },
 
+  // Mint a public share link for one pole. The server decides the real expiry:
+  // field roles (SUPERVISOR/TECHNICIAN) are capped at 7 days; the returned url
+  // is the full public page, ready for the native share sheet. Online-only —
+  // there is nothing sensible to queue, the recipient needs the link now.
+  createAssetShareLink(token: string, assetId: string) {
+    return request<{ token: string; expiresAt: string; url: string }>(
+      `/share/asset/${encodeURIComponent(assetId)}`,
+      { method: 'POST', token, body: {} },
+    );
+  },
+
   getAssetTypes(token: string) {
     return request<AssetType[]>('/asset-types', { token });
   },

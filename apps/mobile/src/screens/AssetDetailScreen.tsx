@@ -7,6 +7,7 @@ import {
   Pressable,
   SafeAreaView,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -114,6 +115,7 @@ export function AssetDetailScreen() {
   const [isStartingInspection, setIsStartingInspection] = useState(false);
   const [isMarkingNotFound, setIsMarkingNotFound] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { width: screenWidth } = useWindowDimensions();
@@ -205,6 +207,44 @@ export function AssetDetailScreen() {
 
   const images = useMemo(() => asset?.latestInspection?.images ?? [], [asset]);
   const imageCarouselWidth = Math.max(180, screenWidth - 72);
+
+  // Share this pole as a public read-only link via the native share sheet.
+  // Online-only: the server must mint the link, and the recipient needs it
+  // immediately — there is nothing sensible to queue offline.
+  const handleShareAsset = useCallback(async () => {
+    if (!asset || isSharing) {
+      return;
+    }
+    if (isTempId(assetId)) {
+      Alert.alert(
+        'Not synced yet',
+        'This pole has not synced to the server, so it cannot be shared yet.',
+      );
+      return;
+    }
+    setIsSharing(true);
+    try {
+      const link = await api.createAssetShareLink(token, assetId);
+      await Share.share({
+        message: `Pole ${asset.assetCode} — current condition:\n${link.url}`,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      Alert.alert(
+        'Could not share',
+        error instanceof ApiError && error.status === 0
+          ? 'Sharing needs an internet connection. Try again when you are back online.'
+          : error instanceof Error
+            ? error.message
+            : 'Unable to create the share link.',
+      );
+    } finally {
+      setIsSharing(false);
+    }
+  }, [asset, assetId, isSharing, token, handleUnauthorized]);
 
   async function handleStartInspection() {
     if (!canInspect || !asset || !visitId || startInspectionRef.current) {
@@ -579,6 +619,14 @@ export function AssetDetailScreen() {
             <Text style={styles.title}>Asset Detail</Text>
           </View>
           <View style={[styles.headerSide, styles.headerSideRight]}>
+            <HeaderIconButton
+              icon="share"
+              onPress={() => {
+                void handleShareAsset();
+              }}
+              accessibilityLabel="Share this pole"
+              disabled={isSharing || !asset}
+            />
             <HeaderIconButton
               icon="refresh"
               onPress={loadAssetDetail}
