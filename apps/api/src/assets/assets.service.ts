@@ -1271,6 +1271,160 @@ export class AssetsService {
     };
   }
 
+  /**
+   * Read-only snapshot of ONE pole for the public share-link page. No user
+   * scoping on purpose: the caller (ShareService) has already validated a live
+   * share token, and that token is the credential for exactly this asset.
+   * Returns the facts the Asset Details page shows, minus internals a person
+   * outside the system has no use for (visit/template ids, metadata, and the
+   * re-inspection reason — that note is written for the crew, not for an
+   * external recipient).
+   */
+  async buildSharedAssetSnapshot(assetId: string) {
+    const asset = await this.prisma.asset.findUnique({
+      where: { id: assetId },
+      include: {
+        assetType: { select: { name: true } },
+        substation: { select: { name: true, location: true } },
+        feederMemberships: {
+          select: {
+            sequenceIndex: true,
+            branchSuffix: true,
+            feeder: { select: { code: true } },
+          },
+        },
+        inspections: {
+          where: {
+            OR: [
+              { completionStatus: InspectionCompletionStatus.SUBMITTED },
+              // A pole sent back for re-inspection is DRAFT again, but its
+              // captured answers and photos still show the pole's condition.
+              { reinspectionRequestedAt: { not: null } },
+            ],
+          },
+          take: 1,
+          orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+          include: {
+            inspectionImages: {
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                inspectionId: true,
+                url: true,
+                filename: true,
+                mimeType: true,
+                latitude: true,
+                longitude: true,
+                timestamp: true,
+                createdAt: true,
+                // Required by buildAssetChecklist's IMAGE-cell resolution.
+                templateItemId: true,
+              },
+            },
+            // Template + results feed the checklist-value overlay on the item
+            // rows (same as getById) — neither is returned raw.
+            template: {
+              select: {
+                sections: { select: { id: true, title: true, sortOrder: true } },
+                items: {
+                  where: { isActive: true },
+                  select: {
+                    id: true,
+                    label: true,
+                    sortOrder: true,
+                    sectionId: true,
+                    inputType: true,
+                    optionsJson: true,
+                  },
+                },
+              },
+            },
+            results: {
+              select: {
+                valueText: true,
+                valueNumber: true,
+                valueBoolean: true,
+                valueDate: true,
+                valueJson: true,
+                valueDateTime: true,
+                templateItemId: true,
+                templateItem: { select: { key: true, label: true } },
+              },
+            },
+            itemResults: {
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                label: true,
+                result: true,
+                remark: true,
+                isDefect: true,
+                severity: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    const latestInspection = asset.inspections[0];
+    const checklist = latestInspection
+      ? this.buildAssetChecklist(latestInspection)
+      : null;
+
+    return {
+      assetCode: asset.assetCode,
+      noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships),
+      name: asset.name,
+      assetType: asset.assetType.name,
+      status: asset.status,
+      latitude: asset.latitude,
+      longitude: asset.longitude,
+      location: asset.substation.location,
+      pencawangName: asset.substation.name,
+      latestInspection: latestInspection
+        ? {
+            status: latestInspection.completionStatus,
+            cycleNumber: latestInspection.inspectionCycle,
+            submittedAt: latestInspection.submittedAt?.toISOString() ?? null,
+            remarks: this.extractRemarks(latestInspection.results),
+            totalDefects: latestInspection.itemResults.filter(
+              (item) => item.isDefect,
+            ).length,
+            items: latestInspection.itemResults.map((item) => {
+              // Same live-value overlay as getById: the recorded answer lives
+              // in InspectionResult; itemResult.remark is a stale submit copy.
+              const liveValue =
+                checklist?.values[normalizeChecklistLabel(item.label)];
+              return {
+                id: item.id,
+                label: item.label,
+                result: item.result,
+                remark: liveValue != null ? liveValue : item.remark,
+                isDefect: item.isDefect,
+                severity: item.severity,
+              };
+            }),
+            images: latestInspection.inspectionImages.map((image) => ({
+              id: image.id,
+              url: image.url,
+              path: buildInspectionImagePath(image.inspectionId, image.filename),
+              filename: image.filename,
+              mimeType: image.mimeType,
+              latitude: image.latitude,
+              longitude: image.longitude,
+              timestamp: image.timestamp?.toISOString() ?? null,
+              createdAt: image.createdAt.toISOString(),
+            })),
+          }
+        : null,
+    };
+  }
+
   async getInspections(user: RequestUser, id: string) {
     const asset = await this.prisma.asset.findFirst({
       where: {

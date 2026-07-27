@@ -55,6 +55,7 @@ import {
   type PencawangMarker,
 } from "@/lib/map";
 import { fetchAssetTypes } from "@/lib/checklist-templates";
+import { MAP_VIEW_STORAGE_KEY } from "@/lib/map-nav";
 import { fetchTeams } from "@/lib/teams";
 import { MAINTENANCE_CATEGORIES } from "@/types/defects";
 import type { AuthSession } from "@/types/auth";
@@ -104,13 +105,11 @@ type ArrayFilterKey =
 type IdName = { id: string; name: string };
 type DrillState = { region?: IdName; mainhead?: IdName; pencawang?: IdName };
 
-/**
- * Where the user was on the map, remembered for the browser session so opening
- * a pole's full page and coming back lands on the same view instead of resetting
- * to the whole country. Session-scoped (like the Site Visits filters) — a new
- * tab always starts at the top level.
- */
-const MAP_VIEW_STORAGE_KEY = "ascure.map.view";
+// Where the user was on the map, remembered for the browser session so opening
+// a pole's full page and coming back lands on the same view instead of resetting
+// to the whole country. Session-scoped (like the Site Visits filters) — a new
+// tab always starts at the top level. The key lives in lib/map-nav so other
+// pages can write a focus target into it ("Show on Map" on the asset page).
 
 type StoredMapView = {
   drill: DrillState;
@@ -551,8 +550,9 @@ function MapContent() {
     });
   }, [viewRestored, drill, filters, showAllPoles, selected]);
 
-  // Reopen the panel on the pole that was open before the round-trip, once its
-  // points have loaded.
+  // Reopen the panel on the pole that was open before the round-trip (or the
+  // one a "Show on Map" hand-off asked for), once its points have loaded —
+  // and centre on it so it's on screen, not just selected.
   useEffect(() => {
     const pendingId = pendingSelectRef.current;
     if (!pendingId || points.length === 0) {
@@ -562,6 +562,7 @@ function MapContent() {
     const match = points.find((asset) => asset.id === pendingId);
     if (match) {
       setSelected(match);
+      controlsRef.current?.panTo?.(match.latitude, match.longitude);
     }
   }, [points]);
 
