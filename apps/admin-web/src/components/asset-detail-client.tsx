@@ -14,6 +14,7 @@ import {
   FileText,
   MapPin,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -27,6 +28,7 @@ import { readAssetNavContext } from "@/lib/asset-nav";
 import { fetchAssetDetail } from "@/lib/assets";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { downloadAssetReportPreview } from "@/lib/report-templates";
+import { requestReinspection } from "@/lib/site-visits";
 import type { AssetDetail } from "@/types/assets";
 import type { AuthSession } from "@/types/auth";
 
@@ -135,6 +137,12 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  // "Need Amendment" — send this pole back for re-inspection with a required
+  // reason, mirroring the map side panel's send-back flow.
+  const [sendBackOpen, setSendBackOpen] = useState(false);
+  const [sendBackReason, setSendBackReason] = useState("");
+  const [sendingBack, setSendingBack] = useState(false);
+  const [sendBackError, setSendBackError] = useState("");
   // Where the back button returns to. Defaults to the Assets list, but a `?from=`
   // return path (e.g. set when opening an asset from a Site Visit) takes over so
   // the user goes back where they came from.
@@ -253,6 +261,12 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const isReadOnly = session?.user?.role !== "ADMIN";
   const canReport =
     session?.user?.canReport === true || session?.user?.role === "ADMIN";
+  // Who may send a pole back: ADMIN, DC (canGovernQa), or the managing MANAGER
+  // (canReviewSurvey) — same gate as the map panel; the API re-enforces scope.
+  const canSendBack =
+    session?.user?.role === "ADMIN" ||
+    session?.user?.canGovernQa === true ||
+    session?.user?.canReviewSurvey === true;
 
   const inspectionImages = useMemo(
     () => buildEvidenceEntries(asset?.latestInspection?.images ?? []),
@@ -303,6 +317,37 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     }
   }, [session?.token, asset, assetId, handleLogout]);
 
+  const handleSendBack = useCallback(async () => {
+    const inspectionId = asset?.latestInspection?.id;
+    if (!session?.token || !inspectionId) {
+      return;
+    }
+    setSendingBack(true);
+    setSendBackError("");
+    try {
+      await requestReinspection(session.token, inspectionId, sendBackReason.trim());
+      setSendBackOpen(false);
+      setSendBackReason("");
+      // The pole now reads "not inspected" for the crew — reload so the banner
+      // and inspection status reflect it.
+      await loadAsset(session.token);
+    } catch (sendError) {
+      if (sendError instanceof ApiError && sendError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setSendBackError(
+        sendError instanceof Error
+          ? sendError.message
+          : "Unable to send this pole back.",
+      );
+    } finally {
+      setSendingBack(false);
+    }
+  }, [session?.token, asset?.latestInspection?.id, sendBackReason, loadAsset, handleLogout]);
+
+  const reinspectionPending = Boolean(asset?.latestInspection?.reinspectionReason);
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
@@ -331,6 +376,12 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                 {asset ? (
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
                     {formatInspectionStatus(asset.inspectionStatus)}
+                  </span>
+                ) : null}
+                {reinspectionPending ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]">
+                    <RotateCcw size={13} />
+                    Sent back for re-inspection
                   </span>
                 ) : null}
               </div>
@@ -366,6 +417,22 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                   </button>
                 </div>
               ) : null}
+              {canSendBack && asset?.latestInspection && !reinspectionPending ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSendBackError("");
+                    setSendBackOpen((value) => !value);
+                  }}
+                  disabled={sendingBack}
+                  aria-expanded={sendBackOpen}
+                  title="Send this pole back for re-inspection, keeping the recorded data"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 shadow-[var(--shadow-soft)] transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RotateCcw size={16} />
+                  Need Amendment
+                </button>
+              ) : null}
               {canReport ? (
                 <button
                   type="button"
@@ -397,6 +464,63 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
           {previewError ? (
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {previewError}
+            </div>
+          ) : null}
+
+          {/* Reason form for "Need Amendment" — the reason is required and is
+              what the crew sees; answers and photos are kept. */}
+          {sendBackOpen && asset?.latestInspection && !reinspectionPending ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <label
+                htmlFor="send-back-reason"
+                className="block text-sm font-semibold text-amber-900"
+              >
+                Why does this pole need re-inspecting?
+              </label>
+              <p className="mt-1 text-xs text-amber-800">
+                The crew sees this. The recorded answers and photos are kept —
+                the pole simply reads as not inspected until they redo it.
+              </p>
+              <textarea
+                id="send-back-reason"
+                autoFocus
+                rows={3}
+                value={sendBackReason}
+                disabled={sendingBack}
+                onChange={(event) => setSendBackReason(event.target.value)}
+                placeholder="e.g. Kelegaan reading 5.98 m does not match the photo — please re-measure"
+                className="mt-2 w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+              />
+              {sendBackError ? (
+                <p className="mt-2 text-sm text-red-700">{sendBackError}</p>
+              ) : null}
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleSendBack()}
+                  disabled={sendingBack || sendBackReason.trim().length === 0}
+                  className="inline-flex items-center gap-2 rounded-md bg-[var(--brand)] px-3 py-2 text-sm font-semibold text-[var(--on-brand)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sendingBack ? (
+                    <RefreshCw size={14} className="animate-spin" />
+                  ) : (
+                    <RotateCcw size={14} />
+                  )}
+                  Send back for re-inspection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSendBackOpen(false);
+                    setSendBackReason("");
+                    setSendBackError("");
+                  }}
+                  disabled={sendingBack}
+                  className="text-sm font-semibold text-amber-800 transition hover:text-amber-900"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -434,6 +558,23 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                 </dl>
 
                 <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
+                  {/* Sent back for re-inspection — the crew sees this pole as
+                      not-inspected until they re-submit it. */}
+                  {asset.latestInspection?.reinspectionReason ? (
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.05em] text-amber-800">
+                        Sent back for re-inspection
+                      </p>
+                      <p className="mt-1 text-sm text-amber-900">
+                        {asset.latestInspection.reinspectionReason}
+                      </p>
+                      {asset.latestInspection.reinspectionRequestedAt ? (
+                        <p className="mt-1 text-xs text-amber-800 opacity-80">
+                          {formatDate(asset.latestInspection.reinspectionRequestedAt)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-base font-semibold text-[var(--foreground)]">
