@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -143,6 +143,18 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   const [sendBackReason, setSendBackReason] = useState("");
   const [sendingBack, setSendingBack] = useState(false);
   const [sendBackError, setSendBackError] = useState("");
+  // The header is sticky, so "Need Amendment" can be pressed from anywhere in
+  // the page — bring the reason form (rendered at the top) into view.
+  const sendBackFormRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (sendBackOpen) {
+      sendBackFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [sendBackOpen]);
   // Where the back button returns to. Defaults to the Assets list, but a `?from=`
   // return path (e.g. set when opening an asset from a Site Visit) takes over so
   // the user goes back where they came from.
@@ -352,7 +364,10 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
         <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
+          {/* Frozen while scrolling, so the stepper + review actions stay in
+              reach on long checklists. top-16 clears the app shell's sticky
+              topbar on desktop; on smaller screens that bar is hidden. */}
+          <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-[var(--line)] bg-[var(--background)] pb-4 pt-2 md:flex-row md:items-end md:justify-between lg:top-16">
             <div>
               <button
                 type="button"
@@ -470,7 +485,12 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
           {/* Reason form for "Need Amendment" — the reason is required and is
               what the crew sees; answers and photos are kept. */}
           {sendBackOpen && asset?.latestInspection && !reinspectionPending ? (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div
+              ref={sendBackFormRef}
+              // Clear the sticky header (+ the shell topbar on lg) when
+              // scrolled into view.
+              className="mt-4 scroll-mt-56 rounded-xl border border-amber-200 bg-amber-50 p-4 lg:scroll-mt-72"
+            >
               <label
                 htmlFor="send-back-reason"
                 className="block text-sm font-semibold text-amber-900"
