@@ -20,6 +20,7 @@ import { ReportGenerationModule } from './report-generation/report-generation.mo
 import { ImportsModule } from './imports/imports.module';
 import { SyncModule } from './sync/sync.module';
 import { PublicModule } from './public/public.module';
+import { ShareModule } from './share/share.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { PublicModule } from './public/public.module';
     ImportsModule,
     SyncModule,
     PublicModule,
+    ShareModule,
   ],
 })
 export class AppModule {}

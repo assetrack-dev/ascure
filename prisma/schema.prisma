@@ -339,6 +339,7 @@ model Tenant {
   networkTieEdges     NetworkTieEdge[]
   organizations       Organization[]
   deletionLogs        DeletionLog[]
+  assetShareLinks     AssetShareLink[]
 }
 
 model Department {
@@ -449,6 +450,7 @@ model User {
   removedSessionAssets      OperationalSessionAsset[]     @relation("OperationalSessionAssetRemovedBy")
   siteVisitLifecycleEvents  SiteVisitLifecycleEvent[]     @relation("SiteVisitLifecycleCreatedBy")
   supervisedTeams           TeamSupervisor[]
+  createdAssetShareLinks    AssetShareLink[]              @relation("AssetShareLinkCreatedBy")
 
   @@index([tenantId])
   @@index([organizationId])
@@ -1029,6 +1031,7 @@ model Asset {
   operationalSessionAssets OperationalSessionAsset[]
   inspections              Inspection[]
   images                   Image[]
+  shareLinks               AssetShareLink[]
 
   @@unique([tenantId, substationId, assetCode], map: "Asset_tenantId_substationId_code_key")
   @@index([tenantId])
@@ -1038,6 +1041,29 @@ model Asset {
   @@index([createdDuringVisitId])
   @@index([createdByUserId])
   @@index([fedFromAssetId])
+}
+
+/// A tokenized public "share this pole" link. Anyone holding the token can
+/// view a read-only, LIVE view of ONE asset (facts + latest inspection +
+/// photos) until the link expires — no account needed. Created from the admin
+/// web by ADMIN / the managing MANAGER / QA actors; the token is the only
+/// credential, so it must be unguessable (random 192-bit, base64url).
+model AssetShareLink {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid
+  assetId         String    @db.Uuid
+  token           String    @unique
+  createdByUserId String?   @db.Uuid
+  createdAt       DateTime  @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  asset           Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy       User?     @relation("AssetShareLinkCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([assetId])
+  @@index([expiresAt])
 }
 
 model OperationalSessionAsset {

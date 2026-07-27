@@ -12,9 +12,11 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Map as MapIcon,
   MapPin,
   RefreshCw,
   RotateCcw,
+  Share2,
   ShieldCheck,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -26,8 +28,10 @@ import {
 import { ApiError } from "@/lib/api";
 import { readAssetNavContext } from "@/lib/asset-nav";
 import { fetchAssetDetail } from "@/lib/assets";
+import { focusAssetOnMap } from "@/lib/map-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { downloadAssetReportPreview } from "@/lib/report-templates";
+import { createAssetShareLink, buildShareUrl } from "@/lib/share";
 import { requestReinspection } from "@/lib/site-visits";
 import type { AssetDetail } from "@/types/assets";
 import type { AuthSession } from "@/types/auth";
@@ -155,6 +159,25 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
       });
     }
   }, [sendBackOpen]);
+
+  // Public share link: mint → show the URL with Copy / WhatsApp actions.
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareDays, setShareDays] = useState(30);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareExpiresAt, setShareExpiresAt] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
+  const shareFormRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (shareOpen) {
+      shareFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [shareOpen]);
   // Where the back button returns to. Defaults to the Assets list, but a `?from=`
   // return path (e.g. set when opening an asset from a Site Visit) takes over so
   // the user goes back where they came from.
@@ -358,7 +381,59 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
     }
   }, [session?.token, asset?.latestInspection?.id, sendBackReason, loadAsset, handleLogout]);
 
+  const handleCreateShareLink = useCallback(async () => {
+    if (!session?.token) {
+      return;
+    }
+    setSharing(true);
+    setShareError("");
+    try {
+      const link = await createAssetShareLink(session.token, assetId, shareDays);
+      setShareUrl(buildShareUrl(link.token));
+      setShareExpiresAt(link.expiresAt);
+      setShareCopied(false);
+    } catch (shareLinkError) {
+      if (shareLinkError instanceof ApiError && shareLinkError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setShareError(
+        shareLinkError instanceof Error
+          ? shareLinkError.message
+          : "Unable to create the share link.",
+      );
+    } finally {
+      setSharing(false);
+    }
+  }, [session?.token, assetId, shareDays, handleLogout]);
+
+  const handleCopyShareUrl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+    } catch {
+      // Clipboard can be unavailable (http, permissions) — the URL stays
+      // visible in the box for a manual copy.
+    }
+  }, [shareUrl]);
+
   const reinspectionPending = Boolean(asset?.latestInspection?.reinspectionReason);
+
+  // "Show on Map" needs coordinates to land on and a Pencawang to drill into.
+  const canShowOnMap =
+    asset?.latitude != null && asset?.longitude != null && Boolean(asset?.substationId);
+
+  const handleShowOnMap = useCallback(() => {
+    if (!asset?.substationId) {
+      return;
+    }
+    focusAssetOnMap({
+      assetId,
+      pencawangId: asset.substationId,
+      pencawangName: asset.pencawangName || "Pencawang",
+    });
+    router.push("/map");
+  }, [asset?.substationId, asset?.pencawangName, assetId, router]);
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -432,6 +507,32 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                   </button>
                 </div>
               ) : null}
+              {canSendBack && asset ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShareError("");
+                    setShareOpen((value) => !value);
+                  }}
+                  aria-expanded={shareOpen}
+                  title="Create a public read-only link to this pole for someone without an ASCURE account"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                >
+                  <Share2 size={16} />
+                  Share
+                </button>
+              ) : null}
+              {canShowOnMap ? (
+                <button
+                  type="button"
+                  onClick={handleShowOnMap}
+                  title="Open the Asset Map centred on this pole"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                >
+                  <MapIcon size={16} />
+                  Show on Map
+                </button>
+              ) : null}
               {canSendBack && asset?.latestInspection && !reinspectionPending ? (
                 <button
                   type="button"
@@ -479,6 +580,106 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
           {previewError ? (
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {previewError}
+            </div>
+          ) : null}
+
+          {/* Share panel: mint a tokenized public link to THIS pole for someone
+              without an account. The page it opens is read-only and live. */}
+          {shareOpen ? (
+            <div
+              ref={shareFormRef}
+              className="mt-4 scroll-mt-56 rounded-xl border border-slate-200 bg-white p-4 shadow-[var(--shadow-soft)] lg:scroll-mt-72"
+            >
+              <p className="text-sm font-semibold text-slate-900">
+                Share this pole
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Anyone with the link can view this pole&apos;s current condition
+                — details, inspection results, and photos. Read-only, no account
+                needed. The link stops working when it expires.
+              </p>
+              {shareUrl ? (
+                <div className="mt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      readOnly
+                      value={shareUrl}
+                      onFocus={(event) => event.currentTarget.select()}
+                      className="min-w-0 flex-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyShareUrl()}
+                      className="rounded-md bg-[var(--brand)] px-3 py-2 text-sm font-semibold text-[var(--on-brand)]"
+                    >
+                      {shareCopied ? "Copied!" : "Copy link"}
+                    </button>
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(
+                        `Pole ${asset?.assetCode ?? ""} — current condition:\n${shareUrl}`,
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand)]"
+                    >
+                      WhatsApp
+                    </a>
+                  </div>
+                  <p className="mt-2 text-xs text-[var(--muted)]">
+                    Valid until {formatDate(shareExpiresAt)}.{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShareUrl("");
+                        setShareExpiresAt("");
+                      }}
+                      className="font-semibold text-[var(--brand)] hover:underline"
+                    >
+                      Create another
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    Link expires in
+                    <select
+                      value={shareDays}
+                      disabled={sharing}
+                      onChange={(event) => setShareDays(Number(event.target.value))}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                    >
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateShareLink()}
+                    disabled={sharing || !session?.token}
+                    className="inline-flex items-center gap-2 rounded-md bg-[var(--brand)] px-3 py-2 text-sm font-semibold text-[var(--on-brand)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sharing ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                      <Share2 size={14} />
+                    )}
+                    Create link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShareOpen(false)}
+                    disabled={sharing}
+                    className="text-sm font-semibold text-[var(--muted)] transition hover:text-[var(--foreground)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {shareError ? (
+                <p className="mt-2 text-sm text-red-700">{shareError}</p>
+              ) : null}
             </div>
           ) : null}
 
