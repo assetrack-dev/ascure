@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ImageOff, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImageOff, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { API_ORIGIN } from "@/lib/api";
 
@@ -169,10 +169,33 @@ export function EvidenceImageGrid({
   );
 }
 
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 5;
+
+interface ZoomView {
+  scale: number;
+  x: number;
+  y: number;
+}
+
+/** Keep the pan offset inside the zoomed image's travel range so the photo
+ *  can never be dragged fully out of the frame. */
+function clampZoomView(view: ZoomView, rect: DOMRect): ZoomView {
+  const maxX = ((view.scale - 1) * rect.width) / 2;
+  const maxY = ((view.scale - 1) * rect.height) / 2;
+  return {
+    scale: view.scale,
+    x: Math.min(maxX, Math.max(-maxX, view.x)),
+    y: Math.min(maxY, Math.max(-maxY, view.y)),
+  };
+}
+
 /**
  * Full-size viewer for the evidence grid: opens in-page (no new tab), pages
  * through the set with the on-screen arrows, ← / → keys, or a touch swipe, and
  * closes on the X, a backdrop click, or Escape. Focus is trapped and restored.
+ * The photo zooms with the scroll wheel (at the cursor), a click, the +/− keys
+ * or header buttons, and pans by dragging while zoomed.
  */
 export function EvidenceLightbox({
   entries,
@@ -188,8 +211,19 @@ export function EvidenceLightbox({
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const imageAreaRef = useRef<HTMLDivElement>(null);
   const [broken, setBroken] = useState(false);
   const touchStartX = useRef<number | null>(null);
+  const [view, setView] = useState<ZoomView>({ scale: 1, x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panState = useRef<{
+    pointerId: number;
+    lastX: number;
+    lastY: number;
+    moved: boolean;
+  } | null>(null);
+  // A drag that panned the photo must not also fire the click-to-zoom toggle.
+  const suppressClick = useRef(false);
   const count = entries.length;
 
   const goPrev = useCallback(
@@ -201,10 +235,60 @@ export function EvidenceLightbox({
     [index, count, onIndexChange],
   );
 
-  // A fresh photo each time we page — clear any prior broken-image state.
+  /** Zoom by `factor`, keeping the point under (clientX, clientY) fixed —
+   *  pass nulls to zoom on the frame centre (buttons, keyboard). */
+  const zoomAt = useCallback(
+    (clientX: number | null, clientY: number | null, factor: number) => {
+      const rect = imageAreaRef.current?.getBoundingClientRect();
+      setView((prev) => {
+        const nextScale = Math.min(
+          MAX_ZOOM,
+          Math.max(MIN_ZOOM, prev.scale * factor),
+        );
+        if (nextScale === MIN_ZOOM || !rect) {
+          return { scale: nextScale, x: 0, y: 0 };
+        }
+        const cx = clientX === null ? 0 : clientX - rect.left - rect.width / 2;
+        const cy = clientY === null ? 0 : clientY - rect.top - rect.height / 2;
+        const ratio = nextScale / prev.scale;
+        return clampZoomView(
+          {
+            scale: nextScale,
+            x: cx - ratio * (cx - prev.x),
+            y: cy - ratio * (cy - prev.y),
+          },
+          rect,
+        );
+      });
+    },
+    [],
+  );
+
+  const resetZoom = useCallback(() => {
+    setView({ scale: 1, x: 0, y: 0 });
+  }, []);
+
+  // A fresh photo each time we page — clear any prior broken-image state and
+  // start it unzoomed.
   useEffect(() => {
     setBroken(false);
+    setView({ scale: 1, x: 0, y: 0 });
   }, [index]);
+
+  // Scroll wheel zooms at the cursor. React's synthetic onWheel can't call
+  // preventDefault (the root listener is passive), so bind natively.
+  useEffect(() => {
+    const node = imageAreaRef.current;
+    if (!node) {
+      return;
+    }
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      zoomAt(event.clientX, event.clientY, event.deltaY < 0 ? 1.25 : 0.8);
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -220,6 +304,15 @@ export function EvidenceLightbox({
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         goNext();
+      } else if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoomAt(null, null, 1.25);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomAt(null, null, 0.8);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        resetZoom();
       } else if (event.key === "Tab") {
         const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
           'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -243,7 +336,7 @@ export function EvidenceLightbox({
       window.removeEventListener("keydown", onKey);
       previouslyFocused?.focus?.();
     };
-  }, [goPrev, goNext, onClose]);
+  }, [goPrev, goNext, onClose, zoomAt, resetZoom]);
 
   const { image, sourceUrl } = entries[index];
   const gps = formatEvidenceGps(image);
@@ -266,7 +359,8 @@ export function EvidenceLightbox({
         onTouchEnd={(event) => {
           const start = touchStartX.current;
           touchStartX.current = null;
-          if (start === null || count < 2) {
+          // While zoomed, a touch drag pans the photo — don't page on it.
+          if (start === null || count < 2 || view.scale > 1) {
             return;
           }
           const dx = (event.changedTouches[0]?.clientX ?? start) - start;
@@ -285,23 +379,144 @@ export function EvidenceLightbox({
               {index + 1} / {count}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1 text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            {sourceUrl && !broken ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => zoomAt(null, null, 0.8)}
+                  disabled={view.scale <= MIN_ZOOM}
+                  aria-label="Zoom out"
+                  title="Zoom out (−)"
+                  className="rounded-md p-1 text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-300"
+                >
+                  <ZoomOut size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={resetZoom}
+                  title="Reset zoom (0)"
+                  className="min-w-[3.25rem] rounded-md px-1 py-0.5 text-center text-xs font-semibold tabular-nums text-slate-600 outline-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                >
+                  {Math.round(view.scale * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => zoomAt(null, null, 1.25)}
+                  disabled={view.scale >= MAX_ZOOM}
+                  aria-label="Zoom in"
+                  title="Zoom in (+)"
+                  className="rounded-md p-1 text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-300"
+                >
+                  <ZoomIn size={17} />
+                </button>
+                <span className="mx-1 h-5 w-px bg-slate-200" aria-hidden="true" />
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded-md p-1 text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-slate-100 p-3">
+        <div
+          ref={imageAreaRef}
+          onPointerDown={(event) => {
+            if (view.scale <= 1 || event.button !== 0) {
+              return;
+            }
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            } catch {
+              // Capture is a nicety (keeps the pan while the cursor leaves the
+              // frame); panning must not die when a browser refuses it.
+            }
+            panState.current = {
+              pointerId: event.pointerId,
+              lastX: event.clientX,
+              lastY: event.clientY,
+              moved: false,
+            };
+            setIsPanning(true);
+          }}
+          onPointerMove={(event) => {
+            const pan = panState.current;
+            if (!pan || pan.pointerId !== event.pointerId) {
+              return;
+            }
+            const dx = event.clientX - pan.lastX;
+            const dy = event.clientY - pan.lastY;
+            if (Math.abs(dx) + Math.abs(dy) > 2) {
+              pan.moved = true;
+            }
+            pan.lastX = event.clientX;
+            pan.lastY = event.clientY;
+            const rect = imageAreaRef.current?.getBoundingClientRect();
+            setView((prev) =>
+              rect
+                ? clampZoomView(
+                    { scale: prev.scale, x: prev.x + dx, y: prev.y + dy },
+                    rect,
+                  )
+                : prev,
+            );
+          }}
+          onPointerUp={(event) => {
+            const pan = panState.current;
+            if (pan?.pointerId === event.pointerId) {
+              suppressClick.current = pan.moved;
+              panState.current = null;
+              setIsPanning(false);
+            }
+          }}
+          onPointerCancel={(event) => {
+            if (panState.current?.pointerId === event.pointerId) {
+              panState.current = null;
+              setIsPanning(false);
+            }
+          }}
+          onClick={(event) => {
+            if (suppressClick.current) {
+              suppressClick.current = false;
+              return;
+            }
+            if (!sourceUrl || broken) {
+              return;
+            }
+            if (view.scale === 1) {
+              zoomAt(event.clientX, event.clientY, 2.5);
+            } else {
+              resetZoom();
+            }
+          }}
+          style={{ touchAction: view.scale > 1 ? "none" : undefined }}
+          className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-slate-100 p-3 ${
+            view.scale > 1
+              ? isPanning
+                ? "cursor-grabbing"
+                : "cursor-grab"
+              : sourceUrl && !broken
+                ? "cursor-zoom-in"
+                : ""
+          }`}
+        >
           {sourceUrl && !broken ? (
             <img
               src={sourceUrl}
               alt={image.filename ?? `${titlePrefix} ${index + 1}`}
               onError={() => setBroken(true)}
-              className="max-h-[70vh] w-auto max-w-full rounded-lg object-contain"
+              draggable={false}
+              style={{
+                transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})`,
+              }}
+              className={`max-h-[70vh] w-auto max-w-full select-none rounded-lg object-contain ${
+                isPanning ? "" : "transition-transform duration-100"
+              }`}
             />
           ) : (
             <div className="flex flex-col items-center gap-2 py-12 text-center text-sm text-slate-500">
@@ -314,7 +529,10 @@ export function EvidenceLightbox({
             <>
               <button
                 type="button"
-                onClick={goPrev}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  goPrev();
+                }}
                 aria-label="Previous photo"
                 className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
               >
@@ -322,7 +540,10 @@ export function EvidenceLightbox({
               </button>
               <button
                 type="button"
-                onClick={goNext}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  goNext();
+                }}
                 aria-label="Next photo"
                 className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
               >
@@ -337,6 +558,11 @@ export function EvidenceLightbox({
             <span>{formatEvidenceTimestamp(image)}</span>
             {gps ? <span>GPS {gps}</span> : null}
             {image.note ? <span className="text-slate-500">{image.note}</span> : null}
+            {sourceUrl && !broken ? (
+              <span className="text-slate-400">
+                Scroll or click to zoom · drag to pan
+              </span>
+            ) : null}
           </span>
           {sourceUrl ? (
             <a
