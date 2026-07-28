@@ -682,7 +682,10 @@ export const api = {
   },
 
   getDefects(token: string) {
-    return request<DefectListItem[]>('/defects', { token });
+    // Newest 300 only. Unbounded, a tenant-scoped ADMIN/MANAGER account pulls
+    // the whole tenant's defect history — the render of that list is what
+    // OOM-crashed the admin phone (v2.0.3, Maintenance workspace).
+    return request<DefectListItem[]>('/defects?limit=300', { token });
   },
 
   getActiveEmergencies(token: string) {

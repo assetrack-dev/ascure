@@ -705,6 +705,11 @@ const SEVERITY_RANK: Record<DefectSeverity, number> = {
 };
 
 const DONE_GROUP_LIMIT = 10;
+// Hard cap on CARDS RENDERED per maintenance group. The workspace lives in a
+// plain ScrollView (no virtualization) — mounting a tenant-scoped account's
+// full defect list as native views is what OOM-crashed the admin phone
+// (confirmed by logcat: OutOfMemoryError in ReactTextViewManager.createViewInstance).
+const GROUP_RENDER_LIMIT = 30;
 
 function MaintenanceWorkspaceView({
   userId,
@@ -823,6 +828,9 @@ function MaintenanceWorkspaceView({
             return null;
           }
 
+          const visible = items.slice(0, GROUP_RENDER_LIMIT);
+          const hiddenCount = items.length - visible.length;
+
           return (
             <View key={group.key} style={styles.statusGroup}>
               <View style={styles.groupHeader}>
@@ -841,7 +849,7 @@ function MaintenanceWorkspaceView({
                   {items.length}
                 </Mono>
               </View>
-              {items.map((item) => (
+              {visible.map((item) => (
                 <MaintenanceTaskCard
                   key={item.id}
                   item={item}
@@ -852,6 +860,12 @@ function MaintenanceWorkspaceView({
                   onClaim={() => handleClaim(item.id)}
                 />
               ))}
+              {hiddenCount > 0 ? (
+                <Text style={styles.groupOverflowNote}>
+                  + {hiddenCount} more not shown — use the Defects screen or the
+                  admin console to browse the full list.
+                </Text>
+              ) : null}
             </View>
           );
         })
@@ -1528,6 +1542,12 @@ const createStyles = (t: Theme) =>
     },
     groupTitleDanger: {
       color: t.colors.danger,
+    },
+    groupOverflowNote: {
+      fontSize: 12,
+      color: t.colors.textMuted,
+      paddingHorizontal: 4,
+      paddingTop: 2,
     },
     mainheadSection: {
       gap: 12,

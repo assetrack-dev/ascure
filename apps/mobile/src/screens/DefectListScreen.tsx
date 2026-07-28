@@ -19,6 +19,12 @@ import {
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 
+// Hard cap on ROWS RENDERED. The list lives in a plain ScrollView (no
+// virtualization) — mounting a tenant-scoped account's full defect list as
+// native views OOM-crashes the phone (same failure as the Maintenance
+// workspace, confirmed by logcat). Search filters within the fetched set.
+const LIST_RENDER_LIMIT = 100;
+
 export function DefectListScreen() {
   const navigation = useNavigation<AppDrawerScreenProps<'DefectList'>['navigation']>();
   const { token, handleUnauthorized } = useSession();
@@ -126,7 +132,7 @@ export function DefectListScreen() {
           ) : null}
 
           {!error
-            ? visibleDefects.map((defect) => (
+            ? visibleDefects.slice(0, LIST_RENDER_LIMIT).map((defect) => (
                 <StatusSpineTile
                   key={defect.id}
                   code={defect.assetCode || 'Unknown asset'}
@@ -145,6 +151,13 @@ export function DefectListScreen() {
                 />
               ))
             : null}
+          {!error && visibleDefects.length > LIST_RENDER_LIMIT ? (
+            <Text style={styles.overflowNote}>
+              Showing the first {LIST_RENDER_LIMIT} of {visibleDefects.length} —
+              type in Search to narrow the list, or browse everything in the
+              admin console.
+            </Text>
+          ) : null}
 
           {error ? (
             <Card>
@@ -229,6 +242,12 @@ const createStyles = (t: Theme) =>
     statRow: {
       flexDirection: 'row',
       gap: 10,
+    },
+    overflowNote: {
+      fontSize: 12,
+      color: t.colors.textMuted,
+      paddingHorizontal: 4,
+      paddingTop: 4,
     },
     statTile: {
       flex: 1,
