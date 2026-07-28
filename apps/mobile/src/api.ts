@@ -387,7 +387,10 @@ export const api = {
   },
 
   getCompletedSiteVisits(token: string) {
-    return request<SiteVisit[]>('/site-visits?status=COMPLETED', { token });
+    // Newest 25 only. Unbounded, an ADMIN/MANAGER account (tenant-scoped)
+    // pulls the whole survey history — enough JSON to OOM a phone and to
+    // overflow the single AsyncStorage cache row it lands in.
+    return request<SiteVisit[]>('/site-visits?status=COMPLETED&limit=25', { token });
   },
 
   getOperationalSessions(token: string, filters: OperationalSessionFilters = {}) {

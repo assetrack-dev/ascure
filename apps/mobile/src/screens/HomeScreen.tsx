@@ -185,7 +185,20 @@ export function HomeScreen() {
         cachedFetch('site-visits-completed', undefined, () => api.getCompletedSiteVisits(token)),
         cachedFetch('my-capabilities', undefined, () => api.getMyCapabilities(token)),
       ]);
-      const activeVisitsWithImageData = await loadVisitDetails(token, activeResult.value);
+      // Offline warming is for FIELD accounts only. An admin/manager account is
+      // tenant-scoped — its "active visits" are EVERY crew's visits, and warming
+      // them all (full registers + templates, concurrently) is what crashed the
+      // admin phone on v2.0.2 (OOM-kill loop, millions of packets per session).
+      // Office roles review online; they don't inspect offline.
+      const warmCount =
+        user?.role === 'TECHNICIAN' || user?.role === 'SUPERVISOR'
+          ? WARM_VISIT_LIMIT
+          : 0;
+      const activeVisitsWithImageData = await loadVisitDetails(
+        token,
+        activeResult.value,
+        warmCount,
+      );
 
       setActiveVisits(activeVisitsWithImageData);
       setCompletedVisits(completedResult.value);
@@ -219,7 +232,7 @@ export function HomeScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [handleUnauthorized, setUser, token]);
+  }, [handleUnauthorized, setUser, token, user?.role]);
 
   useEffect(() => {
     loadHomeData();
@@ -1075,8 +1088,13 @@ function formatRole(role?: string | null) {
     .join(' ');
 }
 
-async function loadVisitDetails(token: string, visits: SiteVisit[]) {
-  return Promise.all(
+// How many visits a FIELD account warms per Home load. A crew realistically
+// works one or two visits; three covers a handover day without ever fanning
+// out to a whole tenant's worth of registers.
+const WARM_VISIT_LIMIT = 3;
+
+async function loadVisitDetails(token: string, visits: SiteVisit[], warmCount: number) {
+  const detailed = await Promise.all(
     visits.map(async (visit) => {
       // A temp (offline-created) visit is already fully in cache (synthesized by
       // Check-In, poles prepended by Add Asset) — never send its non-UUID id to
@@ -1085,8 +1103,6 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
         return visit;
       }
 
-      let detailed: SiteVisit = visit;
-
       try {
         // Cache each detailed visit so VisitDetail can be re-opened offline; on
         // an unreachable server cachedFetch serves the cached copy, and if even
@@ -1094,25 +1110,32 @@ async function loadVisitDetails(token: string, visits: SiteVisit[]) {
         const { value } = await cachedFetch('site-visit', visit.id, () =>
           api.getSiteVisit(token, visit.id),
         );
-        detailed = value;
+        return value;
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           throw error;
         }
+        return visit;
       }
-
-      // Warm the visit's asset register + per-type inspection templates while
-      // online, so an In-Progress visit can be opened AND inspected offline
-      // after just loading Home online (not only after opening it online).
-      // Fire-and-forget: the warm (full asset register + substation assets +
-      // one template per asset type) is by far the heaviest part of the Home
-      // load — it must not hold the skeleton; it keeps filling the offline
-      // caches in the background after the queue paints.
-      void warmVisitOfflineCache(token, detailed);
-
-      return detailed;
     }),
   );
+
+  // Warm asset registers + per-type inspection templates while online, so an
+  // In-Progress visit can be opened AND inspected offline after just loading
+  // Home online. Fire-and-forget (the warm is by far the heaviest part of the
+  // Home load — it must not hold the skeleton) but STRICTLY SEQUENTIAL and
+  // capped: warming every visit concurrently is a memory spike that Android
+  // answers by killing the app when the visit list is large.
+  const toWarm = detailed.filter((visit) => !isTempId(visit.id)).slice(0, warmCount);
+  if (toWarm.length > 0) {
+    void (async () => {
+      for (const visit of toWarm) {
+        await warmVisitOfflineCache(token, visit);
+      }
+    })().catch(() => undefined);
+  }
+
+  return detailed;
 }
 
 function getAvailableInspectionScopes(
