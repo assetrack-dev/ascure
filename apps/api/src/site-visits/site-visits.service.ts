@@ -634,6 +634,9 @@ export class SiteVisitsService {
       orderBy: {
         startedAt: 'desc',
       },
+      // Newest-first cap (mobile passes this; admin-web doesn't and keeps the
+      // full list).
+      ...(query.limit ? { take: query.limit } : {}),
     });
     const siteVisitIds = siteVisits.map((siteVisit) => siteVisit.id);
     const [rollupsByVisitId, lastActivityByVisitId] = await Promise.all([
