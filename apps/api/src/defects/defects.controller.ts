@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { EVIDENCE_MEDIA_UPLOAD_OPTIONS } from '../common/upload-options';
-import { IsUUID } from 'class-validator';
+import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -34,14 +34,27 @@ class DefectIdParamDto {
   id!: string;
 }
 
+class ListDefectsQueryDto {
+  /**
+   * Newest-first cap, added for mobile: a tenant-scoped ADMIN/MANAGER account's
+   * unbounded defect list is the whole tenant's history — the mobile app
+   * OOM-crashed rendering it. Admin-web passes nothing and keeps the full list.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit?: number;
+}
+
 @UseGuards(JwtAuthGuard)
 @Controller('defects')
 export class DefectsController {
   constructor(private readonly defectsService: DefectsService) {}
 
   @Get()
-  list(@CurrentUser() user: RequestUser) {
-    return this.defectsService.list(user);
+  list(@CurrentUser() user: RequestUser, @Query() query: ListDefectsQueryDto) {
+    return this.defectsService.list(user, query.limit);
   }
 
   @Get('operations-board')
