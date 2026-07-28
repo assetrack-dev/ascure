@@ -7,7 +7,17 @@ import {
   SiteVisitValidationStatus,
 } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -16,6 +26,17 @@ export class ListSiteVisitsQueryDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'])
   status?: 'ACTIVE' | 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+  /**
+   * Cap the newest-first result set. Added for mobile: an ADMIN/MANAGER
+   * account is tenant-scoped, so its unbounded COMPLETED list is the whole
+   * survey history — enough to crash a phone parsing and caching it.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
 
   @Transform(trimString)
   @IsOptional()
