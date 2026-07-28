@@ -453,7 +453,7 @@ const LEGACY_MAINTENANCE_RESOLUTION_OUTCOME_MAP: Partial<
 export class DefectsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(user: RequestUser) {
+  async list(user: RequestUser, limit?: number) {
     const ctx = await buildScopeContext(this.prisma, user);
     await this.ensureDefectsForAccessibleItems(user, ctx);
 
@@ -462,6 +462,8 @@ export class DefectsService {
       orderBy: {
         createdAt: 'desc',
       },
+      // Newest-first cap (mobile); admin-web omits it and keeps the full list.
+      ...(limit ? { take: limit } : {}),
       include: {
         assignedUser: {
           select: {
