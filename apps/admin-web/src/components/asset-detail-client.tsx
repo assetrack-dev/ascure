@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CalendarDays,
   Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -14,10 +15,12 @@ import {
   FileText,
   Map as MapIcon,
   MapPin,
+  Pencil,
   RefreshCw,
   RotateCcw,
   Share2,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
@@ -32,9 +35,10 @@ import { focusAssetOnMap } from "@/lib/map-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { downloadAssetReportPreview } from "@/lib/report-templates";
 import { createAssetShareLink, buildShareUrl } from "@/lib/share";
-import { requestReinspection } from "@/lib/site-visits";
+import { editChecklistValue, requestReinspection } from "@/lib/site-visits";
 import type { AssetDetail } from "@/types/assets";
 import type { AuthSession } from "@/types/auth";
+import type { ChecklistColumn } from "@/types/site-visits";
 
 function formatDate(date: string | null) {
   if (!date) {
@@ -120,6 +124,168 @@ function severityBadgeClassName(severity: string | null | undefined) {
     return "border-green-200 bg-green-50 text-green-700";
   }
   return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+/**
+ * The canonical column key for a checklist label — mirrors the API's
+ * `normalizeChecklistLabel` (common/checklist-columns.ts), which is the
+ * documented contract: `PATCH /inspections/:id/checklist-result` resolves the
+ * edited item with this exact normalization, so a key derived here round-trips
+ * to exactly one template item.
+ */
+function checklistKeyForLabel(label: string): string {
+  return label.toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Inline editor for one Inspection Result row's recorded value — the same
+ * behavior as the Linked-Assets table and the map panel: plain text until
+ * clicked, then the editor the template calls for (dropdown when the item
+ * defines options, else a typed input). Saving is per-row; the server coerces
+ * by input type and re-evaluates the defect flag, so the caller reloads after
+ * a save.
+ */
+function EditableRemarkCell({
+  column,
+  value,
+  onSave,
+}: {
+  column: ChecklistColumn;
+  value: string | null;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // A refetch (or paging to another pole) must win over a stale draft.
+  useEffect(() => {
+    setDraft(value ?? "");
+    setEditing(false);
+    setError("");
+  }, [value, column.key]);
+
+  const templateOptions = column.options ?? [];
+
+  // A recorded value NOT among the template's current options (template edited
+  // after the survey) would leave the dropdown blank — and saving from there
+  // would silently discard what the crew recorded. Keep it as an extra choice.
+  const options = useMemo(() => {
+    if (templateOptions.length === 0) {
+      return templateOptions;
+    }
+    const current = value?.trim();
+    if (!current || templateOptions.some((option) => option.value === current)) {
+      return templateOptions;
+    }
+    return [...templateOptions, { value: current, label: `${current} (not in list)` }];
+  }, [templateOptions, value]);
+
+  const commit = useCallback(async () => {
+    if (draft === (value ?? "")) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "Unable to save this value.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, value, onSave]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title={`Edit ${column.label}`}
+        className="group/edit inline-flex max-w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-slate-600 outline-none transition hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+      >
+        <span className="min-w-0 break-words">{value?.trim() || "—"}</span>
+        <Pencil
+          size={12}
+          className="shrink-0 text-slate-300 transition group-hover/edit:text-[var(--brand)]"
+        />
+      </button>
+    );
+  }
+
+  return (
+    <div className="min-w-[11rem]">
+      <div className="flex items-center gap-1.5">
+        {options.length > 0 ? (
+          <select
+            autoFocus
+            value={draft}
+            disabled={saving}
+            onChange={(event) => setDraft(event.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-[var(--brand)] bg-white px-2 py-1 text-sm text-slate-900"
+          >
+            <option value="">—</option>
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            autoFocus
+            value={draft}
+            disabled={saving}
+            inputMode={column.inputType === "NUMBER" ? "decimal" : "text"}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void commit();
+              } else if (event.key === "Escape") {
+                setEditing(false);
+                setDraft(value ?? "");
+                setError("");
+              }
+            }}
+            className="min-w-0 flex-1 rounded-md border border-[var(--brand)] bg-white px-2 py-1 text-sm text-slate-900"
+          />
+        )}
+        <button
+          type="button"
+          onClick={() => void commit()}
+          disabled={saving}
+          aria-label="Save"
+          className="rounded-md bg-[var(--brand)] p-1.5 text-[var(--on-brand)] disabled:opacity-50"
+        >
+          {saving ? (
+            <RefreshCw size={13} className="animate-spin" />
+          ) : (
+            <Check size={13} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(false);
+            setDraft(value ?? "");
+            setError("");
+          }}
+          disabled={saving}
+          aria-label="Cancel"
+          className="rounded-md border border-slate-300 p-1.5 text-slate-500 disabled:opacity-50"
+        >
+          <X size={13} />
+        </button>
+      </div>
+      {error ? <p className="mt-1 text-xs text-red-700">{error}</p> : null}
+    </div>
+  );
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -418,6 +584,38 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   }, [shareUrl]);
 
   const reinspectionPending = Boolean(asset?.latestInspection?.reinspectionReason);
+
+  // Inline checklist editing on the Inspection Result table — same behavior
+  // (and same endpoint) as the Linked-Assets table and the map panel. Gate
+  // mirrors them too: ADMIN / DC / the managing manager, re-enforced by the
+  // API on every write.
+  const checklistColumnsByKey = useMemo(() => {
+    const map = new Map<string, ChecklistColumn>();
+    for (const column of asset?.latestInspection?.checklist?.columns ?? []) {
+      map.set(column.key, column);
+    }
+    return map;
+  }, [asset?.latestInspection?.checklist]);
+
+  const saveChecklistValue = useCallback(
+    async (columnKey: string, next: string) => {
+      const inspection = asset?.latestInspection;
+      if (!session?.token || !inspection?.id) {
+        throw new Error("Your session has expired — refresh and sign in again.");
+      }
+      await editChecklistValue(
+        session.token,
+        inspection.id,
+        columnKey,
+        next,
+        inspection.siteVisitId ?? "",
+      );
+      // The server coerces by input type and re-evaluates the defect flag —
+      // reload so Result / Severity / the red row highlight stay truthful.
+      await loadAsset(session.token);
+    },
+    [session?.token, asset?.latestInspection, loadAsset],
+  );
 
   // "Show on Map" needs coordinates to land on and a Pencawang to drill into.
   const canShowOnMap =
@@ -898,7 +1096,19 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {displayedInspectionItems.map((item) => (
+                            {displayedInspectionItems.map((item) => {
+                              // The row is editable when its label resolves to a
+                              // checklist column (IMAGE columns hold photos, not
+                              // values — those stay read-only here).
+                              const editColumn = canSendBack
+                                ? checklistColumnsByKey.get(
+                                    checklistKeyForLabel(item.label),
+                                  )
+                                : undefined;
+                              const editable =
+                                editColumn && editColumn.inputType !== "IMAGE";
+
+                              return (
                               <tr
                                 key={item.id}
                                 className={item.isDefect ? "bg-red-50/40" : undefined}
@@ -929,10 +1139,21 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                                   )}
                                 </td>
                                 <td className="px-4 py-3 text-slate-600">
-                                  {item.remark || "—"}
+                                  {editable && editColumn ? (
+                                    <EditableRemarkCell
+                                      column={editColumn}
+                                      value={item.remark}
+                                      onSave={(next) =>
+                                        saveChecklistValue(editColumn.key, next)
+                                      }
+                                    />
+                                  ) : (
+                                    item.remark || "—"
+                                  )}
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       ) : (
