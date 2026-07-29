@@ -2366,7 +2366,11 @@ export class AssetsService {
       }));
 
     // The first non-empty value wins for a label, so a later blank row can never
-    // clobber a recorded one; a label present but unfilled maps to null.
+    // clobber a recorded one. A label with a row but no value maps to "" — a
+    // value that was recorded then cleared — while a label with no row at all
+    // stays null. The Inspection Result overlay relies on that distinction:
+    // "" means the live value IS blank (show blank), null means there is no
+    // live value and the frozen itemResult.remark is the only copy.
     const values: Record<string, string | null> = {};
     for (const column of columns) {
       values[column.key] = null;
@@ -2377,8 +2381,8 @@ export class AssetsService {
         continue;
       }
       const key = normalizeChecklistLabel(label);
-      if (values[key] == null) {
-        values[key] = checklistResultValue(row);
+      if (!values[key]) {
+        values[key] = checklistResultValue(row) ?? '';
       }
     }
 
