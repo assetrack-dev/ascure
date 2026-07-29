@@ -1442,6 +1442,9 @@ const CHECKLIST_SORT_PREFIX = "checklist:";
 /** localStorage key for the DC's personal set of extra checklist columns. Global
  *  across visits — the picker renders only the ones a given visit actually has. */
 const CHECKLIST_COLUMNS_STORAGE_KEY = "ascure.siteVisit.checklistColumns";
+/** localStorage key for the optional Type/Source/Added metadata columns —
+ *  HIDDEN by default (owner: they eat width the checklist values need). */
+const META_COLUMNS_STORAGE_KEY = "ascure.siteVisit.metaColumns";
 
 function assetSortText(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? "";
@@ -1969,6 +1972,9 @@ const LINKED_ASSET_LEAD_COLUMNS: [string, AssetSortKey][] = [
   ["Gambar Kelegaan", "gambar"],
   ["Catitan", "catitan"],
 ];
+// Asset/link metadata columns after the checklist block. NOT shown by default
+// (they crowd out the checklist values) — the Columns picker toggles them on,
+// persisted like the checklist selection.
 const LINKED_ASSET_TAIL_COLUMNS: [string, AssetSortKey][] = [
   ["Type", "type"],
   ["Source", "source"],
@@ -1986,10 +1992,17 @@ function ChecklistColumnPicker({
   columns,
   selectedKeys,
   onChange,
+  metaColumns,
+  selectedMetaKeys,
+  onMetaChange,
 }: {
   columns: ChecklistColumn[];
   selectedKeys: string[];
   onChange: (keys: string[]) => void;
+  /** The optional Type/Source/Added metadata columns (hidden by default). */
+  metaColumns: { key: string; label: string }[];
+  selectedMetaKeys: string[];
+  onMetaChange: (keys: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2016,17 +2029,27 @@ function ChecklistColumnPicker({
     };
   }, [open]);
 
-  if (columns.length === 0) {
+  if (columns.length === 0 && metaColumns.length === 0) {
     return null;
   }
 
-  const selectedCount = columns.filter((column) => selectedKeys.includes(column.key)).length;
+  const selectedCount =
+    columns.filter((column) => selectedKeys.includes(column.key)).length +
+    metaColumns.filter((column) => selectedMetaKeys.includes(column.key)).length;
 
   const toggle = (key: string) => {
     onChange(
       selectedKeys.includes(key)
         ? selectedKeys.filter((value) => value !== key)
         : [...selectedKeys, key],
+    );
+  };
+
+  const toggleMeta = (key: string) => {
+    onMetaChange(
+      selectedMetaKeys.includes(key)
+        ? selectedMetaKeys.filter((value) => value !== key)
+        : [...selectedMetaKeys, key],
     );
   };
 
@@ -2061,7 +2084,10 @@ function ChecklistColumnPicker({
             {selectedCount > 0 ? (
               <button
                 type="button"
-                onClick={() => onChange([])}
+                onClick={() => {
+                  onChange([]);
+                  onMetaChange([]);
+                }}
                 className="text-[11px] font-semibold text-[var(--brand)] hover:underline"
               >
                 Clear
@@ -2092,6 +2118,27 @@ function ChecklistColumnPicker({
                 ))}
               </div>
             ))}
+            {metaColumns.length > 0 ? (
+              <div className={columns.length > 0 ? "mt-1 border-t border-[var(--line2)] pt-1" : undefined}>
+                <p className="px-2 pb-0.5 pt-1.5 text-[11px] font-semibold text-[var(--muted)]">
+                  Table info
+                </p>
+                {metaColumns.map((column) => (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] px-2 py-1.5 text-[13px] text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedMetaKeys.includes(column.key)}
+                      onChange={() => toggleMeta(column.key)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-[var(--line-strong)] accent-[var(--brand)]"
+                    />
+                    <span className="min-w-0 flex-1 break-words">{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2147,6 +2194,34 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     setSelectedChecklistKeys(keys);
     try {
       window.localStorage.setItem(CHECKLIST_COLUMNS_STORAGE_KEY, JSON.stringify(keys));
+    } catch {
+      // Selection still applies for this session even if it can't be persisted.
+    }
+  }, []);
+
+  // Optional Type/Source/Added metadata columns — hidden by default, toggled on
+  // via the same Columns picker. Hydrated after mount like the checklist keys.
+  const [selectedMetaKeys, setSelectedMetaKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(META_COLUMNS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSelectedMetaKeys(parsed.filter((value): value is string => typeof value === "string"));
+      }
+    } catch {
+      // Ignore unavailable or malformed storage — the columns just stay hidden.
+    }
+  }, []);
+
+  const persistMetaKeys = useCallback((keys: string[]) => {
+    setSelectedMetaKeys(keys);
+    try {
+      window.localStorage.setItem(META_COLUMNS_STORAGE_KEY, JSON.stringify(keys));
     } catch {
       // Selection still applies for this session even if it can't be persisted.
     }
@@ -2558,6 +2633,12 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [visit?.checklistColumns, selectedChecklistKeys],
   );
 
+  // Metadata (tail) columns the user has toggled on, in fixed order.
+  const activeTailColumns = useMemo(
+    () => LINKED_ASSET_TAIL_COLUMNS.filter(([, key]) => selectedMetaKeys.includes(key)),
+    [selectedMetaKeys],
+  );
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
@@ -2783,6 +2864,11 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                               columns={visit.checklistColumns ?? []}
                               selectedKeys={selectedChecklistKeys}
                               onChange={persistChecklistKeys}
+                              metaColumns={LINKED_ASSET_TAIL_COLUMNS.map(
+                                ([label, key]) => ({ key, label }),
+                              )}
+                              selectedMetaKeys={selectedMetaKeys}
+                              onMetaChange={persistMetaKeys}
                             />
                             <span className="whitespace-nowrap text-[12px] text-[var(--muted)]">
                               {filteredAssetRows.length === operationalAssetRows.length
@@ -2886,7 +2972,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     />
                                   </th>
                                 ))}
-                                {LINKED_ASSET_TAIL_COLUMNS.map(([label, key]) => (
+                                {activeTailColumns.map(([label, key]) => (
                                   <th key={key} className={tableHeadCellClass}>
                                     <SortButton
                                       label={label}
@@ -3079,15 +3165,21 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                       </td>
                                     );
                                   })}
-                                  <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    {formatNullable(link.asset.assetType?.name ?? link.asset.assetType?.code)}
-                                  </td>
-                                  <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    {formatNullable(link.source)}
-                                  </td>
-                                  <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    {formatDateTime(link.addedAt)}
-                                  </td>
+                                  {selectedMetaKeys.includes("type") ? (
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {formatNullable(link.asset.assetType?.name ?? link.asset.assetType?.code)}
+                                    </td>
+                                  ) : null}
+                                  {selectedMetaKeys.includes("source") ? (
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {formatNullable(link.source)}
+                                    </td>
+                                  ) : null}
+                                  {selectedMetaKeys.includes("added") ? (
+                                    <td className={`${tableCellClass} whitespace-nowrap`}>
+                                      {formatDateTime(link.addedAt)}
+                                    </td>
+                                  ) : null}
                                   {/* Send this pole back for re-inspection —
                                       the same action the Asset Map panel
                                       offers, on the row the DC is reading. Only
