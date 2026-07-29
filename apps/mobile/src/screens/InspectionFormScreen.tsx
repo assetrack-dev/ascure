@@ -1761,6 +1761,7 @@ function ChecklistItemCard({
           onChangeText={onChange}
           placeholder="0"
           disabled={disabled}
+          allowText
         />
       ) : null}
       {inputType === 'OCR' ? (
@@ -1771,6 +1772,7 @@ function ChecklistItemCard({
             onChangeText={onChange}
             placeholder="Scan or enter"
             disabled={disabled}
+            allowText
           />
           {isBelowRange ? (
             <Text style={styles.sentinelHint}>
@@ -2298,6 +2300,7 @@ function ReadingBox({
   placeholder,
   disabled,
   unit,
+  allowText = false,
 }: {
   label: string;
   value: string;
@@ -2305,6 +2308,10 @@ function ReadingBox({
   placeholder?: string;
   disabled: boolean;
   unit?: string | null;
+  /** READING/OCR fields accept text (device sentinels like "LO", field notes
+   *  when no number can be produced) — those need the full keyboard. Strict
+   *  NUMBER fields keep the decimal pad. */
+  allowText?: boolean;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -2318,7 +2325,8 @@ function ReadingBox({
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.textMuted}
-          keyboardType="decimal-pad"
+          keyboardType={allowText ? 'default' : 'decimal-pad'}
+          autoCapitalize={allowText ? 'characters' : 'none'}
           editable={!disabled}
         />
         {unit ? <Text style={styles.readingUnit}>{unit}</Text> : null}

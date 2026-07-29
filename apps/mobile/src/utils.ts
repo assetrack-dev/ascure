@@ -657,7 +657,12 @@ function collectSectionIssues(
       continue;
     }
 
-    if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
+    // Only strict NUMBER fields must parse. Reading fields (OCR/READING)
+    // accept text by design — device sentinels ("LO" = below measurable
+    // range) and, per the owner's 2026-07-29 call, any note the technician
+    // must record when a number can't be produced. The payload/API store
+    // text readings as valueText.
+    if (inputType !== 'NUMBER') {
       continue;
     }
 
@@ -754,7 +759,8 @@ export function validateInspectionDraftForSave(
     for (const item of section.items) {
       const inputType = normalizeInspectionInputType(item.inputType);
 
-      if (inputType !== 'NUMBER' && inputType !== 'READING' && inputType !== 'OCR') {
+      // Reading fields (OCR/READING) accept text — see collectSectionIssues.
+      if (inputType !== 'NUMBER') {
         continue;
       }
 
@@ -815,11 +821,11 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
       if (inputType === 'OCR') {
         const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
 
-        // The Smart Sensor shows "LO" instead of a number when the cable is
-        // below its measurable range (clearance under ~3 m). That's a HAZARD,
-        // not a missing reading — send it as text (valueNumber stays null) so
-        // the API stores it and every report surfaces it. Sending it as a
-        // number would coerce to NaN and silently drop the reading.
+        // A numeric reading rides as a number. Anything else rides as TEXT:
+        // the Smart Sensor's "LO" sentinel (below measurable range — a hazard,
+        // not a missing reading; normalized via shared-utils) and any note the
+        // technician records when a number can't be produced. Uppercased for
+        // consistency with the office edit path.
         const sentinel = normalizeReadingSentinel(normalized);
 
         if (sentinel) {
@@ -827,10 +833,13 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
           continue;
         }
 
-        supportedResults.push({
-          templateItemId: item.id,
-          valueNumber: parseFiniteNumber(normalized),
-        });
+        const numeric = parseFiniteNumber(normalized);
+
+        supportedResults.push(
+          numeric !== null || normalized === ''
+            ? { templateItemId: item.id, valueNumber: numeric }
+            : { templateItemId: item.id, valueText: normalized.toUpperCase() },
+        );
         continue;
       }
 
@@ -845,10 +854,22 @@ export function buildResultsPayload(form: InspectionFormResponse, draftValues: D
 
       if (inputType === 'READING') {
         const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
-        supportedResults.push({
-          templateItemId: item.id,
-          valueNumber: normalized === '' ? null : Number(normalized),
-        });
+
+        // Same handling as OCR: numeric → number, sentinel/text → valueText.
+        const sentinel = normalizeReadingSentinel(normalized);
+
+        if (sentinel) {
+          supportedResults.push({ templateItemId: item.id, valueText: sentinel });
+          continue;
+        }
+
+        const numeric = parseFiniteNumber(normalized);
+
+        supportedResults.push(
+          numeric !== null || normalized === ''
+            ? { templateItemId: item.id, valueNumber: numeric }
+            : { templateItemId: item.id, valueText: normalized.toUpperCase() },
+        );
         continue;
       }
 
