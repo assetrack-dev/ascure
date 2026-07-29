@@ -2104,11 +2104,13 @@ export class InspectionsService {
           };
         }
 
-        // The meter shows a sentinel INSTEAD of a number when the target is out
-        // of its measurable range ("LO" = clearance under ~3 m). That's a hazard,
-        // not a missing reading, so persist it as text — every report/admin
-        // reader already prefers valueText over valueNumber. Whitelisted via
-        // shared-utils so free text can't pollute the reading column.
+        // A non-numeric reading is stored as text: device sentinels ("LO" =
+        // below measurable range, normalized via shared-utils) and, since the
+        // owner's 2026-07-29 call, ANY free text the technician records (some
+        // field situations can't produce a number). Uppercased for consistency
+        // with the office edit path; every report/admin reader already prefers
+        // valueText over valueNumber. Numeric consumers must skip text entries
+        // — they already do for the sentinel and null.
         const sentinel = normalizeReadingSentinel(input.valueText);
 
         if (sentinel) {
@@ -2119,8 +2121,12 @@ export class InspectionsService {
           };
         }
 
+        const text =
+          typeof input.valueText === 'string' ? input.valueText.trim() : '';
+
         return {
           ...baseValueData,
+          valueText: text ? text.toUpperCase() : null,
           valueJson: Prisma.DbNull,
         };
       }
