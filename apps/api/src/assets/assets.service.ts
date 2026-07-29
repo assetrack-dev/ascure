@@ -12,6 +12,7 @@ import {
   DefectStatus,
   InspectionCompletionStatus,
   InspectionItemInputType,
+  InspectionItemResultValue,
   MaintenanceCategory,
   OperationalScope,
   Prisma,
@@ -1187,6 +1188,12 @@ export class AssetsService {
       ? this.buildAssetChecklist(latestInspection)
       : null;
 
+    const inspectionItemRows = latestInspection
+      ? latestInspection.itemResults.map((item) =>
+          this.overlayItemResult(item, checklist),
+        )
+      : [];
+
     return {
       id: asset.id,
       assetCode: asset.assetCode,
@@ -1227,28 +1234,10 @@ export class AssetsService {
             // recorded value, so the asset panel can show (and a manager edit)
             // the full checklist rather than only the pass/fail item results.
             checklist: checklist!,
-            totalDefects: latestInspection.itemResults.filter((item) => item.isDefect).length,
-            items: latestInspection.itemResults.map((item) => {
-              // The Remark column shows the recorded VALUE, which lives in
-              // InspectionResult — itemResult.remark is a stale copy from submit
-              // that a manager edit never updates. Overlay the live value whenever
-              // the item has an InspectionResult row (a real value, or blank when
-              // cleared); items with no such row keep their remark. NOT guarded on
-              // PASS/FAIL — a value item is very often ALSO marked PASS (e.g.
-              // "PVC (SPAN) - 7 /044" = 1, PASS), and its value still lives in
-              // InspectionResult. Every remark on this table is a recorded answer,
-              // not a free note, so there is nothing to protect — and this matches
-              // what the map panel and the download already show.
-              const liveValue = checklist?.values[normalizeChecklistLabel(item.label)];
-              return {
-                id: item.id,
-                label: item.label,
-                result: item.result,
-                remark: liveValue != null ? liveValue : item.remark,
-                isDefect: item.isDefect,
-                severity: item.severity,
-              };
-            }),
+            // Defects are counted AFTER the overlay so a cleared item's
+            // withdrawn verdict also leaves the count.
+            totalDefects: inspectionItemRows.filter((item) => item.isDefect).length,
+            items: inspectionItemRows,
             images: latestInspection.inspectionImages.map((image) => ({
               id: image.id,
               inspectionId: image.inspectionId,
@@ -1376,6 +1365,12 @@ export class AssetsService {
       ? this.buildAssetChecklist(latestInspection)
       : null;
 
+    const sharedItemRows = latestInspection
+      ? latestInspection.itemResults.map((item) =>
+          this.overlayItemResult(item, checklist),
+        )
+      : [];
+
     return {
       assetCode: asset.assetCode,
       noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships),
@@ -1392,23 +1387,10 @@ export class AssetsService {
             cycleNumber: latestInspection.inspectionCycle,
             submittedAt: latestInspection.submittedAt?.toISOString() ?? null,
             remarks: this.extractRemarks(latestInspection.results),
-            totalDefects: latestInspection.itemResults.filter(
-              (item) => item.isDefect,
-            ).length,
-            items: latestInspection.itemResults.map((item) => {
-              // Same live-value overlay as getById: the recorded answer lives
-              // in InspectionResult; itemResult.remark is a stale submit copy.
-              const liveValue =
-                checklist?.values[normalizeChecklistLabel(item.label)];
-              return {
-                id: item.id,
-                label: item.label,
-                result: item.result,
-                remark: liveValue != null ? liveValue : item.remark,
-                isDefect: item.isDefect,
-                severity: item.severity,
-              };
-            }),
+            // Same overlay as getById (overlayItemResult): live values win,
+            // and a cleared value withdraws the verdict — counted after.
+            totalDefects: sharedItemRows.filter((item) => item.isDefect).length,
+            items: sharedItemRows,
             images: latestInspection.inspectionImages.map((image) => ({
               id: image.id,
               url: image.url,
@@ -2289,6 +2271,60 @@ export class AssetsService {
    * filled still appears, blank); values are keyed by the same normalized label
    * that `PATCH /inspections/:id/checklist-result` resolves an edit against.
    */
+  /**
+   * One "Inspection Result" table row: the submit-time itemResult overlaid with
+   * the LIVE checklist value (InspectionResult) — itemResult.remark is a copy
+   * frozen at submit that a manager edit never updates.
+   *
+   * A CLEARED value (live row exists but blank, surfaced as "" by
+   * buildAssetChecklist) withdraws the whole verdict: the office decided this
+   * item should not carry an answer on this pole, so showing PASS/FAIL, the
+   * defect flag, or a severity for a value that no longer exists would be
+   * asserting a judgement about nothing. Re-entering a value brings the frozen
+   * verdict back. No live row at all (null — the label doesn't round-trip to
+   * the template, or pre-checklist data) keeps the frozen copy: it is the only
+   * record there is. NOT guarded on PASS/FAIL — a value item is very often
+   * ALSO marked PASS (e.g. "PVC (SPAN) - 7 /044" = 1, PASS).
+   */
+  private overlayItemResult(
+    item: {
+      id: string;
+      label: string;
+      result: InspectionItemResultValue;
+      remark: string | null;
+      isDefect: boolean;
+      severity: string | null;
+    },
+    checklist: { values: Record<string, string | null> } | null,
+  ): {
+    id: string;
+    label: string;
+    result: InspectionItemResultValue | null;
+    remark: string | null;
+    isDefect: boolean;
+    severity: string | null;
+  } {
+    const liveValue = checklist?.values[normalizeChecklistLabel(item.label)];
+    if (liveValue === '') {
+      return {
+        id: item.id,
+        label: item.label,
+        result: null,
+        remark: '',
+        isDefect: false,
+        severity: null,
+      };
+    }
+    return {
+      id: item.id,
+      label: item.label,
+      result: item.result,
+      remark: liveValue != null ? liveValue : item.remark,
+      isDefect: item.isDefect,
+      severity: item.severity,
+    };
+  }
+
   private buildAssetChecklist(inspection: {
     template: {
       sections: { id: string; title: string; sortOrder: number }[];
