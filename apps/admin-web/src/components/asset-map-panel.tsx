@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowDownAZ,
   Camera,
   Check,
   ChevronLeft,
@@ -578,6 +579,10 @@ export function AssetMapPanel({
   // The checklist shows only recorded fields by default; this reveals the whole
   // template (and is how you fill in a field that was left blank).
   const [showAllChecklist, setShowAllChecklist] = useState(false);
+  // A–Z ordering for the checklist — find a field by name instead of scanning
+  // template order. Alphabetical interleaves the template sections, so sorted
+  // mode renders as one flat list without the section headers.
+  const [sortChecklistAlpha, setSortChecklistAlpha] = useState(false);
   // Which photo is open in the full-size viewer (null = closed).
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   // The "send this pole back" prompt — open, the typed reason, and in-flight.
@@ -697,6 +702,18 @@ export function AssetMapPanel({
   // Group the shown fields by their template section so the panel reads the way
   // the crew filled it in. Fields with no section fall into one unnamed group.
   const grouped = useMemo(() => {
+    if (sortChecklistAlpha) {
+      return displayedColumns.length > 0
+        ? [
+            {
+              section: null,
+              columns: [...displayedColumns].sort((a, b) =>
+                a.label.localeCompare(b.label),
+              ),
+            },
+          ]
+        : [];
+    }
     const groups: { section: string | null; columns: ChecklistColumn[] }[] = [];
     for (const column of displayedColumns) {
       const section = column.section ?? null;
@@ -708,7 +725,7 @@ export function AssetMapPanel({
       }
     }
     return groups;
-  }, [displayedColumns]);
+  }, [displayedColumns, sortChecklistAlpha]);
 
   const saveValue = useCallback(
     async (column: ChecklistColumn, next: string) => {
@@ -997,6 +1014,26 @@ export function AssetMapPanel({
                   <span className="text-[11px] text-[var(--muted)]">
                     {canEdit ? "Click a value to edit" : "Read-only"}
                   </span>
+                  {totalColumns > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => setSortChecklistAlpha((value) => !value)}
+                      aria-pressed={sortChecklistAlpha}
+                      title={
+                        sortChecklistAlpha
+                          ? "Back to the template's order, grouped by section"
+                          : "Sort the checklist fields A–Z"
+                      }
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
+                        sortChecklistAlpha
+                          ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--on-brand)]"
+                          : "border-[var(--line)] bg-[var(--panel)] text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+                      }`}
+                    >
+                      <ArrowDownAZ size={11} />
+                      {sortChecklistAlpha ? "A–Z" : "Sort"}
+                    </button>
+                  ) : null}
                   {hiddenColumnCount > 0 ? (
                     <button
                       type="button"
