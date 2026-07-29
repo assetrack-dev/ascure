@@ -2773,7 +2773,11 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                 {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
 
                 <div className="grid gap-6">
-                  <div className="space-y-6">
+                  {/* min-w-0: a grid item's default min-width:auto refuses to
+                      shrink below the Linked-Assets table's content width —
+                      the card then balloons past the page instead of letting
+                      the table's own overflow-x scroller engage. */}
+                  <div className="min-w-0 space-y-6">
                     <ProgressPanel visit={visit} />
 
                     <Card>
