@@ -39,6 +39,21 @@ import {
 
 const UPLOADS_URL_PREFIX = '/uploads';
 
+/**
+ * Only inspections the system's own screens show: SUBMITTED, or sent back for
+ * re-inspection (DRAFT again, but its captured answers still stand) — the same
+ * rule as GET /assets/:id. Without this filter the exports also pull true
+ * drafts, and Postgres sorts their NULL submittedAt FIRST on `submittedAt:
+ * desc`, so the "one row per asset, first wins" pick exports a draft's
+ * empty/partial row instead of the pole's submitted inspection.
+ */
+const EXPORTABLE_INSPECTION_WHERE = {
+  OR: [
+    { completionStatus: InspectionCompletionStatus.SUBMITTED },
+    { reinspectionRequestedAt: { not: null } },
+  ],
+} satisfies Prisma.InspectionWhereInput;
+
 // The stable Pencawang ref code is `<Mainhead.code><4-digit running number>`.
 const MAX_PENCAWANG_REFCODE_SEQ = 9999;
 
@@ -711,6 +726,7 @@ export class ReportsService {
       where: {
         tenantId: user.tenantId,
         asset: { substationId },
+        ...EXPORTABLE_INSPECTION_WHERE,
         ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
@@ -728,6 +744,7 @@ export class ReportsService {
             pencawangCode: true,
             functionalLocation: true,
             mainhead: true,
+            mainheadRecord: { select: { name: true } },
             team: { select: { name: true, code: true } },
           },
         },
@@ -750,6 +767,8 @@ export class ReportsService {
             valueNumber: true,
             valueBoolean: true,
             valueJson: true,
+            valueDate: true,
+            valueDateTime: true,
           },
         },
       },
@@ -788,12 +807,38 @@ export class ReportsService {
     const keyByLabel = new Map(
       templateItems.map((i) => [normLabel(i.label), i.key]),
     );
+    const idsByLabel = new Map<string, string[]>();
+    for (const item of templateItems) {
+      const n = normLabel(item.label);
+      const list = idsByLabel.get(n) ?? [];
+      list.push(item.id);
+      idsByLabel.set(n, list);
+    }
 
     const rows: MasterlistRow[] = chosen
       .map((insp): MasterlistRow => {
+        // Which template items still carry a live value vs. were CLEARED (row
+        // exists, every column blank). A cleared value withdraws the item's
+        // verdict — same rule as overlayItemResult — so its defect mark must
+        // not export while the system shows nothing.
+        const valuedIds = new Set<string>();
+        const clearedIds = new Set<string>();
+        for (const r of insp.results) {
+          (hasRecordedValue(r) ? valuedIds : clearedIds).add(r.templateItemId);
+        }
+
         const defectKeys = new Set<string>();
         for (const ir of insp.itemResults) {
           if (!ir.isDefect) {
+            continue;
+          }
+          const candidateIds = ir.checklistItemId
+            ? [ir.checklistItemId]
+            : idsByLabel.get(normLabel(ir.label)) ?? [];
+          const withdrawn =
+            candidateIds.some((id) => clearedIds.has(id)) &&
+            !candidateIds.some((id) => valuedIds.has(id));
+          if (withdrawn) {
             continue;
           }
           const key =
@@ -824,12 +869,19 @@ export class ReportsService {
         return {
           uniqueId: reverseExternalRef(insp.externalRef),
           userEmail: insp.createdBy?.email ?? '',
-          mainhead: insp.siteVisit?.mainhead ?? '',
+          // Live entity names first (what every screen shows); the visit's
+          // free-text snapshot — frozen at visit creation and copied forward on
+          // re-survey — is only a fallback, so a renamed Pencawang/Mainhead or
+          // a moved pole exports the same name the system displays.
+          mainhead:
+            insp.siteVisit?.mainheadRecord?.name ??
+            insp.siteVisit?.mainhead ??
+            '',
           team: insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           functionalLocation: insp.siteVisit?.functionalLocation ?? '',
           location: lat != null && lng != null ? `${lat}, ${lng}` : '',
-          pencawangName: insp.siteVisit?.pencawangName ?? substation.name,
-          pencawangCode: insp.siteVisit?.pencawangCode ?? substation.code,
+          pencawangName: substation.name || insp.siteVisit?.pencawangName || '',
+          pencawangCode: substation.code || insp.siteVisit?.pencawangCode || '',
           assetCode: insp.asset.assetCode,
           noTiangLama: insp.asset.noTiangLama ?? '',
           date: insp.submittedAt ?? insp.createdAt ?? null,
@@ -876,6 +928,7 @@ export class ReportsService {
       where: {
         tenantId: user.tenantId,
         asset: { substationId },
+        ...EXPORTABLE_INSPECTION_WHERE,
         ...(lifecycleStatus ? { siteVisit: { lifecycleStatus } } : {}),
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
@@ -922,6 +975,8 @@ export class ReportsService {
             valueNumber: true,
             valueBoolean: true,
             valueJson: true,
+            valueDate: true,
+            valueDateTime: true,
           },
         },
       },
@@ -1071,8 +1126,10 @@ export class ReportsService {
           insp.asset.latitude != null && insp.asset.longitude != null
             ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
             : '',
-          sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
-          sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
+          // Live entity name/code first — matches every screen; the visit's
+          // frozen snapshot is only a fallback.
+          sanitizeText(substation.code || insp.siteVisit?.pencawangCode || ''),
+          sanitizeText(substation.name || insp.siteVisit?.pencawangName || ''),
           sanitizeText(insp.asset.assetCode),
           sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
         ];
@@ -1142,8 +1199,10 @@ export class ReportsService {
         }
       }
       const meta: (string | number)[] = [
-        sanitizeText(insp.siteVisit?.pencawangCode ?? substation.code),
-        sanitizeText(insp.siteVisit?.pencawangName ?? substation.name),
+        // Live entity name/code first — matches every screen; the visit's
+        // frozen snapshot is only a fallback.
+        sanitizeText(substation.code || insp.siteVisit?.pencawangCode || ''),
+        sanitizeText(substation.name || insp.siteVisit?.pencawangName || ''),
         sanitizeText(insp.asset.assetCode),
         // NO TIANG LAMA: the SAVR mobile workflow captures the painted label as
         // the asset NAME (Asset Code = NO TIANG RONDAAN); only the F2 import
@@ -1226,6 +1285,7 @@ export class ReportsService {
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
+        ...EXPORTABLE_INSPECTION_WHERE,
         ...(Object.keys(siteVisitWhere).length
           ? { siteVisit: siteVisitWhere }
           : {}),
@@ -1254,6 +1314,10 @@ export class ReportsService {
             latitude: true,
             longitude: true,
             assetType: { select: { code: true, operationalScope: true } },
+            // The pole's CURRENT Pencawang — the bulk export's rows must carry
+            // the live entity name/code the screens show, not only the visit's
+            // frozen snapshot (which had no fallback at all here).
+            substation: { select: { name: true, code: true } },
           },
         },
         itemResults: { select: { checklistItemId: true, result: true } },
@@ -1264,6 +1328,8 @@ export class ReportsService {
             valueNumber: true,
             valueBoolean: true,
             valueJson: true,
+            valueDate: true,
+            valueDateTime: true,
           },
         },
       },
@@ -1300,8 +1366,10 @@ export class ReportsService {
       }
     }
     const chosen = [...latestByAsset.values()].sort((a, b) => {
-      const pa = a.siteVisit?.pencawangName ?? a.siteVisit?.pencawangCode ?? '';
-      const pb = b.siteVisit?.pencawangName ?? b.siteVisit?.pencawangCode ?? '';
+      const pa =
+        a.asset.substation?.name ?? a.siteVisit?.pencawangName ?? '';
+      const pb =
+        b.asset.substation?.name ?? b.siteVisit?.pencawangName ?? '';
       return (
         pa.localeCompare(pb) || a.asset.assetCode.localeCompare(b.asset.assetCode)
       );
@@ -1372,8 +1440,14 @@ export class ReportsService {
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
-        sanitizeText(insp.siteVisit?.pencawangCode ?? ''),
-        sanitizeText(insp.siteVisit?.pencawangName ?? ''),
+        // The pole's CURRENT Pencawang first (matches the screens); the visit
+        // snapshot only fills in if the relation is somehow missing.
+        sanitizeText(
+          insp.asset.substation?.code ?? insp.siteVisit?.pencawangCode ?? '',
+        ),
+        sanitizeText(
+          insp.asset.substation?.name ?? insp.siteVisit?.pencawangName ?? '',
+        ),
         sanitizeText(insp.asset.assetCode),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
       ];
@@ -1585,6 +1659,7 @@ export class ReportsService {
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
+        ...EXPORTABLE_INSPECTION_WHERE,
         siteVisit: {
           operationalScope: OperationalScope.SAVT,
           routeCode: code,
@@ -1625,6 +1700,8 @@ export class ReportsService {
             valueNumber: true,
             valueBoolean: true,
             valueJson: true,
+            valueDate: true,
+            valueDateTime: true,
           },
         },
       },
@@ -1741,6 +1818,7 @@ export class ReportsService {
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
+        ...EXPORTABLE_INSPECTION_WHERE,
         siteVisit: {
           operationalScope: OperationalScope.SAVT,
           routeCode: codeFilter.length ? { in: codeFilter } : { not: null },
@@ -1782,6 +1860,8 @@ export class ReportsService {
             valueNumber: true,
             valueBoolean: true,
             valueJson: true,
+            valueDate: true,
+            valueDateTime: true,
           },
         },
       },
@@ -2351,7 +2431,28 @@ type RecordedResult = {
   valueNumber: Prisma.Decimal | null;
   valueBoolean: boolean | null;
   valueJson: unknown;
+  // Optional: the masterlist export's rows don't fetch the date columns (its
+  // fixed SAVR-KLB layout has no date items); the template-driven exports do.
+  valueDate?: Date | null;
+  valueDateTime?: Date | null;
 };
+
+/**
+ * True when this InspectionResult row still carries any recorded value. A row
+ * whose every column is blank is a value the office CLEARED — and the verdict
+ * follows the value (same rule as overlayItemResult in assets.service), so
+ * verdict-driven cells and defect marks treat such an item as withdrawn.
+ */
+function hasRecordedValue(result: RecordedResult): boolean {
+  return Boolean(
+    result.valueText?.trim() ||
+      result.valueNumber != null ||
+      result.valueBoolean != null ||
+      result.valueDate != null ||
+      result.valueDateTime != null ||
+      (Array.isArray(result.valueJson) && result.valueJson.length > 0),
+  );
+}
 
 /**
  * Resolve a single template-driven report cell by field type. (IMAGE items are
@@ -2370,6 +2471,9 @@ function resolveTemplateCell(
 ): string {
   switch (inputType) {
     case InspectionItemInputType.BOOLEAN:
+      // A cleared value withdraws the verdict — a row exists but is blank, so
+      // the frozen PASS/FAIL must not resurface here (the system shows blank).
+      if (result && !hasRecordedValue(result)) return '';
       if (verdict === InspectionItemResultValue.FAIL) return 'YES';
       if (verdict === InspectionItemResultValue.PASS) return 'NO';
       return ''; // NA or unanswered → blank
@@ -2398,12 +2502,20 @@ function resolveTemplateCell(
       return '';
 
     default: {
-      // TEXT, SELECT (dropdown), DATE, DATETIME, GPS, JSON → recorded value.
+      // TEXT, SELECT (dropdown), DATE, DATETIME, GPS, JSON → recorded value,
+      // read in the shared checklistResultValue priority (text, number, dates,
+      // multi-select picks) so the cell matches what every screen shows.
       if (result?.valueText != null && result.valueText !== '') {
         return sanitizeText(result.valueText);
       }
       if (result?.valueNumber != null) {
         return String(result.valueNumber.toNumber());
+      }
+      if (result?.valueDate != null) {
+        return formatDate(result.valueDate);
+      }
+      if (result?.valueDateTime != null) {
+        return formatDateTime(result.valueDateTime);
       }
       const json = result?.valueJson;
       if (Array.isArray(json)) {
