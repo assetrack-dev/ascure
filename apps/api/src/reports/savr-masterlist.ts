@@ -74,6 +74,12 @@ function dataCells(
 
   switch (spec.type) {
     case 'NUMBER':
+      // Text first: readings/OCR fields may be recorded as TEXT ("LO", free
+      // notes) with no number at all — number-only reading exported those as
+      // BLANK cells while every screen showed the text.
+      if (raw.text?.trim()) {
+        return [raw.text];
+      }
       return [raw.number ?? null];
     case 'BOOLEAN':
       // marker '/' for the keadaan/kawasan ticks, '1' otherwise.
@@ -83,7 +89,7 @@ function dataCells(
     case 'SELECT':
     case 'TEXT':
     default:
-      return [raw.text ?? null];
+      return [raw.text ?? (raw.number != null ? raw.number : null)];
   }
 }
 
