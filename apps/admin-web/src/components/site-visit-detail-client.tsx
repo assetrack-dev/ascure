@@ -17,6 +17,7 @@ import {
   Clock3,
   Download,
   ImageOff,
+  Map as MapIcon,
   Pencil,
   Radio,
   RefreshCw,
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { storeAssetNavContext } from "@/lib/asset-nav";
+import { focusPencawangOnMap } from "@/lib/map-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
   archiveSurvey,
@@ -2639,6 +2641,20 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [selectedMetaKeys],
   );
 
+  // "Show on Map" — open the Asset Map drilled into this visit's Pencawang
+  // (same sessionStorage hand-off as the asset page, minus the pole panel).
+  const handleShowOnMap = useCallback(() => {
+    const substation = visit?.substation;
+    if (!substation?.id) {
+      return;
+    }
+    focusPencawangOnMap({
+      pencawangId: substation.id,
+      pencawangName: substation.name || visit?.pencawangName || "Pencawang",
+    });
+    router.push("/map");
+  }, [visit?.substation, visit?.pencawangName, router]);
+
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
       <main className="px-4 py-6 sm:px-6 lg:px-[30px]">
@@ -2677,15 +2693,26 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                 </>
               }
               actions={
-                <Tbtn
-                  onClick={() =>
-                    session?.token ? loadVisit(session.token, false) : undefined
-                  }
-                  disabled={(isLoading && !visit) || isRefreshing || !session?.token}
-                >
-                  <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-                  Refresh
-                </Tbtn>
+                <>
+                  {visit?.substation?.id ? (
+                    <Tbtn
+                      onClick={handleShowOnMap}
+                      title="Open the Asset Map drilled into this Pencawang"
+                    >
+                      <MapIcon size={16} />
+                      Show on Map
+                    </Tbtn>
+                  ) : null}
+                  <Tbtn
+                    onClick={() =>
+                      session?.token ? loadVisit(session.token, false) : undefined
+                    }
+                    disabled={(isLoading && !visit) || isRefreshing || !session?.token}
+                  >
+                    <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+                    Refresh
+                  </Tbtn>
+                </>
               }
             />
           </div>

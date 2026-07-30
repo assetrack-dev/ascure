@@ -12,6 +12,38 @@
 
 export const MAP_VIEW_STORAGE_KEY = "ascure.map.view";
 
+/**
+ * Same hand-off at the Pencawang level ("Show on Map" on the Site Visit page):
+ * drill straight to the visit's Pencawang with filters cleared, but no pole
+ * panel — the map lands on the Pencawang's points view.
+ */
+export function focusPencawangOnMap(target: {
+  pencawangId: string;
+  pencawangName: string;
+}): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(
+      MAP_VIEW_STORAGE_KEY,
+      JSON.stringify({
+        drill: {
+          pencawang: { id: target.pencawangId, name: target.pencawangName },
+        },
+        // Empty object on purpose: the map merges over its filter defaults, so
+        // this resets any remembered filters that could hide the poles.
+        filters: {},
+        showAllPoles: false,
+        selectedId: null,
+      }),
+    );
+  } catch {
+    // A full / blocked sessionStorage must never break navigation — the map
+    // simply opens on its remembered (or top-level) view instead.
+  }
+}
+
 export function focusAssetOnMap(target: {
   assetId: string;
   pencawangId: string;
