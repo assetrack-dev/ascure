@@ -23,6 +23,7 @@ import { TemplateHandler } from 'easy-template-x';
 import type { ImageContent, TemplateData } from 'easy-template-x';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
+import { normalizeChecklistLabel } from '../common/checklist-columns';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
 import {
@@ -114,6 +115,9 @@ const assetReportInclude = {
       assetType: {
         select: { code: true, name: true, operationalScope: true },
       },
+      // The pole's CURRENT Pencawang — report name tags prefer the live entity
+      // (what every screen shows) over the visit-creation snapshot.
+      substation: { select: { name: true, code: true } },
     },
   },
   siteVisit: {
@@ -141,6 +145,9 @@ const assetReportInclude = {
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,
+      // Links the verdict row to its checklist item so the LIVE recorded value
+      // (InspectionResult) can overlay the frozen submit-time remark.
+      checklistItemId: true,
       label: true,
       result: true,
       remark: true,
@@ -560,15 +567,64 @@ export class ReportGenerationService {
         value: this.readingValue(result),
       }));
 
-    const checks = inspection.itemResults.map((item) => ({
-      label: item.label,
-      result: item.result,
-      remark: item.remark ?? '',
-      severity: item.severity ?? '',
-    }));
+    // The LIVE recorded value per checklist item (InspectionResult) — the
+    // itemResult remark/verdict is a copy frozen at submit that office edits
+    // never update. Same rules as the screens (overlayItemResult in
+    // assets.service): a live value overlays the remark; a CLEARED value (row
+    // exists, every column blank) withdraws the whole verdict; no row keeps
+    // the frozen copy — it is the only record there is.
+    const liveRowById = new Map<string, AssetReportInspection['results'][number]>();
+    const liveIdsByLabel = new Map<string, string[]>();
+    for (const result of inspection.results) {
+      liveRowById.set(result.templateItemId, result);
+      const label = result.templateItem?.label;
+      if (label) {
+        const key = normalizeChecklistLabel(label);
+        const ids = liveIdsByLabel.get(key) ?? [];
+        ids.push(result.templateItemId);
+        liveIdsByLabel.set(key, ids);
+      }
+    }
+    const liveRowFor = (item: { checklistItemId: string | null; label: string }) => {
+      if (item.checklistItemId && liveRowById.has(item.checklistItemId)) {
+        return liveRowById.get(item.checklistItemId);
+      }
+      for (const id of liveIdsByLabel.get(normalizeChecklistLabel(item.label)) ?? []) {
+        const row = liveRowById.get(id);
+        if (row && this.readingValue(row).trim() !== '') {
+          return row;
+        }
+      }
+      return undefined;
+    };
+    const withdrawnItemIds = new Set<string>();
+
+    const checks = inspection.itemResults.map((item) => {
+      const liveRow = liveRowFor(item);
+      if (liveRow) {
+        const liveValue = this.readingValue(liveRow).trim();
+        if (liveValue === '') {
+          // Cleared by the office — the verdict follows the value.
+          withdrawnItemIds.add(item.id);
+          return { label: item.label, result: '', remark: '', severity: '' };
+        }
+        return {
+          label: item.label,
+          result: item.result,
+          remark: liveValue,
+          severity: item.severity ?? '',
+        };
+      }
+      return {
+        label: item.label,
+        result: item.result,
+        remark: item.remark ?? '',
+        severity: item.severity ?? '',
+      };
+    });
 
     const defects = inspection.itemResults
-      .filter((item) => item.isDefect)
+      .filter((item) => item.isDefect && !withdrawnItemIds.has(item.id))
       .map((item) => ({
         label: item.label,
         severity: item.severity ?? item.defect?.severity ?? '',
@@ -579,10 +635,8 @@ export class ReportGenerationService {
       }));
 
     const itemImageMap = await this.buildItemImageMap(inspection.inspectionImages);
-    const { photos, photoItems, otherPhotos, namedImages } = await this.collectPhotos(
-      inspection,
-      itemImageMap,
-    );
+    const { photos, photoItems, otherPhotos, namedImages, itemImageLoops } =
+      await this.collectPhotos(inspection, itemImageMap);
 
     const data: AssetReportData = {
       assetCode: asset.assetCode,
@@ -597,11 +651,17 @@ export class ReportGenerationService {
           ? `${asset.latitude}, ${asset.longitude}`
           : '',
       noTiangLama: asset.noTiangLama ?? '',
-      pencawang: visit?.pencawangName ?? visit?.pencawangCode ?? '',
-      pencawangCode: visit?.pencawangCode ?? '',
-      pencawangName: visit?.pencawangName ?? '',
+      // Live entity names first (what every screen shows since Deploy 127);
+      // the visit's frozen snapshot is only a fallback.
+      pencawang:
+        asset.substation?.name ??
+        visit?.pencawangName ??
+        visit?.pencawangCode ??
+        '',
+      pencawangCode: asset.substation?.code ?? visit?.pencawangCode ?? '',
+      pencawangName: asset.substation?.name ?? visit?.pencawangName ?? '',
       functionalLocation: visit?.functionalLocation ?? '',
-      mainhead: visit?.mainhead ?? visit?.mainheadRecord?.name ?? '',
+      mainhead: visit?.mainheadRecord?.name ?? visit?.mainhead ?? '',
       inspector: inspection.createdBy?.name ?? '',
       inspectorEmail: inspection.createdBy?.email ?? '',
       inspectionDate: this.fmtDateTime(inspection.createdAt),
@@ -634,6 +694,11 @@ export class ReportGenerationService {
     const dynamic = data as unknown as Record<string, unknown>;
     for (const [tag, image] of Object.entries(namedImages)) {
       dynamic[tag] = image;
+    }
+    // Per-item photo loops ({#imgs_<KEY>} … {/imgs_<KEY>}) — every photo of
+    // one checklist item, for fields that can carry more than one capture.
+    for (const [loopKey, entries] of Object.entries(itemImageLoops)) {
+      dynamic[loopKey] = entries;
     }
 
     return data;
@@ -685,11 +750,24 @@ export class ReportGenerationService {
     photoItems: AssetReportData['photoItems'];
     otherPhotos: AssetReportData['otherPhotos'];
     namedImages: Record<string, ImageContent>;
+    itemImageLoops: Record<
+      string,
+      Array<{ image: ImageContent; caption: string; index: string }>
+    >;
   }> {
     const photos: AssetReportData['photos'] = [];
     const photoItems: AssetReportData['photoItems'] = [];
     const otherPhotos: AssetReportData['otherPhotos'] = [];
     const namedImages: Record<string, ImageContent> = {};
+    // How many photos each IMAGE item has produced so far — numbers the flat
+    // tags: 1st photo = {img_<KEY>}, 2nd = {img_<KEY>_2}, 3rd = {img_<KEY>_3}…
+    const namedImageCounts = new Map<string, number>();
+    // Per-item photo loops: {#imgs_<KEY>}{image} {caption}{/imgs_<KEY>} walks
+    // EVERY photo of that one checklist item, however many there are.
+    const itemImageLoops: Record<
+      string,
+      Array<{ image: ImageContent; caption: string; index: string }>
+    > = {};
 
     for (const image of inspection.inspectionImages) {
       const loaded = await loadReportImage(image);
@@ -708,10 +786,17 @@ export class ReportGenerationService {
       if (item) {
         const tag = this.imageTagForKey(item.key);
         photoItems.push({ key: item.key, label: item.label, tag, image: loaded });
-        // First photo for an item wins its named {img_<KEY>} placement tag.
-        if (!(tag in namedImages)) {
-          namedImages[tag] = loaded;
-        }
+        const count = (namedImageCounts.get(tag) ?? 0) + 1;
+        namedImageCounts.set(tag, count);
+        // First photo keeps the unsuffixed {img_<KEY>} tag (backward
+        // compatible); later photos of the SAME item get {img_<KEY>_2}, _3, …
+        namedImages[count === 1 ? tag : `${tag}_${count}`] = loaded;
+        const loopKey = `imgs_${tag.slice('img_'.length)}`;
+        (itemImageLoops[loopKey] ??= []).push({
+          image: loaded,
+          caption: item.label,
+          index: String(count),
+        });
       } else {
         // Ad-hoc / global captures (no checklist item) feed {#otherPhotos}.
         otherPhotos.push({ image: loaded, caption, source: 'Inspection' });
@@ -734,7 +819,7 @@ export class ReportGenerationService {
       }
     }
 
-    return { photos, photoItems, otherPhotos, namedImages };
+    return { photos, photoItems, otherPhotos, namedImages, itemImageLoops };
   }
 
   private async findLatestSubmittedInspection(
@@ -882,6 +967,20 @@ export class ReportGenerationService {
     valueDateTime: Date | null;
     valueJson: Prisma.JsonValue | null;
   }): string {
+    // MULTI_SELECT picks live ONLY in valueJson (string array); an item that
+    // allows "Other (free text)" keeps that answer in valueText alongside the
+    // picks — join them the way every screen does ("A, B, other note") instead
+    // of dumping raw JSON.
+    if (Array.isArray(result.valueJson)) {
+      const picks = result.valueJson
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (picks.length > 0) {
+        const other = result.valueText?.trim();
+        return other ? `${picks.join(', ')}, ${other}` : picks.join(', ');
+      }
+    }
     if (result.valueText != null) {
       return result.valueText;
     }
