@@ -21,10 +21,10 @@ Delimiters are curly braces: `{tagName}`. Whitespace inside braces is allowed.
 | `{status}` | Asset status |
 | `{noTiangLama}` | Previous pole number |
 | `{latitude}` / `{longitude}` / `{gps}` | GPS coordinates (`gps` = "lat, lng") |
-| `{pencawang}` | Pencawang name (falls back to code) |
-| `{pencawangCode}` / `{pencawangName}` | Pencawang code / name |
+| `{pencawang}` | Pencawang name — the LIVE entity name (visit snapshot as fallback) |
+| `{pencawangCode}` / `{pencawangName}` | Pencawang code / name (live entity first) |
 | `{functionalLocation}` | Functional location / operational alamat (from the visit) |
-| `{mainhead}` | MAINHEAD (visit free-text, falls back to the linked MAINHEAD name) |
+| `{mainhead}` | MAINHEAD — the linked MAINHEAD record's name (visit free-text as fallback) |
 | `{inspector}` / `{inspectorEmail}` | Inspector who submitted |
 | `{inspectionDate}` | Inspection created date-time (MYT) |
 | `{submittedDate}` | Submission date-time (MYT) |
@@ -43,10 +43,14 @@ cell of a table row to repeat the row.
 `{key}`, `{label}`, `{type}`, `{value}`
 
 **Checks** — PASS/FAIL/NA outcomes (`{#checks}` … `{/checks}`):
-`{label}`, `{result}`, `{remark}`, `{severity}`
+`{label}`, `{result}`, `{remark}`, `{severity}`. The `{remark}` is the LIVE
+recorded value (reflects office checklist edits); an item whose value the
+office CLEARED renders with blank result/remark/severity — the verdict follows
+the value, exactly like the screens.
 
 **Defects** — failed items flagged as defects (`{#defects}` … `{/defects}`):
-`{label}`, `{severity}`, `{status}`, `{lifecycle}`, `{dueDate}`, `{remark}`
+`{label}`, `{severity}`, `{status}`, `{lifecycle}`, `{dueDate}`, `{remark}`.
+An item whose value was cleared by the office is excluded.
 
 **Photos — all** — every image (`{#photos}` … `{/photos}`):
 `{image}` (the embedded photo — put this tag where the picture should appear),
@@ -76,6 +80,28 @@ Place `{img_GAMBAR_PENUH_TIANG}` where the picture belongs, then use
 `{#otherPhotos}` … `{/otherPhotos}` for the rest — it excludes the per-item
 photos, so nothing duplicates. (Tip: drop a `{#photoItems}` loop printing `{tag}`
 into a draft to discover the exact tag for each IMAGE item in your template.)
+
+### An item with MORE than one photo — numbered tags
+
+When the crew captures several photos against the SAME item, each photo gets its
+own flat tag: the first keeps the plain tag, the rest are numbered:
+
+| Photo | Tag |
+| --- | --- |
+| 1st | `{img_GAMBAR_ASET_TIANG}` |
+| 2nd | `{img_GAMBAR_ASET_TIANG_2}` |
+| 3rd | `{img_GAMBAR_ASET_TIANG_3}` |
+
+Lay the numbered tags in adjacent grid cells; a tag whose photo doesn't exist
+renders blank (the cell simply stays empty), so it is safe to pre-place
+`_2`/`_3` cells for fields that only sometimes get extra photos.
+
+Alternatively, loop EVERY photo of one item with `{#imgs_<KEY>}` …
+`{/imgs_<KEY>}` (same `<KEY>` spelling as the `img_` tag) — fields inside:
+`{image}`, `{caption}` (the item label), `{index}` ("1", "2", …). Put the
+open/close tags in one table row to get one row per photo. Note a loop repeats
+whole rows — it cannot wrap photos across a multi-column grid; use the numbered
+flat tags for grid layouts.
 
 ## Conditionals (show a block only when there is data)
 
