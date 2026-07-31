@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Param,
+  Query,
   Res,
   StreamableFile,
   UseGuards,
@@ -46,20 +48,43 @@ export class VisualReportsController {
     return new StreamableFile(buffer);
   }
 
-  /** The frozen, compiled survey report (latest version). */
+  /** The frozen, compiled survey report (latest version). `?part=n` selects a
+   *  volume (Jilid) when the survey compiled into several. */
   @Get('site-visit/:siteVisitId/report.pdf')
   async compiledReport(
     @CurrentUser() user: RequestUser,
     @Param() params: SiteVisitIdParamDto,
     @Res({ passthrough: true }) res: Response,
+    @Query('part') partRaw?: string,
   ): Promise<StreamableFile> {
+    let part: number | undefined;
+    if (partRaw !== undefined && partRaw !== '') {
+      part = Number(partRaw);
+      if (!Number.isInteger(part) || part < 1 || part > 100) {
+        throw new BadRequestException('part must be an integer between 1 and 100.');
+      }
+    }
     const { buffer, filename } =
       await this.reportGenerationService.getCompiledReport(
         user,
         params.siteVisitId,
+        part,
       );
     this.setPdfHeaders(res, filename);
     return new StreamableFile(buffer);
+  }
+
+  /** Progress of the (background) report compile + the latest version's volume
+   *  list — the admin visit page polls this after pressing Generate. */
+  @Get('site-visit/:siteVisitId/report-status')
+  reportStatus(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.reportGenerationService.getCompileStatus(
+      user,
+      params.siteVisitId,
+    );
   }
 
   private setPdfHeaders(res: Response, filename: string): void {

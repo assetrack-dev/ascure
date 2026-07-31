@@ -110,17 +110,21 @@ export async function downloadAssetReportPreview(
   );
 }
 
-/** Download the frozen compiled survey report PDF (latest version). */
+/** Download a frozen compiled survey report PDF (latest version). `part`
+ *  selects the volume (Jilid) when the survey compiled into several. */
 export async function downloadCompiledReport(
   token: string,
   siteVisit: { id: string; pencawangCode?: string },
+  part?: number,
 ): Promise<void> {
+  const query = part ? `?part=${encodeURIComponent(part)}` : "";
   const { blob, filename } = await apiRequestBlob(
-    `/reports/site-visit/${encodeURIComponent(siteVisit.id)}/report.pdf`,
+    `/reports/site-visit/${encodeURIComponent(siteVisit.id)}/report.pdf${query}`,
     { token },
   );
   triggerBrowserDownload(
     blob,
-    filename ?? `laporan-${siteVisit.pencawangCode || "survey"}.pdf`,
+    filename ??
+      `laporan-${siteVisit.pencawangCode || "survey"}${part ? `-jilid-${part}` : ""}.pdf`,
   );
 }

@@ -855,9 +855,58 @@ export function requestSurveyAmendment(
   return transitionSurveyLifecycle(token, siteVisitId, "request-amendment", { remark });
 }
 
-/** DC generates the report — the gate into LAPORAN SELESAI. */
-export function generateSurveyReport(token: string, siteVisitId: string) {
-  return transitionSurveyLifecycle(token, siteVisitId, "generate-report");
+/** A background report-compile run, as started by Generate. */
+export interface SurveyReportRunStart {
+  runId: string;
+  totalAssets: number;
+  status: string;
+}
+
+/** The latest compile run's progress + the frozen volumes, for polling. */
+export interface SurveyReportStatus {
+  run: {
+    id: string;
+    status: "RUNNING" | "COMPLETED" | "FAILED" | string;
+    totalAssets: number;
+    processedAssets: number;
+    error: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+  volumes: Array<{
+    version: number;
+    part: number;
+    partCount: number;
+    fileName: string;
+    assetCount: number | null;
+    range: string | null;
+  }>;
+}
+
+/**
+ * DC generates the report — STARTS a background compile (a large Pencawang
+ * takes many minutes). The survey flips to LAPORAN SELESAI when the run
+ * completes; poll {@link fetchSurveyReportStatus} for progress.
+ */
+export function generateSurveyReport(
+  token: string,
+  siteVisitId: string,
+): Promise<SurveyReportRunStart> {
+  return apiRequest<SurveyReportRunStart>(
+    `/site-visits/${encodeURIComponent(siteVisitId)}/lifecycle/generate-report`,
+    { method: "POST", token },
+  );
+}
+
+/** Progress of the background report compile + the frozen volume list. */
+export function fetchSurveyReportStatus(
+  token: string,
+  siteVisitId: string,
+): Promise<SurveyReportStatus> {
+  return apiRequest<SurveyReportStatus>(
+    `/reports/site-visit/${encodeURIComponent(siteVisitId)}/report-status`,
+    { token },
+  );
 }
 
 /** DC / Admin archives the completed cycle (→ ARKIB). */
