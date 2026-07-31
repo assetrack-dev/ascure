@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -23,7 +25,9 @@ import { TemplateHandler } from 'easy-template-x';
 import type { ImageContent, TemplateData } from 'easy-template-x';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
+import { releaseDefectsOnReport } from '../common/authorization/defect-governance';
 import { normalizeChecklistLabel } from '../common/checklist-columns';
+import { buildVisitReleasePlan } from '../defects/defect-release.util';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
 import {
@@ -194,12 +198,35 @@ type AssetReportInspection = Prisma.InspectionGetPayload<{
 
 const A4_PORTRAIT: [number, number] = [595.28, 841.89];
 
-/** Upper bound on assets compiled into one report — guards against compiling a
- *  pathologically large survey entirely in memory (each asset PDF is buffered). */
-const MAX_ASSETS_PER_REPORT = 300;
+/**
+ * Poles per compiled VOLUME (Jilid). Large surveys compile into several bound
+ * PDFs — one huge merged file is unmanageable to download/open/print and the
+ * whole-report buffer would spike the API's memory. Overridable via env for
+ * testing (REPORT_VOLUME_SIZE=1 forces one volume per pole).
+ */
+const REPORT_VOLUME_SIZE = Math.max(
+  1,
+  Number(process.env.REPORT_VOLUME_SIZE ?? 120) || 120,
+);
+
+/** Sanity backstop on a single compile run (well above any real Pencawang). */
+const MAX_ASSETS_PER_COMPILE = 2000;
+
+/** SiteVisitReportRun.status values. */
+const RUN_RUNNING = 'RUNNING';
+const RUN_COMPLETED = 'COMPLETED';
+const RUN_FAILED = 'FAILED';
+
+/** The lifecycle states a compile may start from (mirrors generateReport's
+ *  allowedFrom): the DC's review queue, or the deprecated manager-approved
+ *  state for in-flight surveys. */
+const COMPILABLE_LIFECYCLE_STATES: SurveyLifecycleStatus[] = [
+  SurveyLifecycleStatus.RONDAAN_SELESAI,
+  SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+];
 
 @Injectable()
-export class ReportGenerationService {
+export class ReportGenerationService implements OnModuleInit {
   private readonly logger = new Logger(ReportGenerationService.name);
 
   constructor(
@@ -207,6 +234,25 @@ export class ReportGenerationService {
     private readonly usersService: UsersService,
     private readonly gotenberg: GotenbergService,
   ) {}
+
+  /** A compile run lives in this process only — an API restart orphans any
+   *  RUNNING row, so sweep them to FAILED at boot (the survey lifecycle was
+   *  never touched; the user simply generates again). */
+  async onModuleInit(): Promise<void> {
+    const swept = await this.prisma.siteVisitReportRun.updateMany({
+      where: { status: RUN_RUNNING },
+      data: {
+        status: RUN_FAILED,
+        error: 'Interrupted by an API restart — generate the report again.',
+        finishedAt: new Date(),
+      },
+    });
+    if (swept.count > 0) {
+      this.logger.warn(
+        `Marked ${swept.count} interrupted report compile run(s) as FAILED.`,
+      );
+    }
+  }
 
   // ─── Template management (ADMIN) ──────────────────────────────────────────
 
@@ -351,36 +397,21 @@ export class ReportGenerationService {
     return { buffer: pdf, filename };
   }
 
-  // ─── Compile + freeze (LAPORAN SELESAI) ───────────────────────────────────
+  // ─── Compile + freeze (LAPORAN SELESAI) — background run + volumes ────────
 
   /**
-   * Compile every asset's report in a survey into one frozen PDF (cover + each
-   * asset's report, merged) and persist it as a versioned SiteVisitReport.
-   * Standalone entry point; the survey lifecycle uses
-   * {@link prepareSiteVisitReportCreate} instead so the row is written in the
-   * same transaction as the status change.
+   * Start a BACKGROUND compile of a survey's visual report. Validates
+   * everything that can fail fast (state, permissions, size, converter
+   * health), records a SiteVisitReportRun and returns immediately — a
+   * 400-pole Pencawang takes many minutes, far beyond any HTTP timeout. The
+   * admin app polls {@link getCompileStatus} for progress. On success the run
+   * commits its volume rows AND the LAPORAN SELESAI flip in one transaction;
+   * on failure the lifecycle is untouched and the run carries the error.
    */
-  async compileSiteVisitReport(
+  async startCompileRun(
     user: RequestUser,
     siteVisitId: string,
-  ): Promise<SiteVisitReport> {
-    const data = await this.buildSiteVisitReportData(user, siteVisitId);
-    return this.prisma.siteVisitReport.create({ data });
-  }
-
-  /**
-   * Build the frozen report (render + merge + write to disk) and return the
-   * Prisma create *input data* (NOT a query). The caller persists it inside the
-   * same `$transaction` that flips the survey to LAPORAN SELESAI, so the DB
-   * stays consistent: if the status commit fails, no SiteVisitReport row is left
-   * behind (only an orphaned PDF on disk, which is harmless). Returning the data
-   * — not a PrismaPromise — avoids `await` executing the query early (a
-   * PrismaPromise is thenable).
-   */
-  async buildSiteVisitReportData(
-    user: RequestUser,
-    siteVisitId: string,
-  ): Promise<Prisma.SiteVisitReportUncheckedCreateInput> {
+  ): Promise<{ runId: string; totalAssets: number; status: string }> {
     await this.assertCanReport(user);
 
     const siteVisit = await this.prisma.siteVisit.findFirst({
@@ -390,49 +421,51 @@ export class ReportGenerationService {
         tenantId: true,
         status: true,
         lifecycleStatus: true,
-        pencawangCode: true,
-        pencawangName: true,
-        visitType: true,
-        startedAt: true,
-        completedAt: true,
-        visitAssets: {
-          orderBy: { addedAt: 'asc' },
-          select: { assetId: true },
-        },
+        visitAssets: { select: { assetId: true } },
       },
     });
     if (!siteVisit) {
       throw new NotFoundException('Site visit not found.');
     }
-
-    // Re-validate state at compile time (the caller's guard ran earlier; guard
-    // again here against a concurrent cancel / lifecycle change).
     if (siteVisit.status === SiteVisitStatus.CANCELLED) {
       throw new BadRequestException(
         'This site visit is cancelled; no report can be compiled.',
       );
     }
-    // The DC compiles the report once the team's MANAGER has approved the survey
-    // (DISAHKAN PENGURUS) — the gate the lifecycle's generateReport() enforces.
-    // This re-check runs at compile time (inside generateReport's beforeCommit,
-    // before the status flips to LAPORAN SELESAI), so the committed status here is
-    // still DISAHKAN PENGURUS; it must match the lifecycle gate or report
-    // generation throws on every call.
-    if (siteVisit.lifecycleStatus !== SurveyLifecycleStatus.DISAHKAN_PENGURUS) {
+    if (
+      !COMPILABLE_LIFECYCLE_STATES.includes(
+        siteVisit.lifecycleStatus as SurveyLifecycleStatus,
+      )
+    ) {
       throw new BadRequestException(
-        'A report is only compiled from DISAHKAN PENGURUS (after manager approval).',
+        'A report is compiled from RONDAAN SELESAI (the DC review queue) ' +
+          'or DISAHKAN PENGURUS.',
       );
     }
 
-    if (siteVisit.visitAssets.length > MAX_ASSETS_PER_REPORT) {
-      throw new BadRequestException(
-        `This survey has ${siteVisit.visitAssets.length} assets; the compiled ` +
-          `report is capped at ${MAX_ASSETS_PER_REPORT}. Split the survey first.`,
+    const running = await this.prisma.siteVisitReportRun.findFirst({
+      where: { siteVisitId, status: RUN_RUNNING },
+      select: { id: true },
+    });
+    if (running) {
+      throw new ConflictException(
+        'A report compile is already running for this survey.',
       );
     }
 
-    // Fail fast if the converter is down — better than producing a report that
-    // silently drops the assets that happened to be rendered after the outage.
+    const totalAssets = siteVisit.visitAssets.length;
+    if (totalAssets === 0) {
+      throw new BadRequestException('This survey has no linked assets.');
+    }
+    if (totalAssets > MAX_ASSETS_PER_COMPILE) {
+      throw new BadRequestException(
+        `This survey has ${totalAssets} assets; the compiler is capped at ` +
+          `${MAX_ASSETS_PER_COMPILE}.`,
+      );
+    }
+
+    // Fail fast if the converter is down — better than a run that dies on the
+    // first pole.
     if (!(await this.gotenberg.isHealthy())) {
       throw new ServiceUnavailableException(
         'The document conversion service (Gotenberg) is unavailable. ' +
@@ -440,87 +473,437 @@ export class ReportGenerationService {
       );
     }
 
-    const assetPdfs: Buffer[] = [];
-    const included: string[] = [];
-    const skipped: Array<{ assetId: string; reason: string }> = [];
+    const run = await this.prisma.siteVisitReportRun.create({
+      data: {
+        tenantId: siteVisit.tenantId,
+        siteVisitId,
+        totalAssets,
+        startedByUserId: user.id,
+      },
+    });
 
-    for (const { assetId } of siteVisit.visitAssets) {
-      const inspection = await this.findLatestSubmittedInspection(
-        siteVisit.tenantId,
-        assetId,
+    // Detached on purpose: the request returns now; the run row is the
+    // progress/result channel. executeCompileRun catches its own errors — this
+    // outer catch only guards against the failure-marking itself throwing.
+    void this.executeCompileRun(run.id, user).catch((error) => {
+      this.logger.error(
+        `Report compile run ${run.id} crashed outside its own handler: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
       );
-      if (!inspection) {
-        skipped.push({ assetId, reason: 'no submitted inspection' });
-        continue;
+    });
+
+    return { runId: run.id, totalAssets, status: RUN_RUNNING };
+  }
+
+  /** The background body of a compile run: resolve which poles are includable,
+   *  split them into volumes (Jilid) by pole number, render each pole into its
+   *  volume, then commit rows + the lifecycle flip atomically. */
+  private async executeCompileRun(
+    runId: string,
+    user: RequestUser,
+  ): Promise<void> {
+    const writtenFiles: string[] = [];
+    try {
+      const run = await this.prisma.siteVisitReportRun.findUnique({
+        where: { id: runId },
+      });
+      if (!run) {
+        return;
+      }
+      const siteVisit = await this.prisma.siteVisit.findUnique({
+        where: { id: run.siteVisitId },
+        select: {
+          id: true,
+          tenantId: true,
+          pencawangCode: true,
+          pencawangName: true,
+          visitType: true,
+          startedAt: true,
+          completedAt: true,
+          substation: { select: { name: true, code: true } },
+          visitAssets: {
+            orderBy: { addedAt: 'asc' },
+            select: { assetId: true },
+          },
+        },
+      });
+      if (!siteVisit) {
+        throw new Error('Site visit not found.');
       }
 
-      const scope = this.resolveScope(inspection);
-      if (!scope) {
-        skipped.push({ assetId, reason: 'no operational scope' });
-        continue;
+      // Resolve pass (cheap queries, no rendering): which poles CAN be
+      // included, which are legitimately skipped, and each pole's code so
+      // volumes split in pole order. Templates are resolved once per scope.
+      const templateCache = new Map<
+        OperationalScope,
+        { buffer: Buffer } | null
+      >();
+      const loadTemplateCached = async (scope: OperationalScope) => {
+        if (!templateCache.has(scope)) {
+          templateCache.set(
+            scope,
+            await this.loadActiveTemplate(siteVisit.tenantId, scope),
+          );
+        }
+        return templateCache.get(scope) ?? null;
+      };
+
+      const included: Array<{ assetId: string; assetCode: string }> = [];
+      const skipped: Array<{ assetId: string; reason: string }> = [];
+      for (const { assetId } of siteVisit.visitAssets) {
+        const light = await this.prisma.inspection.findFirst({
+          where: {
+            tenantId: siteVisit.tenantId,
+            assetId,
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+          },
+          orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+          select: {
+            operationalScope: true,
+            asset: {
+              select: {
+                assetCode: true,
+                assetType: { select: { code: true, operationalScope: true } },
+              },
+            },
+          },
+        });
+        if (!light) {
+          skipped.push({ assetId, reason: 'no submitted inspection' });
+          continue;
+        }
+        const scope = this.resolveScope(light);
+        if (!scope) {
+          skipped.push({ assetId, reason: 'no operational scope' });
+          continue;
+        }
+        if (!(await loadTemplateCached(scope))) {
+          skipped.push({ assetId, reason: `no active template for ${scope}` });
+          continue;
+        }
+        included.push({ assetId, assetCode: light.asset.assetCode });
       }
 
-      const template = await this.loadActiveTemplate(siteVisit.tenantId, scope);
-      if (!template) {
-        skipped.push({ assetId, reason: `no active template for ${scope}` });
-        continue;
+      if (included.length === 0) {
+        throw new Error(
+          'No asset reports could be generated. Ensure assets have submitted ' +
+            'inspections and an active template exists for their operational scope.',
+        );
       }
 
-      // A render/convert failure aborts the whole compile (the frozen report
-      // must be complete, never silently missing assets). The survey stays in
-      // RONDAAN SELESAI so it can be retried once the cause is fixed.
-      assetPdfs.push(await this.renderAssetPdf(inspection, template.buffer));
-      included.push(inspection.asset.assetCode);
+      // Volumes split in pole-number order so each Jilid covers a clean range.
+      included.sort((a, b) =>
+        a.assetCode.localeCompare(b.assetCode, undefined, { numeric: true }),
+      );
+      const volumes: Array<typeof included> = [];
+      for (let i = 0; i < included.length; i += REPORT_VOLUME_SIZE) {
+        volumes.push(included.slice(i, i + REPORT_VOLUME_SIZE));
+      }
+
+      const version = await this.nextReportVersion(siteVisit.id);
+      const directory = buildSiteVisitReportsDirectory(siteVisit.id);
+      await mkdir(directory, { recursive: true });
+
+      const createInputs: Prisma.SiteVisitReportUncheckedCreateInput[] = [];
+      let processed = 0;
+
+      for (const [index, volumeAssets] of volumes.entries()) {
+        const part = index + 1;
+        const range =
+          volumeAssets.length > 1
+            ? `${volumeAssets[0].assetCode} — ${volumeAssets[volumeAssets.length - 1].assetCode}`
+            : volumeAssets[0].assetCode;
+
+        // Incremental merge: each pole's PDF is copied into the volume and its
+        // buffer released — only ONE volume is ever in memory.
+        const volumeDoc = await PDFDocument.create();
+        await this.drawCoverPage(volumeDoc, siteVisit, {
+          version,
+          part,
+          partCount: volumes.length,
+          assetCount: volumeAssets.length,
+          totalAssets: included.length,
+          range,
+        });
+
+        for (const entry of volumeAssets) {
+          const inspection = await this.findLatestSubmittedInspection(
+            siteVisit.tenantId,
+            entry.assetId,
+          );
+          if (!inspection) {
+            // Present in the resolve pass, gone now (e.g. sent back for
+            // re-inspection mid-compile). The frozen report must be complete —
+            // abort rather than silently omit the pole.
+            throw new Error(
+              `Pole ${entry.assetCode} lost its submitted inspection while ` +
+                'the report was compiling. Generate again.',
+            );
+          }
+          const scope = this.resolveScope(inspection);
+          const template = scope ? await loadTemplateCached(scope) : null;
+          if (!template) {
+            throw new Error(
+              `Pole ${entry.assetCode} lost its report template while the ` +
+                'report was compiling. Generate again.',
+            );
+          }
+          const pdf = await this.renderAssetPdf(inspection, template.buffer);
+          const source = await PDFDocument.load(pdf);
+          const pages = await volumeDoc.copyPages(
+            source,
+            source.getPageIndices(),
+          );
+          pages.forEach((page) => volumeDoc.addPage(page));
+
+          processed += 1;
+          await this.prisma.siteVisitReportRun.update({
+            where: { id: runId },
+            data: { processedAssets: processed },
+          });
+        }
+
+        const bytes = Buffer.from(await volumeDoc.save());
+        const fileName = `${Date.now()}-laporan-v${version}-jilid-${part}.pdf`;
+        await writeFile(resolve(directory, fileName), bytes);
+        writtenFiles.push(resolve(directory, fileName));
+
+        createInputs.push({
+          tenantId: siteVisit.tenantId,
+          siteVisitId: siteVisit.id,
+          version,
+          part,
+          partCount: volumes.length,
+          fileName,
+          storageKey: buildSiteVisitReportPath(siteVisit.id, fileName),
+          url: buildSiteVisitReportUrl(siteVisit.id, fileName),
+          status: 'COMPLETED',
+          compiledByUserId: user.id,
+          metadata: {
+            assetCount: volumeAssets.length,
+            totalAssets: included.length,
+            includedAssets: volumeAssets.map((a) => a.assetCode),
+            range,
+            // The skip list describes the whole run; record it once.
+            ...(part === 1 ? { skipped } : {}),
+            generatedAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      await this.finalizeCompileRun(runId, user, siteVisit.id, createInputs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Report compile run ${runId} failed: ${message}`);
+      await this.prisma.siteVisitReportRun
+        .update({
+          where: { id: runId },
+          data: {
+            status: RUN_FAILED,
+            error: message.slice(0, 800),
+            finishedAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
+      // The volume PDFs written so far belong to no DB row — remove them.
+      await Promise.all(
+        writtenFiles.map((file) => unlink(file).catch(() => undefined)),
+      );
+    }
+  }
+
+  /**
+   * The atomic tail of a successful run: re-guard the lifecycle state (it may
+   * have changed during the minutes-long compile), then commit the volume rows,
+   * the LAPORAN SELESAI flip, its lifecycle event, the defect release (under
+   * RELEASE_ON_REPORT) and the run's COMPLETED mark in ONE transaction —
+   * exactly the invariant the old in-request compile had.
+   */
+  private async finalizeCompileRun(
+    runId: string,
+    user: RequestUser,
+    siteVisitId: string,
+    createInputs: Prisma.SiteVisitReportUncheckedCreateInput[],
+  ): Promise<void> {
+    const visit = await this.prisma.siteVisit.findUnique({
+      where: { id: siteVisitId },
+      select: { status: true, lifecycleStatus: true },
+    });
+    if (
+      !visit ||
+      visit.status === SiteVisitStatus.CANCELLED ||
+      !COMPILABLE_LIFECYCLE_STATES.includes(
+        visit.lifecycleStatus as SurveyLifecycleStatus,
+      )
+    ) {
+      throw new Error(
+        'The survey changed state while the report was compiling — nothing ' +
+          'was frozen. Generate again from its current state.',
+      );
     }
 
-    if (assetPdfs.length === 0) {
-      throw new BadRequestException(
-        'No asset reports could be generated. Ensure assets have submitted ' +
-          'inspections and an active template exists for their operational scope.',
-      );
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.siteVisit.update({
+        where: { id: siteVisitId },
+        data: {
+          lifecycleStatus: SurveyLifecycleStatus.LAPORAN_SELESAI,
+          laporanSelesaiAt: new Date(),
+        },
+      }),
+      this.prisma.siteVisitLifecycleEvent.create({
+        data: {
+          siteVisitId,
+          fromStatus: visit.lifecycleStatus,
+          toStatus: SurveyLifecycleStatus.LAPORAN_SELESAI,
+          createdByUserId: user.id,
+        },
+      }),
+      ...createInputs.map((data) =>
+        this.prisma.siteVisitReport.create({ data }),
+      ),
+      this.prisma.siteVisitReportRun.update({
+        where: { id: runId },
+        data: { status: RUN_COMPLETED, finishedAt: new Date() },
+      }),
+    ];
+
+    if (releaseDefectsOnReport()) {
+      const releasePlan = await buildVisitReleasePlan(this.prisma, siteVisitId, {
+        scope: 'ALL',
+        actorUserId: user.id,
+        now: new Date(),
+      });
+      ops.push(...releasePlan.ops);
     }
 
-    const version = await this.nextReportVersion(siteVisitId);
-    const merged = await this.mergeReports(siteVisit, assetPdfs, version);
+    await this.prisma.$transaction(ops);
+    this.logger.log(
+      `Report compile run ${runId} completed: ${createInputs.length} volume(s) ` +
+        `frozen for visit ${siteVisitId}.`,
+    );
+  }
 
-    const directory = buildSiteVisitReportsDirectory(siteVisitId);
-    await mkdir(directory, { recursive: true });
-    const fileName = `${Date.now()}-laporan-v${version}.pdf`;
-    await writeFile(resolve(directory, fileName), merged);
+  /** Progress + volumes for the admin page's polling: the latest run and the
+   *  latest version's volume list. */
+  async getCompileStatus(
+    user: RequestUser,
+    siteVisitId: string,
+  ): Promise<{
+    run: {
+      id: string;
+      status: string;
+      totalAssets: number;
+      processedAssets: number;
+      error: string | null;
+      startedAt: string;
+      finishedAt: string | null;
+    } | null;
+    volumes: Array<{
+      version: number;
+      part: number;
+      partCount: number;
+      fileName: string;
+      assetCount: number | null;
+      range: string | null;
+    }>;
+  }> {
+    await this.assertCanReport(user);
+
+    const visit = await this.prisma.siteVisit.findFirst({
+      where: { id: siteVisitId, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    if (!visit) {
+      throw new NotFoundException('Site visit not found.');
+    }
+
+    const run = await this.prisma.siteVisitReportRun.findFirst({
+      where: { siteVisitId },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    const latest = await this.prisma.siteVisitReport.findFirst({
+      where: { siteVisitId },
+      orderBy: [{ version: 'desc' }, { part: 'asc' }],
+      select: { version: true },
+    });
+    const volumes = latest
+      ? await this.prisma.siteVisitReport.findMany({
+          where: { siteVisitId, version: latest.version },
+          orderBy: { part: 'asc' },
+          select: {
+            version: true,
+            part: true,
+            partCount: true,
+            fileName: true,
+            metadata: true,
+          },
+        })
+      : [];
 
     return {
-      tenantId: siteVisit.tenantId,
-      siteVisitId,
-      version,
-      fileName,
-      storageKey: buildSiteVisitReportPath(siteVisitId, fileName),
-      url: buildSiteVisitReportUrl(siteVisitId, fileName),
-      status: 'COMPLETED',
-      compiledByUserId: user.id,
-      metadata: {
-        assetCount: included.length,
-        includedAssets: included,
-        skipped,
-        generatedAt: new Date().toISOString(),
-      },
+      run: run
+        ? {
+            id: run.id,
+            status: run.status,
+            totalAssets: run.totalAssets,
+            processedAssets: run.processedAssets,
+            error: run.error,
+            startedAt: run.startedAt.toISOString(),
+            finishedAt: run.finishedAt?.toISOString() ?? null,
+          }
+        : null,
+      volumes: volumes.map((volume) => {
+        const metadata = (volume.metadata ?? {}) as Record<string, unknown>;
+        return {
+          version: volume.version,
+          part: volume.part,
+          partCount: volume.partCount,
+          fileName: volume.fileName,
+          assetCount:
+            typeof metadata.assetCount === 'number' ? metadata.assetCount : null,
+          range: typeof metadata.range === 'string' ? metadata.range : null,
+        };
+      }),
     };
   }
 
-  /** Fetch the frozen compiled report (latest version) for download. */
+  /** Fetch a frozen compiled report volume (latest version; `part` selects the
+   *  Jilid, defaulting to the first). */
   async getCompiledReport(
     user: RequestUser,
     siteVisitId: string,
+    part?: number,
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
-    const report = await this.prisma.siteVisitReport.findFirst({
+    const latest = await this.prisma.siteVisitReport.findFirst({
       where: { siteVisitId, tenantId: user.tenantId },
-      orderBy: { version: 'desc' },
+      orderBy: [{ version: 'desc' }, { part: 'asc' }],
     });
-    if (!report) {
+    if (!latest) {
       throw new NotFoundException(
         'No compiled report exists for this survey yet. It is produced when ' +
           'the survey reaches LAPORAN SELESAI.',
+      );
+    }
+
+    const wantedPart = part ?? latest.part;
+    const report =
+      wantedPart === latest.part
+        ? latest
+        : await this.prisma.siteVisitReport.findFirst({
+            where: {
+              siteVisitId,
+              tenantId: user.tenantId,
+              version: latest.version,
+              part: wantedPart,
+            },
+          });
+    if (!report) {
+      throw new NotFoundException(
+        `This report has ${latest.partCount} volume(s); Jilid ${wantedPart} ` +
+          'does not exist.',
       );
     }
 
@@ -865,9 +1248,15 @@ export class ReportGenerationService {
     }
   }
 
-  private resolveScope(
-    inspection: AssetReportInspection,
-  ): OperationalScope | null {
+  private resolveScope(inspection: {
+    operationalScope: OperationalScope | null;
+    asset: {
+      assetType: {
+        code: string | null;
+        operationalScope: OperationalScope | null;
+      } | null;
+    };
+  }): OperationalScope | null {
     return (
       inspection.operationalScope ??
       inspection.asset.assetType?.operationalScope ??
@@ -884,29 +1273,6 @@ export class ReportGenerationService {
     return (max._max.version ?? 0) + 1;
   }
 
-  private async mergeReports(
-    siteVisit: {
-      pencawangCode: string | null;
-      pencawangName: string | null;
-      visitType: string | null;
-      startedAt: Date | null;
-      completedAt: Date | null;
-    },
-    assetPdfs: Buffer[],
-    version: number,
-  ): Promise<Buffer> {
-    const merged = await PDFDocument.create();
-    await this.drawCoverPage(merged, siteVisit, assetPdfs.length, version);
-
-    for (const pdfBytes of assetPdfs) {
-      const source = await PDFDocument.load(pdfBytes);
-      const pages = await merged.copyPages(source, source.getPageIndices());
-      pages.forEach((page) => merged.addPage(page));
-    }
-
-    return Buffer.from(await merged.save());
-  }
-
   private async drawCoverPage(
     doc: PDFDocument,
     siteVisit: {
@@ -915,9 +1281,18 @@ export class ReportGenerationService {
       visitType: string | null;
       startedAt: Date | null;
       completedAt: Date | null;
+      // The live Pencawang entity — its name leads, the visit snapshot is the
+      // fallback (same rule as every screen and export).
+      substation?: { name: string | null; code: string | null } | null;
     },
-    assetCount: number,
-    version: number,
+    info: {
+      version: number;
+      part: number;
+      partCount: number;
+      assetCount: number;
+      totalAssets: number;
+      range: string;
+    },
   ): Promise<void> {
     const page = doc.addPage(A4_PORTRAIT);
     const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -942,13 +1317,31 @@ export class ReportGenerationService {
     y -= 40;
 
     const rows: Array<[string, string]> = [
-      ['Pencawang', siteVisit.pencawangName ?? siteVisit.pencawangCode ?? '—'],
-      ['Kod Pencawang', siteVisit.pencawangCode ?? '—'],
+      [
+        'Pencawang',
+        siteVisit.substation?.name ??
+          siteVisit.pencawangName ??
+          siteVisit.pencawangCode ??
+          '—',
+      ],
+      [
+        'Kod Pencawang',
+        siteVisit.substation?.code ?? siteVisit.pencawangCode ?? '—',
+      ],
       ['Jenis Lawatan', siteVisit.visitType ?? '—'],
       ['Tarikh Mula', this.fmtDate(siteVisit.startedAt) || '—'],
       ['Tarikh Siap', this.fmtDate(siteVisit.completedAt) || '—'],
-      ['Bilangan Aset', String(assetCount)],
-      ['Versi Laporan', `v${version}`],
+      ...(info.partCount > 1
+        ? ([
+            ['Jilid', `${info.part} / ${info.partCount}`],
+            ['Julat Tiang', info.range],
+            ['Bilangan Aset (jilid ini)', String(info.assetCount)],
+            ['Jumlah Aset', String(info.totalAssets)],
+          ] as Array<[string, string]>)
+        : ([['Bilangan Aset', String(info.assetCount)]] as Array<
+            [string, string]
+          >)),
+      ['Versi Laporan', `v${info.version}`],
       ['Dijana Pada', this.fmtDateTime(new Date())],
     ];
 

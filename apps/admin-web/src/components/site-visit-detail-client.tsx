@@ -62,7 +62,9 @@ import {
   fetchSiteVisitContributions,
   fetchSiteVisitDetail,
   fetchSurveyDeletePreview,
+  fetchSurveyReportStatus,
   generateSurveyReport,
+  type SurveyReportStatus,
   managerApproveSurvey,
   managerRequestAmendment,
   markRondaanSelesai,
@@ -353,13 +355,17 @@ interface SurveyLifecyclePanelProps {
   pendingAction: LifecycleAction | null;
   error: string;
   downloadingReport: boolean;
+  /** The latest background compile run (null = never compiled). */
+  reportRun: SurveyReportStatus["run"];
+  /** The latest frozen version's volumes (1 for small surveys, N Jilid for big). */
+  reportVolumes: SurveyReportStatus["volumes"];
   onRondaanSelesai: () => void;
   onManagerApprove: () => void;
   onManagerRequestAmendment: (remark: string) => void;
   onRequestAmendment: (remark: string) => void;
   onGenerateReport: () => void;
   onArchive: () => void;
-  onDownloadReport: () => void;
+  onDownloadReport: (part?: number) => void;
   onOpenNextCycle: () => void;
 }
 
@@ -372,6 +378,8 @@ function SurveyLifecyclePanel({
   pendingAction,
   error,
   downloadingReport,
+  reportRun,
+  reportVolumes,
   onRondaanSelesai,
   onManagerApprove,
   onManagerRequestAmendment,
@@ -402,6 +410,50 @@ function SurveyLifecyclePanel({
   const canDcAmend =
     (status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") && canGovern;
   const amendmentVisible = canManagerAmend || canDcAmend;
+
+  // The background compile run: progress while it works, an amber note if the
+  // last one failed (the survey stayed put — Generate simply retries).
+  const compileRunning = reportRun?.status === "RUNNING";
+  const compileFailed =
+    reportRun?.status === "FAILED" &&
+    (status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS");
+
+  // Download: one button for a single-volume report, one per Jilid otherwise.
+  const downloadButtons =
+    reportVolumes.length > 1 ? (
+      <div className="flex flex-wrap gap-2">
+        {reportVolumes.map((volume) => (
+          <Tbtn
+            key={volume.part}
+            variant="secondary"
+            onClick={() => onDownloadReport(volume.part)}
+            disabled={isBusy || downloadingReport}
+            title={volume.range ? `Tiang ${volume.range}` : undefined}
+          >
+            {downloadingReport ? (
+              <RefreshCw size={15} className="animate-spin" />
+            ) : (
+              <Download size={15} />
+            )}
+            Jilid {volume.part}/{volume.partCount}
+            {volume.range ? ` · ${volume.range}` : ""}
+          </Tbtn>
+        ))}
+      </div>
+    ) : (
+      <Tbtn
+        variant="secondary"
+        onClick={() => onDownloadReport()}
+        disabled={isBusy || downloadingReport}
+      >
+        {downloadingReport ? (
+          <RefreshCw size={15} className="animate-spin" />
+        ) : (
+          <Download size={15} />
+        )}
+        Download compiled report
+      </Tbtn>
+    );
 
   // The console has no warning-toned button variant, so a secondary Tbtn is
   // repainted with the `medium` (amber) status tokens for the amendment actions.
@@ -513,20 +565,7 @@ function SurveyLifecyclePanel({
               : ""}
             .
           </p>
-          {canReport ? (
-            <Tbtn
-              variant="secondary"
-              onClick={onDownloadReport}
-              disabled={isBusy || downloadingReport}
-            >
-              {downloadingReport ? (
-                <RefreshCw size={15} className="animate-spin" />
-              ) : (
-                <Download size={15} />
-              )}
-              Download compiled report
-            </Tbtn>
-          ) : null}
+          {canReport ? downloadButtons : null}
           {canInspect ? (
             <Tbtn variant="secondary" onClick={onOpenNextCycle} disabled={isBusy}>
               {pendingAction === "open-next-cycle" ? (
@@ -578,30 +617,37 @@ function SurveyLifecyclePanel({
 
           {(status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS") &&
           canReport ? (
-            <Tbtn variant="primary" onClick={onGenerateReport} disabled={isBusy}>
-              {pendingAction === "generate-report" ? (
+            compileRunning && reportRun ? (
+              // The compile runs in the background — a big Pencawang takes
+              // minutes. The page polls and flips to LAPORAN SELESAI when done.
+              <span className="inline-flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--info-border)] bg-[var(--info-bg)] px-3 py-2 text-sm font-semibold text-[var(--info-text)]">
                 <RefreshCw size={15} className="animate-spin" />
-              ) : (
-                <CheckCircle2 size={15} />
-              )}
-              Generate report (Laporan Selesai)
-            </Tbtn>
+                Menjana laporan… {reportRun.processedAssets}/{reportRun.totalAssets}{" "}
+                tiang
+              </span>
+            ) : (
+              <Tbtn
+                variant="primary"
+                onClick={onGenerateReport}
+                disabled={isBusy}
+              >
+                {pendingAction === "generate-report" ? (
+                  <RefreshCw size={15} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={15} />
+                )}
+                Generate report (Laporan Selesai)
+              </Tbtn>
+            )
           ) : null}
 
-          {status === "LAPORAN_SELESAI" && canReport ? (
-            <Tbtn
-              variant="secondary"
-              onClick={onDownloadReport}
-              disabled={isBusy || downloadingReport}
-            >
-              {downloadingReport ? (
-                <RefreshCw size={15} className="animate-spin" />
-              ) : (
-                <Download size={15} />
-              )}
-              Download compiled report
-            </Tbtn>
+          {compileFailed && reportRun?.error && !compileRunning ? (
+            <p className="w-full rounded-[var(--radius-control)] border border-[var(--medium-border)] bg-[var(--medium-bg)] px-3 py-2 text-sm text-[var(--medium-text)]">
+              Penjanaan laporan gagal: {reportRun.error}
+            </p>
           ) : null}
+
+          {status === "LAPORAN_SELESAI" && canReport ? downloadButtons : null}
 
           {status === "LAPORAN_SELESAI" && canGovern ? (
             <Tbtn variant="primary" onClick={onArchive} disabled={isBusy}>
@@ -2402,11 +2448,74 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [runLifecycle, session?.token, siteVisitId],
   );
 
-  const handleGenerateReport = useCallback(() => {
+  // The background report compile: Generate starts a run; the page polls the
+  // run's progress and reloads the visit (now LAPORAN SELESAI) when it lands.
+  const [reportStatus, setReportStatus] = useState<SurveyReportStatus | null>(
+    null,
+  );
+  const refreshReportStatus = useCallback(async () => {
     const token = session?.token;
     if (!token) return;
-    void runLifecycle("generate-report", () => generateSurveyReport(token, siteVisitId));
-  }, [runLifecycle, session?.token, siteVisitId]);
+    try {
+      setReportStatus(await fetchSurveyReportStatus(token, siteVisitId));
+    } catch {
+      // Progress is a convenience — a failed poll must never break the page.
+    }
+  }, [session?.token, siteVisitId]);
+
+  const lifecycleStatusValue = visit?.lifecycle?.status ?? null;
+  useEffect(() => {
+    if (
+      lifecycleStatusValue === "RONDAAN_SELESAI" ||
+      lifecycleStatusValue === "DISAHKAN_PENGURUS" ||
+      lifecycleStatusValue === "LAPORAN_SELESAI" ||
+      lifecycleStatusValue === "ARKIB"
+    ) {
+      void refreshReportStatus();
+    }
+  }, [lifecycleStatusValue, refreshReportStatus]);
+
+  useEffect(() => {
+    if (reportStatus?.run?.status !== "RUNNING") return;
+    const timer = setInterval(() => {
+      void refreshReportStatus();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [reportStatus?.run?.status, refreshReportStatus]);
+
+  // When the run lands, reload the visit — the lifecycle flipped server-side.
+  const prevRunStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const current = reportStatus?.run?.status ?? null;
+    if (prevRunStatus.current === "RUNNING" && current === "COMPLETED") {
+      const token = session?.token;
+      if (token) void loadVisit(token, false);
+    }
+    prevRunStatus.current = current;
+  }, [reportStatus?.run?.status, session?.token, loadVisit]);
+
+  const handleGenerateReport = useCallback(async () => {
+    const token = session?.token;
+    if (!token) return;
+    setPendingAction("generate-report");
+    setLifecycleError("");
+    try {
+      await generateSurveyReport(token, siteVisitId);
+      await refreshReportStatus();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleLogout();
+        return;
+      }
+      setLifecycleError(
+        error instanceof Error
+          ? error.message
+          : "Unable to start the report compile.",
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  }, [session?.token, siteVisitId, refreshReportStatus, handleLogout]);
 
   const handleArchive = useCallback(() => {
     const token = session?.token;
@@ -2433,16 +2542,20 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   );
 
   const [downloadingReport, setDownloadingReport] = useState(false);
-  const handleDownloadReport = useCallback(async () => {
+  const handleDownloadReport = useCallback(async (part?: number) => {
     const token = session?.token;
     if (!token || !visit) return;
     setDownloadingReport(true);
     setLifecycleError("");
     try {
-      await downloadCompiledReport(token, {
-        id: visit.id,
-        pencawangCode: visit.pencawangCode ?? undefined,
-      });
+      await downloadCompiledReport(
+        token,
+        {
+          id: visit.id,
+          pencawangCode: visit.pencawangCode ?? undefined,
+        },
+        part,
+      );
     } catch (downloadError) {
       if (downloadError instanceof ApiError && downloadError.status === 401) {
         handleLogout();
@@ -2768,6 +2881,8 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   canReport={canReport}
                   pendingAction={pendingAction}
                   error={lifecycleError}
+                  reportRun={reportStatus?.run ?? null}
+                  reportVolumes={reportStatus?.volumes ?? []}
                   onRondaanSelesai={handleRondaanSelesai}
                   onManagerApprove={handleManagerApprove}
                   onManagerRequestAmendment={handleManagerRequestAmendment}

@@ -5,9 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, SiteVisitStatus, SurveyLifecycleStatus, UserRole } from '@prisma/client';
 import { isQaActor } from '../common/authorization/qa-actor';
-import { releaseDefectsOnReport } from '../common/authorization/defect-governance';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
-import { buildVisitReleasePlan } from '../defects/defect-release.util';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportGenerationService } from '../report-generation/report-generation.service';
@@ -191,40 +189,16 @@ export class SurveyLifecycleService {
    *  put so it can be retried. */
   async generateReport(user: RequestUser, id: string) {
     await this.assertReporting(user);
-    return this.transition(user, id, {
-      to: SurveyLifecycleStatus.LAPORAN_SELESAI,
-      allowedFrom: [
-        SurveyLifecycleStatus.RONDAAN_SELESAI,
-        SurveyLifecycleStatus.DISAHKAN_PENGURUS,
-      ],
-      data: { laporanSelesaiAt: new Date() },
-      // Compile the frozen report, then persist its row INSIDE the status-commit
-      // transaction, so the report and the LAPORAN SELESAI status are atomic
-      // (no orphaned report row if the commit fails). Under RELEASE_ON_REPORT,
-      // this is also the gate where the survey's dormant defects release and
-      // auto-route to the MAINHEAD's maintenance company — appended to the same
-      // commit so release is atomic with reaching LAPORAN SELESAI.
-      beforeCommit: async () => {
-        const data = await this.reportGeneration.buildSiteVisitReportData(
-          user,
-          id,
-        );
-        const ops: Prisma.PrismaPromise<unknown>[] = [
-          this.prisma.siteVisitReport.create({ data }),
-        ];
-
-        if (releaseDefectsOnReport()) {
-          const releasePlan = await buildVisitReleasePlan(this.prisma, id, {
-            scope: 'ALL',
-            actorUserId: user.id,
-            now: new Date(),
-          });
-          ops.push(...releasePlan.ops);
-        }
-
-        return ops;
-      },
-    });
+    // Enforces tenant + access scope (throws NotFound if inaccessible).
+    await this.siteVisits.getLifecycleState(user, id);
+    // The compile runs in the BACKGROUND (a 400-pole Pencawang takes many
+    // minutes): this returns a run id immediately and the admin app polls
+    // GET /reports/site-visit/:id/report-status. The run itself commits the
+    // volume rows, the LAPORAN SELESAI flip, its lifecycle event and the
+    // RELEASE_ON_REPORT defect release in ONE transaction when it finishes —
+    // the same atomicity the old in-request compile had. On failure the
+    // lifecycle is untouched and the run carries the error.
+    return this.reportGeneration.startCompileRun(user, id);
   }
 
   /** DC / Admin archives the completed cycle. Archive archives the cycle, not
