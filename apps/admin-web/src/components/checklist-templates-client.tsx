@@ -581,12 +581,17 @@ function SeverityBadge({ severity }: { severity: DefectSeverity }) {
   );
 }
 
-function parseOptions(optionsText: string) {
+function parseOptions(optionsText: string, itemLabel: string) {
   const options: ChecklistTemplateOption[] = [];
-  const seenValues = new Set<string>();
+  // value -> the 1-based option line it first appeared on, so a duplicate can
+  // say exactly WHERE. Without the item name + lines, a duplicated "NO DEFECT"
+  // was unfindable in a big template where every dropdown carries that option.
+  const seenValues = new Map<string, number>();
 
-  for (const line of optionsText.split(/\r?\n/)) {
-    const normalizedLine = line.trim();
+  const lines = optionsText.split(/\r?\n/);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const lineNumber = lineIndex + 1;
+    const normalizedLine = lines[lineIndex].trim();
 
     if (!normalizedLine) {
       continue;
@@ -621,11 +626,17 @@ function parseOptions(optionsText: string) {
     }
 
     if (!label || !value) {
-      throw new Error("Dropdown options need a label and value.");
+      throw new Error(
+        `Item "${itemLabel}", option line ${lineNumber}: dropdown options need a label and value.`,
+      );
     }
 
-    if (seenValues.has(value)) {
-      throw new Error(`Dropdown option value "${value}" is duplicated.`);
+    const firstSeenLine = seenValues.get(value);
+    if (firstSeenLine !== undefined) {
+      throw new Error(
+        `Item "${itemLabel}": dropdown option value "${value}" appears twice ` +
+          `(option lines ${firstSeenLine} and ${lineNumber}) — remove one of them.`,
+      );
     }
 
     const option: ChecklistTemplateOption = { label, value };
@@ -641,7 +652,7 @@ function parseOptions(optionsText: string) {
     }
 
     options.push(option);
-    seenValues.add(value);
+    seenValues.set(value, lineNumber);
   }
 
   return options;
@@ -684,7 +695,9 @@ function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
     const key = normalizeEditableItemKey(item.key || itemKeyFromLabel(label));
     const hasSelectableOptions =
       item.fieldType === "DROPDOWN" || item.fieldType === "MULTI_SELECT";
-    const options = hasSelectableOptions ? parseOptions(item.optionsText) : [];
+    const options = hasSelectableOptions
+      ? parseOptions(item.optionsText, label)
+      : [];
 
     if (!key) {
       throw new Error(`Checklist item "${label}" needs an item key.`);
