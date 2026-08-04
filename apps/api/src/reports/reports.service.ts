@@ -1929,28 +1929,44 @@ export class ReportsService {
         item.inputType === InspectionItemInputType.MULTI_SELECT
           ? normalizeTemplateSelectOptions(item.optionsJson)
           : null;
+      // Merge answers by NORMALIZED LABEL across template versions, collecting
+      // every value each answer has ever stored — one sub-column per answer,
+      // markable by data recorded under any version.
+      const mergeOptions = (
+        into: TemplateExportColumn['options'],
+      ): TemplateExportColumn['options'] => {
+        if (!parsedOptions) {
+          return into;
+        }
+        const merged = into ?? [];
+        for (const option of parsedOptions) {
+          const found = merged.find(
+            (entry) =>
+              normalizeChecklistLabel(entry.label) ===
+              normalizeChecklistLabel(option.label),
+          );
+          if (found) {
+            if (!found.values.includes(option.value)) {
+              found.values.push(option.value);
+            }
+          } else {
+            merged.push({ label: option.label, values: [option.value] });
+          }
+        }
+        return merged;
+      };
+
       const existing = columnsByKey.get(item.key);
       if (existing) {
         existing.itemIds.add(item.id);
-        // Union options across template versions (first label per value wins)
-        // so a pole inspected under an older version still marks its column.
-        for (const option of parsedOptions ?? []) {
-          if (!existing.options?.some((o) => o.value === option.value)) {
-            (existing.options ??= []).push({
-              label: option.label,
-              value: option.value,
-            });
-          }
-        }
+        existing.options = mergeOptions(existing.options);
       } else {
         columnsByKey.set(item.key, {
           label: item.label,
           sortOrder: item.sortOrder,
           inputType: item.inputType,
           itemIds: new Set([item.id]),
-          options:
-            parsedOptions?.map((o) => ({ label: o.label, value: o.value })) ??
-            null,
+          options: mergeOptions(null),
         });
       }
     }
@@ -2434,7 +2450,15 @@ type TemplateExportColumn = {
   sortOrder: number;
   inputType: InspectionItemInputType;
   itemIds: Set<string>;
-  options: { label: string; value: string }[] | null;
+  /**
+   * One entry per distinct ANSWER (deduped by normalized label across template
+   * versions); `values` collects every stored value that answer has ever
+   * carried. Old SAVT templates stored "KEADAAN BAIK | NO DEFECT" (value
+   * NO DEFECT), the corrected ones store the label itself — matching by the
+   * label's value SET lets poles surveyed under either version mark the same
+   * sub-column.
+   */
+  options: { label: string; values: string[] }[] | null;
 };
 
 function isMatrixColumn(column: TemplateExportColumn): boolean {
@@ -2549,7 +2573,7 @@ function templateMatrixCells(
         if (text) picked.add(text);
       }
       for (const option of column.options!) {
-        cells.push(picked.has(option.value) ? 1 : '');
+        cells.push(option.values.some((value) => picked.has(value)) ? 1 : '');
       }
     } else {
       cells.push(resolveTemplateCell(column.inputType, result, verdict));
