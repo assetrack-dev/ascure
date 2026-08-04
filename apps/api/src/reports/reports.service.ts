@@ -18,6 +18,7 @@ import {
 import { Workbook, Worksheet } from 'exceljs';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   deriveDisplayStatus,
@@ -1025,35 +1026,9 @@ export class ReportsService {
         })
       : [];
 
-    const columnsByKey = new Map<
-      string,
-      {
-        label: string;
-        sortOrder: number;
-        inputType: InspectionItemInputType;
-        itemIds: Set<string>;
-      }
-    >();
-    for (const item of templateItems) {
-      // IMAGE (photo) fields are evidence, not tabular data — exclude them.
-      if (item.inputType === InspectionItemInputType.IMAGE) {
-        continue;
-      }
-      const existing = columnsByKey.get(item.key);
-      if (existing) {
-        existing.itemIds.add(item.id);
-      } else {
-        columnsByKey.set(item.key, {
-          label: item.label,
-          sortOrder: item.sortOrder,
-          inputType: item.inputType,
-          itemIds: new Set([item.id]),
-        });
-      }
-    }
-    const columns = [...columnsByKey.values()].sort(
-      (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
-    );
+    // The dynamic (non-SAVR) layout derives its columns WITH options via
+    // deriveTemplateColumns further below; the fetch above still feeds the
+    // fixed SAVR label map (itemsByLabel).
 
     // --- Owner's fixed SAVR arrangement ("SUSUNAN UNTUK ML DOWNLOAD") ---------
     // Every SAVR mainhead uses the fixed column layout; the MAINHEAD named
@@ -1178,12 +1153,15 @@ export class ReportsService {
       'LOCATION',
     ];
 
+    const columns = await this.deriveTemplateColumns(templateIds);
+
     const workbook = new Workbook();
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    sheet.addRow([...META_HEADERS, ...columns.map((c) => c.label)]);
-    sheet.getRow(1).font = { bold: true };
+    // TNB matrix layout: dropdown items span one sub-column per answer with a
+    // "1" under the crew's pick (see writeTemplateMatrixHeader).
+    writeTemplateMatrixHeader(sheet, META_HEADERS, columns);
 
     for (const insp of chosen) {
       // Index this inspection's recorded values, defect verdicts and photos by
@@ -1220,28 +1198,14 @@ export class ReportsService {
           : '',
       ];
 
-      const itemCells = columns.map((col) => {
-        // A column may map to several item ids (same key across template
-        // versions); use the first id that carries each kind of value.
-        let result: (typeof insp.results)[number] | undefined;
-        let verdict: InspectionItemResultValue | undefined;
-        for (const id of col.itemIds) {
-          if (!result) {
-            result = resultByItemId.get(id);
-          }
-          if (!verdict) {
-            verdict = verdictByItemId.get(id);
-          }
-        }
-        return resolveTemplateCell(col.inputType, result, verdict);
-      });
+      const itemCells = templateMatrixCells(
+        columns,
+        resultByItemId,
+        verdictByItemId,
+      );
 
       sheet.addRow([...meta, ...itemCells]);
     }
-
-    sheet.columns.forEach((column, index) => {
-      column.width = index < META_HEADERS.length ? 18 : 16;
-    });
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
@@ -1729,8 +1693,9 @@ export class ReportsService {
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    sheet.addRow([...SAVT_META_HEADERS, ...columns.map((c) => c.label)]);
-    sheet.getRow(1).font = { bold: true };
+    // TNB matrix layout: dropdown items span one sub-column per answer with a
+    // "1" under the crew's pick (see writeTemplateMatrixHeader).
+    writeTemplateMatrixHeader(sheet, SAVT_META_HEADERS, columns);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -1761,22 +1726,14 @@ export class ReportsService {
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
       ];
 
-      const itemCells = columns.map((col) => {
-        let result: (typeof insp.results)[number] | undefined;
-        let verdict: InspectionItemResultValue | undefined;
-        for (const id of col.itemIds) {
-          if (!result) result = resultByItemId.get(id);
-          if (!verdict) verdict = verdictByItemId.get(id);
-        }
-        return resolveTemplateCell(col.inputType, result, verdict);
-      });
+      const itemCells = templateMatrixCells(
+        columns,
+        resultByItemId,
+        verdictByItemId,
+      );
 
       sheet.addRow([...meta, ...itemCells]);
     }
-
-    sheet.columns.forEach((column, index) => {
-      column.width = index < SAVT_META_HEADERS.length ? 18 : 16;
-    });
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
@@ -1894,8 +1851,9 @@ export class ReportsService {
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    sheet.addRow([...SAVT_META_HEADERS, ...columns.map((c) => c.label)]);
-    sheet.getRow(1).font = { bold: true };
+    // TNB matrix layout: dropdown items span one sub-column per answer with a
+    // "1" under the crew's pick (see writeTemplateMatrixHeader).
+    writeTemplateMatrixHeader(sheet, SAVT_META_HEADERS, columns);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -1927,22 +1885,14 @@ export class ReportsService {
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
       ];
 
-      const itemCells = columns.map((col) => {
-        let result: (typeof insp.results)[number] | undefined;
-        let verdict: InspectionItemResultValue | undefined;
-        for (const id of col.itemIds) {
-          if (!result) result = resultByItemId.get(id);
-          if (!verdict) verdict = verdictByItemId.get(id);
-        }
-        return resolveTemplateCell(col.inputType, result, verdict);
-      });
+      const itemCells = templateMatrixCells(
+        columns,
+        resultByItemId,
+        verdictByItemId,
+      );
 
       sheet.addRow([...meta, ...itemCells]);
     }
-
-    sheet.columns.forEach((column, index) => {
-      column.width = index < SAVT_META_HEADERS.length ? 18 : 16;
-    });
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
@@ -1958,32 +1908,49 @@ export class ReportsService {
     const templateItems = templateIds.length
       ? await this.prisma.inspectionTemplateItem.findMany({
           where: { templateId: { in: templateIds } },
-          select: { id: true, key: true, label: true, sortOrder: true, inputType: true },
+          select: {
+            id: true,
+            key: true,
+            label: true,
+            sortOrder: true,
+            inputType: true,
+            optionsJson: true,
+          },
           orderBy: { sortOrder: 'asc' },
         })
       : [];
-    const columnsByKey = new Map<
-      string,
-      {
-        label: string;
-        sortOrder: number;
-        inputType: InspectionItemInputType;
-        itemIds: Set<string>;
-      }
-    >();
+    const columnsByKey = new Map<string, TemplateExportColumn>();
     for (const item of templateItems) {
       if (item.inputType === InspectionItemInputType.IMAGE) {
         continue; // photos are evidence, not tabular data
       }
+      const parsedOptions =
+        item.inputType === InspectionItemInputType.SELECT ||
+        item.inputType === InspectionItemInputType.MULTI_SELECT
+          ? normalizeTemplateSelectOptions(item.optionsJson)
+          : null;
       const existing = columnsByKey.get(item.key);
       if (existing) {
         existing.itemIds.add(item.id);
+        // Union options across template versions (first label per value wins)
+        // so a pole inspected under an older version still marks its column.
+        for (const option of parsedOptions ?? []) {
+          if (!existing.options?.some((o) => o.value === option.value)) {
+            (existing.options ??= []).push({
+              label: option.label,
+              value: option.value,
+            });
+          }
+        }
       } else {
         columnsByKey.set(item.key, {
           label: item.label,
           sortOrder: item.sortOrder,
           inputType: item.inputType,
           itemIds: new Set([item.id]),
+          options:
+            parsedOptions?.map((o) => ({ label: o.label, value: o.value })) ??
+            null,
         });
       }
     }
@@ -2452,6 +2419,143 @@ function hasRecordedValue(result: RecordedResult): boolean {
       result.valueDateTime != null ||
       (Array.isArray(result.valueJson) && result.valueJson.length > 0),
   );
+}
+
+/**
+ * A template-driven export column. SELECT / MULTI_SELECT columns carry their
+ * options so the sheet can render TNB's one-hot MATRIX layout — the item name
+ * merged across one sub-column per answer, and a "1" mark under the answer the
+ * crew picked — instead of a free-text value cell. (This is how the official
+ * TNB SAVT checklist reads: e.g. "Cable Tray" spans "Keadaan Baik | Perlu
+ * Tukar | Tiada Cable Tray", and each pole's row marks exactly one of them.)
+ */
+type TemplateExportColumn = {
+  label: string;
+  sortOrder: number;
+  inputType: InspectionItemInputType;
+  itemIds: Set<string>;
+  options: { label: string; value: string }[] | null;
+};
+
+function isMatrixColumn(column: TemplateExportColumn): boolean {
+  return (
+    (column.inputType === InspectionItemInputType.SELECT ||
+      column.inputType === InspectionItemInputType.MULTI_SELECT) &&
+    (column.options?.length ?? 0) > 0
+  );
+}
+
+/**
+ * Two-row TNB-style header: meta cells merged vertically; each matrix item's
+ * name merged across its answer sub-columns with the answer labels rotated 90°
+ * beneath (narrow columns); non-matrix items keep a single merged cell.
+ */
+function writeTemplateMatrixHeader(
+  sheet: Worksheet,
+  metaHeaders: string[],
+  columns: TemplateExportColumn[],
+): void {
+  const row1: string[] = [...metaHeaders];
+  const row2: string[] = metaHeaders.map(() => '');
+  for (const column of columns) {
+    if (isMatrixColumn(column)) {
+      column.options!.forEach((option, index) => {
+        row1.push(index === 0 ? column.label : '');
+        row2.push(option.label);
+      });
+    } else {
+      row1.push(column.label);
+      row2.push('');
+    }
+  }
+  sheet.addRow(row1);
+  sheet.addRow(row2);
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(2).font = { bold: true };
+  sheet.getRow(2).height = 95;
+
+  let columnIndex = 1;
+  for (let meta = 0; meta < metaHeaders.length; meta++) {
+    sheet.mergeCells(1, columnIndex, 2, columnIndex);
+    sheet.getCell(1, columnIndex).alignment = {
+      vertical: 'middle',
+      wrapText: true,
+    };
+    sheet.getColumn(columnIndex).width = 18;
+    columnIndex += 1;
+  }
+  for (const column of columns) {
+    if (isMatrixColumn(column)) {
+      const span = column.options!.length;
+      if (span > 1) {
+        sheet.mergeCells(1, columnIndex, 1, columnIndex + span - 1);
+      }
+      sheet.getCell(1, columnIndex).alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
+      for (let sub = 0; sub < span; sub++) {
+        const cell = sheet.getRow(2).getCell(columnIndex + sub);
+        cell.alignment = {
+          textRotation: 90,
+          vertical: 'bottom',
+          horizontal: 'center',
+        };
+        sheet.getColumn(columnIndex + sub).width = 5;
+      }
+      columnIndex += span;
+    } else {
+      sheet.mergeCells(1, columnIndex, 2, columnIndex);
+      sheet.getCell(1, columnIndex).alignment = {
+        vertical: 'middle',
+        wrapText: true,
+      };
+      sheet.getColumn(columnIndex).width = 16;
+      columnIndex += 1;
+    }
+  }
+  sheet.views = [{ state: 'frozen', ySplit: 2 }];
+}
+
+/**
+ * One pole's item cells for the matrix layout: a matrix column writes 1 under
+ * the picked answer (MULTI_SELECT marks every pick; a cleared or unanswered
+ * item marks nothing); every other column keeps its value cell via
+ * resolveTemplateCell.
+ */
+function templateMatrixCells(
+  columns: TemplateExportColumn[],
+  resultByItemId: ReadonlyMap<string, RecordedResult>,
+  verdictByItemId: ReadonlyMap<string, InspectionItemResultValue>,
+): (string | number)[] {
+  const cells: (string | number)[] = [];
+  for (const column of columns) {
+    let result: RecordedResult | undefined;
+    let verdict: InspectionItemResultValue | undefined;
+    for (const id of column.itemIds) {
+      if (!result) result = resultByItemId.get(id);
+      if (!verdict) verdict = verdictByItemId.get(id);
+    }
+    if (isMatrixColumn(column)) {
+      const picked = new Set<string>();
+      if (result) {
+        if (Array.isArray(result.valueJson)) {
+          for (const entry of result.valueJson) {
+            if (typeof entry === 'string') picked.add(entry.trim());
+          }
+        }
+        const text = result.valueText?.trim();
+        if (text) picked.add(text);
+      }
+      for (const option of column.options!) {
+        cells.push(picked.has(option.value) ? 1 : '');
+      }
+    } else {
+      cells.push(resolveTemplateCell(column.inputType, result, verdict));
+    }
+  }
+  return cells;
 }
 
 /**
