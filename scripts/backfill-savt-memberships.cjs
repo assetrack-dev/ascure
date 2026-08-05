@@ -18,7 +18,10 @@
  *
  * Safe + idempotent: memberships are upserted by (assetId, feederId); re-runs
  * converge. Poles whose code doesn't parse on any of their routes are reported
- * and skipped, never guessed.
+ * and skipped, never guessed — EXCEPT the bare-numeric offline artifact ("167"
+ * with no route prefix, a v22-era capture bug): with evidence for exactly ONE
+ * route those are adopted onto it and their assetCode repaired to the full
+ * "{KOD TIANG} {No}" form (collision-guarded).
  *
  * Usage:
  *   node scripts/backfill-savt-memberships.cjs            # dry run (report only)
@@ -168,6 +171,8 @@ async function main() {
         where: { id: { in: assetIds } },
         select: {
           id: true,
+          tenantId: true,
+          substationId: true,
           assetCode: true,
           latitude: true,
           longitude: true,
@@ -183,6 +188,15 @@ async function main() {
   const membershipsByRoute = new Map();
   const routeMeta = new Map(); // routeKey -> route
   const unparsed = [];
+  // BARE-CODE ADOPTION (first prod dry-run 2026-08-05 found 28 of these, all on
+  // one route): an offline crew capture couldn't read the visit's KOD TIANG, so
+  // the pole saved a BARE numeric code ("167", "171/1") with no route prefix —
+  // a documented v22-era artifact. When such a pole's evidence points to
+  // EXACTLY ONE route, adopt it: membership on that route + (on --apply) the
+  // assetCode repaired to the full "{KOD TIANG} {No}" form. Ambiguous (multi-
+  // route) bare codes stay skipped-and-reported — never guessed.
+  const BARE_CODE = /^(\d+)(\/.*)?$/;
+  const adopted = [];
   for (const [assetId, routes] of routesByAsset) {
     const asset = assetById.get(assetId);
     if (!asset) continue;
@@ -197,6 +211,24 @@ async function main() {
       members.set(assetId, parsed);
     }
     if (!matched) {
+      const bare = BARE_CODE.exec((asset.assetCode ?? "").trim());
+      if (bare && routes.size === 1) {
+        const [routeKey, route] = [...routes.entries()][0];
+        const parsed = {
+          noTiang: parseInt(bare[1], 10),
+          branchSuffix: (bare[2] ?? "").trim(),
+        };
+        routeMeta.set(routeKey, route);
+        let members = membershipsByRoute.get(routeKey);
+        if (!members) membershipsByRoute.set(routeKey, (members = new Map()));
+        members.set(assetId, parsed);
+        adopted.push({
+          assetId,
+          from: asset.assetCode,
+          to: `${route.code} ${asset.assetCode.trim()}`,
+        });
+        continue;
+      }
       unparsed.push({ asset, routes: [...routes.values()].map((r) => r.code) });
     }
   }
@@ -322,11 +354,64 @@ async function main() {
     }
   }
 
+  // ---------- 4b. Repair adopted bare codes to the full form ----------
+  // Only for adoptions that SURVIVED collision pruning, and only when the
+  // target full code is free in the pole's Pencawang (a taken target means a
+  // real duplicate pole — report, touch nothing).
+  const survivingAssetIds = new Set();
+  for (const members of membershipsByRoute.values()) {
+    for (const assetId of members.keys()) survivingAssetIds.add(assetId);
+  }
+  const recoded = [];
+  const recodeConflicts = [];
+  for (const a of adopted) {
+    if (!survivingAssetIds.has(a.assetId)) continue;
+    const asset = assetById.get(a.assetId);
+    const holder = await prisma.asset.findFirst({
+      where: {
+        tenantId: asset.tenantId,
+        substationId: asset.substationId,
+        assetCode: a.to,
+        id: { not: a.assetId },
+      },
+      select: { id: true },
+    });
+    if (holder) {
+      recodeConflicts.push(a);
+      continue;
+    }
+    if (apply) {
+      await prisma.asset.update({
+        where: { id: a.assetId },
+        data: { assetCode: a.to },
+      });
+    }
+    recoded.push(a);
+  }
+
   // ---------- Report ----------
   console.log(`\nSAVT poles with route evidence: ${assetIds.length}`);
   console.log(
     `  ${apply ? "wrote" : "would write"}: ${feederCount} feeders, ${membershipCount} memberships`,
   );
+
+  if (recoded.length) {
+    console.log(
+      `\nBare-code poles adopted onto their only route (${apply ? "codes REPAIRED" : "codes would be repaired"}): ${recoded.length}`,
+    );
+    for (const a of recoded.slice(0, 50)) {
+      console.log(`  "${a.from}" -> "${a.to}"`);
+    }
+    if (recoded.length > 50) console.log(`  ...and ${recoded.length - 50} more`);
+  }
+  if (recodeConflicts.length) {
+    console.log(
+      `\nBare-code poles whose FULL code is already taken (possible real duplicate — left untouched): ${recodeConflicts.length}`,
+    );
+    for (const a of recodeConflicts.slice(0, 50)) {
+      console.log(`  "${a.from}" -> "${a.to}" (taken)`);
+    }
+  }
 
   if (unparsed.length) {
     console.log(
