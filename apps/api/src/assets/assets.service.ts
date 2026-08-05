@@ -10,6 +10,7 @@ import {
   AssetStatus,
   DefectSeverity,
   DefectStatus,
+  FeederKind,
   InspectionCompletionStatus,
   InspectionItemInputType,
   InspectionItemResultValue,
@@ -41,6 +42,7 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { MapQueryDto } from './dto/map-query.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
+import { upsertSavtMembership } from '../common/savt-graph';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import { CLIENT_VISIBLE_LIFECYCLE } from '../common/client-visibility';
 import {
@@ -53,9 +55,11 @@ import {
 } from '../common/checklist-columns';
 import {
   buildNormalizedKey,
+  canonicalizeSavtRouteCode,
   formatBranchSuffix,
   getExpectedParentKey,
   parsePoleCode,
+  parseSavtPoleCode,
 } from '@ascure/shared-utils';
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
@@ -842,7 +846,13 @@ export class AssetsService {
     }
 
     let linkedSiteVisit:
-      | { id: string; operationalScope: OperationalScope | null }
+      | {
+          id: string;
+          operationalScope: OperationalScope | null;
+          routeCode: string | null;
+          fromPencawangId: string | null;
+          substationId: string;
+        }
       | null = null;
 
     if (dto.createdDuringVisitId) {
@@ -859,6 +869,9 @@ export class AssetsService {
         select: {
           id: true,
           operationalScope: true,
+          routeCode: true,
+          fromPencawangId: true,
+          substationId: true,
         },
       });
 
@@ -939,6 +952,22 @@ export class AssetsService {
           assetId: asset.id,
           assetCode,
         });
+
+        // A pole born in a SAVT route survey joins that route's feeder (shared
+        // poles get further memberships via the link endpoint, one per route).
+        if (
+          linkedSiteVisit &&
+          linkedSiteVisit.operationalScope === OperationalScope.SAVT
+        ) {
+          await this.syncSavtPoleMembership(tx, {
+            tenantId: user.tenantId,
+            assetId: asset.id,
+            assetCode,
+            routeCode: linkedSiteVisit.routeCode,
+            feederSubstationId:
+              linkedSiteVisit.fromPencawangId ?? linkedSiteVisit.substationId,
+          });
+        }
 
         return tx.asset.findUniqueOrThrow({
           where: { id: asset.id },
@@ -1072,6 +1101,7 @@ export class AssetsService {
           },
         },
         feederMemberships: {
+          where: { feeder: { kind: FeederKind.RONDAAN } },
           select: {
             sequenceIndex: true,
             branchSuffix: true,
@@ -1177,6 +1207,24 @@ export class AssetsService {
       throw new NotFoundException('Asset not found.');
     }
 
+    // The pole's SAVT routes with its per-route pole code — a shared-corridor
+    // pole carries one printed code PER FEEDER (docs/PLAN-savt-shared-poles.md),
+    // and only the primary one lives in assetCode.
+    const savtMemberships = await this.prisma.poleFeederMembership.findMany({
+      where: { assetId: asset.id, feeder: { kind: FeederKind.SAVT } },
+      orderBy: { feeder: { code: 'asc' } },
+      select: {
+        sequenceIndex: true,
+        branchSuffix: true,
+        feeder: { select: { code: true } },
+      },
+    });
+    const savtRoutes = savtMemberships.map((m) => ({
+      routeCode: m.feeder.code,
+      noTiang: `${m.sequenceIndex}${m.branchSuffix}`,
+      poleCode: `${m.feeder.code} ${m.sequenceIndex}${m.branchSuffix}`,
+    }));
+
     const latestInspection = asset.inspections[0];
     // Live checklist values (InspectionResult, keyed by normalized label). Reused
     // for the checklist block AND to overlay the Inspection Result table's Remark
@@ -1198,6 +1246,9 @@ export class AssetsService {
       id: asset.id,
       assetCode: asset.assetCode,
       noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships),
+      // All SAVT routes this pole carries (shared-corridor poles have several);
+      // [] for non-SAVT poles.
+      savtRoutes,
       noTiangLama: asset.noTiangLama,
       name: asset.name,
       assetType: asset.assetType.name,
@@ -1276,6 +1327,7 @@ export class AssetsService {
         assetType: { select: { name: true } },
         substation: { select: { name: true, location: true } },
         feederMemberships: {
+          where: { feeder: { kind: FeederKind.RONDAAN } },
           select: {
             sequenceIndex: true,
             branchSuffix: true,
@@ -1663,10 +1715,21 @@ export class AssetsService {
         await tx.asset.update({ where: { id }, data });
 
         if (data.assetCode !== undefined || data.substationId !== undefined) {
-          await tx.poleFeederMembership.deleteMany({ where: { assetId: id } });
+          // Wipe-and-resync applies to RONDAAN memberships only: they are fully
+          // derivable from the (new) assetCode. SAVT memberships are NOT — a
+          // shared pole's assetCode carries only its primary route's code, and
+          // its other routes' numbers live solely in the membership rows — so
+          // those are re-parsed in place instead of wiped.
+          await tx.poleFeederMembership.deleteMany({
+            where: { assetId: id, feeder: { kind: FeederKind.RONDAAN } },
+          });
           await this.syncPoleGraph(tx, {
             tenantId: user.tenantId,
             substationId: effectiveSubstationId,
+            assetId: id,
+            assetCode: effectiveAssetCode,
+          });
+          await this.resyncSavtMembershipsForCode(tx, {
             assetId: id,
             assetCode: effectiveAssetCode,
           });
@@ -2191,6 +2254,77 @@ export class AssetsService {
     }
   }
 
+  /**
+   * Join a pole to a SAVT route's feeder (docs/PLAN-savt-shared-poles.md): the
+   * membership's sequenceIndex/branchSuffix come from parsing the pole's code
+   * against that route ("MI - KUK 33/1" -> 33, "/1"). A code that doesn't
+   * parse on the route yields no membership — same philosophy as the RONDAAN
+   * sync. Idempotent (upsert by assetId+feeder).
+   */
+  private async syncSavtPoleMembership(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      assetId: string;
+      assetCode: string;
+      routeCode: string | null;
+      feederSubstationId: string;
+    },
+  ): Promise<void> {
+    const routeCode = canonicalizeSavtRouteCode(params.routeCode);
+    if (!routeCode) {
+      return;
+    }
+    const identity = parseSavtPoleCode(params.assetCode, routeCode);
+    if (!identity) {
+      return;
+    }
+    await upsertSavtMembership(tx, {
+      tenantId: params.tenantId,
+      assetId: params.assetId,
+      feederSubstationId: params.feederSubstationId,
+      routeCode,
+      noTiang: identity.noTiang,
+      branchSuffix: identity.branchSuffix,
+    });
+  }
+
+  /**
+   * After a pole's code changes, re-parse it against each SAVT route the pole
+   * already sits on: the route whose code prefixes the new assetCode (the
+   * primary route) gets its number updated; the pole's OTHER routes are left
+   * untouched — their numbers are independent and not represented in the
+   * assetCode at all.
+   */
+  private async resyncSavtMembershipsForCode(
+    tx: Prisma.TransactionClient,
+    params: { assetId: string; assetCode: string },
+  ): Promise<void> {
+    const { assetId, assetCode } = params;
+    const memberships = await tx.poleFeederMembership.findMany({
+      where: { assetId, feeder: { kind: FeederKind.SAVT } },
+      select: {
+        feeder: {
+          select: { tenantId: true, substationId: true, code: true },
+        },
+      },
+    });
+    for (const membership of memberships) {
+      const identity = parseSavtPoleCode(assetCode, membership.feeder.code);
+      if (!identity) {
+        continue;
+      }
+      await upsertSavtMembership(tx, {
+        tenantId: membership.feeder.tenantId,
+        assetId,
+        feederSubstationId: membership.feeder.substationId,
+        routeCode: membership.feeder.code,
+        noTiang: identity.noTiang,
+        branchSuffix: identity.branchSuffix,
+      });
+    }
+  }
+
   /** Resolve an asset by a normalized RONDAAN key (e.g. "A 2", "B 2/1") within a
    *  Pencawang, via its stored membership. */
   private async findAssetIdByMembershipKey(
@@ -2230,7 +2364,11 @@ export class AssetsService {
           name: true,
         },
       },
+      // RONDAAN memberships only — these feed renderNoTiangRondaan, and a SAVT
+      // membership would corrupt the rendered label. SAVT route codes surface
+      // separately (savtRoutes on the asset detail payload).
       feederMemberships: {
+        where: { feeder: { kind: FeederKind.RONDAAN } },
         select: {
           sequenceIndex: true,
           branchSuffix: true,

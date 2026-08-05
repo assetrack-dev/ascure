@@ -802,6 +802,15 @@ export function AssetMapPanel({
             <p className="truncate text-[12px] text-[var(--muted)]">
               {asset.substation?.name || asset.substation?.code || "—"}
             </p>
+            {detail && detail.savtRoutes.length > 1 ? (
+              // A shared-corridor pole: one physical pole, one printed code per
+              // feeder — list every route's code so it reads as shared, not as
+              // a duplicate (docs/PLAN-savt-shared-poles.md).
+              <p className="mt-0.5 text-[11px] font-medium text-[var(--brand)]">
+                Tiang kongsi ({detail.savtRoutes.length} laluan):{" "}
+                {detail.savtRoutes.map((route) => route.poleCode).join(" · ")}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"

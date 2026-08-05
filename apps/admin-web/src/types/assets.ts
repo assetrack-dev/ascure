@@ -58,10 +58,20 @@ export interface AssetChecklist {
   images: Record<string, SiteVisitSensorPhoto>;
 }
 
+/** One SAVT route a pole carries — shared-corridor poles have several, each
+ *  with its own printed code (docs/PLAN-savt-shared-poles.md). */
+export interface AssetSavtRoute {
+  routeCode: string;
+  noTiang: string;
+  poleCode: string;
+}
+
 export interface AssetDetail extends AssetListItem {
   name: string | null;
   latitude: number | null;
   longitude: number | null;
+  /** [] for non-SAVT poles. */
+  savtRoutes: AssetSavtRoute[];
   latestInspection: {
     id: string;
     /** The visit the inspection was recorded in — passed on a checklist edit so

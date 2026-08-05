@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, SwitchState, TieEdgeKind, UserRole } from '@prisma/client';
+import { FeederKind, Prisma, SwitchState, TieEdgeKind, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { renderNoTiangRondaan } from '../common/rondaan';
@@ -16,6 +16,15 @@ const MEMBERSHIP_SELECT = {
   branchSuffix: true,
   fedFromAssetId: true,
   feeder: { select: { code: true } },
+} as const;
+
+// This service is the RONDAAN (LV) network graph. SAVT route feeders live in
+// the same tables (a From-Pencawang owns both kinds) but are a different
+// domain — always filter memberships to RONDAAN feeders here or SAVT poles
+// leak into the Pencawang graph, its isolation math, and the RONDAAN lint.
+const RONDAAN_MEMBERSHIPS = {
+  where: { feeder: { kind: FeederKind.RONDAAN } },
+  select: MEMBERSHIP_SELECT,
 } as const;
 
 type RenderablePole = {
@@ -34,7 +43,7 @@ const POLE_SELECT = {
   id: true,
   assetCode: true,
   noTiangLama: true,
-  feederMemberships: { select: MEMBERSHIP_SELECT },
+  feederMemberships: RONDAAN_MEMBERSHIPS,
 } as const;
 
 @Injectable()
@@ -57,7 +66,7 @@ export class NetworkService {
 
     const [feeders, assets, tieEdges] = await Promise.all([
       this.prisma.feeder.findMany({
-        where: { substationId },
+        where: { substationId, kind: FeederKind.RONDAAN },
         select: { id: true, code: true, name: true },
         orderBy: { code: 'asc' },
       }),
@@ -70,7 +79,7 @@ export class NetworkService {
           latitude: true,
           longitude: true,
           fedFromAssetId: true,
-          feederMemberships: { select: MEMBERSHIP_SELECT },
+          feederMemberships: RONDAAN_MEMBERSHIPS,
         },
       }),
       this.prisma.networkTieEdge.findMany({
@@ -238,7 +247,9 @@ export class NetworkService {
    */
   async getFeederIsolation(user: RequestUser, feederId: string) {
     const feeder = await this.prisma.feeder.findFirst({
-      where: { id: feederId, tenantId: user.tenantId },
+      // RONDAAN-only: SAVT route isolation is a different electrical question
+      // (an HV route de-energizes downstream PENCAWANG, not just poles).
+      where: { id: feederId, tenantId: user.tenantId, kind: FeederKind.RONDAAN },
       select: { id: true, code: true, name: true, substationId: true },
     });
     if (!feeder) {
@@ -252,7 +263,9 @@ export class NetworkService {
     // (Whole-feeder isolation; the per-feeder fedFromAssetId edges drive partial
     // switch-level isolation, not this.)
     const memberships = await this.prisma.poleFeederMembership.findMany({
-      where: { feeder: { substationId: feeder.substationId } },
+      where: {
+        feeder: { substationId: feeder.substationId, kind: FeederKind.RONDAAN },
+      },
       select: { assetId: true, feederId: true },
     });
     const feederCountByAsset = new Map<string, number>();
