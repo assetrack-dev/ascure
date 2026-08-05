@@ -794,6 +794,26 @@ export function AssetDetailScreen() {
               <Feather name="navigation" size={16} color="#ffffff" />
               <Text style={styles.directionsButtonText}>Get Directions</Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open Street View at this pole"
+              onPress={() => {
+                // Street View is Google imagery — the in-app map is Mapbox (that
+                // is what keeps it fast), so the pegman jump goes to the Google
+                // Maps app's panorama at the pole, like the admin map's pegman.
+                const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${asset.latitude},${asset.longitude}`;
+                void Linking.openURL(url).catch(() => {
+                  Alert.alert(
+                    'Unable to open Street View',
+                    'Install or enable Google Maps to view street imagery.',
+                  );
+                });
+              }}
+              style={({ pressed }) => [styles.streetViewButton, pressed && styles.pressedButton]}
+            >
+              <Feather name="eye" size={16} color={theme.colors.primary} />
+              <Text style={styles.streetViewButtonText}>Street View</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -1355,6 +1375,25 @@ const createStyles = (t: Theme) =>
     },
     directionsButtonText: {
       color: '#ffffff',
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
+    },
+    streetViewButton: {
+      marginTop: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      minHeight: 46,
+      borderRadius: t.radius.control,
+      borderWidth: 1,
+      borderColor: t.colors.primary,
+      backgroundColor: 'transparent',
+      paddingHorizontal: 16,
+    },
+    streetViewButtonText: {
+      color: t.colors.primary,
       fontSize: 14,
       fontWeight: '600',
       fontFamily: t.fonts.bodySemibold,

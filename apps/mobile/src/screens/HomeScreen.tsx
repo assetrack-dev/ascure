@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError, isEndpointUnavailableError } from '../api';
-import { cachedFetch } from '../offlineCache';
+import { cachedFetch, readCache } from '../offlineCache';
 import { warmVisitOfflineCache } from '../offlineWarm';
 import { useSession } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
@@ -169,7 +169,29 @@ export function HomeScreen() {
   const loadHomeData = useCallback(async () => {
     try {
       setError(null);
-      setIsLoading(true);
+
+      // CACHE-FIRST PAINT (owner feedback 2026-08-05: "every time I open the
+      // app it takes time to load"): when the three Home lists are cached from
+      // a previous open, render them IMMEDIATELY and let the network refresh
+      // update the screen when it lands. cachedFetch is network-first (it only
+      // serves cache when UNREACHABLE), so without this the skeleton held for
+      // 3 round-trips + a detail fetch per visit on every single app open.
+      const [cachedActive, cachedCompleted, cachedCapabilities] = await Promise.all([
+        readCache<SiteVisit[]>('site-visits-active'),
+        readCache<SiteVisit[]>('site-visits-completed'),
+        readCache<EffectiveCapability[]>('my-capabilities'),
+      ]);
+      const paintedFromCache = Boolean(
+        cachedActive && cachedCompleted && cachedCapabilities,
+      );
+      if (paintedFromCache) {
+        setActiveVisits(cachedActive!.value);
+        setCompletedVisits(cachedCompleted!.value);
+        setCapabilities(cachedCapabilities!.value);
+        setIsLoading(false);
+      } else {
+        setIsLoading(true);
+      }
 
       // Identity refresh runs concurrently with the list fetches (it used to be
       // serialized after them, adding a full round-trip to the skeleton time).
@@ -197,11 +219,13 @@ export function HomeScreen() {
         user?.role === 'TECHNICIAN' || user?.role === 'SUPERVISOR'
           ? WARM_VISIT_LIMIT
           : 0;
-      const activeVisitsWithImageData = await loadVisitDetails(
-        token,
-        activeResult.value,
-        warmCount,
-      );
+      // Per-visit DETAIL fetches exist to cache visits for offline re-open —
+      // a FIELD need. Office roles skip them (a wide account's active list is
+      // every crew's visits = dozens of awaited round-trips for nothing).
+      const activeVisitsWithImageData =
+        warmCount > 0
+          ? await loadVisitDetails(token, activeResult.value, warmCount)
+          : activeResult.value;
 
       setActiveVisits(activeVisitsWithImageData);
       setCompletedVisits(completedResult.value);
