@@ -128,10 +128,13 @@ export function HomeScreen() {
     useState<MobileWorkspaceId | null>(null);
   const [selectedScope, setSelectedScope] = useState<OperationalScope>('SAVR');
   const [capabilities, setCapabilities] = useState<EffectiveCapability[]>([]);
-  // Which Mainhead sections the crew has collapsed. Held here (not inside
-  // InspectionWorkspaceView) so it survives a refresh — the parent unmounts that
-  // child while isLoading, which would otherwise reset every section to expanded.
-  const [collapsedMainheads, setCollapsedMainheads] = useState<Set<string>>(
+  // Which Mainhead sections the crew has EXPANDED. Default = none: a multi-
+  // Mainhead account first sees just the Mainhead headers (owner feedback — the
+  // fully-expanded list was too long to scan) and opens the one it needs. Held
+  // here (not inside InspectionWorkspaceView) so it survives a refresh — the
+  // parent unmounts that child while isLoading, which would otherwise reset
+  // the crew's choice.
+  const [expandedMainheads, setExpandedMainheads] = useState<Set<string>>(
     () => new Set(),
   );
   const theme = useTheme();
@@ -337,7 +340,7 @@ export function HomeScreen() {
   );
 
   const toggleMainhead = useCallback((key: string) => {
-    setCollapsedMainheads((current) => {
+    setExpandedMainheads((current) => {
       const next = new Set(current);
       if (next.has(key)) {
         next.delete(key);
@@ -445,7 +448,7 @@ export function HomeScreen() {
           queueItems={queueItems}
           onSelectScope={setSelectedScope}
           onOpenQueueItem={handleOpenQueueItem}
-          collapsedMainheads={collapsedMainheads}
+          expandedMainheads={expandedMainheads}
           onToggleMainhead={toggleMainhead}
         />
       ) : null}
@@ -519,7 +522,7 @@ function InspectionWorkspaceView({
   queueItems,
   onSelectScope,
   onOpenQueueItem,
-  collapsedMainheads,
+  expandedMainheads,
   onToggleMainhead,
 }: {
   availableScopes: OperationalScope[];
@@ -528,7 +531,7 @@ function InspectionWorkspaceView({
   queueItems: InspectionQueueItem[];
   onSelectScope: (scope: OperationalScope) => void;
   onOpenQueueItem: (item: InspectionQueueItem) => void;
-  collapsedMainheads: Set<string>;
+  expandedMainheads: Set<string>;
   onToggleMainhead: (key: string) => void;
 }) {
   const theme = useTheme();
@@ -605,7 +608,7 @@ function InspectionWorkspaceView({
         // Multiple Mainheads: a collapsible labelled section per Mainhead, with
         // its status groups nested within.
         mainheadGroups.map((group) => {
-          const collapsed = collapsedMainheads.has(group.key);
+          const collapsed = !expandedMainheads.has(group.key);
 
           return (
             <View key={group.key} style={styles.mainheadSection}>

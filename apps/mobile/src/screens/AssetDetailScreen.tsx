@@ -792,7 +792,7 @@ export function AssetDetailScreen() {
               style={({ pressed }) => [styles.directionsButton, pressed && styles.pressedButton]}
             >
               <Feather name="navigation" size={16} color="#ffffff" />
-              <Text style={styles.directionsButtonText}>Get Directions (Google Maps)</Text>
+              <Text style={styles.directionsButtonText}>Get Directions</Text>
             </Pressable>
           </View>
         ) : null}

@@ -117,9 +117,11 @@ type MapControlDeckProps = {
   showHeatmap: boolean;
   showFeederLines: boolean;
   showSequenceWarnings: boolean;
+  colorByPencawang: boolean;
   onToggleHeatmap: () => void;
   onToggleFeederLines: () => void;
   onToggleSequenceWarnings: () => void;
+  onToggleColorByPencawang: () => void;
   currentAccuracy: number | null;
   locationMessage: string | null;
   onRequestCurrentLocation: () => void;
@@ -148,6 +150,36 @@ const DEFECT_HEATMAP_RADIUS = 42;
 // Cluster bubbles use the brand blue (theme isn't readable at layer-style
 // scope); leaf circles keep each pole's own status colour via ['get','color'].
 const ASSET_CLUSTER_COLOR = '#2563EB';
+
+// "Colour by Pencawang" palette: 12 visually-distinct hues assigned by hashing
+// the substationId, so each Pencawang's poles share one colour and neighbouring
+// Pencawang (the redundancy question) almost always land on different ones.
+// >12 Pencawang in one view can repeat a colour — acceptable for a field check.
+const PENCAWANG_COLOR_PALETTE = [
+  '#2563EB',
+  '#DB2777',
+  '#16A34A',
+  '#EA580C',
+  '#7C3AED',
+  '#0891B2',
+  '#CA8A04',
+  '#DC2626',
+  '#0D9488',
+  '#9333EA',
+  '#65A30D',
+  '#C2410C',
+];
+
+function pencawangColor(substationId: string | null | undefined) {
+  if (!substationId) {
+    return ASSET_CLUSTER_COLOR;
+  }
+  let hash = 0;
+  for (let i = 0; i < substationId.length; i++) {
+    hash = (hash * 31 + substationId.charCodeAt(i)) | 0;
+  }
+  return PENCAWANG_COLOR_PALETTE[Math.abs(hash) % PENCAWANG_COLOR_PALETTE.length];
+}
 const DEFECT_HEATMAP_OPACITY = 0.78;
 const DEFECT_HEATMAP_GRADIENT = {
   colors: ['#22c55e', '#facc15', '#dc2626'],
@@ -235,6 +267,10 @@ export function MapScreen() {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showFeederLines, setShowFeederLines] = useState(false);
   const [showSequenceWarnings, setShowSequenceWarnings] = useState(false);
+  // Layers toggle: fill poles by their PENCAWANG (one colour per Pencawang)
+  // instead of inspection status — the "is my Pencawang overlapping that one?"
+  // field check.
+  const [colorByPencawang, setColorByPencawang] = useState(false);
   const [mapFilters, setMapFilters] = useState<MapFilters>(INITIAL_MAP_FILTERS);
   const [region, setRegion] = useState<Region>(
     hasExplicitFocusCoordinate
@@ -886,10 +922,29 @@ export function MapScreen() {
                 id="asset-points"
                 filter={['!', ['has', 'point_count']]}
                 style={{
-                  circleColor: ['get', 'color'],
+                  circleColor: colorByPencawang
+                    ? ['get', 'pencawangColor']
+                    : ['get', 'color'],
                   circleRadius: 7,
                   circleStrokeWidth: 2,
                   circleStrokeColor: '#ffffff',
+                }}
+              />
+              {/* Pole codes (NO TIANG RONDAAN / KOD TIANG) appear once zoomed
+                  close enough that they don't smear into each other. */}
+              <Mapbox.SymbolLayer
+                id="asset-point-labels"
+                filter={['!', ['has', 'point_count']]}
+                minZoomLevel={16}
+                style={{
+                  textField: ['get', 'label'],
+                  textSize: 11,
+                  textColor: '#ffffff',
+                  textHaloColor: 'rgba(15, 23, 42, 0.9)',
+                  textHaloWidth: 1.2,
+                  textOffset: [0, 1.1],
+                  textAnchor: 'top',
+                  textAllowOverlap: false,
                 }}
               />
             </Mapbox.ShapeSource>
@@ -911,10 +966,14 @@ export function MapScreen() {
             showHeatmap={showHeatmap}
             showFeederLines={showFeederLines}
             showSequenceWarnings={showSequenceWarnings}
+            colorByPencawang={colorByPencawang}
             onToggleHeatmap={() => setShowHeatmap((currentValue) => !currentValue)}
             onToggleFeederLines={() => setShowFeederLines((currentValue) => !currentValue)}
             onToggleSequenceWarnings={() =>
               setShowSequenceWarnings((currentValue) => !currentValue)
+            }
+            onToggleColorByPencawang={() =>
+              setColorByPencawang((currentValue) => !currentValue)
             }
             currentAccuracy={currentAccuracy}
             locationMessage={locationMessage}
@@ -994,9 +1053,11 @@ function MapControlDeck({
   showHeatmap,
   showFeederLines,
   showSequenceWarnings,
+  colorByPencawang,
   onToggleHeatmap,
   onToggleFeederLines,
   onToggleSequenceWarnings,
+  onToggleColorByPencawang,
   currentAccuracy,
   locationMessage,
   onRequestCurrentLocation,
@@ -1008,7 +1069,8 @@ function MapControlDeck({
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [openMenu, setOpenMenu] = useState<MapControlMenu>(null);
-  const hasActiveLayers = showHeatmap || showFeederLines || showSequenceWarnings;
+  const hasActiveLayers =
+    showHeatmap || showFeederLines || showSequenceWarnings || colorByPencawang;
   const mapTypeLabel = mapType === 'hybrid' ? 'Sat' : 'Map';
   // The floating count strip reflects the active mode, so the crew sees the
   // number that matches what's on the map (poles in Assets mode, defects in
@@ -1083,6 +1145,12 @@ function MapControlDeck({
               isActive={showSequenceWarnings}
               activeColor="#b45309"
               onPress={onToggleSequenceWarnings}
+            />
+            <MapLayerMenuOption
+              label="Pencawang colours"
+              isActive={colorByPencawang}
+              activeColor="#7C3AED"
+              onPress={onToggleColorByPencawang}
             />
           </View>
         ) : null}
@@ -2036,7 +2104,15 @@ function buildAssetFeatureCollection(
             type: 'Point' as const,
             coordinates: [coordinate.longitude, coordinate.latitude],
           },
-          properties: { assetId: asset.id, color: assetMarkerColor(asset) },
+          properties: {
+            assetId: asset.id,
+            color: assetMarkerColor(asset),
+            // "Colour by Pencawang" alternative fill + the pole-code label the
+            // zoomed-in SymbolLayer shows (assetCode = the NO TIANG RONDAAN /
+            // KOD TIANG mirror).
+            pencawangColor: pencawangColor(asset.substationId),
+            label: asset.assetCode ?? '',
+          },
         },
       ];
     }),
