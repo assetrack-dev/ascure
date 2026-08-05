@@ -548,8 +548,13 @@ export function MapScreen() {
     centerMapOnCoordinate(resolvedFocusCoordinate, FOCUS_REGION_DELTA);
   }, [centerMapOnCoordinate, resolvedFocusCoordinate]);
 
+  // Adding a pole from the map only makes sense INSIDE a visit (the pole needs
+  // its visit + Pencawang context). The side-menu map is a VIEWING tool — no
+  // drop-pin there, so a wide-account browse can't accidentally create poles.
+  const canAddAssetHere = canInspect && Boolean(visitId);
+
   function handleLongPress(feature: GeoJSON.Feature<GeoJSON.Point>) {
-    if (!canInspect) {
+    if (!canAddAssetHere) {
       return;
     }
     const coordinates = feature.geometry?.coordinates;
@@ -589,7 +594,7 @@ export function MapScreen() {
   // onRegionChangeComplete) so adding an asset is "drop + drag to place" rather
   // than hunting for a spot to long-press. Long-press still works as a shortcut.
   function handleDropPinAtCentre() {
-    if (!canInspect) {
+    if (!canAddAssetHere) {
       return;
     }
     setSelectedCoordinate({
@@ -837,7 +842,12 @@ export function MapScreen() {
               shape={assetFeatureCollection}
               cluster
               clusterRadius={45}
-              clusterMaxZoomLevel={16}
+              // Clusters dissolve into REAL poles from zoom 12 (~district
+              // level): the field need is seeing every pole in an area to spot
+              // Pencawang overlap. Uncapped is safe — leaves are GPU circle
+              // layers, not native views (10k+ renders fine); only far-out
+              // zooms cluster, to keep the country view readable.
+              clusterMaxZoomLevel={12}
               onPress={handleAssetSourcePress}
             >
               <Mapbox.CircleLayer
@@ -888,8 +898,9 @@ export function MapScreen() {
         )}
 
         {/* Aiming crosshair: "Drop Pin to Add Asset" captures the map centre, so
-            show a fixed centre target while no pin is placed yet. */}
-        {!isLoading && !selectedCoordinate ? <MapCrosshair /> : null}
+            show a fixed centre target while no pin is placed yet. Only when
+            adding is possible (inside a visit) — the browse map needs no aim. */}
+        {canAddAssetHere && !isLoading && !selectedCoordinate ? <MapCrosshair /> : null}
 
         {!isLoading ? (
           <MapControlDeck
@@ -933,13 +944,13 @@ export function MapScreen() {
             }
             // Lift above the docked "Drop Pin" bar when the crew can add assets so
             // the two bottom sheets don't overlap.
-            liftForDropPin={canInspect}
+            liftForDropPin={canAddAssetHere}
           />
         ) : null}
 
         {/* Add-asset peek card (handoff 1d): grab handle, mono coords, big blue
             navigate button. Restyle of the old selectedPinPanel — same handlers. */}
-        {canInspect && selectedCoordinate ? (
+        {canAddAssetHere && selectedCoordinate ? (
           <View style={styles.peekCard}>
             <View style={styles.grabHandle} />
             <Text style={styles.peekTitle}>Drag pin to adjust location</Text>
@@ -965,7 +976,7 @@ export function MapScreen() {
           </View>
         ) : null}
 
-        {canInspect && !isLoading && !selectedCoordinate ? (
+        {canAddAssetHere && !isLoading && !selectedCoordinate ? (
           <View style={styles.dropPinBar}>
             <AppButton label="Drop Pin to Add Asset" onPress={handleDropPinAtCentre} />
           </View>

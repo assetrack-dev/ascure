@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -773,6 +774,26 @@ export function AssetDetailScreen() {
               </Mapbox.MapView>
             </Pressable>
             <Text style={styles.miniMapHint}>Tap the map to open it at this asset.</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Get directions to this pole in Google Maps"
+              onPress={() => {
+                // The api=1 universal link opens the Google Maps APP on Android
+                // when installed (browser otherwise) — no API key, no package
+                // dependency, works from any screen state.
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${asset.latitude},${asset.longitude}`;
+                void Linking.openURL(url).catch(() => {
+                  Alert.alert(
+                    'Unable to open Google Maps',
+                    'Install or enable Google Maps to get directions.',
+                  );
+                });
+              }}
+              style={({ pressed }) => [styles.directionsButton, pressed && styles.pressedButton]}
+            >
+              <Feather name="navigation" size={16} color="#ffffff" />
+              <Text style={styles.directionsButtonText}>Get Directions (Google Maps)</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -1320,6 +1341,23 @@ const createStyles = (t: Theme) =>
       lineHeight: 16,
       color: t.colors.textSecondary,
       textAlign: 'center',
+    },
+    directionsButton: {
+      marginTop: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      minHeight: 46,
+      borderRadius: t.radius.control,
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 16,
+    },
+    directionsButtonText: {
+      color: '#ffffff',
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
     },
     infoRow: {
       flexDirection: 'row',
