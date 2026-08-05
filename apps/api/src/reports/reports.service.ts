@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   DefectStatus,
+  FeederKind,
   InspectionCompletionStatus,
   InspectionItemInputType,
   InspectionItemResultValue,
@@ -21,6 +22,7 @@ import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
+  canonicalizeSavtRouteCode,
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
   type DisplayStatus,
@@ -1679,9 +1681,29 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // Membership-first numbering: a shared pole's assetCode carries only its
+    // PRIMARY route's number — this route's number lives in the membership.
+    const canonicalRoute = canonicalizeSavtRouteCode(code);
+    const membershipIndex = await this.getSavtMembershipIndex(user.tenantId, [
+      ...latestByAsset.keys(),
+    ]);
     const chosen = [...latestByAsset.values()].sort((a, b) => {
-      const ka = noTiangSortKey(stripRoutePrefix(a.asset.assetCode, code));
-      const kb = noTiangSortKey(stripRoutePrefix(b.asset.assetCode, code));
+      const ka = noTiangSortKey(
+        this.savtNoTiangCell(
+          membershipIndex.get(a.assetId),
+          canonicalRoute,
+          a.asset.assetCode,
+          code,
+        ),
+      );
+      const kb = noTiangSortKey(
+        this.savtNoTiangCell(
+          membershipIndex.get(b.assetId),
+          canonicalRoute,
+          b.asset.assetCode,
+          code,
+        ),
+      );
       return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
     });
 
@@ -1722,8 +1744,21 @@ export class ReportsService {
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
-        sanitizeText(stripRoutePrefix(insp.asset.assetCode, code)),
+        sanitizeText(
+          this.savtNoTiangCell(
+            membershipIndex.get(insp.assetId),
+            canonicalRoute,
+            insp.asset.assetCode,
+            code,
+          ),
+        ),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        sanitizeText(
+          this.savtSharedWithCell(
+            membershipIndex.get(insp.assetId),
+            canonicalRoute,
+          ),
+        ),
       ];
 
       const itemCells = templateMatrixCells(
@@ -1832,14 +1867,25 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // Membership-first numbering per row (see buildSavtRouteChecklist).
+    const membershipIndex = await this.getSavtMembershipIndex(user.tenantId, [
+      ...latestByAsset.keys(),
+    ]);
+    const rowNoTiang = (insp: (typeof inspections)[number], route: string) =>
+      this.savtNoTiangCell(
+        membershipIndex.get(insp.assetId),
+        canonicalizeSavtRouteCode(route),
+        insp.asset.assetCode,
+        route,
+      );
     const chosen = [...latestByAsset.values()].sort((a, b) => {
       const ra = (a.siteVisit?.routeCode ?? '').trim();
       const rb = (b.siteVisit?.routeCode ?? '').trim();
       if (ra !== rb) {
         return ra.localeCompare(rb);
       }
-      const ka = noTiangSortKey(stripRoutePrefix(a.asset.assetCode, ra));
-      const kb = noTiangSortKey(stripRoutePrefix(b.asset.assetCode, rb));
+      const ka = noTiangSortKey(rowNoTiang(a, ra));
+      const kb = noTiangSortKey(rowNoTiang(b, rb));
       return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
     });
 
@@ -1881,8 +1927,14 @@ export class ReportsService {
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
-        sanitizeText(stripRoutePrefix(insp.asset.assetCode, code)),
+        sanitizeText(rowNoTiang(insp, code)),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        sanitizeText(
+          this.savtSharedWithCell(
+            membershipIndex.get(insp.assetId),
+            canonicalizeSavtRouteCode(code),
+          ),
+        ),
       ];
 
       const itemCells = templateMatrixCells(
@@ -1898,6 +1950,70 @@ export class ReportsService {
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
     const statusTag = lifecycleStatus ? `_${lifecycleStatus}` : '';
     return { buffer, filename: `ALL_SAVT_ROUTES${statusTag}_CHECKLIST.xlsx` };
+  }
+
+  /**
+   * Per-asset SAVT route memberships (docs/PLAN-savt-shared-poles.md): each
+   * pole's canonical route codes with its per-route No. Tiang. Drives the
+   * membership-first "No. Tiang" cell (a shared pole's assetCode carries only
+   * its primary route's number) and the KONGSI DENGAN column.
+   */
+  private async getSavtMembershipIndex(
+    tenantId: string,
+    assetIds: string[],
+  ): Promise<Map<string, { code: string; noTiang: string }[]>> {
+    const rows = assetIds.length
+      ? await this.prisma.poleFeederMembership.findMany({
+          where: {
+            assetId: { in: assetIds },
+            feeder: { tenantId, kind: FeederKind.SAVT },
+          },
+          select: {
+            assetId: true,
+            sequenceIndex: true,
+            branchSuffix: true,
+            feeder: { select: { code: true } },
+          },
+        })
+      : [];
+    const byAsset = new Map<string, { code: string; noTiang: string }[]>();
+    for (const row of rows) {
+      const list = byAsset.get(row.assetId) ?? [];
+      list.push({
+        code: row.feeder.code,
+        noTiang: `${row.sequenceIndex}${row.branchSuffix}`,
+      });
+      byAsset.set(row.assetId, list);
+    }
+    return byAsset;
+  }
+
+  /** This route's No. Tiang for a pole: its membership on the route when one
+   *  exists (correct for shared poles), else stripped from the assetCode
+   *  (pre-backfill fallback). */
+  private savtNoTiangCell(
+    memberships: { code: string; noTiang: string }[] | undefined,
+    canonicalRoute: string | null,
+    assetCode: string,
+    rawRoute: string,
+  ): string {
+    const onRoute = canonicalRoute
+      ? memberships?.find((m) => m.code === canonicalRoute)
+      : undefined;
+    return onRoute?.noTiang ?? stripRoutePrefix(assetCode, rawRoute);
+  }
+
+  /** The pole's codes on its OTHER routes, e.g. "KK - MM 12" — so a shared
+   *  pole reads as shared, not as a duplicate. */
+  private savtSharedWithCell(
+    memberships: { code: string; noTiang: string }[] | undefined,
+    canonicalRoute: string | null,
+  ): string {
+    return (memberships ?? [])
+      .filter((m) => m.code !== canonicalRoute)
+      .map((m) => `${m.code} ${m.noTiang}`)
+      .sort()
+      .join(', ');
   }
 
   /**
@@ -2826,6 +2942,10 @@ const SAVT_META_HEADERS = [
   'LOCATION',
   'No. Tiang',
   'NO TIANG LAMA',
+  // A shared-corridor pole's codes on its OTHER routes ("KK - MM 12") — the
+  // same physical pole appearing in several per-feeder reports is by design
+  // (docs/PLAN-savt-shared-poles.md), not a duplicate.
+  'KONGSI DENGAN',
 ];
 
 /**

@@ -1649,10 +1649,21 @@ enum SwitchState {
 
 // --- Network graph spine (north-star §2-§3; docs/adr/0001-network-graph-storage-model.md) ---
 
+// RONDAAN = an LV distribution feeder of ONE Pencawang (code is a NO TIANG
+// RONDAAN feeder token, e.g. "B"). SAVT = an HV overhead route OWNED BY its
+// source Pencawang (code is the KOD TIANG, e.g. "KK - LL"; the pair is unique —
+// no double circuits, owner-confirmed 2026-08-05). Kept in one table so
+// PoleFeederMembership serves both; queries must filter by kind.
+enum FeederKind {
+  RONDAAN
+  SAVT
+}
+
 model Feeder {
   id           String                 @id @default(uuid()) @db.Uuid
   tenantId     String                 @db.Uuid
   substationId String                 @db.Uuid
+  kind         FeederKind             @default(RONDAAN)
   code         String
   name         String?
   isActive     Boolean                @default(true)

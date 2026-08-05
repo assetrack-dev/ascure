@@ -386,11 +386,28 @@ function normalizeAssetDetail(rawAsset: unknown, index = 0): AssetDetail | null 
     })
     .filter((image): image is InspectionEvidenceImage => Boolean(image));
 
+  const savtRoutes = (Array.isArray(record.savtRoutes) ? record.savtRoutes : [])
+    .map((raw) => {
+      const routeRecord = asRecord(raw);
+      const routeCode = readString(routeRecord, "routeCode");
+      const noTiang = readString(routeRecord, "noTiang");
+      if (!routeCode || !noTiang) {
+        return null;
+      }
+      return {
+        routeCode,
+        noTiang,
+        poleCode: readString(routeRecord, "poleCode") ?? `${routeCode} ${noTiang}`,
+      };
+    })
+    .filter((route): route is NonNullable<typeof route> => Boolean(route));
+
   return {
     ...baseAsset,
     name: firstString(record, ["name", "assetName"]),
     latitude: readNumber(record, "latitude"),
     longitude: readNumber(record, "longitude"),
+    savtRoutes,
     latestInspection: latestInspection
       ? {
           id: firstString(latestInspection, ["id", "inspectionId"]) ?? "latest-inspection",

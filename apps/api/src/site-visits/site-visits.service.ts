@@ -12,6 +12,7 @@ import { extname, resolve } from 'path';
 import {
   AssetStatus,
   InspectionCompletionStatus,
+  OperationalScope,
   Prisma,
   SiteVisitStatus,
   SiteVisitType,
@@ -41,6 +42,7 @@ import {
   type ChecklistImage,
 } from '../common/checklist-columns';
 import {
+  canonicalizeSavtRouteCode,
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
 } from '@ascure/shared-utils';
@@ -51,6 +53,7 @@ import {
   scopeRequiresQAQC,
 } from '../common/operational-scope';
 import { normalizeOperationalText } from '../common/operational-text';
+import { upsertSavtMembership } from '../common/savt-graph';
 import {
   buildSiteVisitImagePath,
   buildSiteVisitImagesDirectory,
@@ -1148,6 +1151,25 @@ export class SiteVisitsService {
     const siteVisit = await this.findAccessibleSiteVisit(user, id);
     this.assertVisitIsMutable(siteVisit);
 
+    // SAVT shared-pole link: the crew is standing under a pole that already
+    // exists on ANOTHER route and is joining it to THIS route with this
+    // route's own No. Tiang (docs/PLAN-savt-shared-poles.md).
+    const isSharedPoleLink = dto.savtNoTiang !== undefined;
+    const routeCode = canonicalizeSavtRouteCode(siteVisit.routeCode);
+
+    if (isSharedPoleLink) {
+      if (siteVisit.operationalScope !== OperationalScope.SAVT) {
+        throw new BadRequestException(
+          'Shared-pole linking is only available on a SAVT route survey.',
+        );
+      }
+      if (!routeCode) {
+        throw new BadRequestException(
+          'This SAVT visit has no KOD TIANG; a shared pole cannot be numbered on it.',
+        );
+      }
+    }
+
     const asset = await this.prisma.asset.findFirst({
       where: {
         id: dto.assetId,
@@ -1163,35 +1185,69 @@ export class SiteVisitsService {
       throw new NotFoundException('Asset not found.');
     }
 
-    if (asset.substationId !== siteVisit.substationId) {
+    // A shared SAVT pole may live under a different source Pencawang than this
+    // route's (corridors can be shared by feeders of different sources), so
+    // the same-substation guard applies only to the non-SAVT link flow.
+    if (!isSharedPoleLink && asset.substationId !== siteVisit.substationId) {
       throw new BadRequestException('Asset does not belong to the substation for the selected site visit.');
     }
 
     const source = this.normalizeOptionalString(dto.source);
     const notes = this.normalizeOperationalString(dto.notes);
 
-    const link = await this.prisma.siteVisitAsset.upsert({
-      where: {
-        siteVisitId_assetId: {
-          siteVisitId: siteVisit.id,
-          assetId: asset.id,
-        },
-      },
-      create: {
-        siteVisitId: siteVisit.id,
-        assetId: asset.id,
-        addedByUserId: user.id,
-        source: source ?? 'MANUAL',
-        notes,
-      },
-      update: {
-        ...(dto.source !== undefined ? { source } : {}),
-        ...(dto.notes !== undefined ? { notes } : {}),
-      },
-      include: SITE_VISIT_ASSET_INCLUDE,
-    });
+    try {
+      const link = await this.prisma.$transaction(async (tx) => {
+        const upserted = await tx.siteVisitAsset.upsert({
+          where: {
+            siteVisitId_assetId: {
+              siteVisitId: siteVisit.id,
+              assetId: asset.id,
+            },
+          },
+          create: {
+            siteVisitId: siteVisit.id,
+            assetId: asset.id,
+            addedByUserId: user.id,
+            source: source ?? (isSharedPoleLink ? 'SHARED_POLE_LINK' : 'MANUAL'),
+            notes,
+          },
+          update: {
+            ...(dto.source !== undefined ? { source } : {}),
+            ...(dto.notes !== undefined ? { notes } : {}),
+          },
+          include: SITE_VISIT_ASSET_INCLUDE,
+        });
 
-    return this.serializeSiteVisitAssetLink(link);
+        if (isSharedPoleLink && routeCode) {
+          await upsertSavtMembership(tx, {
+            tenantId: user.tenantId,
+            assetId: asset.id,
+            feederSubstationId:
+              siteVisit.fromPencawangId ?? siteVisit.substationId,
+            routeCode,
+            noTiang: dto.savtNoTiang as number,
+            branchSuffix: dto.savtBranchSuffix ?? '',
+          });
+        }
+
+        return upserted;
+      });
+
+      return this.serializeSiteVisitAssetLink(link);
+    } catch (error) {
+      // (feederId, sequenceIndex, branchSuffix) is unique — another pole
+      // already holds this No. Tiang on the route.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `No. Tiang ${dto.savtNoTiang}${dto.savtBranchSuffix ?? ''} is already used on route ${routeCode}.`,
+        );
+      }
+
+      throw error;
+    }
   }
 
   async complete(user: RequestUser, id: string, dto: CompleteSiteVisitDto) {
@@ -1506,6 +1562,10 @@ export class SiteVisitsService {
         sessionKind: prior.sessionKind,
         fromPencawangId: prior.fromPencawangId,
         toPencawangId: prior.toPencawangId,
+        // Carry the route identity into the next cycle (canonicalized — the
+        // prior may predate KOD TIANG canonicalization); without it a cycle-2
+        // SAVT visit falls out of every per-route report.
+        routeCode: canonicalizeSavtRouteCode(prior.routeCode),
         requiresQAQC: prior.requiresQAQC,
         reportingGroup: prior.reportingGroup,
         mainhead: prior.mainhead,
@@ -1933,9 +1993,11 @@ export class SiteVisitsService {
       toPencawangId,
       requiresQAQC: dto.requiresQAQC ?? scopeRequiresQAQC(operationalScope),
       reportingGroup: this.normalizeOperationalString(dto.reportingGroup),
-      // Plain trim (not normalizeOperationalString) so the route code is stored
-      // exactly as entered — e.g. "MI - KUK" keeps its spacing.
-      routeCode: this.normalizeOptionalString(dto.routeCode),
+      // The KOD TIANG is a SAVT feeder identity key (shared-pole memberships,
+      // per-route reports), so it must be canonical on write — crews re-type it
+      // from the plate and "MI-KUK" / "MI – KUK" would otherwise split one
+      // route into two feeders. Canonical form keeps the "MI - KUK" spacing.
+      routeCode: canonicalizeSavtRouteCode(dto.routeCode),
     };
   }
 
