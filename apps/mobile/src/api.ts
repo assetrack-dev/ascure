@@ -809,6 +809,30 @@ export const api = {
     });
   },
 
+  /**
+   * SAVT shared-pole link ("Tiang kongsi", docs/PLAN-savt-shared-poles.md):
+   * joins an EXISTING pole to this route's visit, carrying THIS route's own
+   * No. Tiang — the server creates the pole's membership on the route instead
+   * of a duplicate asset. 409 = that No. Tiang is already taken on the route.
+   */
+  linkVisitAsset(
+    token: string,
+    siteVisitId: string,
+    input: {
+      assetId: string;
+      savtNoTiang?: number;
+      savtBranchSuffix?: string;
+      source?: string;
+      notes?: string;
+    },
+  ) {
+    return request<unknown>(`/site-visits/${siteVisitId}/assets`, {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  },
+
   updateAsset(token: string, assetId: string, input: UpdateAssetInput) {
     return request<Asset>(`/assets/${assetId}`, {
       method: 'PUT',

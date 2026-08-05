@@ -42,11 +42,29 @@ import { Asset, AssetStatus, AssetType, SiteVisit, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 import { normalizePoleInput, suggestNextPoleCode } from '../utils/feederSequence';
 import { loadLastPoleCode, storeLastPoleCode } from '../storage';
+import { parseSavtPoleCode } from '@ascure/shared-utils';
 
 type Coordinate = {
   latitude: number;
   longitude: number;
 };
+
+// "Tiang kongsi" candidates must be within arm's reach of where the crew
+// stands. Field GPS runs ±10–55 m; 30 m matches the backfill's duplicate-
+// suspect radius (docs/PLAN-savt-shared-poles.md).
+const SHARED_POLE_RADIUS_METERS = 30;
+
+function distanceMeters(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const R = 6371000;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((aLat * Math.PI) / 180) *
+      Math.cos((bLat * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
 
 type CoordinateSource = 'current_gps' | 'map_picker' | 'manual';
 
@@ -178,6 +196,13 @@ export function AddAssetScreen() {
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [suggestedCode, setSuggestedCode] = useState<string | null>(null);
+  // "Tiang kongsi": the pole the crew stands under already exists on ANOTHER
+  // route — link it to THIS route (with this route's own No. Tiang) instead of
+  // creating a duplicate asset (docs/PLAN-savt-shared-poles.md Phase B).
+  const [sharedPoleMode, setSharedPoleMode] = useState(false);
+  // null = still loading from cache/network.
+  const [sharedPoleCandidates, setSharedPoleCandidates] = useState<Asset[] | null>(null);
+  const [sharedPoleTargetId, setSharedPoleTargetId] = useState<string | null>(null);
   // SAVT route context, fetched from the visit. A SAVT survey numbers poles as a
   // running integer carrying the route's KOD TIANG (e.g. "MI - KUK 1"), unlike
   // SAVR's feeder grammar. Detected by the VISIT scope (authoritative), not the
@@ -287,6 +312,76 @@ export function AddAssetScreen() {
       cancelled = true;
     };
   }, [assetToEdit, isSAVTWorkflow, routePrefix, substationId, selectedSubstationId, token]);
+
+  // Shared-pole candidates come from the Pencawang's cached asset register, so
+  // the flow works offline (the corridor's poles are cached with the visit).
+  // Limitation (accepted for Phase B v1): a corridor shared with a route from a
+  // DIFFERENT source Pencawang only resolves when that Pencawang's assets are
+  // cached or the device is online.
+  useEffect(() => {
+    if (!sharedPoleMode || assetToEdit || !isSAVTWorkflow) {
+      return;
+    }
+    const target = substationId ?? selectedSubstationId;
+    if (!target) {
+      setSharedPoleCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    setSharedPoleCandidates(null);
+    cachedFetch('assets', target, () => api.getAssets(token, target))
+      .then(({ value }) => {
+        if (!cancelled) {
+          setSharedPoleCandidates(value);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSharedPoleCandidates([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedPoleMode, assetToEdit, isSAVTWorkflow, substationId, selectedSubstationId, token]);
+
+  const isSharedLinkActive = isSAVTWorkflow && sharedPoleMode && !assetToEdit;
+
+  // Nearby = has GPS, on ANOTHER route (code doesn't carry this KOD TIANG),
+  // within the radius of the form's coordinate; closest first.
+  const nearbySharedPoleCandidates = useMemo(() => {
+    if (!isSharedLinkActive) {
+      return [];
+    }
+    if (sharedPoleCandidates == null) {
+      return null; // still loading
+    }
+    const lat = Number.parseFloat(latitude);
+    const lng = Number.parseFloat(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return [];
+    }
+    const prefix = routePrefix ? `${routePrefix} `.toUpperCase() : null;
+    return sharedPoleCandidates
+      .filter(
+        (candidate) =>
+          typeof candidate.latitude === 'number' &&
+          typeof candidate.longitude === 'number' &&
+          (!prefix || !(candidate.assetCode ?? '').toUpperCase().startsWith(prefix)),
+      )
+      .map((candidate) => ({
+        asset: candidate,
+        meters: distanceMeters(
+          lat,
+          lng,
+          candidate.latitude as number,
+          candidate.longitude as number,
+        ),
+      }))
+      .filter((entry) => entry.meters <= SHARED_POLE_RADIUS_METERS)
+      .sort((a, b) => a.meters - b.meters)
+      .slice(0, 8);
+  }, [isSharedLinkActive, sharedPoleCandidates, latitude, longitude, routePrefix]);
 
   useEffect(() => {
     setSelectedSubstationId(assetToEdit?.substationId ?? substationId ?? '');
@@ -619,6 +714,94 @@ export function AddAssetScreen() {
 
     if (!normalizedAssetCode) {
       setError(`Please enter ${assetCodeLabel}.`);
+      return;
+    }
+
+    // "Tiang kongsi": LINK the existing pole to this route instead of creating
+    // it again. Runs before the create-only validations — the pole already has
+    // its NO TIANG LAMA, type and GPS; the only new fact is THIS route's number.
+    if (isSharedLinkActive) {
+      if (!siteVisitId || !routePrefix) {
+        setError('Shared-pole linking needs an active SAVT route visit.');
+        return;
+      }
+      const target =
+        nearbySharedPoleCandidates?.find(
+          (entry) => entry.asset.id === sharedPoleTargetId,
+        )?.asset ?? null;
+      if (!target) {
+        setError('Pick the existing shared pole from the nearby list first.');
+        return;
+      }
+      const composedSharedCode = normalizedAssetCode
+        .toUpperCase()
+        .startsWith(`${routePrefix} `.toUpperCase())
+        ? normalizedAssetCode
+        : `${routePrefix} ${normalizedAssetCode}`;
+      const identity = parseSavtPoleCode(composedSharedCode, routePrefix);
+      if (!identity) {
+        setError('No. Tiang for this route must be a number (branches like 33/1 are fine).');
+        return;
+      }
+
+      try {
+        setError(null);
+        setIsSubmitting(true);
+
+        const linkInput = {
+          assetId: target.id,
+          savtNoTiang: identity.noTiang,
+          savtBranchSuffix: identity.branchSuffix || undefined,
+          source: 'SHARED_POLE_LINK',
+        };
+        const queueOfflineLink = async () => {
+          await enqueueMutation({
+            type: 'LINK_VISIT_ASSET',
+            payload: { siteVisitId, ...linkInput } as Record<string, unknown>,
+            tempId: mintTempId('link'),
+            // Wait for an offline-created visit and/or an offline-created
+            // candidate pole to reconcile to real ids first.
+            dependsOn: [
+              ...(isTempId(siteVisitId) ? [siteVisitId] : []),
+              ...(isTempId(target.id) ? [target.id] : []),
+            ],
+            ownerUserId: user.id,
+            label: composedSharedCode,
+            sublabel: 'Tiang kongsi',
+          });
+        };
+
+        if (isTempId(siteVisitId) || isTempId(target.id)) {
+          await queueOfflineLink();
+        } else {
+          try {
+            await api.linkVisitAsset(token, siteVisitId, linkInput);
+          } catch (linkError) {
+            // Offline (server unreachable) → queue, like the create path.
+            if (linkError instanceof ApiError && linkError.status === 0) {
+              await queueOfflineLink();
+            } else {
+              throw linkError;
+            }
+          }
+        }
+
+        // Surface the linked pole in this visit's cached register.
+        await prependToCachedArray('site-visit-assets', siteVisitId, target, (a) => a.id);
+        proceedAfterSave(target, intent);
+      } catch (linkSubmitError) {
+        if (linkSubmitError instanceof ApiError && linkSubmitError.status === 401) {
+          await handleUnauthorized(linkSubmitError);
+          return;
+        }
+        setError(
+          linkSubmitError instanceof Error
+            ? linkSubmitError.message
+            : 'Unable to link the shared pole.',
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -1018,6 +1201,40 @@ export function AddAssetScreen() {
                 </Mono>
               </View>
             ) : null}
+            {isSAVTWorkflow && !isEditMode && routePrefix ? (
+              <SelectCard
+                label="Tiang kongsi (shared pole)"
+                description="The pole in front of you already exists on another route — link it to this route instead of adding it again."
+                selected={sharedPoleMode}
+                onPress={() => {
+                  setSharedPoleMode((current) => !current);
+                  setSharedPoleTargetId(null);
+                }}
+              />
+            ) : null}
+            {isSharedLinkActive ? (
+              nearbySharedPoleCandidates == null ? (
+                <LoadingBlock label="Finding nearby poles..." />
+              ) : nearbySharedPoleCandidates.length === 0 ? (
+                <EmptyState
+                  icon="map-pin"
+                  title="No nearby pole found"
+                  description={`No existing pole from another route within ${SHARED_POLE_RADIUS_METERS} m. Capture GPS at the pole first (Use current location), then try again.`}
+                />
+              ) : (
+                <View style={styles.sharedPoleList}>
+                  {nearbySharedPoleCandidates.map(({ asset, meters }) => (
+                    <SelectCard
+                      key={asset.id}
+                      label={asset.assetCode}
+                      description={`${Math.round(meters)} m away${asset.name ? ` · ${asset.name}` : ''}`}
+                      selected={sharedPoleTargetId === asset.id}
+                      onPress={() => setSharedPoleTargetId(asset.id)}
+                    />
+                  ))}
+                </View>
+              )
+            ) : null}
             <TextField
               label={assetCodeLabel}
               value={assetCode}
@@ -1050,16 +1267,20 @@ export function AddAssetScreen() {
                 <Text style={styles.suggestionChipHint}>Tap to use</Text>
               </Pressable>
             ) : null}
-            <TextField
-              label={assetNameLabel}
-              value={assetName}
-              onChangeText={(nextValue) => setAssetName(normalizeOperationalText(nextValue))}
-              placeholder={isPoleSurvey ? 'No Tiang Lama (atau TNT jika tiada)' : 'Enter a readable asset name'}
-              autoCapitalize="characters"
-            />
+            {/* A shared pole already carries its NO TIANG LAMA — hide the
+                create-only field so the form reads as "link", not "create". */}
+            {!isSharedLinkActive ? (
+              <TextField
+                label={assetNameLabel}
+                value={assetName}
+                onChangeText={(nextValue) => setAssetName(normalizeOperationalText(nextValue))}
+                placeholder={isPoleSurvey ? 'No Tiang Lama (atau TNT jika tiada)' : 'Enter a readable asset name'}
+                autoCapitalize="characters"
+              />
+            ) : null}
           </Card>
 
-          {isPoleSurvey ? (
+          {isPoleSurvey && !isSharedLinkActive ? (
             <Card>
               <SectionTitle>Operational Status</SectionTitle>
               <Pressable
@@ -1638,6 +1859,10 @@ const createStyles = (t: Theme) =>
       borderColor: t.colors.infoBorder,
       backgroundColor: t.colors.infoSoft,
       gap: 2,
+    },
+    sharedPoleList: {
+      gap: 8,
+      marginBottom: 4,
     },
     routeContextLabel: {
       fontSize: 11,

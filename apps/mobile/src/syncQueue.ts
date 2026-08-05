@@ -39,7 +39,11 @@ export type SyncQueueDisplayStatus = SyncQueueStatus | CompletedSyncStatus;
 // inspection-submission keyed on a temp inspectionId) resolves through the same
 // `tempIdMap`.
 
-export type OfflineMutationType = 'CREATE_ASSET' | 'CREATE_INSPECTION' | 'CREATE_VISIT';
+export type OfflineMutationType =
+  | 'CREATE_ASSET'
+  | 'CREATE_INSPECTION'
+  | 'CREATE_VISIT'
+  | 'LINK_VISIT_ASSET';
 
 /**
  * An arrival site photo captured during an OFFLINE check-in. The file is copied
@@ -91,8 +95,10 @@ function nextLocalSuffix() {
   return `${Date.now().toString(36)}_${localIdCounter}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Mint a temp id for an entity created offline. Recognizable via isTempId(). */
-export function mintTempId(entity: 'asset' | 'inspection' | 'visit') {
+/** Mint a temp id for an entity created offline. Recognizable via isTempId().
+ *  'link' = a queued shared-pole link (no new entity; the id is just the
+ *  queue item's identity and maps to the linked asset on completion). */
+export function mintTempId(entity: 'asset' | 'inspection' | 'visit' | 'link') {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
 
@@ -582,6 +588,40 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
           payload as unknown as Parameters<typeof api.createSiteVisit>[1],
         );
         realId = created.id;
+        break;
+      }
+      case 'LINK_VISIT_ASSET': {
+        // SAVT shared-pole link (Tiang kongsi): idempotent server-side upsert,
+        // so at-least-once retry is safe. No new entity is created — the temp
+        // id maps to the linked asset's id (inert, keeps the runner uniform).
+        const link = payload as unknown as {
+          siteVisitId: string;
+          assetId: string;
+          savtNoTiang?: number;
+          savtBranchSuffix?: string;
+          source?: string;
+        };
+        try {
+          await api.linkVisitAsset(token, link.siteVisitId, {
+            assetId: link.assetId,
+            savtNoTiang: link.savtNoTiang,
+            savtBranchSuffix: link.savtBranchSuffix,
+            source: link.source,
+          });
+        } catch (error) {
+          // 409 = this route's No. Tiang was claimed by ANOTHER pole while we
+          // were offline. Retrying can never succeed and the pole + its
+          // inspection sync independently — complete the item with a warning;
+          // the office fixes the numbering from the admin side.
+          if (error instanceof ApiError && error.status === 409) {
+            console.warn(
+              `[offline-sync] shared-pole link "${mutation.label}" hit a No. Tiang conflict: ${getErrorMessage(error)}`,
+            );
+          } else {
+            throw error;
+          }
+        }
+        realId = link.assetId;
         break;
       }
       default: {
@@ -1653,6 +1693,7 @@ function isOfflineMutationType(value: unknown): value is OfflineMutationType {
     case 'CREATE_ASSET':
     case 'CREATE_INSPECTION':
     case 'CREATE_VISIT':
+    case 'LINK_VISIT_ASSET':
       return true;
     default:
       return false;

@@ -49,6 +49,7 @@ import {
 import { Theme, useTheme } from '../theme';
 import { Mainhead, SiteVisit, SiteVisitType, Substation, Team } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
+import { composeSavtRouteCode } from '@ascure/shared-utils';
 
 type CapturedSitePhoto = {
   id: string;
@@ -189,6 +190,73 @@ export function CheckInScreen() {
         ? substations.find((substation) => substation.id === selectedSubstationId) ?? null
         : null,
     [pencawangMode, selectedSubstationId, substations],
+  );
+
+  // KOD TIANG is DERIVED, not free text: `{from KOD PENCAWANG} - {to code}`
+  // (docs/PLAN-savt-shared-poles.md). Crews used to re-type it from the plate,
+  // and "MI-KUK" vs "MI - KUK" would split ONE route into TWO feeders now that
+  // the route code is a feeder identity key. Compose it; the crew VERIFIES it
+  // against the plate instead of transcribing.
+  const composedRouteCode = useMemo(() => {
+    if (!isSavt) {
+      return null;
+    }
+    const fromCode =
+      pencawangMode === 'EXISTING' ? selectedSubstation?.code : pencawangCode;
+    const toCode =
+      toPencawangMode === 'EXISTING'
+        ? substations.find((substation) => substation.id === toPencawangId)?.code
+        : toPencawangCode;
+    return composeSavtRouteCode(fromCode ?? null, toCode ?? null);
+  }, [
+    isSavt,
+    pencawangMode,
+    selectedSubstation,
+    pencawangCode,
+    toPencawangMode,
+    substations,
+    toPencawangId,
+    toPencawangCode,
+  ]);
+
+  // Auto-fill tracks the composed value until the crew edits the field by hand;
+  // clearing the field hands control back to the composer.
+  const routeCodeTouchedRef = useRef(false);
+  useEffect(() => {
+    if (isSavt && composedRouteCode && !routeCodeTouchedRef.current) {
+      setRouteCode(composedRouteCode);
+    }
+  }, [isSavt, composedRouteCode]);
+
+  // Duplicate-Pencawang guard: two crews typing the same Pencawang as "New" with
+  // slightly different codes splits SAVT routes exactly like a mistyped KOD
+  // TIANG (the feeder is keyed on the From-Pencawang record). When the typed
+  // code matches master data, offer a one-tap switch to the existing record.
+  // Best-effort: `substations` loads online; offline the guard stays quiet.
+  const findSubstationByCode = useCallback(
+    (typedCode: string) => {
+      const code = typedCode.trim().toUpperCase();
+      if (!code) {
+        return null;
+      }
+      return (
+        substations.find(
+          (substation) => (substation.code ?? '').trim().toUpperCase() === code,
+        ) ?? null
+      );
+    },
+    [substations],
+  );
+  const fromPencawangDuplicate = useMemo(
+    () => (pencawangMode === 'NEW' ? findSubstationByCode(pencawangCode) : null),
+    [pencawangMode, pencawangCode, findSubstationByCode],
+  );
+  const toPencawangDuplicate = useMemo(
+    () =>
+      isSavt && toPencawangMode === 'NEW'
+        ? findSubstationByCode(toPencawangCode)
+        : null,
+    [isSavt, toPencawangMode, toPencawangCode, findSubstationByCode],
   );
 
   const selectedActiveVisit = useMemo(
@@ -1049,6 +1117,20 @@ export function CheckInScreen() {
               placeholder="Kod pencawang"
               autoCapitalize="characters"
             />
+            {fromPencawangDuplicate ? (
+              <Pressable
+                onPress={() => {
+                  setPencawangMode('EXISTING');
+                  setSelectedSubstationId(fromPencawangDuplicate.id);
+                }}
+              >
+                <BodyText muted>
+                  Pencawang {fromPencawangDuplicate.code} already exists (
+                  {fromPencawangDuplicate.name}) — tap here to use the existing
+                  record instead of creating a duplicate.
+                </BodyText>
+              </Pressable>
+            ) : null}
             <View style={styles.fieldGroup}>
               <EyebrowLabel>MAINHEAD *</EyebrowLabel>
               {!optionsLoaded ? (
@@ -1146,16 +1228,55 @@ export function CheckInScreen() {
                       placeholder="Kod pencawang hujung"
                       autoCapitalize="characters"
                     />
+                    {toPencawangDuplicate ? (
+                      <Pressable
+                        onPress={() => {
+                          setToPencawangMode('EXISTING');
+                          setToPencawangId(toPencawangDuplicate.id);
+                        }}
+                      >
+                        <BodyText muted>
+                          Pencawang {toPencawangDuplicate.code} already exists (
+                          {toPencawangDuplicate.name}) — tap here to use the
+                          existing record instead of creating a duplicate.
+                        </BodyText>
+                      </Pressable>
+                    ) : null}
                   </>
                 )}
 
                 <TextField
                   label="KOD TIANG *"
                   value={routeCode}
-                  onChangeText={(nextValue) => setRouteCode(normalizeOperationalText(nextValue))}
-                  placeholder="Route line code, e.g. MI - KUK"
+                  onChangeText={(nextValue) => {
+                    const normalized = normalizeOperationalText(nextValue);
+                    // Hand control back to the composer when cleared.
+                    routeCodeTouchedRef.current = normalized.length > 0;
+                    setRouteCode(normalized);
+                  }}
+                  placeholder="Auto: {from} - {to}, e.g. MI - KUK"
                   autoCapitalize="characters"
                 />
+                {composedRouteCode ? (
+                  routeCode === composedRouteCode ? (
+                    <BodyText muted>
+                      Auto-filled from the Pencawang codes — verify it matches the
+                      plate on the pole.
+                    </BodyText>
+                  ) : (
+                    <Pressable
+                      onPress={() => {
+                        routeCodeTouchedRef.current = false;
+                        setRouteCode(composedRouteCode);
+                      }}
+                    >
+                      <BodyText muted>
+                        Differs from the composed code {composedRouteCode} — tap
+                        here to restore it, or keep what the plate shows.
+                      </BodyText>
+                    </Pressable>
+                  )
+                ) : null}
               </View>
             ) : null}
           </Card>
