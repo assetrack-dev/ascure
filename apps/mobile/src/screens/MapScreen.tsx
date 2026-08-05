@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import * as Location from 'expo-location';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -37,6 +37,12 @@ type Region = {
 
 type HeatmapPoint = Coordinate & {
   weight: number;
+};
+
+// Structural stand-in for @rnmapbox's OnPressEvent (not exported from the
+// package root): all the press handler reads is the tapped feature list.
+type ShapeSourcePressEvent = {
+  features: GeoJSON.Feature[];
 };
 
 type MapFeederLine = ReturnType<typeof buildFeederLines>[number];
@@ -139,6 +145,9 @@ const CURRENT_LOCATION_REGION_DELTA = 0.005;
 // ~3× closer (≈ a ~165 m-tall view) makes the focused pole fill the screen.
 const FOCUS_REGION_DELTA = 0.0015;
 const DEFECT_HEATMAP_RADIUS = 42;
+// Cluster bubbles use the brand blue (theme isn't readable at layer-style
+// scope); leaf circles keep each pole's own status colour via ['get','color'].
+const ASSET_CLUSTER_COLOR = '#2563EB';
 const DEFECT_HEATMAP_OPACITY = 0.78;
 const DEFECT_HEATMAP_GRADIENT = {
   colors: ['#22c55e', '#facc15', '#dc2626'],
@@ -589,29 +598,72 @@ export function MapScreen() {
     });
   }
 
-  const mapMarkers = useMemo(() => {
-    const markers = filteredAssets.flatMap((asset) => {
-      const coordinate = getAssetCoordinate(asset);
+  // The clustered pole source: every filtered pole as a GeoJSON feature carrying
+  // its status colour, rendered by GPU circle layers (clusters + leaves) instead
+  // of native views. This is what lets 10k+ poles render without an ANR.
+  const assetFeatureCollection = useMemo(
+    () => buildAssetFeatureCollection(filteredAssets),
+    [filteredAssets],
+  );
 
-      if (!coordinate) {
-        return [];
+  const assetById = useMemo(
+    () => new Map(filteredAssets.map((asset) => [asset.id, asset])),
+    [filteredAssets],
+  );
+
+  const handleAssetSourcePress = useCallback(
+    (event: ShapeSourcePressEvent) => {
+      const feature = event.features?.[0];
+      if (!feature) {
+        return;
       }
+      const properties = (feature.properties ?? {}) as Record<string, unknown>;
+      if (properties.cluster) {
+        // Tap a cluster = step INTO it (mirrors the admin-web drill-down).
+        const geometry = feature.geometry as GeoJSON.Point | undefined;
+        if (geometry?.type === 'Point') {
+          const [longitude, latitude] = geometry.coordinates;
+          cameraRef.current?.setCamera({
+            centerCoordinate: [longitude, latitude],
+            zoomLevel: Math.min(regionToZoomLevel(region.latitudeDelta) + 2, 20),
+            animationDuration: 350,
+          });
+        }
+        return;
+      }
+      const assetId = properties.assetId;
+      if (typeof assetId === 'string') {
+        const asset = assetById.get(assetId);
+        if (asset) {
+          handleOpenAssetDetail(asset);
+        }
+      }
+    },
+    [assetById, handleOpenAssetDetail, region.latitudeDelta],
+  );
 
-      const focused = Boolean(focusAssetId && asset.id === focusAssetId);
-      const markerColor = assetMarkerColor(asset);
-
-      return [
-        <AssetMarker
-          key={`asset-${asset.id}`}
-          coordinate={coordinate}
-          color={markerColor}
-          // Highlight the asset we were opened to focus (from Asset Detail) so
-          // it's distinguishable from its neighbours.
-          focused={focused}
-          onPress={() => handleOpenAssetDetail(asset)}
-        />,
-      ];
-    });
+  const mapMarkers = useMemo(() => {
+    // Poles render as ONE clustered ShapeSource (see asset-cluster-source in the
+    // MapView), NOT one MarkerView each: a MarkerView is a live native Android
+    // view, and the widest accounts see 10k+ poles — 10k native views froze the
+    // UI thread into an ANR ("ASCURE isn't responding"). Only the FOCUSED pole
+    // keeps a MarkerView, so the pole opened from Asset Detail still pops.
+    const markers: ReactElement[] = [];
+    if (focusAssetId) {
+      const focusedAsset = filteredAssets.find((asset) => asset.id === focusAssetId);
+      const coordinate = focusedAsset ? getAssetCoordinate(focusedAsset) : null;
+      if (focusedAsset && coordinate) {
+        markers.push(
+          <AssetMarker
+            key={`asset-${focusedAsset.id}`}
+            coordinate={coordinate}
+            color={assetMarkerColor(focusedAsset)}
+            focused
+            onPress={() => handleOpenAssetDetail(focusedAsset)}
+          />,
+        );
+      }
+    }
 
     if (!showHeatmap) {
       markers.push(
@@ -776,6 +828,61 @@ export function MapScreen() {
                   </Mapbox.ShapeSource>
                 ))
               : null}
+            {/* Clustered pole rendering (GPU circle layers, NOT native views):
+                clusters carry a count and split apart on zoom/tap, like the
+                admin-web hierarchical map; leaf circles keep each pole's status
+                colour and open Asset Detail on tap. */}
+            <Mapbox.ShapeSource
+              id="asset-cluster-source"
+              shape={assetFeatureCollection}
+              cluster
+              clusterRadius={45}
+              clusterMaxZoomLevel={16}
+              onPress={handleAssetSourcePress}
+            >
+              <Mapbox.CircleLayer
+                id="asset-cluster-circles"
+                filter={['has', 'point_count']}
+                style={{
+                  circleColor: ASSET_CLUSTER_COLOR,
+                  circleOpacity: 0.92,
+                  circleRadius: [
+                    'interpolate',
+                    ['linear'],
+                    ['get', 'point_count'],
+                    2,
+                    14,
+                    100,
+                    19,
+                    1000,
+                    25,
+                  ],
+                  circleStrokeWidth: 2,
+                  circleStrokeColor: '#ffffff',
+                }}
+              />
+              <Mapbox.SymbolLayer
+                id="asset-cluster-counts"
+                filter={['has', 'point_count']}
+                style={{
+                  textField: ['get', 'point_count_abbreviated'],
+                  textSize: 12,
+                  textColor: '#ffffff',
+                  textAllowOverlap: true,
+                  textIgnorePlacement: true,
+                }}
+              />
+              <Mapbox.CircleLayer
+                id="asset-points"
+                filter={['!', ['has', 'point_count']]}
+                style={{
+                  circleColor: ['get', 'color'],
+                  circleRadius: 7,
+                  circleStrokeWidth: 2,
+                  circleStrokeColor: '#ffffff',
+                }}
+              />
+            </Mapbox.ShapeSource>
             {mapMarkers}
           </Mapbox.MapView>
         )}
@@ -1414,9 +1521,19 @@ async function loadAssetsForMap(token: string, substationId?: string, visitId?: 
   return (
     await cachedFetch('map-all-assets', undefined, async () => {
       const substations = await api.getSubstations(token);
-      const assetGroups = await Promise.all(
-        substations.map((substation) => api.getAssets(token, substation.id)),
-      );
+      // Chunked, NOT one burst: an unbounded Promise.all here fired one request
+      // per Pencawang simultaneously — fine at 10 Pencawang, a self-inflicted
+      // load spike at 100+ (the widest-account lesson, data edition).
+      const assetGroups: Asset[][] = [];
+      const CONCURRENCY = 5;
+      for (let i = 0; i < substations.length; i += CONCURRENCY) {
+        const batch = substations.slice(i, i + CONCURRENCY);
+        assetGroups.push(
+          ...(await Promise.all(
+            batch.map((substation) => api.getAssets(token, substation.id)),
+          )),
+        );
+      }
 
       return assetGroups.flat();
     })
@@ -1889,6 +2006,30 @@ function zoomLevelToDelta(zoomLevel: number): number {
     return CURRENT_LOCATION_REGION_DELTA;
   }
   return REGION_ZOOM_CONSTANT / 2 ** zoomLevel;
+}
+
+function buildAssetFeatureCollection(
+  assets: Asset[],
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: 'FeatureCollection',
+    features: assets.flatMap((asset) => {
+      const coordinate = getAssetCoordinate(asset);
+      if (!coordinate) {
+        return [];
+      }
+      return [
+        {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [coordinate.longitude, coordinate.latitude],
+          },
+          properties: { assetId: asset.id, color: assetMarkerColor(asset) },
+        },
+      ];
+    }),
+  };
 }
 
 function buildDefectHeatmapFeatureCollection(
