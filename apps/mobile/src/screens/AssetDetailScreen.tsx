@@ -26,6 +26,7 @@ import { dropOfflineAssetCreate, enqueueMutation, isTempId, mintTempId } from '.
 import { buildOfflineInspectionForm } from '../offlineInspection';
 import { useSession } from '../context/AuthContext';
 import { useCapabilities } from '../useCapabilities';
+import { openStreetViewAt } from '../utils/streetView';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   Asset,
@@ -797,18 +798,9 @@ export function AssetDetailScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open Street View at this pole"
-              onPress={() => {
-                // Street View is Google imagery — the in-app map is Mapbox (that
-                // is what keeps it fast), so the pegman jump goes to the Google
-                // Maps app's panorama at the pole, like the admin map's pegman.
-                const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${asset.latitude},${asset.longitude}`;
-                void Linking.openURL(url).catch(() => {
-                  Alert.alert(
-                    'Unable to open Street View',
-                    'Install or enable Google Maps to view street imagery.',
-                  );
-                });
-              }}
+              onPress={() =>
+                openStreetViewAt(asset.latitude as number, asset.longitude as number)
+              }
               style={({ pressed }) => [styles.streetViewButton, pressed && styles.pressedButton]}
             >
               <Feather name="eye" size={16} color={theme.colors.primary} />

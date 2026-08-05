@@ -20,6 +20,7 @@ import { Theme, useTheme } from '../theme';
 import { Asset, DefectDetail, DefectListItem } from '../types';
 import { buildFeederLines, validateFeederSequences } from '../utils/feederSequence';
 import type { AssetLike } from '../utils/feederSequence';
+import { openStreetViewAt } from '../utils/streetView';
 
 type Coordinate = {
   latitude: number;
@@ -125,6 +126,8 @@ type MapControlDeckProps = {
   currentAccuracy: number | null;
   locationMessage: string | null;
   onRequestCurrentLocation: () => void;
+  streetViewArmed: boolean;
+  onToggleStreetView: () => void;
   visibleAssetCount: number;
   totalAssetCount: number;
   visibleDefectCount: number;
@@ -264,6 +267,8 @@ export function MapScreen() {
   const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [mapType, setMapType] = useState<MapType>('hybrid');
+  // Pegman: armed by the deck's Street View button, spent on the next map tap.
+  const [streetViewArmed, setStreetViewArmed] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showFeederLines, setShowFeederLines] = useState(false);
   const [showSequenceWarnings, setShowSequenceWarnings] = useState(false);
@@ -629,6 +634,21 @@ export function MapScreen() {
   // Drop a draggable pin at the current map centre (region tracks the centre via
   // onRegionChangeComplete) so adding an asset is "drop + drag to place" rather
   // than hunting for a spot to long-press. Long-press still works as a shortcut.
+  // A plain tap does nothing on this map unless the pegman is armed — the
+  // add-asset pin is dropped by long-press or the docked button, so arming
+  // cannot steal a gesture the crew already uses.
+  function handleMapPress(feature: GeoJSON.Feature<GeoJSON.Point>) {
+    if (!streetViewArmed) {
+      return;
+    }
+    const coordinates = feature.geometry?.coordinates;
+    if (!coordinates) {
+      return;
+    }
+    const [longitude, latitude] = coordinates as [number, number];
+    handleStreetViewTap({ latitude, longitude });
+  }
+
   function handleDropPinAtCentre() {
     if (!canAddAssetHere) {
       return;
@@ -652,6 +672,14 @@ export function MapScreen() {
     [filteredAssets],
   );
 
+  // The pegman is spent on one tap, so the map goes straight back to normal
+  // panning — the crew can never get stuck in a mode they have to find a way out
+  // of. Leaving the app for Google Maps and coming back arrives disarmed.
+  const handleStreetViewTap = useCallback((coordinate: Coordinate) => {
+    setStreetViewArmed(false);
+    openStreetViewAt(coordinate.latitude, coordinate.longitude);
+  }, []);
+
   const handleAssetSourcePress = useCallback(
     (event: ShapeSourcePressEvent) => {
       const feature = event.features?.[0];
@@ -659,9 +687,18 @@ export function MapScreen() {
         return;
       }
       const properties = (feature.properties ?? {}) as Record<string, unknown>;
+      const geometry = feature.geometry as GeoJSON.Point | undefined;
+      // Pegman armed: a tap on a pole means "show me HERE", not "open this
+      // record". It has to be handled here as well as in the MapView's onPress
+      // because the pole layer swallows the touch before the map ever sees it —
+      // and poles are exactly what the crew wants to aim at.
+      if (streetViewArmed && geometry?.type === 'Point') {
+        const [longitude, latitude] = geometry.coordinates;
+        handleStreetViewTap({ latitude, longitude });
+        return;
+      }
       if (properties.cluster) {
         // Tap a cluster = step INTO it (mirrors the admin-web drill-down).
-        const geometry = feature.geometry as GeoJSON.Point | undefined;
         if (geometry?.type === 'Point') {
           const [longitude, latitude] = geometry.coordinates;
           cameraRef.current?.setCamera({
@@ -680,7 +717,13 @@ export function MapScreen() {
         }
       }
     },
-    [assetById, handleOpenAssetDetail, region.latitudeDelta],
+    [
+      assetById,
+      handleOpenAssetDetail,
+      handleStreetViewTap,
+      region.latitudeDelta,
+      streetViewArmed,
+    ],
   );
 
   const mapMarkers = useMemo(() => {
@@ -700,7 +743,11 @@ export function MapScreen() {
             coordinate={coordinate}
             color={assetMarkerColor(focusedAsset)}
             focused
-            onPress={() => handleOpenAssetDetail(focusedAsset)}
+            onPress={() =>
+              streetViewArmed
+                ? handleStreetViewTap(coordinate)
+                : handleOpenAssetDetail(focusedAsset)
+            }
           />,
         );
       }
@@ -719,7 +766,18 @@ export function MapScreen() {
           >
             <Pressable
               accessibilityRole="button"
-              onPress={() => handleOpenDefectDetail(defect.id)}
+              onPress={() =>
+                // Defect pins are their own native views sitting above the map,
+                // so they need the same armed check the pole layer has —
+                // otherwise the one tap the pegman is waiting for silently opens
+                // a defect instead.
+                streetViewArmed
+                  ? handleStreetViewTap({
+                      latitude: defect.latitude,
+                      longitude: defect.longitude,
+                    })
+                  : handleOpenDefectDetail(defect.id)
+              }
             >
               <DefectMarkerView defect={defect} />
             </Pressable>
@@ -767,10 +825,12 @@ export function MapScreen() {
     focusAssetId,
     handleOpenAssetDetail,
     handleOpenDefectDetail,
+    handleStreetViewTap,
     selectedCoordinate,
     sequenceWarningMarkers,
     showHeatmap,
     showSequenceWarnings,
+    streetViewArmed,
     styles,
   ]);
 
@@ -806,6 +866,7 @@ export function MapScreen() {
             style={{ flex: 1 }}
             styleURL={mapType === 'hybrid' ? SATELLITE_STYLE : STREET_STYLE}
             scaleBarEnabled={false}
+            onPress={handleMapPress}
             onLongPress={handleLongPress}
             onMapIdle={handleMapIdle}
           >
@@ -980,6 +1041,8 @@ export function MapScreen() {
             onRequestCurrentLocation={() => {
               void requestCurrentLocation(true);
             }}
+            streetViewArmed={streetViewArmed}
+            onToggleStreetView={() => setStreetViewArmed((currentValue) => !currentValue)}
             visibleAssetCount={filteredAssetsWithCoordinates.length}
             totalAssetCount={assetsWithCoordinates.length}
             visibleDefectCount={filteredDefectMarkers.length}
@@ -1061,6 +1124,8 @@ function MapControlDeck({
   currentAccuracy,
   locationMessage,
   onRequestCurrentLocation,
+  streetViewArmed,
+  onToggleStreetView,
   visibleAssetCount,
   totalAssetCount,
   visibleDefectCount,
@@ -1103,6 +1168,26 @@ function MapControlDeck({
               isActive={openMenu === 'mapType'}
               onPress={() => toggleMenu('mapType')}
             />
+            {/* Pegman, the mobile answer to the admin map's draggable one: arm
+                it, then tap a spot to open Google's panorama there. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: streetViewArmed }}
+              accessibilityLabel={streetViewArmed ? 'Cancel Street View' : 'Street View'}
+              onPress={onToggleStreetView}
+              hitSlop={6}
+              style={({ pressed }) => [
+                styles.pegmanButton,
+                streetViewArmed ? styles.pegmanButtonActive : null,
+                pressed ? styles.mapControlPressed : null,
+              ]}
+            >
+              <Feather
+                name="eye"
+                size={15}
+                color={streetViewArmed ? theme.colors.textOnPrimary : theme.colors.textPrimary}
+              />
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="My Location"
@@ -1125,6 +1210,17 @@ function MapControlDeck({
             <Text style={styles.mapCountTotal}>{` / ${countTotal}`}</Text>
           </Mono>
         </View>
+
+        {/* Armed state has to be readable at a glance — a tinted icon alone is
+            not enough to explain why the next tap behaves differently. */}
+        {streetViewArmed ? (
+          <View style={styles.streetViewHint}>
+            <Feather name="eye" size={13} color={theme.colors.primary} />
+            <Text style={styles.streetViewHintText}>
+              Tap a spot or a pole to open Street View
+            </Text>
+          </View>
+        ) : null}
 
         {openMenu === 'layers' ? (
           <View style={styles.mapDropdownPanel}>
@@ -2550,6 +2646,50 @@ const createStyles = (t: Theme) =>
       shadowOpacity: 0.08,
       shadowRadius: 5,
       elevation: 1,
+    },
+    // Square peer of the Layers / Sat buttons, so the rail still reads as one
+    // row of controls rather than a bolted-on extra.
+    pegmanButton: {
+      width: 34,
+      minHeight: 34,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceMuted,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 5,
+      paddingVertical: 7,
+    },
+    pegmanButtonActive: {
+      backgroundColor: t.colors.primary,
+      borderColor: t.colors.primary,
+    },
+    streetViewHint: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: t.colors.card,
+      borderRadius: MAP_CONTROL_RADIUS,
+      borderWidth: 1,
+      borderColor: t.colors.primary,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      shadowColor: t.colors.shadow,
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.08,
+      shadowRadius: 5,
+      elevation: 1,
+    },
+    streetViewHintText: {
+      color: t.colors.textPrimary,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '700',
     },
     locationButton: {
       width: 34,
