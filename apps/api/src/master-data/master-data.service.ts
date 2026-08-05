@@ -445,10 +445,11 @@ export class MasterDataService {
     // it to the caller's own company for non-admins (ADMIN → tenant-wide). Uses the
     // OVERSIGHT scope so a MAIN_CONTRACTOR manager also sees its subcontractor
     // subtree's assets (self-limiting: identical to own-company for everyone else).
-    // The substation-filtered path is shared with the mobile inspection flow + the
-    // cross-team map, so it stays tenant-wide (mobile always passes substation_id).
+    // The substation-filtered path (the mobile map + inspection flow) is narrowed
+    // to the caller's ASSIGNED Mainheads — owner decision 2026-08-05, superseding
+    // the Deploy-60 tenant-wide cross-team map now that wide accounts load 10k+.
     const companyScope = substationId
-      ? {}
+      ? await this.assetMainheadScope(user)
       : assetOversightWhere(user, await buildScopeContext(this.prisma, user));
     const assets = await this.prisma.asset.findMany({
       where: {
@@ -524,6 +525,61 @@ export class MasterDataService {
         : null,
       latestInspectionImages: inspections[0]?.inspectionImages ?? [],
     }));
+  }
+
+  /**
+   * Narrow substation-filtered asset reads (the mobile map feed + inspection
+   * flow) to the caller's ASSIGNED Mainheads — owner decision 2026-08-05,
+   * superseding the Deploy-60 tenant-wide cross-team map:
+   *
+   * - ADMIN: tenant-wide (unchanged).
+   * - CLIENT viewer: its OrganizationMainhead assignments, FAIL CLOSED (empty
+   *   = see nothing — same rule as the client progress view).
+   * - TECHNICIAN: the Mainheads where their teams work (team assignment +
+   *   the teams' site visits — the existing cross-team scope, now the CEILING
+   *   instead of a widening).
+   * - Other org users (manager/supervisor/etc.): their company's active
+   *   OrganizationMainhead assignments.
+   *
+   * A non-client caller whose scope resolves EMPTY (org with no Mainhead
+   * assignments, technician with no team) keeps the old tenant-wide view —
+   * unconfigured orgs behave exactly as before; assigning Mainheads to the
+   * company is what activates the narrowing. Substations still in the
+   * "Unassigned" bucket (mainheadId null) stay visible to every contractor so
+   * a freshly-created Pencawang never vanishes mid-survey.
+   */
+  private async assetMainheadScope(
+    user: RequestUser,
+  ): Promise<Prisma.AssetWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    if (ctx.isAdmin) {
+      return {};
+    }
+
+    if (ctx.isClientViewer) {
+      return { substation: { mainheadId: { in: ctx.clientMainheadIds } } };
+    }
+
+    let allowed: string[] = [];
+    if (user.role === UserRole.TECHNICIAN) {
+      allowed = ctx.crossTeamMainheadIds;
+    } else if (user.organizationId) {
+      const assignments = await this.prisma.organizationMainhead.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+        select: { mainheadId: true },
+      });
+      allowed = assignments.map((row) => row.mainheadId);
+    }
+
+    if (allowed.length === 0) {
+      return {};
+    }
+
+    return {
+      substation: {
+        OR: [{ mainheadId: { in: allowed } }, { mainheadId: null }],
+      },
+    };
   }
 
   async getAssetType(user: RequestUser, id: string) {
