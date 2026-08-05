@@ -241,6 +241,15 @@ export function InspectionFormScreen() {
     resolve: (uri: string) => void;
     reject: (error: Error) => void;
   } | null>(null);
+  // Resolves when the off-screen overlay <Image> has actually decoded + drawn
+  // (onLoad). The burn used to wait a FIXED 400 ms instead, and any device
+  // whose full-res JPEG decoded slower produced a BLANK photo — or, when the
+  // capture landed mid Image fade-in, a uniformly DARKER one (v2.0.5 field bug).
+  const overlayImageLoadRef = useRef<{
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
 
   const isSubmitted = form?.inspection.completionStatus === 'SUBMITTED';
   // The inspection (its answers, photos and defects) is read-only once it is
@@ -356,8 +365,12 @@ export function InspectionFormScreen() {
 
     const renderOverlayPhoto = async () => {
       try {
+        // Deterministic: wait for the photo Image to report onLoad (however
+        // slow the device), then one paint for the loaded frame to draw. A
+        // fixed delay here is what produced blank/darker photos in the field.
+        await waitForOverlayImageLoad(overlayImageLoadRef.current);
         await waitForNextPaint();
-        await delay(400);
+        await delay(50);
 
         if (!overlayCaptureRef.current) {
           throw new Error('Unable to prepare the overlaid photo.');
@@ -389,6 +402,7 @@ export function InspectionFormScreen() {
       } finally {
         if (!isCancelled) {
           overlayPromiseHandlersRef.current = null;
+          overlayImageLoadRef.current = null;
           setPendingOverlayPhoto(null);
         }
       }
@@ -913,6 +927,7 @@ export function InspectionFormScreen() {
         resolve,
         reject,
       };
+      overlayImageLoadRef.current = createOverlayImageLoadSignal();
       setPendingOverlayPhoto(photo);
     });
   }
@@ -1359,6 +1374,15 @@ export function InspectionFormScreen() {
                   source={{ uri: pendingOverlayPhoto.originalUri }}
                   style={styles.overlayCaptureImage}
                   resizeMode="cover"
+                  // No fade-in: the burn snapshot must never catch the photo at
+                  // partial opacity (the "darker photo" half of the v2.0.5 bug).
+                  fadeDuration={0}
+                  onLoad={() => overlayImageLoadRef.current?.resolve()}
+                  onError={() =>
+                    overlayImageLoadRef.current?.reject(
+                      new Error('Could not render the captured photo. Please retake it.'),
+                    )
+                  }
                 />
                 {pendingOverlayPhoto.tiltLineAngle != null ? (
                   <TiltOverlay angleDeg={pendingOverlayPhoto.tiltLineAngle} />
@@ -2578,6 +2602,53 @@ async function waitForNextPaint() {
 
 async function delay(durationMs: number) {
   await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
+}
+
+// Ceiling for the overlay <Image> to decode the full-res capture. On timeout we
+// FAIL (crew retakes) rather than snapshot a possibly-blank canvas — a silent
+// blank photo is the exact field bug this replaces.
+const OVERLAY_IMAGE_LOAD_TIMEOUT_MS = 8000;
+
+function createOverlayImageLoadSignal() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  // Keep a handled branch so an unawaited rejection (e.g. the effect was
+  // cancelled mid-flight) never surfaces as an unhandled-promise warning.
+  promise.catch(() => {});
+  return { promise, resolve, reject };
+}
+
+async function waitForOverlayImageLoad(
+  signal: { promise: Promise<void> } | null,
+) {
+  if (!signal) {
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      signal.promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                'Preparing the photo stamp took too long. Please retake the photo.',
+              ),
+            ),
+          OVERLAY_IMAGE_LOAD_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 const createStyles = (t: Theme) =>
