@@ -52,6 +52,19 @@ import type { AuthSession } from "@/types/auth";
  * LABELLED rather than hidden. The shared labels live in `lib/client-labels`.
  */
 
+/**
+ * Long in-card lists scroll rather than growing the page. Both lists here are
+ * unbounded in practice — KUANTAN is already 33 Pencawang, and one Pencawang can
+ * hold hundreds of poles — and an unbounded card shoves everything beside and
+ * below it off screen.
+ *
+ * `overscroll-contain` stops the page from scrolling on when the list hits its
+ * end, which is what makes a nested scroll area feel deliberate instead of
+ * broken. The height is generous enough that a short list never looks clipped.
+ */
+const SCROLL_LIST_CLASS =
+  "max-h-[560px] overflow-y-auto overscroll-contain";
+
 /** Coverage bar — inspected vs registered, with the count spelled out. */
 function CoverageRow({
   group,
@@ -381,7 +394,9 @@ function ClientProgressContent() {
                       appears the moment a crew registers it in the field.
                     </p>
                   ) : (
-                    <div>
+                    /* A Pencawang can hold hundreds of poles — scroll the list
+                       instead of pushing the rest of the page off screen. */
+                    <div className={SCROLL_LIST_CLASS}>
                       {poles.poles.map((pole) => (
                         <button
                           key={pole.id}
@@ -449,15 +464,16 @@ function ClientProgressContent() {
                           />
                         </button>
                       ))}
-                      {poles.total > poles.poles.length ? (
-                        <p className="px-4 py-3 text-[12px] text-[var(--muted)]">
-                          Showing the first{" "}
-                          {poles.poles.length.toLocaleString()} of{" "}
-                          {poles.total.toLocaleString()} poles.
-                        </p>
-                      ) : null}
                     </div>
                   )}
+                  {/* Outside the scroll box on purpose — a truncation notice you
+                      have to scroll to find is no notice at all. */}
+                  {poles.total > poles.poles.length ? (
+                    <p className="border-t border-[var(--line2)] px-4 pt-3 text-[12px] text-[var(--muted)]">
+                      Showing the first {poles.poles.length.toLocaleString()} of{" "}
+                      {poles.total.toLocaleString()} poles.
+                    </p>
+                  ) : null}
                 </Card>
               ) : (
                 <div className="grid gap-4 lg:grid-cols-3">
@@ -483,7 +499,10 @@ function ClientProgressContent() {
                             : "Nothing recorded here yet."}
                         </p>
                       ) : (
-                        <div>
+                        /* KUANTAN alone is 33 Pencawang and climbing — cap the
+                           height so the Findings column stays beside it rather
+                           than being pushed a screen down. */
+                        <div className={SCROLL_LIST_CLASS}>
                           {progress.groups.map((group) => (
                             <CoverageRow
                               key={group.id}
