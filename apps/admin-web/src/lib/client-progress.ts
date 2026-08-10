@@ -33,6 +33,12 @@ export interface ClientProgress {
   percent: number;
   lastInspectionAt: string | null;
   groups: ProgressGroup[];
+  /** Pencawang in scope, and how many are fully surveyed. */
+  pencawang: {
+    total: number;
+    completed: number;
+    percent: number;
+  };
   defects: {
     open: number;
     emergency: number;
