@@ -118,4 +118,45 @@ describe('Authz · cross-company isolation (work & findings are org-private)', (
     expect(body).toContain(IDS.asset.a);
     expect(body).not.toContain(IDS.asset.b);
   });
+
+  /**
+   * Minting a share link PUBLISHES a pole to an unauthenticated public URL, so
+   * it is the sharpest edge of cross-company isolation. This was tenant-scoped
+   * only until 2026-08-10 — any authenticated non-admin could publish ANY pole
+   * in the tenant by id, company B's included. The rule now: you may share what
+   * you may already SEE.
+   */
+  describe('share links are scoped to what the caller can see', () => {
+    it('techA can share its own company pole', () =>
+      http(app, token.techA)
+        .post(`/api/v1/share/asset/${IDS.asset.a}`)
+        .send({ expiresInDays: 7 })
+        .expect(201));
+
+    it('techA CANNOT share company B pole', () =>
+      http(app, token.techA)
+        .post(`/api/v1/share/asset/${IDS.asset.b}`)
+        .send({ expiresInDays: 7 })
+        .expect(404));
+
+    it('a MANAGER cannot share another company pole either', async () => {
+      const mgrA = await login(app, EMAILS.mgrA);
+      await http(app, mgrA)
+        .post(`/api/v1/share/asset/${IDS.asset.b}`)
+        .send({ expiresInDays: 30 })
+        .expect(404);
+    });
+
+    it('ADMIN still shares tenant-wide', () =>
+      http(app, token.adminT1)
+        .post(`/api/v1/share/asset/${IDS.asset.b}`)
+        .send({ expiresInDays: 30 })
+        .expect(201));
+
+    it('a cross-TENANT admin cannot reach it at all', () =>
+      http(app, token.adminT2)
+        .post(`/api/v1/share/asset/${IDS.asset.a}`)
+        .send({ expiresInDays: 30 })
+        .expect(404));
+  });
 });
