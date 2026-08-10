@@ -91,11 +91,20 @@ function buildSiteVisitScope(
   // CLIENT VIEWER (TNB / CLIENT org): scoped by WHOSE NETWORK IT IS, not by who
   // did the work — every survey on their assigned MAINHEADs, whichever company
   // performed it. Fails closed: an empty assignment list yields `in: []`, which
-  // matches nothing (the team filter below would have matched nothing anyway,
-  // since a client user belongs to no crew team).
+  // matches nothing on BOTH branches (the team filter below would have matched
+  // nothing anyway, since a client user belongs to no crew team).
+  //
+  // ⚠ TWO branches on purpose. SiteVisit.mainheadId is NULLABLE and is stamped
+  // at check-in, but the client's progress + map scopes reach a pole through
+  // `substation.mainheadId` instead. Matching only the visit's own column would
+  // silently drop a survey whose Mainhead was never stamped — its poles would
+  // show on the client's map while the survey itself vanished from their feed.
   if (ctx?.isClientViewer) {
     return {
-      mainheadId: { in: ctx.clientMainheadIds },
+      OR: [
+        { mainheadId: { in: ctx.clientMainheadIds } },
+        { substation: { mainheadId: { in: ctx.clientMainheadIds } } },
+      ],
     };
   }
 

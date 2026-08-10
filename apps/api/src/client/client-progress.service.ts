@@ -7,24 +7,35 @@ import {
   ScopeContext,
 } from '../common/authorization/scope-context';
 import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
-import { CLIENT_VISIBLE_LIFECYCLE } from '../common/client-visibility';
+import { isSurveyFinished } from '../common/client-visibility';
 
 /** Open defect statuses — mirrors the map/dashboard definition of "open". */
 const OPEN_DEFECT_STATUSES = ['OPEN', 'IN_PROGRESS', 'MONITORING'] as const;
 
+/** Poles returned for one Pencawang / one visit before the list is truncated.
+ *  The response reports the true total so the UI never implies it showed all. */
+const POLE_PAGE_SIZE = 1000;
+
+/** Surveys returned by the visits list. */
+const VISIT_PAGE_SIZE = 200;
+
 /**
- * What "surveyed" means to a client: the pole has a SUBMITTED inspection AND the
- * survey it belongs to has left the field ({@link CLIENT_VISIBLE_LIFECYCLE}).
+ * What "surveyed" means to a client: the crew has SUBMITTED the pole's
+ * inspection. The survey it belongs to need not have left the field.
  *
- * ⚠ ONE definition for the whole page. Counting bare submissions here while the
- * evidence drill-down required a completed survey produced a contradiction the
- * client could see: a Pencawang reading 44/44 = 100% that opened to "no
- * completed surveys yet". A pole inside a survey still being walked can still be
- * amended and its defects can still change, so it is not finished work.
+ * ⚠ ONE definition for the whole view — coverage, the group roll-ups and the
+ * pole lists all filter on this, so the headline and the drill-down can never
+ * contradict each other.
+ *
+ * ⚠ HISTORY: this used to additionally require the survey to have reached
+ * RONDAAN_SELESAI or later, because a client could only SEE finished work and a
+ * Pencawang that read 44/44 = 100% opened to "no completed surveys yet". The
+ * owner opened the client view to every status on 2026-08-10, so that
+ * contradiction is gone the other way: in-field poles are now visible AND
+ * counted, and the lifecycle is shown per row instead of gating the row.
  */
 const SURVEYED_INSPECTION: Prisma.InspectionWhereInput = {
   completionStatus: InspectionCompletionStatus.SUBMITTED,
-  siteVisit: { lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE } },
 };
 
 /** Defects raised by a survey the client may see — same gate as the counts. */
@@ -263,10 +274,76 @@ export class ClientProgressService {
     };
   }
 
+  /** The pole row every client list returns — see {@link toClientPole}. */
+  private static readonly POLE_SELECT = {
+    id: true,
+    assetCode: true,
+    name: true,
+    latitude: true,
+    longitude: true,
+    inspections: {
+      where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 1,
+      select: {
+        id: true,
+        submittedAt: true,
+        siteVisit: { select: { id: true, lifecycleStatus: true } },
+        itemResults: {
+          where: { isDefect: true },
+          select: { id: true, label: true, severity: true },
+        },
+        _count: { select: { inspectionImages: true } },
+      },
+    },
+  } satisfies Prisma.AssetSelect;
+
   /**
-   * Poles in one Pencawang the client may open evidence for — SUBMITTED
-   * inspections on surveys the crew has finished ({@link
-   * CLIENT_VISIBLE_LIFECYCLE}), so work-in-progress never surfaces.
+   * Shape one pole for the client, from its LATEST submitted inspection.
+   *
+   * `surveyState` is what the UI chips on: NOT_SURVEYED (nobody has submitted
+   * this pole yet — a registered pole with no work) vs SURVEYED. `isFinished`
+   * then splits a surveyed pole into settled work vs a survey still in the
+   * field, so the client can tell "done" from "being walked right now" without
+   * either being hidden from them.
+   */
+  private toClientPole(
+    asset: Prisma.AssetGetPayload<{
+      select: typeof ClientProgressService.POLE_SELECT;
+    }>,
+  ) {
+    const latest = asset.inspections[0];
+    const lifecycleStatus = latest?.siteVisit?.lifecycleStatus ?? null;
+
+    return {
+      id: asset.id,
+      assetCode: asset.assetCode,
+      name: asset.name,
+      latitude: asset.latitude,
+      longitude: asset.longitude,
+      inspectionId: latest?.id ?? null,
+      inspectedAt: latest?.submittedAt?.toISOString() ?? null,
+      visitId: latest?.siteVisit?.id ?? null,
+      lifecycleStatus,
+      surveyState: latest ? ('SURVEYED' as const) : ('NOT_SURVEYED' as const),
+      isFinished: isSurveyFinished(lifecycleStatus),
+      photoCount: latest?._count.inspectionImages ?? 0,
+      defects:
+        latest?.itemResults.map((item) => ({
+          id: item.id,
+          label: item.label,
+          severity: item.severity,
+        })) ?? [],
+    };
+  }
+
+  /**
+   * EVERY pole in one Pencawang — surveyed or not, at any lifecycle stage.
+   *
+   * ⚠ This used to return only poles whose survey had left the field. The client
+   * owns the network, so an untouched pole is as much their business as a
+   * finished one; each row now carries `surveyState` + `lifecycleStatus` so the
+   * UI says WHICH state a pole is in instead of dropping it from the list.
    */
   async listPoles(user: RequestUser, substationId: string) {
     const { ctx, mainheadIds } = await this.requireClientScope(user);
@@ -284,42 +361,20 @@ export class ClientProgressService {
       throw new ForbiddenException('That Pencawang is not in your scope.');
     }
 
-    const assets = await this.prisma.asset.findMany({
-      where: {
-        tenantId: user.tenantId,
-        substationId: substation.id,
-        inspections: {
-          some: {
-            completionStatus: InspectionCompletionStatus.SUBMITTED,
-            siteVisit: { lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE } },
-          },
-        },
-      },
-      select: {
-        id: true,
-        assetCode: true,
-        name: true,
-        latitude: true,
-        longitude: true,
-        inspections: {
-          where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
-          orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
-          take: 1,
-          select: {
-            id: true,
-            submittedAt: true,
-            siteVisit: { select: { lifecycleStatus: true } },
-            itemResults: {
-              where: { isDefect: true },
-              select: { id: true, label: true, severity: true },
-            },
-            _count: { select: { inspectionImages: true } },
-          },
-        },
-      },
-      orderBy: { assetCode: 'asc' },
-      take: 500,
-    });
+    const where: Prisma.AssetWhereInput = {
+      tenantId: user.tenantId,
+      substationId: substation.id,
+    };
+
+    const [total, assets] = await Promise.all([
+      this.prisma.asset.count({ where }),
+      this.prisma.asset.findMany({
+        where,
+        select: ClientProgressService.POLE_SELECT,
+        orderBy: { assetCode: 'asc' },
+        take: POLE_PAGE_SIZE,
+      }),
+    ]);
 
     return {
       substation: {
@@ -328,33 +383,16 @@ export class ClientProgressService {
       },
       // Kept so an ADMIN previewing the view sees the same shape a client does.
       isClientView: !ctx.isAdmin,
-      poles: assets.map((asset) => {
-        const latest = asset.inspections[0];
-        return {
-          id: asset.id,
-          assetCode: asset.assetCode,
-          name: asset.name,
-          latitude: asset.latitude,
-          longitude: asset.longitude,
-          inspectionId: latest?.id ?? null,
-          inspectedAt: latest?.submittedAt?.toISOString() ?? null,
-          lifecycleStatus: latest?.siteVisit?.lifecycleStatus ?? null,
-          photoCount: latest?._count.inspectionImages ?? 0,
-          defects:
-            latest?.itemResults.map((item) => ({
-              id: item.id,
-              label: item.label,
-              severity: item.severity,
-            })) ?? [],
-        };
-      }),
+      /** True count in the Pencawang — `poles` may be truncated to the page size. */
+      total,
+      poles: assets.map((asset) => this.toClientPole(asset)),
     };
   }
 
   /**
-   * Guard for the client's evidence drill-down: the pole must sit in their
-   * Mainheads AND its latest survey must have left the field. Returns the asset
-   * id so the caller can reuse the normal asset-detail read.
+   * Guard for the client's pole drill-down: the pole must sit in one of their
+   * assigned Mainheads. ⚠ No lifecycle condition — the client sees their network
+   * at every stage; scope is the only boundary, and it still fails closed.
    */
   async assertPoleVisible(user: RequestUser, assetId: string): Promise<void> {
     const { mainheadIds } = await this.requireClientScope(user);
@@ -366,20 +404,12 @@ export class ClientProgressService {
         ...(mainheadIds === null
           ? {}
           : { substation: { mainheadId: { in: mainheadIds } } }),
-        inspections: {
-          some: {
-            completionStatus: InspectionCompletionStatus.SUBMITTED,
-            siteVisit: { lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE } },
-          },
-        },
       },
       select: { id: true },
     });
 
     if (!asset) {
-      throw new ForbiddenException(
-        'That pole is not available in your scope yet.',
-      );
+      throw new ForbiddenException('That pole is not in your scope.');
     }
   }
 
@@ -399,43 +429,235 @@ export class ClientProgressService {
     return mainheads;
   }
 
-  /**
-   * Recently completed surveys in scope — the client's "what happened lately"
-   * feed. Same lifecycle gate as the evidence view.
-   */
-  async listRecentSurveys(user: RequestUser) {
-    const { ctx } = await this.requireClientScope(user);
-    const scopeWhere = siteVisitAccessWhere(user, ctx);
-
-    const visits = await this.prisma.siteVisit.findMany({
-      where: {
-        ...scopeWhere,
-        tenantId: user.tenantId,
-        lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE },
-      },
-      orderBy: [{ completedAt: 'desc' }, { endedAt: 'desc' }],
-      take: 20,
+  /** The survey row every client visit list returns — see {@link toClientVisit}. */
+  private static readonly VISIT_SELECT = {
+    id: true,
+    lifecycleStatus: true,
+    startedAt: true,
+    completedAt: true,
+    endedAt: true,
+    substation: {
       select: {
         id: true,
-        lifecycleStatus: true,
-        completedAt: true,
-        endedAt: true,
-        substation: { select: { id: true, name: true, code: true } },
-        // `mainhead` is a legacy free-text column; the relation is mainheadRecord.
-        mainheadRecord: { select: { id: true, name: true } },
-        _count: { select: { visitAssets: true } },
+        name: true,
+        code: true,
+        // Fallback for the Mainhead label — see toClientVisit.
+        mainhead: { select: { id: true, name: true } },
       },
-    });
+    },
+    // `mainhead` is a legacy free-text column; the relation is mainheadRecord.
+    mainheadRecord: { select: { id: true, name: true } },
+    _count: { select: { visitAssets: true } },
+  } satisfies Prisma.SiteVisitSelect;
 
-    return visits.map((visit) => ({
+  /**
+   * Shape one survey for the client.
+   *
+   * ⚠ NO ATTRIBUTION: the contractor org / crew that walked the survey is
+   * deliberately absent (owner's call, 2026-08-10). The client sees WHAT was
+   * done on their network, not WHO did it — keep it that way if this grows.
+   *
+   * `poleCount` takes the larger of the linked poles and the surveyed ones so a
+   * visit whose SiteVisitAsset links are incomplete can never read "45 of 44".
+   */
+  private toClientVisit(
+    visit: Prisma.SiteVisitGetPayload<{
+      select: typeof ClientProgressService.VISIT_SELECT;
+    }>,
+    surveyedByVisit: Map<string, number>,
+    defectsByVisit: Map<string, { open: number; emergency: number }>,
+  ) {
+    const surveyed = surveyedByVisit.get(visit.id) ?? 0;
+    const linked = visit._count.visitAssets;
+    const defects = defectsByVisit.get(visit.id) ?? { open: 0, emergency: 0 };
+    // ⚠ SiteVisit.mainheadId is nullable and is only stamped at check-in, so fall
+    // back to the Pencawang's Mainhead — the same link the client scope matches
+    // on. Without this an in-scope survey renders a bare "—" for its Mainhead.
+    const mainhead = visit.mainheadRecord ?? visit.substation?.mainhead ?? null;
+
+    return {
       id: visit.id,
       pencawang: visit.substation?.name || visit.substation?.code || '—',
       pencawangId: visit.substation?.id ?? null,
-      mainhead: visit.mainheadRecord?.name ?? '—',
+      mainhead: mainhead?.name ?? '—',
+      mainheadId: mainhead?.id ?? null,
       lifecycleStatus: visit.lifecycleStatus,
-      completedAt:
-        (visit.completedAt ?? visit.endedAt)?.toISOString() ?? null,
-      poleCount: visit._count.visitAssets,
-    }));
+      isFinished: isSurveyFinished(visit.lifecycleStatus),
+      startedAt: visit.startedAt?.toISOString() ?? null,
+      completedAt: (visit.completedAt ?? visit.endedAt)?.toISOString() ?? null,
+      poleCount: Math.max(linked, surveyed),
+      surveyedCount: surveyed,
+      openDefects: defects.open,
+      emergency: defects.emergency,
+    };
+  }
+
+  /** Per-visit surveyed-pole and open-defect tallies for a page of visits. */
+  private async visitTallies(visitIds: string[]) {
+    if (visitIds.length === 0) {
+      return {
+        surveyedByVisit: new Map<string, number>(),
+        defectsByVisit: new Map<string, { open: number; emergency: number }>(),
+      };
+    }
+
+    const [submitted, defectRows] = await Promise.all([
+      this.prisma.inspection.groupBy({
+        by: ['siteVisitId'],
+        where: { siteVisitId: { in: visitIds }, ...SURVEYED_INSPECTION },
+        _count: { _all: true },
+      }),
+      this.prisma.defect.findMany({
+        where: {
+          status: { in: [...OPEN_DEFECT_STATUSES] },
+          inspectionItemResult: {
+            ...SURVEYED_DEFECT_SOURCE,
+            inspection: { ...SURVEYED_INSPECTION, siteVisitId: { in: visitIds } },
+          },
+        },
+        select: {
+          isEmergency: true,
+          inspectionItemResult: {
+            select: { inspection: { select: { siteVisitId: true } } },
+          },
+        },
+      }),
+    ]);
+
+    const defectsByVisit = new Map<string, { open: number; emergency: number }>();
+    for (const row of defectRows) {
+      const key = row.inspectionItemResult.inspection.siteVisitId;
+      const entry = defectsByVisit.get(key) ?? { open: 0, emergency: 0 };
+      entry.open += 1;
+      if (row.isEmergency) entry.emergency += 1;
+      defectsByVisit.set(key, entry);
+    }
+
+    return {
+      surveyedByVisit: new Map(
+        submitted.map((row) => [row.siteVisitId, row._count._all]),
+      ),
+      defectsByVisit,
+    };
+  }
+
+  /**
+   * Surveys on the client's network, newest first.
+   *
+   * ⚠ EVERY lifecycle status — work still being walked included. The row carries
+   * `lifecycleStatus` + `isFinished` so the UI LABELS in-field work rather than
+   * hiding it (owner's call, 2026-08-10).
+   */
+  async listVisits(
+    user: RequestUser,
+    mainheadId?: string,
+    take = VISIT_PAGE_SIZE,
+  ) {
+    const { ctx, mainheadIds } = await this.requireClientScope(user);
+
+    if (mainheadId && mainheadIds !== null && !mainheadIds.includes(mainheadId)) {
+      throw new ForbiddenException('That Mainhead is not in your scope.');
+    }
+
+    // ⚠ AND, never two spreads of the same key: the client scope and the
+    // Mainhead filter BOTH constrain `mainheadId`, and spreading them would let
+    // the filter silently REPLACE the scope — the exact bug that once showed a
+    // TNB user an unassigned Mainhead on the map.
+    const where: Prisma.SiteVisitWhereInput = {
+      AND: [
+        siteVisitAccessWhere(user, ctx),
+        { tenantId: user.tenantId },
+        // Same two branches as the client scope itself — a visit whose own
+        // mainheadId was never stamped is still THIS Mainhead's if its Pencawang
+        // is (see the client branch in buildSiteVisitScope).
+        ...(mainheadId
+          ? [{ OR: [{ mainheadId }, { substation: { mainheadId } }] }]
+          : []),
+      ],
+    };
+
+    const [total, visits] = await Promise.all([
+      this.prisma.siteVisit.count({ where }),
+      this.prisma.siteVisit.findMany({
+        where,
+        orderBy: [{ startedAt: 'desc' }],
+        take: Math.min(take, VISIT_PAGE_SIZE),
+        select: ClientProgressService.VISIT_SELECT,
+      }),
+    ]);
+
+    const { surveyedByVisit, defectsByVisit } = await this.visitTallies(
+      visits.map((visit) => visit.id),
+    );
+
+    return {
+      /** True count in scope — `visits` is truncated to the page size. */
+      total,
+      visits: visits.map((visit) =>
+        this.toClientVisit(visit, surveyedByVisit, defectsByVisit),
+      ),
+    };
+  }
+
+  /** One survey and the poles it covers, at any lifecycle stage. */
+  async getVisit(user: RequestUser, visitId: string) {
+    const { ctx } = await this.requireClientScope(user);
+
+    const visit = await this.prisma.siteVisit.findFirst({
+      where: {
+        AND: [
+          siteVisitAccessWhere(user, ctx),
+          { id: visitId, tenantId: user.tenantId },
+        ],
+      },
+      select: ClientProgressService.VISIT_SELECT,
+    });
+
+    if (!visit) {
+      throw new ForbiddenException('That survey is not in your scope.');
+    }
+
+    // A pole belongs to a survey three ways: linked to it, registered during it,
+    // or inspected on it. Older visits predate one or another of those, so take
+    // the union rather than trusting any single link.
+    const where: Prisma.AssetWhereInput = {
+      tenantId: user.tenantId,
+      OR: [
+        { siteVisitAssets: { some: { siteVisitId: visit.id } } },
+        { createdDuringVisitId: visit.id },
+        { inspections: { some: { siteVisitId: visit.id } } },
+      ],
+    };
+
+    const [total, assets, tallies] = await Promise.all([
+      this.prisma.asset.count({ where }),
+      this.prisma.asset.findMany({
+        where,
+        select: ClientProgressService.POLE_SELECT,
+        orderBy: { assetCode: 'asc' },
+        take: POLE_PAGE_SIZE,
+      }),
+      this.visitTallies([visit.id]),
+    ]);
+
+    return {
+      visit: this.toClientVisit(
+        visit,
+        tallies.surveyedByVisit,
+        tallies.defectsByVisit,
+      ),
+      /** True pole count on the survey — `poles` is truncated to the page size. */
+      total,
+      poles: assets.map((asset) => this.toClientPole(asset)),
+    };
+  }
+
+  /**
+   * The latest surveys in scope — the Progress page's "what's happening" feed.
+   * A thin wrapper over {@link listVisits} so the two can never disagree.
+   */
+  async listRecentSurveys(user: RequestUser) {
+    const { visits } = await this.listVisits(user, undefined, 20);
+    return visits;
   }
 }

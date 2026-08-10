@@ -18,8 +18,10 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  *  3. NO BACK DOOR — `GET /assets/:id` must not hand a client a pole outside its
  *     Mainheads; the client view's scoping would be pointless if the generic
  *     asset read leaked.
- *  4. LIFECYCLE-GATED — evidence only appears once the crew has finished the
- *     survey, so work-in-progress never reaches the client.
+ *  4. EVERY STAGE VISIBLE — inside those Mainheads the client sees the network
+ *     at any lifecycle stage, in-field work included, LABELLED rather than
+ *     hidden (owner's call, 2026-08-10 — this used to be a lifecycle gate).
+ *     Mainhead scope is now the ONLY boundary, which makes 1–3 load-bearing.
  *  5. CLOSED TO NON-CLIENTS — a contractor cannot read the client endpoints.
  *
  * Self-contained: this spec creates its OWN org / mainhead / pencawang / pole /
@@ -35,8 +37,11 @@ const C = {
   otherSubstation: '30000000-0000-4000-8000-0000000000f2',
   team: '20000000-0000-4000-8000-0000000000f1',
   visit: '60000000-0000-4000-8000-0000000000f1',
+  outsideVisit: '60000000-0000-4000-8000-0000000000f2',
   asset: '70000000-0000-4000-8000-0000000000f1',
   outsideAsset: '70000000-0000-4000-8000-0000000000f2',
+  /** In the client's Pencawang but never inspected — the NOT_SURVEYED case. */
+  bareAsset: '70000000-0000-4000-8000-0000000000f3',
   inspection: '80000000-0000-4000-8000-0000000000f1',
   assignment: 'f0000000-0000-4000-8000-000000000001',
   region: 'd0000000-0000-4000-8000-000000000001',
@@ -141,6 +146,13 @@ describe('Authz · client (TNB) progress view', () => {
           substationId: C.otherSubstation,
           assetTypeId: IDS.assetType.savr,
         },
+        {
+          id: C.bareAsset,
+          tenantId: IDS.tenant.t1,
+          assetCode: 'CL-POLE-2',
+          substationId: C.substation,
+          assetTypeId: IDS.assetType.savr,
+        },
       ],
     });
     await prisma.team.create({
@@ -152,19 +164,35 @@ describe('Authz · client (TNB) progress view', () => {
         organizationId: IDS.org.a,
       },
     });
-    // The survey starts IN PROGRESS so the lifecycle gate can be proven first.
-    await prisma.siteVisit.create({
-      data: {
-        id: C.visit,
-        tenantId: IDS.tenant.t1,
-        teamId: C.team,
-        substationId: C.substation,
-        mainheadId: C.mainhead,
-        createdByUserId: IDS.user.mgrA,
-        organizationId: IDS.org.a,
-        status: 'ACTIVE',
-        lifecycleStatus: 'DALAM_RONDAAN',
-      },
+    // The survey starts IN THE FIELD, which is now a VISIBLE state for the
+    // client — the assertions below pin that it is labelled, not hidden.
+    await prisma.siteVisit.createMany({
+      data: [
+        {
+          id: C.visit,
+          tenantId: IDS.tenant.t1,
+          teamId: C.team,
+          substationId: C.substation,
+          mainheadId: C.mainhead,
+          createdByUserId: IDS.user.mgrA,
+          organizationId: IDS.org.a,
+          status: 'ACTIVE',
+          lifecycleStatus: 'DALAM_RONDAAN',
+        },
+        // A finished survey on the UNASSIGNED Mainhead: the client must not
+        // reach it through the visits feed either.
+        {
+          id: C.outsideVisit,
+          tenantId: IDS.tenant.t1,
+          teamId: C.team,
+          substationId: C.otherSubstation,
+          mainheadId: C.otherMainhead,
+          createdByUserId: IDS.user.mgrA,
+          organizationId: IDS.org.a,
+          status: 'ACTIVE',
+          lifecycleStatus: 'LAPORAN_SELESAI',
+        },
+      ],
     });
     await prisma.inspection.create({
       data: {
@@ -185,10 +213,15 @@ describe('Authz · client (TNB) progress view', () => {
 
   afterAll(async () => {
     // Reverse dependency order so the FKs stay satisfied.
+    await prisma.assetShareLink.deleteMany({
+      where: { assetId: { in: [C.asset, C.outsideAsset, C.bareAsset] } },
+    });
     await prisma.inspection.deleteMany({ where: { id: C.inspection } });
-    await prisma.siteVisit.deleteMany({ where: { id: C.visit } });
+    await prisma.siteVisit.deleteMany({
+      where: { id: { in: [C.visit, C.outsideVisit] } },
+    });
     await prisma.asset.deleteMany({
-      where: { id: { in: [C.asset, C.outsideAsset] } },
+      where: { id: { in: [C.asset, C.outsideAsset, C.bareAsset] } },
     });
     await prisma.team.deleteMany({ where: { id: C.team } });
     await prisma.substation.deleteMany({
@@ -233,11 +266,11 @@ describe('Authz · client (TNB) progress view', () => {
     it('progress covers the assigned Mainhead only', async () => {
       const res = await http(app, token.client).get('/api/v1/client/progress');
       expect(res.status).toBe(200);
-      expect(res.body.total).toBe(1);
-      // The pole IS submitted, but its survey is still being walked — coverage
-      // counts finished work only, matching the evidence gate. A page that
-      // reported 100% here would open to "no completed surveys yet".
-      expect(res.body.inspected).toBe(0);
+      // Two registered poles, one of them submitted. Coverage counts the
+      // SUBMISSION, not the survey's lifecycle stage, so a pole inside a survey
+      // still being walked counts (owner's call, 2026-08-10).
+      expect(res.body.total).toBe(2);
+      expect(res.body.inspected).toBe(1);
       const names = res.body.groups.map((g: { name: string }) => g.name);
       expect(names).toContain('CLIENT MH IN');
       expect(names).not.toContain('CLIENT MH OUT');
@@ -290,19 +323,104 @@ describe('Authz · client (TNB) progress view', () => {
       });
     });
 
-    describe('evidence is gated on the survey leaving the field', () => {
-      it('an in-progress survey exposes NO poles', async () => {
+    // ⚠ These replace the old lifecycle-gate cases. The client used to see only
+    // surveys that had left the field; they now see every stage, so what needs
+    // pinning is the opposite: in-field work must be VISIBLE and LABELLED, and
+    // the Mainhead boundary must still hold on its own.
+    describe('in-field work is visible and labelled, not hidden', () => {
+      it('the Pencawang lists every pole, surveyed or not', async () => {
         const res = await http(app, token.client).get(
           `/api/v1/client/pencawang/${C.substation}/poles`,
         );
         expect(res.status).toBe(200);
-        expect(res.body.poles).toHaveLength(0);
+        expect(res.body.total).toBe(2);
+
+        const byCode = Object.fromEntries(
+          res.body.poles.map((pole: { assetCode: string }) => [
+            pole.assetCode,
+            pole,
+          ]),
+        );
+        // Submitted, but its survey is still being walked: shown, flagged.
+        expect(byCode['CL-POLE-1'].surveyState).toBe('SURVEYED');
+        expect(byCode['CL-POLE-1'].isFinished).toBe(false);
+        expect(byCode['CL-POLE-1'].lifecycleStatus).toBe('DALAM_RONDAAN');
+        // Registered but never inspected — the client's outstanding work.
+        expect(byCode['CL-POLE-2'].surveyState).toBe('NOT_SURVEYED');
+        expect(byCode['CL-POLE-2'].inspectionId).toBeNull();
       });
 
-      it('and /assets/:id still refuses the pole while in progress', () =>
-        http(app, token.client).get(`/api/v1/assets/${C.asset}`).expect(404));
+      it('and /assets/:id opens the pole while it is still in the field', () =>
+        http(app, token.client).get(`/api/v1/assets/${C.asset}`).expect(200));
 
-      it('completing the survey reveals the pole and its evidence', async () => {
+      it('the visits feed lists the in-field survey, marked unfinished', async () => {
+        const res = await http(app, token.client).get('/api/v1/client/visits');
+        expect(res.status).toBe(200);
+
+        const ids = res.body.visits.map((visit: { id: string }) => visit.id);
+        expect(ids).toContain(C.visit);
+        // ...but never a survey on an unassigned Mainhead.
+        expect(ids).not.toContain(C.outsideVisit);
+
+        const mine = res.body.visits.find(
+          (visit: { id: string }) => visit.id === C.visit,
+        );
+        expect(mine.isFinished).toBe(false);
+        expect(mine.lifecycleStatus).toBe('DALAM_RONDAAN');
+        expect(mine.surveyedCount).toBe(1);
+        // ⚠ NO ATTRIBUTION — the contractor that walked it must not be sent.
+        expect(mine.team).toBeUndefined();
+        expect(mine.organization).toBeUndefined();
+      });
+
+      it('a survey on an unassigned Mainhead is refused by id', () =>
+        http(app, token.client)
+          .get(`/api/v1/client/visits/${C.outsideVisit}`)
+          .expect(403));
+
+      it('the visit detail lists the survey and its poles', async () => {
+        const res = await http(app, token.client).get(
+          `/api/v1/client/visits/${C.visit}`,
+        );
+        expect(res.status).toBe(200);
+        expect(res.body.visit.pencawang).toBe('Client Pencawang');
+        const codes = res.body.poles.map(
+          (pole: { assetCode: string }) => pole.assetCode,
+        );
+        expect(codes).toContain('CL-POLE-1');
+      });
+
+      it('filtering the feed by an unassigned Mainhead is refused', () =>
+        http(app, token.client)
+          .get(`/api/v1/client/visits?mainheadId=${C.otherMainhead}`)
+          .expect(403));
+
+      // The client may hand a pole on THEIR network to someone without an
+      // account — but a share link is PUBLIC and unauthenticated, so the
+      // Mainhead boundary has to hold here too or it becomes a way to publish
+      // any pole in the tenant by id.
+      describe('sharing a pole', () => {
+        it('the client can mint a link for a pole on their Mainhead', async () => {
+          const res = await http(app, token.client)
+            .post(`/api/v1/share/asset/${C.asset}`)
+            .send({ expiresInDays: 90 });
+          expect(res.status).toBe(201);
+          expect(typeof res.body.token).toBe('string');
+          // ...capped at 30 days however long they asked for.
+          const days =
+            (new Date(res.body.expiresAt).getTime() - Date.now()) / 86_400_000;
+          expect(days).toBeLessThanOrEqual(30);
+          expect(days).toBeGreaterThan(29);
+        });
+
+        it('but NOT for a pole outside their Mainheads', () =>
+          http(app, token.client)
+            .post(`/api/v1/share/asset/${C.outsideAsset}`)
+            .send({ expiresInDays: 30 })
+            .expect(404));
+      });
+
+      it('completing the survey flips it to finished', async () => {
         await prisma.siteVisit.update({
           where: { id: C.visit },
           data: { lifecycleStatus: 'RONDAAN_SELESAI' },
@@ -312,17 +430,18 @@ describe('Authz · client (TNB) progress view', () => {
           `/api/v1/client/pencawang/${C.substation}/poles`,
         );
         expect(res.status).toBe(200);
-        expect(res.body.poles).toHaveLength(1);
-        expect(res.body.poles[0].assetCode).toBe('CL-POLE-1');
+        const pole = res.body.poles.find(
+          (row: { assetCode: string }) => row.assetCode === 'CL-POLE-1',
+        );
+        expect(pole.isFinished).toBe(true);
 
-        await http(app, token.client).get(`/api/v1/assets/${C.asset}`).expect(200);
-
-        // ...and coverage moves WITH it — the headline and the drill-down agree.
+        // Coverage does NOT move — it already counted the submission, so the
+        // headline and the drill-down agree at every stage.
         const progress = await http(app, token.client).get(
           '/api/v1/client/progress',
         );
         expect(progress.body.inspected).toBe(1);
-        expect(progress.body.percent).toBe(100);
+        expect(progress.body.total).toBe(2);
       });
     });
   });
@@ -334,6 +453,14 @@ describe('Authz · client (TNB) progress view', () => {
     it('nor the client pole list', () =>
       http(app, token.mgrA)
         .get(`/api/v1/client/pencawang/${C.substation}/poles`)
+        .expect(403));
+
+    it('nor the client visits feed', () =>
+      http(app, token.mgrA).get('/api/v1/client/visits').expect(403));
+
+    it('nor one client visit by id', () =>
+      http(app, token.mgrA)
+        .get(`/api/v1/client/visits/${C.visit}`)
         .expect(403));
   });
 });

@@ -22,6 +22,18 @@ class AssetParamDto {
   assetId!: string;
 }
 
+class VisitParamDto {
+  @IsUUID()
+  visitId!: string;
+}
+
+class VisitsQueryDto {
+  /** Narrow the feed to one Mainhead. Omit for every Mainhead in scope. */
+  @IsOptional()
+  @IsUUID()
+  mainheadId?: string;
+}
+
 /**
  * The network owner's (TNB / CLIENT) read-only progress view. Every route is
  * scoped by the caller's organization → assigned MAINHEADs and rejects a
@@ -46,6 +58,17 @@ export class ClientController {
   @Get('surveys')
   listRecentSurveys(@CurrentUser() user: RequestUser) {
     return this.clientProgress.listRecentSurveys(user);
+  }
+
+  /** Every survey on the client's Mainheads, at any lifecycle stage. */
+  @Get('visits')
+  listVisits(@CurrentUser() user: RequestUser, @Query() query: VisitsQueryDto) {
+    return this.clientProgress.listVisits(user, query.mainheadId);
+  }
+
+  @Get('visits/:visitId')
+  getVisit(@CurrentUser() user: RequestUser, @Param() params: VisitParamDto) {
+    return this.clientProgress.getVisit(user, params.visitId);
   }
 
   @Get('pencawang/:substationId/poles')

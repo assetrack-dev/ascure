@@ -1,18 +1,23 @@
 import { SurveyLifecycleStatus } from '@prisma/client';
 
 /**
- * Survey states whose EVIDENCE a client (network owner) may see. The crew has
- * finished walking the survey and handed it on, so what the client reads is
- * settled work rather than a pole half-captured in the field.
+ * Survey states that mean the crew has LEFT THE FIELD and handed the work on.
+ *
+ * ⚠ HISTORY — this list used to be a client VISIBILITY GATE: a client (network
+ * owner) could only read poles and surveys that had reached one of these
+ * states, so nothing half-captured ever reached them. The owner reversed that
+ * on 2026-08-10: TNB now sees EVERY survey in their assigned Mainheads at every
+ * status, work still in the field included.
+ *
+ * The list survives as a LABEL rather than a filter — it tells the client view
+ * which surveys are settled and which are still moving, so in-field work is
+ * MARKED rather than hidden. Scope (which Mainheads) is still enforced, and
+ * still fails closed; only the lifecycle gate is gone.
  *
  * ⚠ DALAM_RONDAAN (still being walked) is deliberately absent, and a visit with
- * NO lifecycle status is treated as in-progress — `in:` never matches null.
- *
- * ⚠ SINGLE SOURCE OF TRUTH. Both the client progress view and the asset-detail
- * read gate filter on this; if they diverge, one path leaks work-in-progress
- * that the other hides.
+ * NO lifecycle status counts as in-field — `includes` never matches null.
  */
-export const CLIENT_VISIBLE_LIFECYCLE: SurveyLifecycleStatus[] = [
+export const SURVEY_FINISHED_LIFECYCLE: SurveyLifecycleStatus[] = [
   SurveyLifecycleStatus.RONDAAN_SELESAI,
   SurveyLifecycleStatus.DISAHKAN_PENGURUS,
   SurveyLifecycleStatus.PERLU_PINDAAN,
@@ -20,3 +25,10 @@ export const CLIENT_VISIBLE_LIFECYCLE: SurveyLifecycleStatus[] = [
   SurveyLifecycleStatus.LAPORAN_SELESAI,
   SurveyLifecycleStatus.ARKIB,
 ];
+
+/** True once the survey has left the field. Null (never advanced) = in field. */
+export function isSurveyFinished(
+  status: SurveyLifecycleStatus | null | undefined,
+): boolean {
+  return status != null && SURVEY_FINISHED_LIFECYCLE.includes(status);
+}

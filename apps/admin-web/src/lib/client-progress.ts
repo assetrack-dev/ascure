@@ -49,24 +49,51 @@ export interface ClientPole {
   longitude: number | null;
   inspectionId: string | null;
   inspectedAt: string | null;
+  visitId: string | null;
   lifecycleStatus: string | null;
+  /** NOT_SURVEYED = registered but nobody has submitted it yet. */
+  surveyState: "SURVEYED" | "NOT_SURVEYED";
+  /** The survey has left the field (RONDAAN SELESAI onward). */
+  isFinished: boolean;
   photoCount: number;
   defects: { id: string; label: string; severity: string | null }[];
 }
 
 export interface ClientPoleList {
   substation: { id: string; name: string };
+  /** True count in the Pencawang — `poles` may be truncated by the API. */
+  total: number;
   poles: ClientPole[];
 }
 
+/** One survey on the client's network, at ANY lifecycle stage. */
 export interface ClientSurvey {
   id: string;
   pencawang: string;
   pencawangId: string | null;
   mainhead: string;
+  mainheadId: string | null;
   lifecycleStatus: string | null;
+  isFinished: boolean;
+  startedAt: string | null;
   completedAt: string | null;
   poleCount: number;
+  surveyedCount: number;
+  openDefects: number;
+  emergency: number;
+}
+
+export interface ClientVisitList {
+  /** True count in scope — `visits` may be truncated by the API. */
+  total: number;
+  visits: ClientSurvey[];
+}
+
+export interface ClientVisitDetail {
+  visit: ClientSurvey;
+  /** True pole count on the survey — `poles` may be truncated by the API. */
+  total: number;
+  poles: ClientPole[];
 }
 
 export async function fetchClientProgress(
@@ -99,6 +126,26 @@ export async function fetchClientPoles(
 ): Promise<ClientPoleList> {
   return apiRequest<ClientPoleList>(
     `/client/pencawang/${encodeURIComponent(substationId)}/poles`,
+    { token },
+  );
+}
+
+export async function fetchClientVisits(
+  token: string,
+  mainheadId?: string,
+): Promise<ClientVisitList> {
+  const query = mainheadId
+    ? `?mainheadId=${encodeURIComponent(mainheadId)}`
+    : "";
+  return apiRequest<ClientVisitList>(`/client/visits${query}`, { token });
+}
+
+export async function fetchClientVisit(
+  token: string,
+  visitId: string,
+): Promise<ClientVisitDetail> {
+  return apiRequest<ClientVisitDetail>(
+    `/client/visits/${encodeURIComponent(visitId)}`,
     { token },
   );
 }
