@@ -15,10 +15,18 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
-import { Card, CardHead, Eyebrow, KpiCard, Tbtn } from "@/components/ui";
+import { Card, CardHead, Chip, Eyebrow, KpiCard, Tbtn } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { storeAssetNavContext } from "@/lib/asset-nav";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
+import {
+  formatCategory,
+  formatClientDate as formatDate,
+  lifecycleLabel,
+  lifecycleTone,
+  poleStateChip,
+  severityTone,
+} from "@/lib/client-labels";
 import {
   fetchClientMainheads,
   fetchClientPoles,
@@ -33,71 +41,16 @@ import type { AuthSession } from "@/types/auth";
 
 /**
  * The network owner's (TNB) progress view: how much of their network has been
- * surveyed, what was found, and — for surveys the crew has finished — the poles
- * behind those numbers.
+ * surveyed, what was found, and the poles behind those numbers.
  *
  * ⚠ `total` counts poles ASCURE has REGISTERED in the client's Mainheads, not
  * every pole they own (the full asset register isn't imported). The page says so
  * explicitly rather than implying whole-network coverage.
+ *
+ * ⚠ EVERY lifecycle stage is visible here (owner's call, 2026-08-10) — a pole
+ * counts as surveyed the moment the crew submits it, and in-field work is
+ * LABELLED rather than hidden. The shared labels live in `lib/client-labels`.
  */
-
-function formatDate(value: string | null) {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(parsed);
-}
-
-/** Survey lifecycle → a label a client can read without knowing our workflow. */
-function lifecycleLabel(status: string | null): string {
-  switch (status) {
-    case "RONDAAN_SELESAI":
-      return "Survey complete";
-    case "DISAHKAN_PENGURUS":
-      return "Verified";
-    case "PERLU_PINDAAN":
-      return "Under revision";
-    case "PINDAAN_SELESAI":
-      return "Revised";
-    case "LAPORAN_SELESAI":
-      return "Reported";
-    case "ARKIB":
-      return "Archived";
-    default:
-      return "In progress";
-  }
-}
-
-/** Maintenance category → the words TNB uses, not our enum token. */
-function formatCategory(category: string): string {
-  switch (category.toUpperCase()) {
-    case "RENTIS":
-      return "Rentis";
-    case "CAT_TIANG":
-      return "Cat Tiang";
-    case "SELENGGARAAN":
-      return "Selenggaraan";
-    default:
-      return category;
-  }
-}
-
-function severityTone(severity: string | null): string {
-  switch (severity?.toUpperCase()) {
-    case "CRITICAL":
-      return "border-[var(--critical-border)] bg-[var(--critical-bg)] text-[var(--critical-text)]";
-    case "HIGH":
-      return "border-[var(--high-border)] bg-[var(--high-bg)] text-[var(--high-text)]";
-    case "MEDIUM":
-      return "border-[var(--medium-border)] bg-[var(--medium-bg)] text-[var(--medium-text)]";
-    default:
-      return "border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]";
-  }
-}
 
 /** Coverage bar — inspected vs registered, with the count spelled out. */
 function CoverageRow({
@@ -393,18 +346,19 @@ function ClientProgressContent() {
               {/* The honest denominator — say what "registered" means. */}
               <p className="flex items-start gap-1.5 text-[12px] text-[var(--muted)]">
                 <Info size={13} className="mt-0.5 shrink-0" />
-                A pole counts as surveyed once its survey is complete, so these
-                figures reflect finished work. Coverage is measured against poles
-                recorded in ASCURE for your Mainheads — poles not yet registered
-                by a survey are not counted.
+                A pole counts as surveyed once the crew submits it, so surveys
+                still being walked are included and their stage is shown on each
+                row. Coverage is measured against poles recorded in ASCURE for
+                your Mainheads — poles not yet registered by a survey are not
+                counted.
               </p>
 
               {poles ? (
-                /* Pole evidence — completed surveys only */
+                /* Every pole in the Pencawang — surveyed or not, any stage */
                 <Card>
                   <CardHead
-                    title={`${poles.substation.name} — ${poles.poles.length} pole${poles.poles.length === 1 ? "" : "s"}`}
-                    hint="Surveys the crew has completed"
+                    title={`${poles.substation.name} — ${poles.total.toLocaleString()} pole${poles.total === 1 ? "" : "s"}`}
+                    hint="Every pole recorded here, at whatever stage its survey has reached"
                     actions={
                       <Tbtn onClick={goToMainhead}>
                         <ChevronLeft size={14} />
@@ -414,8 +368,8 @@ function ClientProgressContent() {
                   />
                   {poles.poles.length === 0 ? (
                     <p className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
-                      No completed surveys here yet. Poles appear once the crew
-                      has finished and submitted the survey.
+                      No poles have been recorded in this Pencawang yet. A pole
+                      appears the moment a crew registers it in the field.
                     </p>
                   ) : (
                     <div>
@@ -441,40 +395,58 @@ function ClientProgressContent() {
                             <span className="block truncate font-mono text-[13px] font-semibold text-[var(--foreground)]">
                               {pole.assetCode}
                             </span>
-                            <span className="block text-[11.5px] text-[var(--muted)]">
-                              {formatDate(pole.inspectedAt)} ·{" "}
-                              {lifecycleLabel(pole.lifecycleStatus)} ·{" "}
-                              {pole.photoCount} photo
-                              {pole.photoCount === 1 ? "" : "s"}
-                            </span>
+                            {/* The chip already says "Not surveyed", so an
+                                unsurveyed pole shows its name rather than
+                                repeating itself. */}
+                            {pole.surveyState === "SURVEYED" ? (
+                              <span className="block text-[11.5px] text-[var(--muted)]">
+                                {formatDate(pole.inspectedAt)} ·{" "}
+                                {pole.photoCount} photo
+                                {pole.photoCount === 1 ? "" : "s"}
+                              </span>
+                            ) : pole.name ? (
+                              <span className="block truncate text-[11.5px] text-[var(--muted)]">
+                                {pole.name}
+                              </span>
+                            ) : null}
                           </span>
+                          <Chip tone={poleStateChip(pole).tone}>
+                            {poleStateChip(pole).label}
+                          </Chip>
                           {pole.defects.length > 0 ? (
                             <span className="flex shrink-0 flex-wrap justify-end gap-1">
                               {pole.defects.slice(0, 2).map((defect) => (
-                                <span
+                                <Chip
                                   key={defect.id}
-                                  className={`rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${severityTone(defect.severity)}`}
+                                  tone={severityTone(defect.severity)}
                                 >
                                   {defect.severity ?? "DEFECT"}
-                                </span>
+                                </Chip>
                               ))}
                               {pole.defects.length > 2 ? (
-                                <span className="rounded-full border border-[var(--line)] bg-[var(--panel-muted)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--muted)]">
+                                <Chip tone="neutral">
                                   +{pole.defects.length - 2}
-                                </span>
+                                </Chip>
                               ) : null}
                             </span>
-                          ) : (
+                          ) : pole.surveyState === "SURVEYED" ? (
                             <span className="shrink-0 text-[11.5px] text-[var(--success-text)]">
                               No defects
                             </span>
-                          )}
+                          ) : null}
                           <ChevronRight
                             size={15}
                             className="shrink-0 text-[var(--muted-2)]"
                           />
                         </button>
                       ))}
+                      {poles.total > poles.poles.length ? (
+                        <p className="px-4 py-3 text-[12px] text-[var(--muted)]">
+                          Showing the first{" "}
+                          {poles.poles.length.toLocaleString()} of{" "}
+                          {poles.total.toLocaleString()} poles.
+                        </p>
+                      ) : null}
                     </div>
                   )}
                 </Card>
@@ -587,28 +559,45 @@ function ClientProgressContent() {
                     ) : null}
 
                     <Card>
-                      <CardHead title="Recent surveys" hint="Completed work" />
+                      <CardHead
+                        title="Latest surveys"
+                        hint="Newest first, at every stage"
+                        actions={
+                          <Tbtn onClick={() => router.push("/visits")}>
+                            See all
+                            <ChevronRight size={14} />
+                          </Tbtn>
+                        }
+                      />
                       {surveys.length === 0 ? (
                         <p className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
-                          No completed surveys yet.
+                          No surveys recorded yet.
                         </p>
                       ) : (
                         <div>
                           {surveys.slice(0, 8).map((survey) => (
-                            <div
+                            <button
                               key={survey.id}
-                              className="border-b border-[var(--line2)] px-4 py-2.5 last:border-b-0"
+                              type="button"
+                              onClick={() => router.push("/visits")}
+                              className="flex w-full items-center gap-2 border-b border-[var(--line2)] px-4 py-2.5 text-left transition last:border-b-0 hover:bg-[var(--panel-muted)]"
                             >
-                              <p className="truncate text-[12.5px] font-semibold text-[var(--foreground)]">
-                                {survey.pencawang}
-                              </p>
-                              <p className="text-[11px] text-[var(--muted)]">
-                                {survey.poleCount} pole
-                                {survey.poleCount === 1 ? "" : "s"} ·{" "}
-                                {lifecycleLabel(survey.lifecycleStatus)} ·{" "}
-                                {formatDate(survey.completedAt)}
-                              </p>
-                            </div>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[12.5px] font-semibold text-[var(--foreground)]">
+                                  {survey.pencawang}
+                                </span>
+                                <span className="block text-[11px] text-[var(--muted)]">
+                                  {survey.surveyedCount.toLocaleString()} /{" "}
+                                  {survey.poleCount.toLocaleString()} poles ·{" "}
+                                  {formatDate(
+                                    survey.completedAt ?? survey.startedAt,
+                                  )}
+                                </span>
+                              </span>
+                              <Chip tone={lifecycleTone(survey.lifecycleStatus)}>
+                                {lifecycleLabel(survey.lifecycleStatus)}
+                              </Chip>
+                            </button>
                           ))}
                         </div>
                       )}

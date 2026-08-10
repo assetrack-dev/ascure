@@ -44,7 +44,6 @@ import { MapQueryDto } from './dto/map-query.dto';
 import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
 import { upsertSavtMembership } from '../common/savt-graph';
 import { buildInspectionImagePath } from '../common/uploads.constants';
-import { CLIENT_VISIBLE_LIFECYCLE } from '../common/client-visibility';
 import {
   checklistColumnOptions,
   checklistResultValue,
@@ -1058,23 +1057,18 @@ export class AssetsService {
 
   async getById(user: RequestUser, id: string) {
     // A CLIENT viewer (TNB) is an EXTERNAL party, so tenant scope alone is not
-    // enough here: narrow to poles in their assigned Mainheads whose survey has
-    // left the field. Without this they could read any pole in the tenant by id,
-    // bypassing the client progress view's own scoping.
+    // enough here: narrow to poles in their assigned Mainheads. Without this
+    // they could read any pole in the tenant by id, bypassing the client view's
+    // own scoping.
+    //
+    // ⚠ There is deliberately NO lifecycle condition (owner's call 2026-08-10):
+    // the network owner sees their poles at every stage, in-field work included.
+    // Mainhead scope is the whole boundary, and it still fails closed — an org
+    // with no assignment yields `in: []`, which matches nothing.
     const ctx = await buildScopeContext(this.prisma, user);
     const clientWhere: Prisma.AssetWhereInput =
       ctx.isClientViewer && !ctx.isAdmin
-        ? {
-            substation: { mainheadId: { in: ctx.clientMainheadIds } },
-            inspections: {
-              some: {
-                completionStatus: InspectionCompletionStatus.SUBMITTED,
-                siteVisit: {
-                  lifecycleStatus: { in: CLIENT_VISIBLE_LIFECYCLE },
-                },
-              },
-            },
-          }
+        ? { substation: { mainheadId: { in: ctx.clientMainheadIds } } }
         : {};
 
     const asset = await this.prisma.asset.findFirst({

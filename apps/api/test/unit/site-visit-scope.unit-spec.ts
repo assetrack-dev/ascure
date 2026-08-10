@@ -30,6 +30,10 @@ const ctx = (overrides: Partial<ScopeContext> = {}): ScopeContext => ({
   qaMainheadIds: [],
   maintenanceOrgIds: [],
   crossTeamMainheadIds: [],
+  // Required since the client (TNB) branch landed — a default of "not a client"
+  // keeps every contractor case below unchanged.
+  isClientViewer: false,
+  clientMainheadIds: [],
   ...overrides,
 });
 

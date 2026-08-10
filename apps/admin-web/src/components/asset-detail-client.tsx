@@ -28,6 +28,7 @@ import {
   EvidenceImageGrid,
   buildEvidenceEntries,
 } from "@/components/inspection-evidence-grid";
+import { PoleRecordView } from "@/components/pole-record-view";
 import { ApiError } from "@/lib/api";
 import { readAssetNavContext } from "@/lib/asset-nav";
 import { fetchAssetDetail } from "@/lib/assets";
@@ -76,6 +77,10 @@ function backLabel(href: string): string {
   }
   if (href.startsWith("/progress")) {
     return "Progress";
+  }
+  // The client's read-only survey feed — distinct from /site-visits above.
+  if (href.startsWith("/visits")) {
+    return "Surveys";
   }
   return "Assets";
 }
@@ -460,14 +465,27 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
   }, [goToSibling]);
 
   const isReadOnly = session?.user?.role !== "ADMIN";
+  // A CLIENT viewer (TNB) reads this page as the network OWNER, not as an
+  // operator: they get the same presentation as a public share link
+  // (PoleRecordView) instead of the crew's working surface. ADMIN keeps the
+  // internal view so the team can still work while previewing the client's.
+  const isClientViewer =
+    session?.user?.isClientViewer === true && session?.user?.role !== "ADMIN";
   const canReport =
-    session?.user?.canReport === true || session?.user?.role === "ADMIN";
+    (session?.user?.canReport === true || session?.user?.role === "ADMIN") &&
+    // ⏸ HIDDEN FOR CLIENTS pending the final report design (owner, 2026-08-10).
+    // Drop this clause to give TNB the per-asset report back.
+    !isClientViewer;
   // Who may send a pole back: ADMIN, DC (canGovernQa), or the managing MANAGER
   // (canReviewSurvey) — same gate as the map panel; the API re-enforces scope.
   const canSendBack =
     session?.user?.role === "ADMIN" ||
     session?.user?.canGovernQa === true ||
     session?.user?.canReviewSurvey === true;
+  // A client (TNB) may share a pole on their OWN network — the record the link
+  // opens is the same one they are already looking at. The API confines them to
+  // their assigned Mainheads and caps the link at 30 days.
+  const canShare = canSendBack || isClientViewer;
 
   const inspectionImages = useMemo(
     () => buildEvidenceEntries(asset?.latestInspection?.images ?? []),
@@ -650,29 +668,36 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                 <ArrowLeft size={16} />
                 {backLabel(backHref)}
               </button>
-              <p className="mt-4 text-sm font-semibold uppercase text-[var(--brand)]">
-                Asset Detail
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
-                {asset?.assetCode ?? "Asset"}
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                  <ShieldCheck size={14} />
-                  {isReadOnly ? "Read-only" : "Full access"}
-                </span>
-                {asset ? (
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
-                    {formatInspectionStatus(asset.inspectionStatus)}
-                  </span>
-                ) : null}
-                {reinspectionPending ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]">
-                    <RotateCcw size={13} />
-                    Sent back for re-inspection
-                  </span>
-                ) : null}
-              </div>
+              {/* A client viewer gets the pole's own heading + chips from
+                  PoleRecordView below, so this operator-facing header would
+                  only repeat it (and expose internal review state). */}
+              {isClientViewer ? null : (
+                <>
+                  <p className="mt-4 text-sm font-semibold uppercase text-[var(--brand)]">
+                    Asset Detail
+                  </p>
+                  <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
+                    {asset?.assetCode ?? "Asset"}
+                  </h1>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                      <ShieldCheck size={14} />
+                      {isReadOnly ? "Read-only" : "Full access"}
+                    </span>
+                    {asset ? (
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)]">
+                        {formatInspectionStatus(asset.inspectionStatus)}
+                      </span>
+                    ) : null}
+                    {reinspectionPending ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-[var(--shadow-soft)]">
+                        <RotateCcw size={13} />
+                        Sent back for re-inspection
+                      </span>
+                    ) : null}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -705,7 +730,7 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                   </button>
                 </div>
               ) : null}
-              {canSendBack && asset ? (
+              {canShare && asset ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -849,7 +874,11 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
                     >
                       <option value={7}>7 days</option>
                       <option value={30}>30 days</option>
-                      <option value={90}>90 days</option>
+                      {/* The API caps a client's link at 30 days — don't offer
+                          a length it would silently shorten. */}
+                      {isClientViewer ? null : (
+                        <option value={90}>90 days</option>
+                      )}
                     </select>
                   </label>
                   <button
@@ -956,6 +985,45 @@ function AssetDetailContent({ assetId }: { assetId: string }) {
             ) : error ? (
               <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
                 {error}
+              </div>
+            ) : asset && isClientViewer ? (
+              /* The network owner's read: the SAME record a public share link
+                 shows (PoleRecordView), so what TNB sees on the console and what
+                 they get sent by WhatsApp are one presentation. No operator
+                 fields, no review state, no inline editing. */
+              <div className="mx-auto max-w-3xl">
+                <PoleRecordView
+                  assetCode={asset.assetCode}
+                  assetType={asset.assetType}
+                  latitude={asset.latitude}
+                  longitude={asset.longitude}
+                  facts={[
+                    { label: "Pencawang", value: asset.pencawangName },
+                    { label: "Location", value: asset.location },
+                    { label: "Feeder", value: asset.feeder },
+                    { label: "Name", value: asset.name },
+                    {
+                      label: "Kod Tiang",
+                      value:
+                        asset.savtRoutes.length > 0
+                          ? asset.savtRoutes
+                              .map((route) => route.poleCode)
+                              .join(" · ")
+                          : null,
+                    },
+                  ]}
+                  inspection={
+                    asset.latestInspection
+                      ? {
+                          submittedAt: asset.latestInspection.submittedAt,
+                          totalDefects: inspectionDefectCount,
+                          items: inspectionItems,
+                          images: asset.latestInspection.images ?? [],
+                        }
+                      : null
+                  }
+                  emptyText="This pole has been registered but not surveyed yet."
+                />
               </div>
             ) : asset ? (
               <div className="space-y-6">

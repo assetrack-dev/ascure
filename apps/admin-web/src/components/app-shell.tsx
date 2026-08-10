@@ -6,6 +6,7 @@ import {
   Bug,
   Building2,
   CalendarClock,
+  ClipboardCheck,
   ClipboardList,
   Factory,
   FileSpreadsheet,
@@ -91,12 +92,15 @@ const MANAGER_NAV_HREFS = new Set<string>([
   "/teams",
 ]);
 
-// A CLIENT viewer (TNB) sees exactly two pages: their progress view and the
-// asset map — both server-scoped to the Mainheads assigned to their
-// organization. Everything else here is contractor operations, not theirs.
+// A CLIENT viewer (TNB) sees exactly three pages: their progress roll-up, the
+// survey feed and the asset map — all server-scoped to the Mainheads assigned to
+// their organization, all read-only. Everything else here is contractor
+// operations, not theirs. ⚠ Keep /site-visits OUT: that page is the contractor's
+// operational surface (lifecycle actions, editable checklist cells); the client
+// gets /visits, a purpose-built read-only feed over the same surveys.
 // ⚠ This allow-list also OVERRIDES the /map item's own `roles` gate (which lists
 // only ADMIN/MANAGER/SUPERVISOR), so the client branch must run before it.
-const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/map"]);
+const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/visits", "/map"]);
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
@@ -137,6 +141,16 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       href: "/progress",
       label: "Progress",
       icon: TrendingUp,
+      section: "operations",
+      requiresClientViewer: true,
+    },
+    // The client's survey feed — every survey on their Mainheads at every
+    // lifecycle stage, read-only. Distinct from /site-visits (the contractor's
+    // operational surface); see CLIENT_NAV_HREFS.
+    {
+      href: "/visits",
+      label: "Surveys",
+      icon: ClipboardCheck,
       section: "operations",
       requiresClientViewer: true,
     },
