@@ -26,7 +26,6 @@ import { dropOfflineAssetCreate, enqueueMutation, isTempId, mintTempId } from '.
 import { buildOfflineInspectionForm } from '../offlineInspection';
 import { useSession } from '../context/AuthContext';
 import { useCapabilities } from '../useCapabilities';
-import { openStreetViewAt } from '../utils/streetView';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   Asset,
@@ -795,17 +794,6 @@ export function AssetDetailScreen() {
               <Feather name="navigation" size={16} color="#ffffff" />
               <Text style={styles.directionsButtonText}>Get Directions</Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open Street View at this pole"
-              onPress={() =>
-                openStreetViewAt(asset.latitude as number, asset.longitude as number)
-              }
-              style={({ pressed }) => [styles.streetViewButton, pressed && styles.pressedButton]}
-            >
-              <Feather name="eye" size={16} color={theme.colors.primary} />
-              <Text style={styles.streetViewButtonText}>Street View</Text>
-            </Pressable>
           </View>
         ) : null}
 
@@ -1367,25 +1355,6 @@ const createStyles = (t: Theme) =>
     },
     directionsButtonText: {
       color: '#ffffff',
-      fontSize: 14,
-      fontWeight: '600',
-      fontFamily: t.fonts.bodySemibold,
-    },
-    streetViewButton: {
-      marginTop: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      minHeight: 46,
-      borderRadius: t.radius.control,
-      borderWidth: 1,
-      borderColor: t.colors.primary,
-      backgroundColor: 'transparent',
-      paddingHorizontal: 16,
-    },
-    streetViewButtonText: {
-      color: t.colors.primary,
       fontSize: 14,
       fontWeight: '600',
       fontFamily: t.fonts.bodySemibold,
