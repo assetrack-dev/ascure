@@ -2125,14 +2125,15 @@ export class AssetsService {
     if (memberships.length === 0) {
       return;
     }
-    // Feeder-Pillar origin (FP<n>) has no column in the structured membership
-    // graph yet, so skip these poles — persisting "FP1 A 1" as a bare A-1 Feeder
-    // membership would conflate it with the direct A line and drop the prefix
-    // from the rendered NO TIANG RONDAAN. They stay string-only: with no
-    // memberships, renderNoTiangRondaan returns null and callers fall back to the
-    // assetCode mirror (which holds "FP1 A 1"). Structured FP backfill is a later
-    // migration (PoleFeederMembership.feederPillar).
-    if (memberships.some((membership) => membership.feederPillar !== undefined)) {
+    // A power origin (FP<n> Feeder Pillar, TX<n> transformer) has no column in
+    // the structured membership graph yet, so skip these poles — persisting
+    // "FP1 A 1" as a bare A-1 Feeder membership would conflate it with the direct
+    // A line and drop the prefix from the rendered NO TIANG RONDAAN. They stay
+    // string-only: with no memberships, renderNoTiangRondaan returns null and
+    // callers fall back to the assetCode mirror (which holds "FP1 A 1" / "TX1 A 1"
+    // verbatim). Structured origin backfill is a later migration
+    // (PoleFeederMembership.origin).
+    if (memberships.some((membership) => membership.origin !== undefined)) {
       return;
     }
 
@@ -2227,7 +2228,7 @@ export class AssetsService {
     }
     // Feeder-Pillar poles aren't in the structured graph (see syncPoleMemberships),
     // so there's no membership key to resolve a parent against — skip.
-    if (memberships.some((membership) => membership.feederPillar !== undefined)) {
+    if (memberships.some((membership) => membership.origin !== undefined)) {
       return;
     }
     const primary = [...memberships].sort(

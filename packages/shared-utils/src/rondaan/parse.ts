@@ -3,16 +3,47 @@ export interface PoleBranchPart {
   suffix?: string;
 }
 
+/**
+ * Where a feeder line takes its power from, when it is not straight off the
+ * Pencawang busbar:
+ *   - `FP` — a Feeder Pillar (Pencawang→FP→pole).
+ *   - `TX` — a specific outgoing TRANSFORMER, for a Pencawang that has more than
+ *     one and where TNB wants each feeder attributed to the right one.
+ *
+ * Both behave identically: a pure LABEL that namespaces the feeder line, so
+ * `TX1 A 1`, `FP1 A 1` and `A 1` are three different poles on three different
+ * lines, each with its own sequence.
+ *
+ * ⚠ ONE origin per pole code. `TX1 FP1 A 1` (a pillar fed by a transformer) is
+ * NOT grammar today — if TNB needs to record both levels, this becomes two
+ * slots rather than a kind, and `buildNormalizedKey` has to render both.
+ */
+export type PoleOriginKind = 'FP' | 'TX';
+
+export interface PoleOrigin {
+  kind: PoleOriginKind;
+  number: number;
+}
+
+/** Origin tokens, longest-first, safe to drop into a regex alternation. */
+const ORIGIN_KINDS: PoleOriginKind[] = ['FP', 'TX'];
+const ORIGIN_TOKEN = ORIGIN_KINDS.join('|');
+
+/** Render an origin back to its canonical prefix token, e.g. `TX2`. */
+export function formatPoleOrigin(origin: PoleOrigin): string {
+  return `${origin.kind}${origin.number}`;
+}
+
 export interface ParsedPoleCode {
   original: string;
   feeder: string;
   baseNumber: number;
   branchParts: PoleBranchPart[];
-  /** Optional Feeder-Pillar origin (the `<n>` in an `FP<n>` prefix), set when the
-   *  pole's feeder runs from a Feeder Pillar (Pencawang→FP→pole) rather than
-   *  straight off the Pencawang. Undefined = direct. It namespaces the feeder
-   *  line, so `FP1 A 1` ≠ `A 1` ≠ `FP2 A 1` (each its own sequence). */
-  feederPillar?: number;
+  /** Optional power origin (the `FP<n>` / `TX<n>` prefix), set when the pole's
+   *  feeder runs from a Feeder Pillar or a specific outgoing transformer rather
+   *  than straight off the Pencawang. Undefined = direct. It namespaces the
+   *  feeder line, so `FP1 A 1` ≠ `TX1 A 1` ≠ `A 1` ≠ `FP2 A 1`. */
+  origin?: PoleOrigin;
   normalizedKey: string;
   parentKey?: string;
   isValid: boolean;
@@ -82,7 +113,7 @@ export interface FeederLine {
   warning?: string;
 }
 
-type BranchAddress = Pick<ParsedPoleCode, 'feeder' | 'baseNumber' | 'branchParts' | 'feederPillar'>;
+type BranchAddress = Pick<ParsedPoleCode, 'feeder' | 'baseNumber' | 'branchParts' | 'origin'>;
 type DrawableParsedAssetPoleCode = Omit<ParsedAssetPoleCode, 'coordinate'> & {
   coordinate: AssetCoordinate;
 };
@@ -158,52 +189,58 @@ export function normalizePoleInput(input: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Collapse a Feeder-Pillar token back to its canonical `FP<n>` form: the
-  // letter→digit spacer above splits `FP1` into `FP 1`. An `FP<n>` prefix may sit
+  // Collapse an origin token back to its canonical `FP<n>` / `TX<n>` form: the
+  // letter→digit spacer above splits `FP1` into `FP 1`. An origin prefix may sit
   // at the front OR on any `&`-joined segment — a pole shared across feeder lines
-  // that run from a Feeder Pillar is written per-segment, e.g. `FP1 C 1 & FP1 G 1`
-  // (or `FP1 A 1 & FP2 B 1` for two different pillars). Only collapse when it
-  // prefixes a feeder line, so a bare `FP 1` (feeders F & P at index 1) is left as
-  // the normal feeder grammar.
-  return normalized.replace(/(^|& )FP\s+([1-9]\d*)\s+(?=[A-Z])/g, '$1FP$2 ');
+  // that run from one is written per-segment, e.g. `FP1 C 1 & FP1 G 1` (or
+  // `FP1 A 1 & FP2 B 1` for two different pillars). Only collapse when it
+  // prefixes a feeder line, so a bare `FP 1` (feeders F & P at index 1) — or
+  // `TX 1` (feeders T & X) — is left as the normal feeder grammar.
+  return normalized.replace(
+    new RegExp(`(^|& )(${ORIGIN_TOKEN})\\s+([1-9]\\d*)\\s+(?=[A-Z])`, 'g'),
+    '$1$2$3 ',
+  );
 }
 
 /**
- * Split a normalized pole code into its optional leading Feeder-Pillar origin
- * (`FP<n>`) and the remaining feeder grammar:
- *   "FP1 A 1"      -> { feederPillar: 1, rest: "A 1" }
- *   "FP2 AB 1"     -> { feederPillar: 2, rest: "AB 1" }
+ * Split a normalized pole code into its optional leading power origin
+ * (`FP<n>` / `TX<n>`) and the remaining feeder grammar:
+ *   "FP1 A 1"      -> { origin: {kind:'FP', number:1}, rest: "A 1" }
+ *   "TX2 AB 1"     -> { origin: {kind:'TX', number:2}, rest: "AB 1" }
  *   "A 1"          -> { rest: "A 1" }
- * Only a leading `FP<n>` that prefixes a feeder line is taken, so a bare "FP 1"
- * (feeders F & P at index 1) is left as-is for the normal feeder grammar.
+ * Only a leading origin token that prefixes a feeder line is taken, so a bare
+ * "FP 1" (feeders F & P at index 1) or "TX 1" (feeders T & X) is left as-is for
+ * the normal feeder grammar.
  */
-export function extractFeederPillar(normalizedInput: string): {
-  feederPillar?: number;
+export function extractOrigin(normalizedInput: string): {
+  origin?: PoleOrigin;
   rest: string;
 } {
-  const match = normalizedInput.match(/^FP\s*([1-9]\d*)\s+([A-Z].*)$/);
+  const match = normalizedInput.match(
+    new RegExp(`^(${ORIGIN_TOKEN})\\s*([1-9]\\d*)\\s+([A-Z].*)$`),
+  );
 
   if (!match) {
     return { rest: normalizedInput };
   }
 
-  const feederPillar = Number(match[1]);
+  const number = Number(match[2]);
 
-  if (!Number.isSafeInteger(feederPillar) || feederPillar <= 0) {
+  if (!Number.isSafeInteger(number) || number <= 0) {
     return { rest: normalizedInput };
   }
 
-  return { feederPillar, rest: match[2] };
+  return { origin: { kind: match[1] as PoleOriginKind, number }, rest: match[3] };
 }
 
 export function buildNormalizedKey(
   feeder: string,
   baseNumber: number,
   branchParts: PoleBranchPart[] = [],
-  feederPillar?: number,
+  origin?: PoleOrigin,
 ): string {
   const prefix =
-    feederPillar !== undefined && feederPillar > 0 ? `FP${feederPillar} ` : '';
+    origin !== undefined && origin.number > 0 ? `${formatPoleOrigin(origin)} ` : '';
   const normalizedFeeder = feeder.trim().toUpperCase();
   const branchKey = branchParts
     .map((part) => {
@@ -231,12 +268,12 @@ export function getExpectedParentKey(code: BranchAddress): string | undefined {
   if (lastPart.number > 1) {
     lastPart.number -= 1;
 
-    return buildNormalizedKey(code.feeder, code.baseNumber, parentBranchParts, code.feederPillar);
+    return buildNormalizedKey(code.feeder, code.baseNumber, parentBranchParts, code.origin);
   }
 
   parentBranchParts.pop();
 
-  return buildNormalizedKey(code.feeder, code.baseNumber, parentBranchParts, code.feederPillar);
+  return buildNormalizedKey(code.feeder, code.baseNumber, parentBranchParts, code.origin);
 }
 
 export function parsePoleCode(input: string): ParsedPoleCode[] {
@@ -253,15 +290,14 @@ export function parsePoleCode(input: string): ParsedPoleCode[] {
   // single `FP<n>` at the FRONT is the default origin for any bare segment, so
   // `FP1 C 1 & G 1` still reads both lines as FP1 (backward-compatible). Still no
   // nesting — at most one `FP<n>` per segment.
-  const { feederPillar: frontFeederPillar, rest } = extractFeederPillar(normalizedInput);
+  const { origin: frontOrigin, rest } = extractOrigin(normalizedInput);
   const segments = rest.split('&').map((segment) => segment.trim());
   const parsedCodes: ParsedPoleCode[] = [];
 
   for (const segment of segments) {
-    const { feederPillar: segmentFeederPillar, rest: segmentRest } =
-      extractFeederPillar(segment);
+    const { origin: segmentOrigin, rest: segmentRest } = extractOrigin(segment);
     parsedCodes.push(
-      ...parsePoleSegment(original, segmentRest, segmentFeederPillar ?? frontFeederPillar),
+      ...parsePoleSegment(original, segmentRest, segmentOrigin ?? frontOrigin),
     );
   }
 
@@ -368,7 +404,7 @@ export function buildFeederLines(assets: AssetLike[]): FeederLine[] {
         parsed.feeder,
         parsed.baseNumber + 1,
         [],
-        parsed.feederPillar,
+        parsed.origin,
       );
       const nextBaseEntry = entriesByKey.get(nextBaseKey);
 
@@ -398,7 +434,7 @@ export function buildFeederLines(assets: AssetLike[]): FeederLine[] {
 function parsePoleSegment(
   original: string,
   segment: string,
-  feederPillar?: number,
+  origin?: PoleOrigin,
 ): ParsedPoleCode[] {
   const normalizedSegment = normalizePoleInput(segment);
 
@@ -434,13 +470,13 @@ function parsePoleSegment(
   }
 
   return feederLetters.split('').map((feeder) => {
-    const normalizedKey = buildNormalizedKey(feeder, baseNumber, branchParts, feederPillar);
+    const normalizedKey = buildNormalizedKey(feeder, baseNumber, branchParts, origin);
     const parsed: ParsedPoleCode = {
       original,
       feeder,
       baseNumber,
       branchParts: branchParts.map((part) => ({ ...part })),
-      ...(feederPillar !== undefined ? { feederPillar } : {}),
+      ...(origin !== undefined ? { origin } : {}),
       normalizedKey,
       isValid: true,
       errors: [],
@@ -559,7 +595,7 @@ function groupDrawableEntriesByFeeder(
 function findMissingBaseSequenceIssues(entries: ParsedAssetPoleCode[]): FeederValidationIssue[] {
   const linesByKey = new Map<
     string,
-    { feeder: string; feederPillar?: number; baseNumbers: Set<number> }
+    { feeder: string; origin?: PoleOrigin; baseNumbers: Set<number> }
   >();
   const issues: FeederValidationIssue[] = [];
 
@@ -574,7 +610,7 @@ function findMissingBaseSequenceIssues(entries: ParsedAssetPoleCode[]): FeederVa
     let line = linesByKey.get(lineKey);
 
     if (!line) {
-      line = { feeder: parsed.feeder, feederPillar: parsed.feederPillar, baseNumbers: new Set<number>() };
+      line = { feeder: parsed.feeder, origin: parsed.origin, baseNumbers: new Set<number>() };
       linesByKey.set(lineKey, line);
     }
 
@@ -589,8 +625,8 @@ function findMissingBaseSequenceIssues(entries: ParsedAssetPoleCode[]): FeederVa
       const currentNumber = sortedBaseNumbers[index];
 
       for (let missingNumber = previousNumber + 1; missingNumber < currentNumber; missingNumber += 1) {
-        const missingKey = buildNormalizedKey(line.feeder, missingNumber, [], line.feederPillar);
-        const currentKey = buildNormalizedKey(line.feeder, currentNumber, [], line.feederPillar);
+        const missingKey = buildNormalizedKey(line.feeder, missingNumber, [], line.origin);
+        const currentKey = buildNormalizedKey(line.feeder, currentNumber, [], line.origin);
 
         issues.push({
           type: 'MISSING_PREVIOUS_BASE_SEQUENCE',
@@ -610,8 +646,10 @@ function findMissingBaseSequenceIssues(entries: ParsedAssetPoleCode[]): FeederVa
 /** Identity of one feeder line within a Pencawang, namespaced by its
  *  Feeder-Pillar origin: the `FP1 A` line and the direct `A` line are distinct,
  *  so their base/branch sequences validate and draw independently. */
-function originLineKey(parsed: Pick<ParsedPoleCode, 'feeder' | 'feederPillar'>): string {
-  return `${parsed.feederPillar ?? ''} ${parsed.feeder}`;
+function originLineKey(parsed: Pick<ParsedPoleCode, 'feeder' | 'origin'>): string {
+  // \u0000 as an escape, NOT a raw NUL byte: a literal NUL made this file read
+  // as BINARY to grep/ripgrep and every editor tool that guards against it.
+  return `${parsed.origin ? formatPoleOrigin(parsed.origin) : ''}\u0000${parsed.feeder}`;
 }
 
 function hasEarlierBranchSequence(parsed: ParsedPoleCode, validKeySet: Set<string>): boolean {
@@ -631,7 +669,7 @@ function hasEarlierBranchSequence(parsed: ParsedPoleCode, validKeySet: Set<strin
         ...prefixParts,
         lastPart.suffix ? { number, suffix: lastPart.suffix } : { number },
       ],
-      parsed.feederPillar,
+      parsed.origin,
     );
 
     if (validKeySet.has(key)) {

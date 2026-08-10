@@ -19,8 +19,8 @@
  * {C,1}+{D,1}; this formatter recombines them. Keep that symmetry.
  */
 
-import type { ParsedPoleCode, PoleBranchPart } from './parse';
-import { normalizePoleInput, parsePoleCode } from './parse';
+import type { ParsedPoleCode, PoleBranchPart, PoleOrigin } from './parse';
+import { formatPoleOrigin, normalizePoleInput, parsePoleCode } from './parse';
 
 /**
  * One feeder membership of a pole: which feeder, the per-feeder index, and the
@@ -35,11 +35,10 @@ export interface PoleMembership {
   /** Canonical branch suffix as stored (e.g. "/1A"); takes precedence over
    *  branchParts when set, so DB rows render without re-parsing. */
   branchSuffix?: string;
-  /** Optional Feeder-Pillar origin (`<n>` in `FP<n>`): the pole's feeder runs
-   *  from a Feeder Pillar (Pencawang→FP→pole). Rendered as a single leading
-   *  `FP<n>` prefix. A pole has at most one origin, so all of its memberships
-   *  share this value. */
-  feederPillar?: number;
+  /** Optional power origin (`FP<n>` Feeder Pillar, or `TX<n>` a specific
+   *  outgoing transformer). Rendered as a single leading prefix. A pole has at
+   *  most one origin, so all of its memberships share this value. */
+  origin?: PoleOrigin;
 }
 
 interface MembershipGroup {
@@ -49,6 +48,17 @@ interface MembershipGroup {
 }
 
 const SINGLE_LETTER_FEEDER = /^[A-Z]$/;
+
+/** Two origins match when both are absent, or both name the same kind AND
+ *  number. ⚠ Never compare origins with `===` — they are objects now, so that
+ *  is reference equality and would fail for every separately-parsed segment. */
+function sameOrigin(a?: PoleOrigin, b?: PoleOrigin): boolean {
+  if (a === undefined || b === undefined) {
+    return a === b;
+  }
+
+  return a.kind === b.kind && a.number === b.number;
+}
 
 /**
  * Render the branch lineage suffix: [] -> "", [{1}] -> "/1",
@@ -90,7 +100,7 @@ export function formatMembership(membership: PoleMembership): string {
  */
 export function formatRondaan(memberships: PoleMembership[]): string {
   const groups = new Map<string, MembershipGroup>();
-  let feederPillar: number | undefined;
+  let origin: PoleOrigin | undefined;
 
   for (const membership of memberships) {
     const feeder = membership.feeder.trim().toUpperCase();
@@ -99,15 +109,15 @@ export function formatRondaan(memberships: PoleMembership[]): string {
       continue;
     }
 
-    // A pole has one origin; take the first valid Feeder-Pillar seen and prefix
-    // the whole rendered code with it once (FP1 E 4 & F 2), not per segment.
+    // A pole has one origin; take the first valid one seen and prefix the whole
+    // rendered code with it once (FP1 E 4 & F 2), not per segment.
     if (
-      feederPillar === undefined &&
-      membership.feederPillar !== undefined &&
-      Number.isInteger(membership.feederPillar) &&
-      membership.feederPillar > 0
+      origin === undefined &&
+      membership.origin !== undefined &&
+      Number.isInteger(membership.origin.number) &&
+      membership.origin.number > 0
     ) {
-      feederPillar = membership.feederPillar;
+      origin = membership.origin;
     }
 
     const branchSuffix = resolveBranchSuffix(membership);
@@ -131,7 +141,7 @@ export function formatRondaan(memberships: PoleMembership[]): string {
     return '';
   }
 
-  return feederPillar !== undefined ? `FP${feederPillar} ${body}` : body;
+  return origin !== undefined ? `${formatPoleOrigin(origin)} ${body}` : body;
 }
 
 /**
@@ -165,7 +175,7 @@ export function suggestNextPoleCode(lastCode: string): string | null {
 
   const [first] = parsed;
 
-  if (!parsed.every((entry) => entry.feederPillar === first.feederPillar)) {
+  if (!parsed.every((entry) => sameOrigin(entry.origin, first.origin))) {
     return null;
   }
 
@@ -179,8 +189,7 @@ export function suggestNextPoleCode(lastCode: string): string | null {
  * level's leg suffix.
  */
 function advanceToNextPole(entry: ParsedPoleCode): PoleMembership {
-  const origin =
-    entry.feederPillar !== undefined ? { feederPillar: entry.feederPillar } : {};
+  const origin = entry.origin !== undefined ? { origin: entry.origin } : {};
   const deepest = entry.branchParts[entry.branchParts.length - 1];
 
   if (!deepest) {
@@ -203,7 +212,7 @@ function advanceToNextPole(entry: ParsedPoleCode): PoleMembership {
  */
 function renderPreservingOrder(memberships: PoleMembership[]): string {
   const groups: MembershipGroup[] = [];
-  let feederPillar: number | undefined;
+  let origin: PoleOrigin | undefined;
 
   for (const membership of memberships) {
     const feeder = membership.feeder.trim().toUpperCase();
@@ -213,12 +222,12 @@ function renderPreservingOrder(memberships: PoleMembership[]): string {
     }
 
     if (
-      feederPillar === undefined &&
-      membership.feederPillar !== undefined &&
-      Number.isInteger(membership.feederPillar) &&
-      membership.feederPillar > 0
+      origin === undefined &&
+      membership.origin !== undefined &&
+      Number.isInteger(membership.origin.number) &&
+      membership.origin.number > 0
     ) {
-      feederPillar = membership.feederPillar;
+      origin = membership.origin;
     }
 
     const branchSuffix = resolveBranchSuffix(membership);
@@ -241,7 +250,7 @@ function renderPreservingOrder(memberships: PoleMembership[]): string {
     return '';
   }
 
-  return feederPillar !== undefined ? `FP${feederPillar} ${body}` : body;
+  return origin !== undefined ? `${formatPoleOrigin(origin)} ${body}` : body;
 }
 
 /** Map a parsed pole code (one feeder segment) to a membership. The backfill
@@ -252,7 +261,7 @@ export function membershipFromParsed(parsed: ParsedPoleCode): PoleMembership {
     feeder: parsed.feeder,
     index: parsed.baseNumber,
     branchParts: parsed.branchParts,
-    ...(parsed.feederPillar !== undefined ? { feederPillar: parsed.feederPillar } : {}),
+    ...(parsed.origin !== undefined ? { origin: parsed.origin } : {}),
   };
 }
 
