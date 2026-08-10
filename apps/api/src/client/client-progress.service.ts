@@ -136,21 +136,23 @@ export class ClientProgressService {
       ? { ...base, substation: { mainheadId } }
       : base;
 
-    const [total, inspected, groups, defects, lastActivity] = await Promise.all([
-      this.prisma.asset.count({ where }),
-      this.prisma.asset.count({
-        where: { ...where, inspections: { some: SURVEYED_INSPECTION } },
-      }),
-      mainheadId
-        ? this.groupByPencawang(where)
-        : this.groupByMainhead(user, mainheadIds),
-      this.defectSummary(where),
-      this.prisma.inspection.findFirst({
-        where: { asset: where, ...SURVEYED_INSPECTION },
-        orderBy: { submittedAt: 'desc' },
-        select: { submittedAt: true },
-      }),
-    ]);
+    const [total, inspected, groups, defects, lastActivity, pencawang] =
+      await Promise.all([
+        this.prisma.asset.count({ where }),
+        this.prisma.asset.count({
+          where: { ...where, inspections: { some: SURVEYED_INSPECTION } },
+        }),
+        mainheadId
+          ? this.groupByPencawang(where)
+          : this.groupByMainhead(user, mainheadIds),
+        this.defectSummary(where),
+        this.prisma.inspection.findFirst({
+          where: { asset: where, ...SURVEYED_INSPECTION },
+          orderBy: { submittedAt: 'desc' },
+          select: { submittedAt: true },
+        }),
+        this.pencawangSummary(where),
+      ]);
 
     return {
       level: mainheadId ? ('pencawang' as const) : ('mainhead' as const),
@@ -161,6 +163,50 @@ export class ClientProgressService {
       lastInspectionAt: lastActivity?.submittedAt?.toISOString() ?? null,
       groups,
       defects,
+      pencawang,
+    };
+  }
+
+  /**
+   * How many Pencawang the client has, and how many are FINISHED — every pole
+   * recorded there surveyed. "How many substations are done" is the question a
+   * network owner actually asks; a pole percentage hides that one Pencawang at
+   * 40% is a site someone still has to go back to.
+   *
+   * ⚠ Two groupBy queries, NOT one rollup per Pencawang — this runs at every
+   * drill level, and a per-Pencawang loop would be N+1 over a Mainhead that can
+   * hold a hundred of them.
+   */
+  private async pencawangSummary(scope: Prisma.AssetWhereInput) {
+    const [totals, surveyed] = await Promise.all([
+      this.prisma.asset.groupBy({
+        by: ['substationId'],
+        where: scope,
+        _count: { _all: true },
+      }),
+      this.prisma.asset.groupBy({
+        by: ['substationId'],
+        // AND, not a spread: `scope` is caller-supplied and may grow keys.
+        where: { AND: [scope, { inspections: { some: SURVEYED_INSPECTION } }] },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const surveyedBySubstation = new Map(
+      surveyed.map((row) => [row.substationId, row._count._all]),
+    );
+
+    // A Pencawang with no poles recorded isn't in `totals` at all, so it can
+    // never be miscounted as "complete" on an empty denominator.
+    const completed = totals.filter(
+      (row) => (surveyedBySubstation.get(row.substationId) ?? 0) >= row._count._all,
+    ).length;
+
+    return {
+      total: totals.length,
+      completed,
+      percent:
+        totals.length > 0 ? Math.round((completed / totals.length) * 100) : 0,
     };
   }
 

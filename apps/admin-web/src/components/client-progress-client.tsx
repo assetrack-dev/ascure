@@ -7,10 +7,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Factory,
   Info,
   MapPin,
   RefreshCw,
-  Siren,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -307,7 +307,10 @@ function ClientProgressContent() {
 
           {progress ? (
             <>
-              {/* Headline coverage */}
+              {/* Headline coverage. ⚠ No separate "Coverage %" card — it only
+                  repeated the percentage already on the Poles-surveyed context
+                  line. The pair that earns its place instead is PENCAWANG: how
+                  many sites there are, and how many are actually finished. */}
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <KpiCard
                   label="Poles surveyed"
@@ -317,10 +320,10 @@ function ClientProgressContent() {
                   context={`of ${progress.total.toLocaleString()} registered · ${progress.percent}%`}
                 />
                 <KpiCard
-                  label="Coverage"
-                  value={`${progress.percent}%`}
-                  icon={MapPin}
-                  tone={progress.percent >= 100 ? "success" : "neutral"}
+                  label="Pencawang"
+                  value={progress.pencawang.total}
+                  icon={Factory}
+                  tone="neutral"
                   context={
                     progress.lastInspectionAt
                       ? `last survey ${formatDate(progress.lastInspectionAt)}`
@@ -328,18 +331,24 @@ function ClientProgressContent() {
                   }
                 />
                 <KpiCard
+                  label="Pencawang completed"
+                  value={`${progress.pencawang.percent}%`}
+                  icon={MapPin}
+                  tone={progress.pencawang.percent >= 100 ? "success" : "neutral"}
+                  context={`${progress.pencawang.completed.toLocaleString()} of ${progress.pencawang.total.toLocaleString()} fully surveyed`}
+                />
+                <KpiCard
                   label="Open findings"
                   value={progress.defects.open}
                   icon={AlertTriangle}
                   tone={progress.defects.open > 0 ? "high" : "success"}
-                  context="defects awaiting action"
-                />
-                <KpiCard
-                  label="Urgent"
-                  value={progress.defects.emergency}
-                  icon={Siren}
-                  alarm={progress.defects.emergency > 0}
-                  context="flagged as emergency"
+                  // The Urgent card is gone, but an emergency is not something
+                  // to drop off the page — it rides here instead of a 5th card.
+                  context={
+                    progress.defects.emergency > 0
+                      ? `${progress.defects.emergency.toLocaleString()} flagged as emergency`
+                      : "defects awaiting action"
+                  }
                 />
               </div>
 
