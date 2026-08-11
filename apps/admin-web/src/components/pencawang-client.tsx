@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   ExternalLink,
@@ -31,6 +32,21 @@ import {
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import type { AuthSession } from "@/types/auth";
 import type { ManagedSubstation } from "@/types/substations";
+
+// Client-side only — Google Maps cannot render during SSR.
+const PencawangLocationPicker = dynamic(
+  () => import("@/components/pencawang-location-picker"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center text-xs text-slate-500">
+        Loading map...
+      </div>
+    ),
+  },
+);
+
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
 
@@ -128,6 +144,7 @@ function PencawangContent() {
   const [editInitial, setEditInitial] = useState(editForm);
   const [editError, setEditError] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [mapLoadError, setMapLoadError] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -297,6 +314,23 @@ function PencawangContent() {
     },
     [handleLogout, session?.token],
   );
+
+  // The picker's pin position — the form's coordinate strings, when valid.
+  const editPosition = useMemo(() => {
+    const lat = parseCoordinateInput(editForm.latitude, -90, 90);
+    const lng = parseCoordinateInput(editForm.longitude, -180, 180);
+    return typeof lat === "number" && typeof lng === "number"
+      ? { lat, lng }
+      : null;
+  }, [editForm.latitude, editForm.longitude]);
+
+  const handlePickLocation = useCallback((lat: number, lng: number) => {
+    setEditForm((form) => ({
+      ...form,
+      latitude: lat.toFixed(6),
+      longitude: lng.toFixed(6),
+    }));
+  }, []);
 
   const handleOpenEdit = useCallback((substation: ManagedSubstation) => {
     const form = {
@@ -755,7 +789,7 @@ function PencawangContent() {
             aria-modal="true"
             aria-label={`Edit ${editTarget.name}`}
           >
-            <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+            <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
               <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">
@@ -846,6 +880,27 @@ function PencawangContent() {
                     a pin wins over every future check-in. Clear both fields to
                     follow check-ins again.
                   </p>
+                  {GOOGLE_MAPS_API_KEY && !mapLoadError ? (
+                    <>
+                      <div className="mt-3 h-72 overflow-hidden rounded-md border border-slate-200">
+                        <PencawangLocationPicker
+                          apiKey={GOOGLE_MAPS_API_KEY}
+                          position={editPosition}
+                          onPick={handlePickLocation}
+                          onLoadError={() => setMapLoadError(true)}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Click the satellite map (or drag the pin) to place the
+                        Pencawang — the coordinates below follow.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs font-semibold text-amber-700">
+                      Map picker unavailable — enter the coordinates manually
+                      (right-click the spot in Google Maps to copy them).
+                    </p>
+                  )}
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <label className="block text-sm">
                       <span className="font-semibold text-slate-700">Latitude</span>
