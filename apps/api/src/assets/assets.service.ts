@@ -497,8 +497,10 @@ export class AssetsService {
   }
 
   /**
-   * The Pencawang's own map location — its most recent site-visit check-in GPS.
-   * Shown alongside the poles (as a distinct marker) at the points level.
+   * The Pencawang's own map location — its manually-set coordinate when the
+   * office has pinned one (the fix for a mis-pointed check-in), otherwise its
+   * most recent site-visit check-in GPS. Shown alongside the poles (as a
+   * distinct marker) at the points level.
    */
   private async pencawangCheckIn(user: RequestUser, pencawangId: string) {
     const substation = await this.prisma.substation.findFirst({
@@ -507,6 +509,8 @@ export class AssetsService {
         id: true,
         code: true,
         name: true,
+        latitude: true,
+        longitude: true,
         siteVisits: {
           where: {
             checkInLatitude: { not: null },
@@ -518,13 +522,19 @@ export class AssetsService {
         },
       },
     });
-    const visit = substation?.siteVisits[0];
-    if (
-      !substation ||
-      !visit ||
-      visit.checkInLatitude == null ||
-      visit.checkInLongitude == null
-    ) {
+    if (!substation) {
+      return null;
+    }
+    if (substation.latitude != null && substation.longitude != null) {
+      return {
+        id: substation.id,
+        name: substation.name || substation.code,
+        latitude: substation.latitude,
+        longitude: substation.longitude,
+      };
+    }
+    const visit = substation.siteVisits[0];
+    if (!visit || visit.checkInLatitude == null || visit.checkInLongitude == null) {
       return null;
     }
     return {

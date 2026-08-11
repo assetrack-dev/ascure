@@ -20,6 +20,8 @@ import {
   UpdateAssetTypeDto,
   UpdateAssetTypeStatusDto,
 } from './dto/manage-asset-type.dto';
+import { UpdateSubstationDetailsDto } from './dto/manage-substation.dto';
+import { normalizeOperationalText } from '../common/operational-text';
 
 const assetTypeInclude = {
   capability: {
@@ -50,6 +52,17 @@ const substationCountInclude = {
       name: true,
       code: true,
     },
+  },
+  // The latest check-in GPS — the Pencawang's DERIVED position when no manual
+  // coordinate is set (crews check in AT the Pencawang; see Substation.latitude).
+  siteVisits: {
+    where: {
+      checkInLatitude: { not: null },
+      checkInLongitude: { not: null },
+    },
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    select: { checkInLatitude: true, checkInLongitude: true },
   },
   _count: {
     select: {
@@ -132,6 +145,120 @@ export class MasterDataService {
     });
 
     return this.serializeSubstation(substation);
+  }
+
+  /**
+   * Edit a Pencawang's details: name, functional location, and its OWN map
+   * coordinate. The coordinate is the office fix for a mis-pointed check-in —
+   * once set it wins over every future check-in; clearing it (null pair)
+   * reverts to check-in-derived. ADMIN anywhere; a MANAGER only when every
+   * survey at this Pencawang belongs to their own company (the cascade-delete
+   * own-company rule).
+   */
+  async updateSubstationDetails(
+    user: RequestUser,
+    id: string,
+    dto: UpdateSubstationDetailsDto,
+  ) {
+    await this.findSubstationOrThrow(user.tenantId, id);
+    await this.assertManagerOwnsPencawang(user, id, 'edit');
+
+    const data: Prisma.SubstationUpdateInput = {};
+
+    if (dto.name !== undefined) {
+      const name = normalizeOperationalText(dto.name.trim().replace(/\s+/g, ' '));
+      if (!name) {
+        throw new BadRequestException('The Pencawang name cannot be empty.');
+      }
+      // Mirror the check-in create guard: mobile matches an "existing"
+      // Pencawang by code OR name (case-insensitive), so a rename that collides
+      // with another one would make it ambiguous there.
+      const clash = await this.prisma.substation.findFirst({
+        where: {
+          tenantId: user.tenantId,
+          id: { not: id },
+          OR: [
+            { code: { equals: name, mode: 'insensitive' } },
+            { name: { equals: name, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new ConflictException(
+          'Another Pencawang already uses this name or code.',
+        );
+      }
+      data.name = name;
+    }
+
+    if (dto.location !== undefined) {
+      const location = dto.location?.trim().replace(/\s+/g, ' ') ?? '';
+      data.location = location ? normalizeOperationalText(location) : null;
+    }
+
+    const hasLatitude = dto.latitude !== undefined;
+    const hasLongitude = dto.longitude !== undefined;
+    if (hasLatitude !== hasLongitude) {
+      throw new BadRequestException(
+        'Latitude and longitude must be provided together.',
+      );
+    }
+    if (hasLatitude && hasLongitude) {
+      const clearing = dto.latitude === null || dto.longitude === null;
+      if (clearing && !(dto.latitude === null && dto.longitude === null)) {
+        throw new BadRequestException(
+          'Latitude and longitude must be provided together.',
+        );
+      }
+      data.latitude = dto.latitude;
+      data.longitude = dto.longitude;
+      // Stamp who pinned it; a cleared pin reverts fully to check-in-derived.
+      data.locationSetAt = clearing ? null : new Date();
+      data.locationSetByEmail = clearing ? null : user.email;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nothing to update.');
+    }
+
+    const substation = await this.prisma.substation.update({
+      where: { id },
+      data,
+      include: substationCountInclude,
+    });
+
+    return this.serializeSubstation(substation);
+  }
+
+  // A non-ADMIN may only touch a Pencawang wholly covered by their own
+  // company's surveys — the same rule the cascade delete applies. A Pencawang
+  // with no surveys at all is fair game (nothing of anyone else's to distort).
+  private async assertManagerOwnsPencawang(
+    user: RequestUser,
+    substationId: string,
+    action: string,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+    const [total, visible] = await Promise.all([
+      this.prisma.siteVisit.count({
+        where: { tenantId: user.tenantId, substationId },
+      }),
+      this.prisma.siteVisit.count({
+        where: {
+          tenantId: user.tenantId,
+          substationId,
+          ...siteVisitAccessWhere(user),
+        },
+      }),
+    ]);
+    if (total !== visible) {
+      throw new ForbiddenException(
+        `This Pencawang holds surveys from another team or company. Only an administrator can ${action} it.`,
+      );
+    }
   }
 
   async deleteSubstation(user: RequestUser, id: string) {
@@ -365,12 +492,32 @@ export class MasterDataService {
   }
 
   private serializeSubstation(substation: SubstationRecord) {
+    const derivedVisit = substation.siteVisits[0] ?? null;
+    const hasManualLocation = substation.latitude != null && substation.longitude != null;
     return {
       id: substation.id,
       tenantId: substation.tenantId,
       code: substation.code,
       name: substation.name,
       location: substation.location,
+      // Manual coordinate (null = derived from check-in) + the effective
+      // position every map consumer should show. `locationSource` labels which
+      // one won so the UI can say "Manual" vs "From latest check-in".
+      latitude: substation.latitude,
+      longitude: substation.longitude,
+      locationSetAt: substation.locationSetAt,
+      locationSetByEmail: substation.locationSetByEmail,
+      effectiveLatitude: hasManualLocation
+        ? substation.latitude
+        : (derivedVisit?.checkInLatitude ?? null),
+      effectiveLongitude: hasManualLocation
+        ? substation.longitude
+        : (derivedVisit?.checkInLongitude ?? null),
+      locationSource: hasManualLocation
+        ? ('MANUAL' as const)
+        : derivedVisit
+          ? ('CHECK_IN' as const)
+          : null,
       isActive: substation.isActive,
       // The MAINHEAD this Pencawang rolls up under on the hierarchical map
       // (null = "Unassigned"). Editable via assignSubstationMainhead.

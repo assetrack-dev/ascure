@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Factory, Power, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  ExternalLink,
+  Factory,
+  MapPin,
+  Pencil,
+  Power,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -13,6 +23,7 @@ import {
   fetchMainheadOptions,
   fetchSubstationsForAdmin,
   previewDeletePencawang,
+  updateSubstationDetails,
   updateSubstationStatus,
   type MainheadOption,
   type PencawangDeletePreview,
@@ -36,6 +47,27 @@ const dangerActionButtonClassName =
 
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+/** Blank → null; valid number in range → the number; anything else → undefined. */
+function parseCoordinateInput(
+  value: string,
+  min: number,
+  max: number,
+): number | null | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function formatCoordinate(value: number | null | undefined) {
+  return typeof value === "number" ? value.toFixed(6) : "";
 }
 
 function normalizeSearchText(value: string | null | undefined) {
@@ -83,6 +115,19 @@ function PencawangContent() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [cascadePreview, setCascadePreview] =
     useState<PencawangDeletePreview | null>(null);
+  // Edit-details dialog. Coordinate inputs prefill with the EFFECTIVE position
+  // (manual pin, else latest check-in) so a correction is a tweak, not a
+  // retype; only fields the user actually changed are sent.
+  const [editTarget, setEditTarget] = useState<ManagedSubstation | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    location: "",
+    latitude: "",
+    longitude: "",
+  });
+  const [editInitial, setEditInitial] = useState(editForm);
+  const [editError, setEditError] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -252,6 +297,126 @@ function PencawangContent() {
     },
     [handleLogout, session?.token],
   );
+
+  const handleOpenEdit = useCallback((substation: ManagedSubstation) => {
+    const form = {
+      name: substation.name ?? "",
+      location: substation.location ?? "",
+      latitude: formatCoordinate(substation.effectiveLatitude),
+      longitude: formatCoordinate(substation.effectiveLongitude),
+    };
+    setEditForm(form);
+    setEditInitial(form);
+    setEditError("");
+    setEditTarget(substation);
+  }, []);
+
+  const handleCloseEdit = useCallback(() => {
+    if (isSavingEdit) {
+      return;
+    }
+    setEditTarget(null);
+    setEditError("");
+  }, [isSavingEdit]);
+
+  const handleSaveEdit = useCallback(async () => {
+    const token = session?.token;
+    if (!token || !editTarget) {
+      return;
+    }
+
+    const payload: {
+      name?: string;
+      location?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+    } = {};
+
+    const nextName = editForm.name.trim();
+    if (nextName !== editInitial.name.trim()) {
+      if (!nextName) {
+        setEditError("The Pencawang name cannot be empty.");
+        return;
+      }
+      payload.name = nextName;
+    }
+
+    const nextLocation = editForm.location.trim();
+    if (nextLocation !== editInitial.location.trim()) {
+      payload.location = nextLocation || null;
+    }
+
+    const coordinatesTouched =
+      editForm.latitude.trim() !== editInitial.latitude.trim() ||
+      editForm.longitude.trim() !== editInitial.longitude.trim();
+    if (coordinatesTouched) {
+      const latitude = parseCoordinateInput(editForm.latitude, -90, 90);
+      const longitude = parseCoordinateInput(editForm.longitude, -180, 180);
+      if (latitude === undefined || longitude === undefined) {
+        setEditError(
+          "Coordinates must be numbers: latitude -90 to 90, longitude -180 to 180.",
+        );
+        return;
+      }
+      if ((latitude === null) !== (longitude === null)) {
+        setEditError("Enter both latitude and longitude, or clear both.");
+        return;
+      }
+      if (latitude === null && longitude === null) {
+        // Both cleared: with a manual pin this reverts to check-in-derived;
+        // without one there is nothing to clear server-side.
+        if (editTarget.locationSource === "MANUAL") {
+          payload.latitude = null;
+          payload.longitude = null;
+        }
+      } else {
+        payload.latitude = latitude;
+        payload.longitude = longitude;
+      }
+    }
+
+    if (Object.keys(payload).length === 0) {
+      handleCloseEdit();
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setEditError("");
+    setError("");
+    setNotice("");
+
+    try {
+      const updated = await updateSubstationDetails(token, editTarget.id, payload);
+      setSubstations((current) =>
+        sortSubstations(
+          current.map((item) => (item.id === updated.id ? updated : item)),
+        ),
+      );
+      setNotice(
+        payload.latitude !== undefined && payload.latitude !== null
+          ? `${updated.name} updated — its map location is now pinned manually.`
+          : payload.latitude === null
+            ? `${updated.name} updated — its map location follows check-ins again.`
+            : `${updated.name} updated.`,
+      );
+      setEditTarget(null);
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setEditError(requestErrorMessage(saveError, "Unable to update Pencawang."));
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [
+    editForm,
+    editInitial,
+    editTarget,
+    handleCloseEdit,
+    handleLogout,
+    session?.token,
+  ]);
 
   // First click: empty Pencawang → straight to confirm; non-empty → preview the
   // cascade (and surface any block reason) before arming the confirm.
@@ -446,7 +611,15 @@ function PencawangContent() {
                       </td>
                       <td className="px-4 py-3 text-slate-700">{substation.name}</td>
                       <td className="px-4 py-3 text-slate-500">
-                        {substation.location || "—"}
+                        <span className="inline-flex items-center gap-1.5">
+                          {substation.locationSource === "MANUAL" ? (
+                            <MapPin
+                              className="h-3.5 w-3.5 shrink-0 text-teal-600"
+                              aria-label="Map location pinned manually"
+                            />
+                          ) : null}
+                          {substation.location || "—"}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
                         <select
@@ -524,6 +697,16 @@ function PencawangContent() {
                               type="button"
                               className={rowActionButtonClassName}
                               disabled={isBusy}
+                              title="Edit name, functional location, or map location"
+                              onClick={() => handleOpenEdit(substation)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className={rowActionButtonClassName}
+                              disabled={isBusy}
                               onClick={() => void handleToggleStatus(substation)}
                             >
                               {substation.isActive ? (
@@ -564,6 +747,185 @@ function PencawangContent() {
             </tbody>
           </table>
         </div>
+
+        {editTarget ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit ${editTarget.name}`}
+          >
+            <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-card)]">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Edit Pencawang
+                  </h2>
+                  <p className="text-xs font-semibold text-slate-500">
+                    {editTarget.code}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseEdit}
+                  disabled={isSavingEdit}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:text-slate-300"
+                  aria-label="Close edit dialog"
+                >
+                  <X size={17} />
+                </button>
+              </div>
+
+              <div className="space-y-4 px-5 py-5">
+                {editError ? (
+                  <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                    {editError}
+                  </div>
+                ) : null}
+
+                <label className="block text-sm">
+                  <span className="font-semibold text-slate-700">Name</span>
+                  <input
+                    className={`mt-1 ${searchControlClassName} pl-3`}
+                    value={editForm.name}
+                    disabled={isSavingEdit}
+                    onChange={(event) =>
+                      setEditForm((form) => ({ ...form, name: event.target.value }))
+                    }
+                  />
+                </label>
+
+                <label className="block text-sm">
+                  <span className="font-semibold text-slate-700">
+                    Functional location
+                  </span>
+                  {/* TNB's identifier for the Pencawang — an ID, not an address. */}
+                  <input
+                    className={`mt-1 ${searchControlClassName} pl-3`}
+                    value={editForm.location}
+                    disabled={isSavingEdit}
+                    placeholder="e.g. CKTN/PCE/J01685"
+                    onChange={(event) =>
+                      setEditForm((form) => ({
+                        ...form,
+                        location: event.target.value,
+                      }))
+                    }
+                  />
+                  <span className="mt-1 block text-xs text-slate-500">
+                    The TNB functional-location ID for this Pencawang.
+                  </span>
+                </label>
+
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Map location
+                    </span>
+                    <span className="text-xs font-semibold text-slate-500">
+                      {editTarget.locationSource === "MANUAL"
+                        ? `Pinned manually${
+                            editTarget.locationSetAt
+                              ? ` on ${new Date(
+                                  editTarget.locationSetAt,
+                                ).toLocaleDateString()}`
+                              : ""
+                          }${
+                            editTarget.locationSetByEmail
+                              ? ` by ${editTarget.locationSetByEmail}`
+                              : ""
+                          }`
+                        : editTarget.locationSource === "CHECK_IN"
+                          ? "From the latest check-in GPS"
+                          : "No location yet (never visited)"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Crews check in AT the Pencawang, so its map position follows
+                    the latest check-in. Save corrected coordinates to pin it —
+                    a pin wins over every future check-in. Clear both fields to
+                    follow check-ins again.
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <label className="block text-sm">
+                      <span className="font-semibold text-slate-700">Latitude</span>
+                      <input
+                        className={`mt-1 ${searchControlClassName} pl-3`}
+                        value={editForm.latitude}
+                        disabled={isSavingEdit}
+                        placeholder="e.g. 5.483033"
+                        inputMode="decimal"
+                        onChange={(event) =>
+                          setEditForm((form) => ({
+                            ...form,
+                            latitude: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="font-semibold text-slate-700">Longitude</span>
+                      <input
+                        className={`mt-1 ${searchControlClassName} pl-3`}
+                        value={editForm.longitude}
+                        disabled={isSavingEdit}
+                        placeholder="e.g. 101.125401"
+                        inputMode="decimal"
+                        onChange={(event) =>
+                          setEditForm((form) => ({
+                            ...form,
+                            longitude: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  {(() => {
+                    const latitude = parseCoordinateInput(editForm.latitude, -90, 90);
+                    const longitude = parseCoordinateInput(
+                      editForm.longitude,
+                      -180,
+                      180,
+                    );
+                    if (typeof latitude !== "number" || typeof longitude !== "number") {
+                      return null;
+                    }
+                    return (
+                      <a
+                        className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--brand)] hover:underline"
+                        href={`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Verify these coordinates in Google Maps
+                      </a>
+                    );
+                  })()}
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={handleCloseEdit}
+                    disabled={isSavingEdit}
+                    className={rowActionButtonClassName}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveEdit()}
+                    disabled={isSavingEdit}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 text-xs font-semibold text-[var(--on-brand)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {isSavingEdit ? "Saving..." : "Save changes"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );

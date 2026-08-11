@@ -441,6 +441,9 @@ export class ReportsService {
         refCode: true,
         name: true,
         location: true,
+        // Manual office pin — wins over the check-in-derived coordinate below.
+        latitude: true,
+        longitude: true,
         _count: { select: { assets: true } },
       },
     });
@@ -533,11 +536,16 @@ export class ReportsService {
       const displayStatus = displayStatusBySubstation.get(substation.id) ?? null;
       const coords = coordsBySubstation.get(substation.id) ?? null;
       const reportVisitId = reportVisitBySubstation.get(substation.id) ?? null;
+      const hasManualLocation =
+        substation.latitude != null && substation.longitude != null;
       return {
         ...substation,
         mainhead: mainheadBySubstation.get(substation.id) ?? null,
-        latitude: coords?.latitude ?? null,
-        longitude: coords?.longitude ?? null,
+        // Manual office pin first; else the latest check-in GPS.
+        latitude: hasManualLocation ? substation.latitude : (coords?.latitude ?? null),
+        longitude: hasManualLocation
+          ? substation.longitude
+          : (coords?.longitude ?? null),
         displayStatus,
         displayStatusLabel: displayStatus
           ? DISPLAY_STATUS_LABEL[displayStatus]
@@ -555,9 +563,10 @@ export class ReportsService {
    * DC master-reference export: a flat list of every accessible Pencawang with its
    * readable Pencawang Code, Nama Pencawang, Functional Location and lat/long.
    * Pencawang Code = the stable `<Mainhead.code><NNNN>` ref code (blank until the
-   * Pencawang has a coded Mainhead). Lat/long = the most recent site-visit check-in
-   * GPS (from listSubstations); BLANK when never visited = a "not yet surveyed"
-   * flag. Assigns any missing ref codes first, then reads. Tenant + access scoped.
+   * Pencawang has a coded Mainhead). Lat/long = the manual office pin when set,
+   * else the most recent site-visit check-in GPS (from listSubstations); BLANK
+   * when never visited and never pinned = a "not yet surveyed" flag. Assigns any
+   * missing ref codes first, then reads. Tenant + access scoped.
    */
   async buildPencawangList(
     user: RequestUser,
@@ -595,7 +604,8 @@ export class ReportsService {
         substation.refCode ?? '',
         substation.name ?? '',
         substation.location ?? '',
-        // Blank when never visited (no check-in GPS) — an empty coordinate flags a
+        // Manual pin or latest check-in GPS (see listSubstations). Blank when
+        // never visited AND never pinned — an empty coordinate flags a
         // Pencawang that has not been surveyed. Numeric otherwise.
         substation.latitude ?? '',
         substation.longitude ?? '',
