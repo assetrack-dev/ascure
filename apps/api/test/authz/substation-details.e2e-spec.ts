@@ -151,4 +151,20 @@ describe('Authz · Pencawang details edit', () => {
       .send({ name: 'X' });
     expect(res.status).toBe(403);
   });
+
+  // Owner decision 2026-08-11: managers EDIT but never DELETE — the cascade
+  // path (which used to allow an own-company MANAGER) is ADMIN-only now.
+  it('MANAGER cannot preview a Pencawang delete (403)', async () => {
+    const res = await http(app, token.mgrA).get(
+      `/api/v1/substations/${OWNED_SUB}/delete-preview`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('MANAGER cannot cascade-delete even a wholly-owned Pencawang (403)', async () => {
+    const res = await http(app, token.mgrA).del(
+      `/api/v1/substations/${OWNED_SUB}/cascade`,
+    );
+    expect(res.status).toBe(403);
+  });
 });

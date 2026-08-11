@@ -405,19 +405,19 @@ export class MasterDataService {
     };
   }
 
+  // Owner decision 2026-08-11: deleting a Pencawang is ADMIN-only (managers
+  // edit their own company's, but never delete). Used to also allow MANAGER.
   private assertCanDeletePencawang(user: RequestUser) {
-    if (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) {
+    if (user.role === UserRole.ADMIN) {
       return;
     }
-    throw new ForbiddenException(
-      'Only a manager or administrator can delete a Pencawang.',
-    );
+    throw new ForbiddenException('Only an administrator can delete a Pencawang.');
   }
 
   /**
    * Returns a human reason a Pencawang cascade-delete must be refused, or null.
-   * Data-integrity guards (route endpoint, shared SAVT poles) apply to everyone;
-   * the own-company guard applies only to a non-ADMIN.
+   * Data-integrity guards only (route endpoint, shared SAVT poles) — the caller
+   * is always an ADMIN now, so the old own-company branch is gone.
    */
   private async resolvePencawangDeleteBlock(
     user: RequestUser,
@@ -456,24 +456,6 @@ export class MasterDataService {
       return 'This Pencawang shares poles with surveys of other Pencawang/routes. Deleting it could corrupt them — not yet supported.';
     }
 
-    // MANAGER: every direct survey here must belong to their own company.
-    if (user.role !== UserRole.ADMIN) {
-      const [total, visible] = await Promise.all([
-        this.prisma.siteVisit.count({
-          where: { tenantId: user.tenantId, substationId },
-        }),
-        this.prisma.siteVisit.count({
-          where: {
-            tenantId: user.tenantId,
-            substationId,
-            ...siteVisitAccessWhere(user),
-          },
-        }),
-      ]);
-      if (total !== visible) {
-        return 'This Pencawang holds surveys from another team or company. Only an administrator can delete it.';
-      }
-    }
 
     return null;
   }

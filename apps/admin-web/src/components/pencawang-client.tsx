@@ -173,7 +173,7 @@ function PencawangContent() {
         }
 
         if (loadError instanceof ApiError && loadError.status === 403) {
-          setError("ADMIN role is required to manage Pencawang.");
+          setError("An ADMIN or MANAGER role is required to manage Pencawang.");
           return;
         }
 
@@ -194,8 +194,15 @@ function PencawangContent() {
       return;
     }
 
-    if (storedSession.user && storedSession.user.role !== "ADMIN") {
-      setError("ADMIN role is required to manage Pencawang.");
+    // ADMIN manages everything; a MANAGER gets an edit-only view (their own
+    // company's Pencawang — the PATCH endpoint enforces the scope). MANAGER
+    // collapses to VIEWER client-side, so sourceRole is the real backend role.
+    if (
+      storedSession.user &&
+      storedSession.user.role !== "ADMIN" &&
+      (storedSession.user.sourceRole ?? "") !== "MANAGER"
+    ) {
+      setError("An ADMIN or MANAGER role is required to manage Pencawang.");
       setIsLoading(false);
       return;
     }
@@ -536,10 +543,10 @@ function PencawangContent() {
     [handleLogout, session?.token, cascadePreview],
   );
 
-  // Force-cascade (non-empty Pencawang) is ADMIN or a MANAGER (server flag —
-  // MANAGER collapses to VIEWER client-side; the API still scopes to own company).
-  const canForceDelete =
-    session?.user?.role === "ADMIN" || (session?.user?.canDeleteSurvey ?? false);
+  // Owner decision 2026-08-11: a MANAGER may EDIT a Pencawang (own company)
+  // but never delete/deactivate/re-assign it — those stay ADMIN-only, hidden
+  // here and enforced by @Roles(ADMIN) on the API.
+  const isAdmin = session?.user?.role === "ADMIN";
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -550,11 +557,9 @@ function PencawangContent() {
             <h1 className="text-xl font-bold text-slate-900">Pencawang</h1>
           </div>
           <p className="text-sm text-slate-600">
-            Manage the Pencawang (substations) that appear in check-in and route
-            pickers. Deactivate one to hide it everywhere without losing its
-            history. An empty Pencawang can be deleted outright; a non-empty one
-            can be cascade-deleted (all its visits, poles and feeders) by a
-            manager or admin.
+            {isAdmin
+              ? "Manage the Pencawang (substations) that appear in check-in and route pickers. Deactivate one to hide it everywhere without losing its history; deleting (including cascade) is admin-only."
+              : "Edit the details of your company's Pencawang — name, TNB functional location, and its map location (fix a mis-pointed check-in). Deleting and deactivating are admin-only."}
           </p>
           <p className="text-xs font-semibold text-slate-500">
             {activeCount} active &middot; {substations.length} total
@@ -656,35 +661,41 @@ function PencawangContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <select
-                          className={mainheadSelectClassName}
-                          value={substation.mainheadId ?? ""}
-                          disabled={isBusy || mainheadActionId === substation.id}
-                          aria-label={`Mainhead for ${substation.name}`}
-                          title={
-                            substation.mainheadId
-                              ? "Change this Pencawang's Mainhead"
-                              : "Unassigned — pick a Mainhead so it groups on the map"
-                          }
-                          onChange={(event) =>
-                            void handleAssignMainhead(substation, event.target.value)
-                          }
-                        >
-                          <option value="">— Unassigned —</option>
-                          {/* A current mainhead that isn't in the fetched options
-                              (e.g. inactive) still renders so the value shows. */}
-                          {substation.mainhead &&
-                          !mainheads.some((m) => m.id === substation.mainheadId) ? (
-                            <option value={substation.mainhead.id}>
-                              {substation.mainhead.name}
-                            </option>
-                          ) : null}
-                          {mainheads.map((mainhead) => (
-                            <option key={mainhead.id} value={mainhead.id}>
-                              {mainhead.name}
-                            </option>
-                          ))}
-                        </select>
+                        {isAdmin ? (
+                          <select
+                            className={mainheadSelectClassName}
+                            value={substation.mainheadId ?? ""}
+                            disabled={isBusy || mainheadActionId === substation.id}
+                            aria-label={`Mainhead for ${substation.name}`}
+                            title={
+                              substation.mainheadId
+                                ? "Change this Pencawang's Mainhead"
+                                : "Unassigned — pick a Mainhead so it groups on the map"
+                            }
+                            onChange={(event) =>
+                              void handleAssignMainhead(substation, event.target.value)
+                            }
+                          >
+                            <option value="">— Unassigned —</option>
+                            {/* A current mainhead that isn't in the fetched options
+                                (e.g. inactive) still renders so the value shows. */}
+                            {substation.mainhead &&
+                            !mainheads.some((m) => m.id === substation.mainheadId) ? (
+                              <option value={substation.mainhead.id}>
+                                {substation.mainhead.name}
+                              </option>
+                            ) : null}
+                            {mainheads.map((mainhead) => (
+                              <option key={mainhead.id} value={mainhead.id}>
+                                {mainhead.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-slate-700">
+                            {substation.mainhead?.name ?? "— Unassigned —"}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-700">
                         {poleCount}
@@ -737,40 +748,42 @@ function PencawangContent() {
                               <Pencil className="h-3.5 w-3.5" />
                               Edit
                             </button>
-                            <button
-                              type="button"
-                              className={rowActionButtonClassName}
-                              disabled={isBusy}
-                              onClick={() => void handleToggleStatus(substation)}
-                            >
-                              {substation.isActive ? (
-                                <>
-                                  <Power className="h-3.5 w-3.5" />
-                                  Deactivate
-                                </>
-                              ) : (
-                                <>
-                                  <RefreshCw className="h-3.5 w-3.5" />
-                                  Reactivate
-                                </>
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              className={dangerActionButtonClassName}
-                              disabled={isBusy || (!isEmpty && !canForceDelete)}
-                              title={
-                                isEmpty
-                                  ? "Delete this empty Pencawang"
-                                  : canForceDelete
-                                    ? "Delete this Pencawang and everything under it"
-                                    : "Has poles or visits — deactivate instead"
-                              }
-                              onClick={() => void handleRequestDelete(substation)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Delete
-                            </button>
+                            {isAdmin ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className={rowActionButtonClassName}
+                                  disabled={isBusy}
+                                  onClick={() => void handleToggleStatus(substation)}
+                                >
+                                  {substation.isActive ? (
+                                    <>
+                                      <Power className="h-3.5 w-3.5" />
+                                      Deactivate
+                                    </>
+                                  ) : (
+                                    <>
+                                      <RefreshCw className="h-3.5 w-3.5" />
+                                      Reactivate
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={dangerActionButtonClassName}
+                                  disabled={isBusy}
+                                  title={
+                                    isEmpty
+                                      ? "Delete this empty Pencawang"
+                                      : "Delete this Pencawang and everything under it"
+                                  }
+                                  onClick={() => void handleRequestDelete(substation)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Delete
+                                </button>
+                              </>
+                            ) : null}
                           </div>
                         )}
                       </td>
