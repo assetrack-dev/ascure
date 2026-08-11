@@ -90,6 +90,10 @@ const MANAGER_NAV_HREFS = new Set<string>([
   "/crew-performance",
   "/users",
   "/teams",
+  // Edit-only surface for a manager: fix a Pencawang's details/map pin (their
+  // own company's only — server-enforced). Delete/deactivate/Mainhead stay
+  // ADMIN-only and are hidden on the page itself.
+  "/pencawang",
 ]);
 
 // A CLIENT viewer (TNB) sees exactly three pages: their progress roll-up, the

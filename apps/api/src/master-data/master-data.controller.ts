@@ -98,10 +98,12 @@ export class MasterDataController {
     return this.masterDataService.deleteSubstation(user, params.id);
   }
 
-  // --- ADMIN / own-company MANAGER: cascade-delete a whole Pencawang ---
+  // --- ADMIN-only: cascade-delete a whole Pencawang. Owner decision
+  // 2026-08-11: managers EDIT (own company, PATCH above) but never delete —
+  // this used to also allow an own-company MANAGER. ---
 
   @Get('substations/:id/delete-preview')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN)
   previewDeletePencawang(
     @CurrentUser() user: RequestUser,
     @Param() params: SubstationIdParamDto,
@@ -110,7 +112,7 @@ export class MasterDataController {
   }
 
   @Delete('substations/:id/cascade')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN)
   deletePencawangCascade(
     @CurrentUser() user: RequestUser,
     @Param() params: SubstationIdParamDto,
