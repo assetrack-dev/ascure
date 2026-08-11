@@ -34,6 +34,31 @@ export function assignSubstationMainhead(
   );
 }
 
+/**
+ * Edit a Pencawang's details. Coordinates travel as a pair: numbers pin the
+ * Pencawang there (wins over check-in-derived), an explicit null pair clears
+ * the manual pin, omitted leaves them untouched.
+ */
+export function updateSubstationDetails(
+  token: string,
+  substationId: string,
+  payload: {
+    name?: string;
+    location?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+  },
+) {
+  return apiRequest<ManagedSubstation>(
+    `/substations/${encodeURIComponent(substationId)}`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export function updateSubstationStatus(
   token: string,
   substationId: string,

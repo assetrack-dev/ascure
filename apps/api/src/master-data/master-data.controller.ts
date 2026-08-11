@@ -27,6 +27,7 @@ import {
   AssignSubstationMainheadDto,
   ListSubstationsQueryDto,
   SubstationIdParamDto,
+  UpdateSubstationDetailsDto,
   UpdateSubstationStatusDto,
 } from './dto/manage-substation.dto';
 import { MasterDataService } from './master-data.service';
@@ -44,6 +45,20 @@ export class MasterDataController {
     return this.masterDataService.listSubstations(user, {
       includeInactive: query.includeInactive === 'true',
     });
+  }
+
+  // Edit a Pencawang's details: name, functional location, and its OWN map
+  // coordinate (the manual fix for a mis-pointed check-in). ADMIN anywhere; a
+  // MANAGER only for a Pencawang wholly covered by their own company's surveys
+  // (same own-company rule as the cascade delete).
+  @Patch('substations/:id')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  updateSubstationDetails(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+    @Body() dto: UpdateSubstationDetailsDto,
+  ) {
+    return this.masterDataService.updateSubstationDetails(user, params.id, dto);
   }
 
   @Patch('substations/:id/status')

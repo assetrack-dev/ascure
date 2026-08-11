@@ -935,6 +935,15 @@ model Substation {
   // the composite @@unique below), matching every other Substation identifier and
   // the per-tenant numbering in reports.service.ensurePencawangRefCodes.
   refCode             String?
+  // The Pencawang's own coordinate. Null = derived: readers fall back to the
+  // LATEST site-visit check-in GPS (the original workflow — crews check in AT
+  // the Pencawang, once per visit). Set only by a manual office correction
+  // (PATCH /substations/:id), which then wins over every future check-in.
+  // locationSetAt/ByEmail distinguish a manual fix from the derived value.
+  latitude            Float?
+  longitude           Float?
+  locationSetAt       DateTime?
+  locationSetByEmail  String?
   isActive            Boolean     @default(true)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
