@@ -165,22 +165,41 @@ export class MasterDataService {
 
     const data: Prisma.SubstationUpdateInput = {};
 
+    // Renamed identity strings (KOD PENCAWANG and/or name) collected for one
+    // clash check below.
+    const identities: string[] = [];
+
+    if (dto.code !== undefined) {
+      const code = normalizeOperationalText(dto.code.trim().replace(/\s+/g, ' '));
+      if (!code) {
+        throw new BadRequestException('The Kod Pencawang cannot be empty.');
+      }
+      data.code = code;
+      identities.push(code);
+    }
+
     if (dto.name !== undefined) {
       const name = normalizeOperationalText(dto.name.trim().replace(/\s+/g, ' '));
       if (!name) {
         throw new BadRequestException('The Pencawang name cannot be empty.');
       }
-      // Mirror the check-in create guard: mobile matches an "existing"
-      // Pencawang by code OR name (case-insensitive), so a rename that collides
-      // with another one would make it ambiguous there.
+      data.name = name;
+      identities.push(name);
+    }
+
+    // Mirror the check-in create guard: mobile matches an "existing" Pencawang
+    // by code OR name (case-insensitive), so a rename that collides with
+    // another one — on EITHER column — would make it ambiguous there. The DB
+    // unique [tenantId, code] is the backstop (P2002 catch on the update).
+    if (identities.length > 0) {
       const clash = await this.prisma.substation.findFirst({
         where: {
           tenantId: user.tenantId,
           id: { not: id },
-          OR: [
-            { code: { equals: name, mode: 'insensitive' } },
-            { name: { equals: name, mode: 'insensitive' } },
-          ],
+          OR: identities.flatMap((value) => [
+            { code: { equals: value, mode: 'insensitive' as const } },
+            { name: { equals: value, mode: 'insensitive' as const } },
+          ]),
         },
         select: { id: true },
       });
@@ -189,7 +208,6 @@ export class MasterDataService {
           'Another Pencawang already uses this name or code.',
         );
       }
-      data.name = name;
     }
 
     if (dto.location !== undefined) {
@@ -222,13 +240,24 @@ export class MasterDataService {
       throw new BadRequestException('Nothing to update.');
     }
 
-    const substation = await this.prisma.substation.update({
-      where: { id },
-      data,
-      include: substationCountInclude,
-    });
-
-    return this.serializeSubstation(substation);
+    try {
+      const substation = await this.prisma.substation.update({
+        where: { id },
+        data,
+        include: substationCountInclude,
+      });
+      return this.serializeSubstation(substation);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Another Pencawang already uses this name or code.',
+        );
+      }
+      throw error;
+    }
   }
 
   // A non-ADMIN may only touch a Pencawang wholly covered by their own

@@ -43,6 +43,7 @@ export function updateSubstationDetails(
   token: string,
   substationId: string,
   payload: {
+    code?: string;
     name?: string;
     location?: string | null;
     latitude?: number | null;
