@@ -1,11 +1,12 @@
-# TNB client view: Emergency hidden on the Asset Map (temporary)
+# TNB client view: Emergency hidden (temporary)
 
 **Date:** 2026-08-13
 **Why:** TNB presented ASCURE to their Zone Manager on 2026-08-14. The
 emergency system (declare / dispatch lanes) is **not fully deployed yet**, so
 showing an "EMERGENCY 7" card to the network owner would invite questions we
 can't back up in the product yet. Decision: hide every emergency surface from
-the **client (TNB) view of the map page** until the rollout completes.
+the **client (TNB) view** — the Asset Map, Progress, and Surveys pages — until
+the rollout completes.
 
 This is a **presentation-layer hide only**. No data changed, no API changed.
 Internal users (ADMIN / managers / DC) still see everything. An emergency pole
@@ -30,23 +31,27 @@ All in `apps/admin-web/src`:
 | Red bubble / red pole marker on the map | `components/hierarchical-map.tsx` (`hideEmergency` prop), `lib/map.ts` (`mapAssetMarkerColor` opts) | emergency colour collapses to the open-defect orange |
 | "· emergency" badge in the pole side panel | `components/asset-map-panel.tsx` | suffix not rendered |
 
+## What was hidden (Progress + Surveys pages — second commit, same day)
+
+These two components render ONLY for client viewers, so the emergency renders
+were removed outright (no `isClientViewer` gate needed), each spot marked with
+a comment pointing at this doc:
+
+| Surface | File |
+| --- | --- |
+| "N flagged as emergency" context on the Open-findings KPI | `components/client-progress-client.tsx` |
+| `· N urgent` on Mainhead / group rows | `components/client-progress-client.tsx` |
+| "N urgent" summary chip | `components/client-visits-client.tsx` |
+| Per-visit urgent Siren icon | `components/client-visits-client.tsx` |
+
+Note: the Progress KPI context line was itself a deliberate earlier decision
+("an emergency is not something to drop off the page") — restore it when
+un-hiding.
+
 ## How to un-hide (when the emergency system is client-ready)
 
-Search `apps/admin-web/src` for `hideEmergency` and `isClientViewer` on the map
-page and remove the gates added on 2026-08-13 (commit message:
-`feat(admin-web): hide Emergency from the TNB client view map page`). Reverting
-that commit restores everything in one step.
-
-## Known remaining emergency mentions in the TNB view (NOT part of this change)
-
-Deliberately untouched — flagged to the owner on 2026-08-13:
-
-- **Progress page** (`components/client-progress-client.tsx`): the "Open
-  findings" KPI shows "N flagged as emergency" as its context line, and group
-  rows show `· N urgent`. (The context line was itself a deliberate earlier
-  decision — "an emergency is not something to drop off the page".)
-- **Surveys page** (`components/client-visits-client.tsx`): summary and
-  per-visit "N urgent" chips.
-
-If TNB will demo those pages too, the same `isClientViewer`-style hide (these
-two components are client-only, so a plain removal) takes minutes.
+Revert the two 2026-08-13 commits (messages:
+`feat(admin-web): hide Emergency from the TNB client view map page` and
+`feat(admin-web): hide Emergency from the TNB client Progress + Surveys pages`),
+or search `apps/admin-web/src` for `hideEmergency` /
+`tnb-view-emergency-hidden` and remove the gates by hand.

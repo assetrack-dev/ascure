@@ -106,8 +106,9 @@ function CoverageRow({
         </div>
         {group.openDefects > 0 ? (
           <span className="shrink-0 text-[11px] text-[var(--muted)]">
+            {/* "· N urgent" is hidden until the emergency system's rollout
+                completes (docs/tnb-view-emergency-hidden.md). */}
             {group.openDefects} defect{group.openDefects === 1 ? "" : "s"}
-            {group.emergency > 0 ? ` · ${group.emergency} urgent` : ""}
           </span>
         ) : null}
       </div>
@@ -355,13 +356,11 @@ function ClientProgressContent() {
                   value={progress.defects.open}
                   icon={AlertTriangle}
                   tone={progress.defects.open > 0 ? "high" : "success"}
-                  // The Urgent card is gone, but an emergency is not something
-                  // to drop off the page — it rides here instead of a 5th card.
-                  context={
-                    progress.defects.emergency > 0
-                      ? `${progress.defects.emergency.toLocaleString()} flagged as emergency`
-                      : "defects awaiting action"
-                  }
+                  // The "N flagged as emergency" ride-along is hidden until the
+                  // emergency system's rollout completes — the client can't be
+                  // shown a lane the product can't back up yet
+                  // (docs/tnb-view-emergency-hidden.md).
+                  context="defects awaiting action"
                 />
               </div>
 

@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Info,
   RefreshCw,
-  Siren,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -238,7 +237,6 @@ function ClientVisitsContent() {
       inField: visits.filter((visit) => !visit.isFinished).length,
       finished: visits.filter((visit) => visit.isFinished).length,
       openDefects: visits.reduce((sum, visit) => sum + visit.openDefects, 0),
-      emergency: visits.reduce((sum, visit) => sum + visit.emergency, 0),
     }),
     [visits],
   );
@@ -266,14 +264,11 @@ function ClientVisitsContent() {
                   <Chip tone="success" dot>
                     {summary.finished} completed
                   </Chip>
+                  {/* The "N urgent" chip is hidden until the emergency system's
+                      rollout completes (docs/tnb-view-emergency-hidden.md). */}
                   {summary.openDefects > 0 ? (
                     <Chip tone="high" dot>
                       {summary.openDefects.toLocaleString()} open findings
-                    </Chip>
-                  ) : null}
-                  {summary.emergency > 0 ? (
-                    <Chip tone="critical" dot>
-                      {summary.emergency} urgent
                     </Chip>
                   ) : null}
                 </>
@@ -465,13 +460,9 @@ function ClientVisitsContent() {
                                 <span className="font-mono text-[12.5px] tabular-nums">
                                   {visit.openDefects.toLocaleString()}
                                 </span>
-                                {visit.emergency > 0 ? (
-                                  <Siren
-                                    size={13}
-                                    className="text-[var(--critical)]"
-                                    aria-label={`${visit.emergency} urgent`}
-                                  />
-                                ) : null}
+                                {/* The urgent Siren is hidden until the
+                                    emergency system's rollout completes
+                                    (docs/tnb-view-emergency-hidden.md). */}
                               </span>
                             )}
                           </td>
