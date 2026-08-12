@@ -58,6 +58,10 @@ export interface HierarchicalMapProps {
    *  centring alone is easy to lose in a dense cluster. Kept off the pole layer
    *  so changing the selection never rebuilds (and repaints) the pole canvas. */
   selectedPoint?: MapAsset | null;
+  /** TNB client view: don't render the distinct emergency red — emergency poles
+   *  and bubbles show as ordinary open defects. The emergency system is hidden
+   *  from clients until its rollout completes (docs/tnb-view-emergency-hidden.md). */
+  hideEmergency?: boolean;
 }
 
 /** Serialize the map viewport as "minLng,minLat,maxLng,maxLat" (or null). */
@@ -77,10 +81,20 @@ function abbreviate(n: number): string {
 }
 
 /** Bubble fill: defect state wins in defect mode; else inspection completeness. */
-function bubbleColor(bubble: MapBubble, mode: MapColorMode): string {
+function bubbleColor(
+  bubble: MapBubble,
+  mode: MapColorMode,
+  hideEmergency?: boolean,
+): string {
   if (mode === "defect") {
-    if (bubble.emergency > 0) return EMERGENCY_DEFECT_MARKER_COLOR;
-    if (bubble.openDefects > 0) return OPEN_DEFECT_MARKER_COLOR;
+    if (bubble.emergency > 0 && !hideEmergency) {
+      return EMERGENCY_DEFECT_MARKER_COLOR;
+    }
+    // An emergency IS an open defect, so a hidden-emergency bubble still reads
+    // as defective — belt-and-braces in case openDefects ever excludes them.
+    if (bubble.openDefects > 0 || bubble.emergency > 0) {
+      return OPEN_DEFECT_MARKER_COLOR;
+    }
   }
   if (bubble.count > 0 && bubble.inspected >= bubble.count) {
     return INSPECTED_MARKER_COLOR;
@@ -298,6 +312,7 @@ function Layers({
   onBoundsChange,
   pencawangAnchors,
   selectedPoint,
+  hideEmergency,
 }: HierarchicalMapProps) {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -389,7 +404,7 @@ function Layers({
         const marker = new google.maps.Marker({
           position,
           icon: bubbleIcon(
-            bubbleColor(bubble, colorMode),
+            bubbleColor(bubble, colorMode, hideEmergency),
             bubbleSize(bubble.count),
             abbreviate(bubble.count),
             bubble.name,
@@ -413,7 +428,10 @@ function Layers({
           // labelled dot coloured by inspection/defect status.
           icon: colorByPencawang
             ? dotLabelIcon(pencawangColor(asset.substation?.id), "")
-            : dotLabelIcon(mapAssetMarkerColor(asset, colorMode), asset.assetCode),
+            : dotLabelIcon(
+                mapAssetMarkerColor(asset, colorMode, { hideEmergency }),
+                asset.assetCode,
+              ),
           title: colorByPencawang
             ? `${asset.assetCode} · ${asset.substation?.name ?? "—"}`
             : asset.assetCode,
@@ -457,7 +475,7 @@ function Layers({
       return () => google.maps.event.removeListener(listener);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, mode, bubbles, points, colorMode, pencawang, colorByPencawang, suppressAutoFit]);
+  }, [map, mode, bubbles, points, colorMode, pencawang, colorByPencawang, suppressAutoFit, hideEmergency]);
 
   // Pencawang anchors (overlap view): their OWN marker layer, rebuilt only when
   // the anchor set / mode changes — NOT on every pole refetch, so panning doesn't

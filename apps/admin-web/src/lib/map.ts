@@ -122,10 +122,14 @@ export function mapAssetPriority(asset: MapAsset): number {
   return base + Math.min(asset.openDefectCount, 999);
 }
 
-/** Marker fill colour for an asset under the given colour mode. */
+/** Marker fill colour for an asset under the given colour mode.
+ *  `hideEmergency` collapses the emergency red into the ordinary open-defect
+ *  colour — the TNB client view hides the emergency system until its rollout
+ *  is complete (docs/tnb-view-emergency-hidden.md). */
 export function mapAssetMarkerColor(
   asset: MapAsset,
   mode: MapColorMode,
+  opts?: { hideEmergency?: boolean },
 ): string {
   if (mode === "inspection") {
     return isMapAssetInspected(asset)
@@ -135,7 +139,9 @@ export function mapAssetMarkerColor(
 
   switch (mapAssetDefectState(asset)) {
     case "emergency":
-      return EMERGENCY_DEFECT_MARKER_COLOR;
+      return opts?.hideEmergency
+        ? OPEN_DEFECT_MARKER_COLOR
+        : EMERGENCY_DEFECT_MARKER_COLOR;
     case "defect":
       return OPEN_DEFECT_MARKER_COLOR;
     case "monitoring":
