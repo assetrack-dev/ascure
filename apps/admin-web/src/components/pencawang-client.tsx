@@ -136,6 +136,7 @@ function PencawangContent() {
   // retype; only fields the user actually changed are sent.
   const [editTarget, setEditTarget] = useState<ManagedSubstation | null>(null);
   const [editForm, setEditForm] = useState({
+    code: "",
     name: "",
     location: "",
     latitude: "",
@@ -341,6 +342,7 @@ function PencawangContent() {
 
   const handleOpenEdit = useCallback((substation: ManagedSubstation) => {
     const form = {
+      code: substation.code ?? "",
       name: substation.name ?? "",
       location: substation.location ?? "",
       latitude: formatCoordinate(substation.effectiveLatitude),
@@ -367,11 +369,21 @@ function PencawangContent() {
     }
 
     const payload: {
+      code?: string;
       name?: string;
       location?: string | null;
       latitude?: number | null;
       longitude?: number | null;
     } = {};
+
+    const nextCode = editForm.code.trim();
+    if (nextCode !== editInitial.code.trim()) {
+      if (!nextCode) {
+        setEditError("The Kod Pencawang cannot be empty.");
+        return;
+      }
+      payload.code = nextCode;
+    }
 
     const nextName = editForm.name.trim();
     if (nextName !== editInitial.name.trim()) {
@@ -829,6 +841,23 @@ function PencawangContent() {
                     {editError}
                   </div>
                 ) : null}
+
+                <label className="block text-sm">
+                  <span className="font-semibold text-slate-700">Kod Pencawang</span>
+                  <input
+                    className={`mt-1 ${searchControlClassName} pl-3`}
+                    value={editForm.code}
+                    disabled={isSavingEdit}
+                    placeholder="e.g. PCH-001"
+                    onChange={(event) =>
+                      setEditForm((form) => ({ ...form, code: event.target.value }))
+                    }
+                  />
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Renaming keeps history (old visits show the code they were
+                    recorded under); bulk imports match by this code.
+                  </span>
+                </label>
 
                 <label className="block text-sm">
                   <span className="font-semibold text-slate-700">Name</span>

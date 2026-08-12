@@ -28,6 +28,14 @@ export class UpdateSubstationStatusDto {
 }
 
 export class UpdateSubstationDetailsDto {
+  // KOD PENCAWANG (operational text, uppercased). Renaming is deliberate:
+  // historical visits keep their recorded snapshot, and a bulk import still
+  // using the OLD code will create a new Pencawang. Omit to leave unchanged.
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  code?: string;
+
   // Display name (operational text — the service uppercases it the same way the
   // check-in create flow does). Omit to leave unchanged.
   @IsOptional()

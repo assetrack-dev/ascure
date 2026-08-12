@@ -129,6 +129,28 @@ describe('Authz · Pencawang details edit', () => {
     expect(res.status).toBe(409);
   });
 
+  it('edits the Kod Pencawang (operational-text normalized)', async () => {
+    const res = await http(app, token.admin)
+      .patch(`/api/v1/substations/${OWNED_SUB}`)
+      .send({ code: 'pmu-edit-a2' });
+    expect(res.status).toBe(200);
+    expect(res.body.code).toBe('PMU-EDIT-A2');
+
+    // Restore so the other tests keep matching the fixture code.
+    const restore = await http(app, token.admin)
+      .patch(`/api/v1/substations/${OWNED_SUB}`)
+      .send({ code: 'PMU-EDIT-A' });
+    expect(restore.status).toBe(200);
+  });
+
+  it('rejects a Kod Pencawang that collides with another Pencawang (409)', async () => {
+    // PMU-1 is fixture substation s1's code.
+    const res = await http(app, token.admin)
+      .patch(`/api/v1/substations/${OWNED_SUB}`)
+      .send({ code: 'pmu-1' });
+    expect(res.status).toBe(409);
+  });
+
   it('MANAGER edits a Pencawang wholly owned by their company', async () => {
     const res = await http(app, token.mgrA)
       .patch(`/api/v1/substations/${OWNED_SUB}`)
