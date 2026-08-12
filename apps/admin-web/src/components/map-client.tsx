@@ -748,6 +748,14 @@ function MapContent() {
     session?.user?.canGovernQa === true ||
     session?.user?.canReviewSurvey === true;
 
+  // Network-owner (TNB) viewer. The emergency system's rollout is not complete,
+  // so EVERY emergency surface on this page — the KPI tile, the legend row, the
+  // red markers, the ⚠ list suffixes, the panel badge — is hidden from clients
+  // for now; emergency poles read as ordinary open defects. Internal users are
+  // unaffected. Un-hiding is a search for isClientViewer on this page — see
+  // docs/tnb-view-emergency-hidden.md.
+  const isClientViewer = session?.user?.isClientViewer === true;
+
   const itemsLabel = mode === "points" ? LEVEL_ITEMS.points : LEVEL_ITEMS[level];
   // Sum both sets so the render gate never hits 0 mid-transition (e.g. toggling
   // "show all poles": mode flips to points before the poles arrive). A 0 here
@@ -830,7 +838,9 @@ function MapContent() {
             <KpiTile label="Poles" value={kpis.count} />
             <KpiTile label="Inspected" value={`${kpis.inspectedPct}%`} />
             <KpiTile label="Open defects" value={kpis.openDefects} />
-            <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
+            {isClientViewer ? null : (
+              <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
+            )}
             <Tbtn
               onClick={() =>
                 token ? load(token, drill, filters, showAllPoles) : undefined
@@ -883,6 +893,7 @@ function MapContent() {
               onBoundsChange={handleBoundsChange}
               pencawangAnchors={pencawangAnchors}
               selectedPoint={selected}
+              hideEmergency={isClientViewer}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
@@ -965,7 +976,9 @@ function MapContent() {
                 </>
               ) : (
                 <>
-                  <LegendRow color={EMERGENCY_DEFECT_MARKER_COLOR} label="Emergency" count={kpis.emergency} />
+                  {isClientViewer ? null : (
+                    <LegendRow color={EMERGENCY_DEFECT_MARKER_COLOR} label="Emergency" count={kpis.emergency} />
+                  )}
                   <LegendRow color={OPEN_DEFECT_MARKER_COLOR} label="Open defects" count={kpis.openDefects} />
                 </>
               )}
@@ -1007,14 +1020,12 @@ function MapContent() {
               asset={selected}
               token={session?.token ?? null}
               canEdit={canEditChecklist}
-              isClientViewer={session?.user?.isClientViewer === true}
+              isClientViewer={isClientViewer}
               rondaanIssues={
                 // Rondaan lint is an INTERNAL data-quality note for our own
                 // crews — never surface "bad pole-number format" to the client
                 // whose network it is.
-                session?.user?.isClientViewer === true
-                  ? []
-                  : (rondaanIssuesByAsset.get(selected.id) ?? [])
+                isClientViewer ? [] : (rondaanIssuesByAsset.get(selected.id) ?? [])
               }
               onAssetCodeChanged={() => {
                 if (token) void load(token, drill, filters, showAllPoles);
@@ -1191,7 +1202,7 @@ function MapContent() {
                             <span className="block truncate text-[11.5px] text-[var(--on-chrome-muted)]">
                               {b.inspected}/{b.count} inspected
                               {b.openDefects > 0 ? ` · ${b.openDefects} open` : ""}
-                              {b.emergency > 0 ? ` · ${b.emergency}⚠` : ""}
+                              {b.emergency > 0 && !isClientViewer ? ` · ${b.emergency}⚠` : ""}
                             </span>
                           </span>
                           <span className="font-mono text-[13px] font-bold tabular-nums text-[var(--on-chrome)]">
@@ -1205,7 +1216,9 @@ function MapContent() {
                     })
                   : pointRows.map((asset) => {
                       const isSel = asset.id === selected?.id;
-                      const dotColor = mapAssetMarkerColor(asset, colorMode);
+                      const dotColor = mapAssetMarkerColor(asset, colorMode, {
+                        hideEmergency: isClientViewer,
+                      });
                       return (
                         <button
                           key={asset.id}
@@ -1232,7 +1245,7 @@ function MapContent() {
                           {asset.openDefectCount > 0 ? (
                             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--on-chrome-muted)]">
                               {asset.openDefectCount}
-                              {asset.hasEmergencyDefect ? "⚠" : ""}
+                              {asset.hasEmergencyDefect && !isClientViewer ? "⚠" : ""}
                             </span>
                           ) : null}
                         </button>

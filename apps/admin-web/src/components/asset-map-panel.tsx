@@ -893,7 +893,9 @@ export function AssetMapPanel({
                 {asset.openDefectCount > 0 ? (
                   <span className="rounded-full border border-[var(--critical-border)] bg-[var(--critical-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--critical-text)]">
                     {asset.openDefectCount} open
-                    {asset.hasEmergencyDefect ? " · emergency" : ""}
+                    {/* Emergency is hidden from the client view until its
+                        rollout completes (docs/tnb-view-emergency-hidden.md). */}
+                    {asset.hasEmergencyDefect && !isClientViewer ? " · emergency" : ""}
                   </span>
                 ) : null}
               </div>
