@@ -327,15 +327,20 @@ function NetworkContent() {
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
-      <main className="px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
-        <div className="mx-auto max-w-6xl">
-          <div className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 md:flex-row md:items-end md:justify-between">
+      {/* Viewport-height workspace (lg+): the header/controls stay compact and
+          the stage takes every remaining pixel, so the graph is as big as the
+          screen allows. Below lg the page keeps its natural scrolling flow. */}
+      <main className="px-4 py-3 sm:px-6 lg:h-[calc(100dvh-64px)] lg:overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex flex-col gap-3 border-b border-[var(--line)] pb-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase text-[var(--brand)]">Network</p>
-              <h1 className="mt-2 text-3xl font-bold text-[var(--foreground)]">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--brand)]">
+                Network
+              </p>
+              <h1 className="mt-0.5 text-xl font-bold text-[var(--foreground)]">
                 Network Graph &amp; Isolation
               </h1>
-              <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
+              <p className="mt-0.5 max-w-3xl text-[12.5px] text-[var(--muted)]">
                 The feeder topology for a Pencawang, rendered from the persisted graph. Click a
                 feeder to isolate it — de-energized poles turn red and back-feed points (NOPs) are
                 flagged.
@@ -389,14 +394,18 @@ function NetworkContent() {
           </div>
 
           {error ? (
-            <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mt-4 shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </div>
           ) : null}
 
-          <div className="mt-6 max-w-md">
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">Pencawang</span>
+          {/* One compact controls row — selector + view tabs — so the stage
+              below gets the rest of the viewport. */}
+          <div className="mt-3 flex shrink-0 flex-wrap items-end gap-3">
+            <label className="block w-full max-w-md">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Pencawang
+              </span>
               <select
                 value={selectedId}
                 onChange={(event) => {
@@ -420,28 +429,36 @@ function NetworkContent() {
                 ))}
               </select>
             </label>
+            {network ? (
+              <div className="inline-flex h-11 items-center gap-0.5 rounded-md border border-slate-300 bg-white p-0.5 shadow-[var(--shadow-soft)]">
+                <button
+                  type="button"
+                  onClick={() => setView("schematic")}
+                  className={viewTabClass(view === "schematic")}
+                >
+                  <GitBranch size={15} /> Schematic
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView("map")}
+                  className={viewTabClass(view === "map")}
+                >
+                  <MapIcon size={15} /> Map
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {network ? (
-            <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="space-y-3">
-                <div className="inline-flex gap-0.5 rounded-md border border-slate-300 bg-white p-0.5 shadow-[var(--shadow-soft)]">
-                  <button
-                    type="button"
-                    onClick={() => setView("schematic")}
-                    className={viewTabClass(view === "schematic")}
-                  >
-                    <GitBranch size={15} /> Schematic
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setView("map")}
-                    className={viewTabClass(view === "map")}
-                  >
-                    <MapIcon size={15} /> Map
-                  </button>
-                </div>
-                <section className="overflow-auto rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3 shadow-[var(--shadow-card)]">
+            <div className="mt-3 grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_300px]">
+              {/* The stage: a fixed generous height on small screens, every
+                  remaining pixel on lg+. The map fills it; the schematic pans
+                  by scrolling inside it. */}
+              <section
+                className={`${
+                  view === "map" ? "overflow-hidden" : "overflow-auto"
+                } h-[62vh] min-h-[420px] rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] lg:h-auto lg:min-h-0`}
+              >
                 {view === "map" ? (
                   <NetworkMap
                     network={network}
@@ -549,10 +566,9 @@ function NetworkContent() {
                     capture poles via the mobile app.
                   </p>
                 )}
-                </section>
-              </div>
+              </section>
 
-              <aside className="space-y-4">
+              <aside className="space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-[var(--shadow-card)]">
                   <p className="text-xs font-semibold uppercase text-slate-500">
                     Feeders — click to isolate
