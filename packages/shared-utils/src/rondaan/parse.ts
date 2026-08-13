@@ -276,6 +276,47 @@ export function getExpectedParentKey(code: BranchAddress): string | undefined {
   return buildNormalizedKey(code.feeder, code.baseNumber, parentBranchParts, code.origin);
 }
 
+/** Backstop against a pathological index (e.g. "A 99999/50000") spinning the
+ *  ancestor walk — real feeders hold a few hundred poles at most. */
+const PARENT_CHAIN_MAX_KEYS = 10_000;
+
+/**
+ * Every candidate parent key for a pole, NEAREST FIRST, walking the grammar up
+ * the lineage until the feeder head:
+ *
+ *   "A 4/2/2"  ->  A 4/2/1, A 4/2, A 4/1, A 4, A 3, A 2, A 1
+ *   "A 4/2/1A" ->  A 4/2 (a first branch pole pops to its junction), A 4/1, …
+ *   "A 5"      ->  A 4, A 3, A 2, A 1
+ *
+ * The first key that EXISTS in a Pencawang is the nearest recorded pole to hang
+ * this one from. Resolving against this chain (instead of "exact parent, else
+ * any lower TRUNK pole") keeps a child on its own branch when an intermediate
+ * pole is merely unrecorded — the trunk-only fallback drew every such child as
+ * a long line straight back to the trunk.
+ */
+export function expectedParentKeyChain(code: BranchAddress): string[] {
+  const keys: string[] = [];
+  const branchParts = code.branchParts.map((part) => ({ ...part }));
+
+  while (branchParts.length > 0 && keys.length < PARENT_CHAIN_MAX_KEYS) {
+    const lastPart = branchParts[branchParts.length - 1];
+
+    if (lastPart.number > 1) {
+      lastPart.number -= 1;
+    } else {
+      branchParts.pop();
+    }
+
+    keys.push(buildNormalizedKey(code.feeder, code.baseNumber, branchParts, code.origin));
+  }
+
+  for (let base = code.baseNumber - 1; base >= 1 && keys.length < PARENT_CHAIN_MAX_KEYS; base -= 1) {
+    keys.push(buildNormalizedKey(code.feeder, base, [], code.origin));
+  }
+
+  return keys;
+}
+
 export function parsePoleCode(input: string): ParsedPoleCode[] {
   const original = String(input ?? '').trim();
   const normalizedInput = normalizePoleInput(input);

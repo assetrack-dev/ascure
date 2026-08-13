@@ -1,4 +1,8 @@
 /**
+ * ⚠ SUPERSEDED for graph repair by `repair-network-parents.ts` (2026-08-13) —
+ * that script also FIXES wrong fed-from edges (this one only fills NULLs) and
+ * reports why a Pencawang has no graph. Keep this one for the LAMA backfill.
+ *
  * Backfill the network graph (north-star §2-§3; docs/adr/0001-network-graph-storage-model.md)
  * from the legacy assetCode strings — the Phase 1 migration's data half.
  *
@@ -191,11 +195,13 @@ async function processSubstation(
     const asset = assetById.get(assetId)!;
     const update: AssetUpdate = {};
 
-    // Feeder-Pillar poles (FP<n>) can't be represented in the structured graph
+    // Origin poles (FP<n> / TX<n>) can't be represented in the structured graph
     // yet (no column), so skip their feeder/membership/fed-from planning — they
     // stay string-only, matching the live syncPoleMemberships guard. The LAMA
     // backfill below is origin-independent and still applies.
-    const isFeederPillar = memberships.some((m) => m.feederPillar !== undefined);
+    // (Was `m.feederPillar` — a field the TX generalisation renamed to `origin`;
+    // the stale name made this guard a no-op and would have corrupted FP poles.)
+    const isFeederPillar = memberships.some((m) => m.origin !== undefined);
 
     if (!isFeederPillar) {
       for (const m of memberships) {
@@ -247,7 +253,7 @@ async function processSubstation(
         feeder: m.feeder,
         index: m.baseNumber,
         branchParts: m.branchParts,
-        ...(m.feederPillar !== undefined ? { feederPillar: m.feederPillar } : {}),
+        ...(m.origin !== undefined ? { origin: m.origin } : {}),
       })),
     );
     if (canonical && canonical !== normalizePoleInput(asset.assetCode)) {
