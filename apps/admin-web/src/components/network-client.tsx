@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { Download, GitBranch, Map as MapIcon, Plus, RefreshCw, X, Zap, ZapOff } from "lucide-react";
+import {
+  Download,
+  GitBranch,
+  Map as MapIcon,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+  Zap,
+  ZapOff,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiError } from "@/lib/api";
@@ -62,6 +72,120 @@ function viewTabClass(active: boolean) {
 
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+/**
+ * Type-ahead Pencawang picker — a tenant can have hundreds, so scrolling a
+ * plain <select> doesn't scale. Type any part of the name or code to filter;
+ * click a row (or press Enter for the top match) to load that network.
+ */
+function PencawangSearchSelect({
+  substations,
+  selectedId,
+  disabled,
+  placeholder,
+  onSelect,
+}: {
+  substations: ReportSubstation[];
+  selectedId: string;
+  disabled: boolean;
+  placeholder: string;
+  onSelect: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const selected = substations.find((substation) => substation.id === selectedId) ?? null;
+  const selectedLabel = selected ? `${selected.code} - ${selected.name}` : "";
+
+  const normalized = query.trim().toLowerCase();
+  const matches = normalized
+    ? substations.filter((substation) =>
+        `${substation.code} ${substation.name}`.toLowerCase().includes(normalized),
+      )
+    : substations;
+
+  const pick = (id: string) => {
+    setOpen(false);
+    setQuery("");
+    onSelect(id);
+  };
+
+  return (
+    <div className="relative">
+      <Search
+        size={15}
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+      />
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-label="Search Pencawang"
+        // Closed = the current selection; open = the live search query.
+        value={open ? query : selectedLabel}
+        placeholder={placeholder}
+        disabled={disabled}
+        onFocus={() => {
+          setOpen(true);
+          setQuery("");
+        }}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (!open) setOpen(true);
+        }}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setOpen(false);
+            event.currentTarget.blur();
+          }
+          if (event.key === "Enter" && open && matches.length > 0) {
+            event.preventDefault();
+            pick(matches[0].id);
+            event.currentTarget.blur();
+          }
+        }}
+        className={`${inputClassName} pl-9 ${selected ? "pr-9" : ""}`}
+      />
+      {selected && !open ? (
+        <button
+          type="button"
+          aria-label="Clear Pencawang"
+          onClick={() => pick("")}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-600"
+        >
+          <X size={15} />
+        </button>
+      ) : null}
+      {open ? (
+        <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+          {matches.map((substation) => (
+            <button
+              key={substation.id}
+              type="button"
+              // Beat the input's blur so the click still lands.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => pick(substation.id)}
+              className={`block w-full px-3 py-2 text-left text-sm transition hover:bg-slate-100 ${
+                substation.id === selectedId
+                  ? "font-semibold text-[var(--brand)]"
+                  : "text-slate-700"
+              }`}
+            >
+              <span className="font-mono text-xs text-slate-500">{substation.code}</span>{" "}
+              {substation.name}
+            </button>
+          ))}
+          {matches.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-slate-500">
+              No Pencawang matches &ldquo;{query}&rdquo;.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function NetworkContent() {
@@ -402,33 +526,29 @@ function NetworkContent() {
           {/* One compact controls row — selector + view tabs — so the stage
               below gets the rest of the viewport. */}
           <div className="mt-3 flex shrink-0 flex-wrap items-end gap-3">
-            <label className="block w-full max-w-md">
+            <div className="block w-full max-w-md">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Pencawang
               </span>
-              <select
-                value={selectedId}
-                onChange={(event) => {
-                  setSelectedId(event.target.value);
-                  void loadNetwork(event.target.value);
-                }}
-                disabled={isLoading || visibleSubstations.length === 0}
-                className={`${inputClassName} mt-1.5`}
-              >
-                <option value="">
-                  {isLoading
-                    ? "Loading…"
-                    : visibleSubstations.length === 0
-                      ? "No Pencawang available"
-                      : "Select a Pencawang"}
-                </option>
-                {visibleSubstations.map((substation) => (
-                  <option key={substation.id} value={substation.id}>
-                    {substation.code} - {substation.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <div className="mt-1.5">
+                <PencawangSearchSelect
+                  substations={visibleSubstations}
+                  selectedId={selectedId}
+                  disabled={isLoading || visibleSubstations.length === 0}
+                  placeholder={
+                    isLoading
+                      ? "Loading…"
+                      : visibleSubstations.length === 0
+                        ? "No Pencawang available"
+                        : "Search Pencawang by name or code…"
+                  }
+                  onSelect={(id) => {
+                    setSelectedId(id);
+                    void loadNetwork(id);
+                  }}
+                />
+              </div>
+            </div>
             {network ? (
               <div className="inline-flex h-11 items-center gap-0.5 rounded-md border border-slate-300 bg-white p-0.5 shadow-[var(--shadow-soft)]">
                 <button
