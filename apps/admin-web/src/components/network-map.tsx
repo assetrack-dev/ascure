@@ -55,8 +55,14 @@ export default function NetworkMap({
     overlayRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     const timer = setTimeout(() => map.invalidateSize(), 0);
+    // The container now fills a flexible stage (viewport-height layout), so its
+    // size changes without a window resize (Leaflet only tracks window resize).
+    // Watch the element itself and reflow the tiles.
+    const observer = new ResizeObserver(() => map.invalidateSize());
+    observer.observe(container);
     return () => {
       clearTimeout(timer);
+      observer.disconnect();
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
@@ -142,7 +148,9 @@ export default function NetworkMap({
   }
 
   return (
-    <div className="p-3">
+    // Fill whatever the parent stage gives us — the page sizes the stage to the
+    // viewport so the map is as large as the screen allows.
+    <div className="flex h-full min-h-[420px] flex-col p-2">
       <style>{`
         .ascure-pole-label {
           background: transparent;
@@ -159,11 +167,12 @@ export default function NetworkMap({
       `}</style>
       <div
         ref={containerRef}
-        style={{ height: 480, borderRadius: 12 }}
+        className="min-h-0 flex-1"
+        style={{ borderRadius: 10 }}
         role="img"
         aria-label={`GPS map for ${network.substation.code}`}
       />
-      <p className="mt-2 px-1 text-xs text-[var(--muted)]">
+      <p className="mt-1.5 shrink-0 px-1 text-xs text-[var(--muted)]">
         Poles on an OpenStreetMap basemap, positioned by captured GPS · {locatedCount} of{" "}
         {network.poles.length} located.
       </p>
