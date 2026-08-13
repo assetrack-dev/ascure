@@ -1,4 +1,8 @@
-import { expectedParentKeyChain, parsePoleCode } from '@ascure/shared-utils';
+import {
+  canonicalSegmentsPerFeeder,
+  expectedParentKeyChain,
+  parsePoleCode,
+} from '@ascure/shared-utils';
 
 /**
  * The expected-parent CHAIN (2026-08-13): every candidate parent key for a
@@ -58,5 +62,40 @@ describe('rondaan expectedParentKeyChain', () => {
   it('an FP/TX origin namespaces every candidate', () => {
     expect(chainOf('FP1 A 4/2').slice(0, 2)).toEqual(['FP1 A 4/1', 'FP1 A 4']);
     expect(chainOf('TX2 B 3')).toEqual(['TX2 B 2', 'TX2 B 1']);
+  });
+});
+
+/**
+ * A code holding TWO positions on the SAME feeder ("B 18 & B 23/5B" — a field
+ * loop) can persist only ONE membership row per (asset, feeder). The canonical
+ * pick must be deterministic and shared by the live sync AND the repair script:
+ * the 2026-08-13 prod repair left 13 such rows oscillating between their two
+ * positions on every pass because the writers disagreed.
+ */
+describe('rondaan canonicalSegmentsPerFeeder', () => {
+  const keysOf = (code: string): string[] =>
+    canonicalSegmentsPerFeeder(
+      parsePoleCode(code).filter((entry) => entry.isValid),
+    ).map((entry) => entry.normalizedKey);
+
+  it('keeps the lowest position of a same-feeder loop pole', () => {
+    expect(keysOf('B 18 & B 23/5B')).toEqual(['B 18']);
+  });
+
+  it('a trunk position beats a branch at the same base', () => {
+    expect(keysOf('D 4 & D 4/1')).toEqual(['D 4']);
+  });
+
+  it('same base and depth compares the branch lineage', () => {
+    expect(keysOf('A 8/2/1 & A 8/1/1')).toEqual(['A 8/1/1']);
+  });
+
+  it('different feeders are untouched', () => {
+    expect(keysOf('E 4 & F 2')).toEqual(['E 4', 'F 2']);
+    expect(keysOf('CD 1')).toEqual(['C 1', 'D 1']);
+  });
+
+  it('an origin namespaces the feeder line, so FP1-A and FP2-A both stay', () => {
+    expect(keysOf('FP1 A 5 & FP2 A 9')).toEqual(['FP1 A 5', 'FP2 A 9']);
   });
 });

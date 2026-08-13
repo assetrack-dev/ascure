@@ -40,6 +40,7 @@
  */
 import { FeederKind, PrismaClient } from '@prisma/client';
 import {
+  canonicalSegmentsPerFeeder,
   expectedParentKeyChain,
   formatBranchSuffix,
   parsePoleCode,
@@ -62,6 +63,7 @@ type Totals = {
   poles: number;
   originSkipped: number;
   parseFailures: number;
+  positionConflicts: number;
   membershipsCreated: number;
   membershipsRealigned: number;
   membershipEdgesFixed: number;
@@ -87,6 +89,9 @@ async function processSubstation(
   const assets = await prisma.asset.findMany({
     where: { substationId: sub.id },
     select: { id: true, assetCode: true, fedFromAssetId: true },
+    // Deterministic planning order: duplicate-key winners and position claims
+    // must not depend on DB row order.
+    orderBy: { assetCode: 'asc' },
   });
   if (assets.length === 0) {
     return; // nothing to graph, nothing to report — not even a picker entry
@@ -110,7 +115,10 @@ async function processSubstation(
       originSkipped.push(asset.assetCode);
       continue;
     }
-    parsedByAsset.set(asset.id, parsed);
+    // One position per (asset, feeder), LOWEST wins — same deterministic pick
+    // as the live sync, so repeated runs agree ("B 18 & B 23/5B" loop poles
+    // used to oscillate between their two positions on every pass).
+    parsedByAsset.set(asset.id, canonicalSegmentsPerFeeder(parsed));
   }
 
   // ---- Existing membership rows (RONDAAN feeders only) ----------------------
@@ -129,40 +137,84 @@ async function processSubstation(
     existing.map((row) => [`${row.assetId}|${row.feeder.code}`, row] as const),
   );
 
-  // ---- Plan creations / realignments ---------------------------------------
+  // ---- Plan creations / realignments (occupancy-aware) ----------------------
+  // The DB enforces one row per position (@@unique [feederId, sequenceIndex,
+  // branchSuffix]). A planned create/move into a position already held by
+  // ANOTHER pole (a true duplicate-code data problem) must be skipped and
+  // reported — attempting it would abort the whole substation's transaction.
+  // `positionOwner` models the POST-APPLY world as claims are planned.
   const feederCodes = new Set<string>();
   const toCreate: { assetId: string; feederCode: string; sequenceIndex: number; branchSuffix: string }[] = [];
   const toRealign: { id: string; sequenceIndex: number; branchSuffix: string; label: string }[] = [];
+  const positionConflicts: string[] = [];
 
-  for (const [assetId, parsedList] of parsedByAsset) {
-    for (const p of parsedList) {
-      feederCodes.add(p.feeder);
-      const branchSuffix = formatBranchSuffix(p.branchParts);
-      const row = existingByAssetFeeder.get(`${assetId}|${p.feeder}`);
-      if (!row) {
-        toCreate.push({ assetId, feederCode: p.feeder, sequenceIndex: p.baseNumber, branchSuffix });
-      } else if (row.sequenceIndex !== p.baseNumber || row.branchSuffix !== branchSuffix) {
-        toRealign.push({
-          id: row.id,
-          sequenceIndex: p.baseNumber,
-          branchSuffix,
-          label: `${codeById.get(assetId)}: ${row.feeder.code} ${row.sequenceIndex}${row.branchSuffix} -> ${p.feeder} ${p.baseNumber}${branchSuffix}`,
-        });
-      }
-    }
+  const positionOwner = new Map<string, string>(); // "F|seq|suffix" -> assetId
+  for (const row of existing) {
+    positionOwner.set(
+      `${row.feeder.code}|${row.sequenceIndex}|${row.branchSuffix}`,
+      row.assetId,
+    );
   }
 
-  // ---- Recompute every parent over the FULL set (existing + planned) --------
+  // Entries carry the identity each row will ACTUALLY have after apply — the
+  // canonical position when the create/move goes through, the stored position
+  // when a conflict keeps the row where it is. Parents resolve against this
+  // post-apply world, so repeated runs agree.
   type Entry = {
     assetId: string;
     parsed: ParsedPoleCode;
     currentParentId: string | null | undefined; // undefined = row doesn't exist yet
   };
   const entries: Entry[] = [];
+  const parseStored = (feeder: string, seq: number, suffix: string) =>
+    parsePoleCode(`${feeder} ${seq}${suffix}`).filter((e) => e.isValid)[0];
+
   for (const [assetId, parsedList] of parsedByAsset) {
     for (const p of parsedList) {
+      feederCodes.add(p.feeder);
+      const branchSuffix = formatBranchSuffix(p.branchParts);
+      const posKey = `${p.feeder}|${p.baseNumber}|${branchSuffix}`;
       const row = existingByAssetFeeder.get(`${assetId}|${p.feeder}`);
-      entries.push({ assetId, parsed: p, currentParentId: row ? row.fedFromAssetId : undefined });
+
+      if (!row) {
+        const owner = positionOwner.get(posKey);
+        if (owner && owner !== assetId) {
+          positionConflicts.push(
+            `${codeById.get(assetId)}: position ${p.feeder} ${p.baseNumber}${branchSuffix} held by "${codeById.get(owner) ?? '?'}" — membership NOT created`,
+          );
+          continue;
+        }
+        positionOwner.set(posKey, assetId);
+        toCreate.push({ assetId, feederCode: p.feeder, sequenceIndex: p.baseNumber, branchSuffix });
+        entries.push({ assetId, parsed: p, currentParentId: undefined });
+        continue;
+      }
+
+      if (row.sequenceIndex !== p.baseNumber || row.branchSuffix !== branchSuffix) {
+        const owner = positionOwner.get(posKey);
+        if (owner && owner !== assetId) {
+          positionConflicts.push(
+            `${codeById.get(assetId)}: cannot move ${row.feeder.code} ${row.sequenceIndex}${row.branchSuffix} -> ${p.feeder} ${p.baseNumber}${branchSuffix} (held by "${codeById.get(owner) ?? '?'}") — kept at stored position`,
+          );
+          const storedParsed = parseStored(row.feeder.code, row.sequenceIndex, row.branchSuffix);
+          if (storedParsed) {
+            entries.push({ assetId, parsed: storedParsed, currentParentId: row.fedFromAssetId });
+          }
+          continue;
+        }
+        positionOwner.delete(`${row.feeder.code}|${row.sequenceIndex}|${row.branchSuffix}`);
+        positionOwner.set(posKey, assetId);
+        toRealign.push({
+          id: row.id,
+          sequenceIndex: p.baseNumber,
+          branchSuffix,
+          label: `${codeById.get(assetId)}: ${row.feeder.code} ${row.sequenceIndex}${row.branchSuffix} -> ${p.feeder} ${p.baseNumber}${branchSuffix}`,
+        });
+        entries.push({ assetId, parsed: p, currentParentId: row.fedFromAssetId });
+        continue;
+      }
+
+      entries.push({ assetId, parsed: p, currentParentId: row.fedFromAssetId });
     }
   }
   const keyToAssetId = new Map<string, string>();
@@ -220,11 +272,13 @@ async function processSubstation(
   console.log(
     `\n# ${sub.code} (${sub.name}) — poles=${assets.length} graphable=${parsedByAsset.size} ` +
       `originSkipped=${originSkipped.length} parseFailures=${parseFailures.length} ` +
+      `positionConflicts=${positionConflicts.length} ` +
       `createMemberships=${toCreate.length} realign=${toRealign.length} ` +
       `edgeFixes=${edgeFixes.length} assetEdgeFixes=${assetEdgeFixes.length}`,
   );
   reportSample('  parse-failures (not RONDAAN?)', parseFailures);
   reportSample('  FP/TX-origin poles (string-only by design)', originSkipped);
+  reportSample('  position conflicts (duplicate codes — owner should retype)', positionConflicts);
   reportSample('  membership realignments', toRealign.map((r) => r.label));
   reportSample('  edge fixes (pole: old-parent -> new-parent)', edgeFixes);
   reportSample('  asset-level fed-from fixes', assetEdgeFixes);
@@ -246,6 +300,7 @@ async function processSubstation(
   totals.poles += assets.length;
   totals.originSkipped += originSkipped.length;
   totals.parseFailures += parseFailures.length;
+  totals.positionConflicts += positionConflicts.length;
   totals.membershipsCreated += toCreate.length;
   totals.membershipsRealigned += toRealign.length;
   totals.membershipEdgesFixed += edgeFixes.length;
@@ -275,6 +330,16 @@ async function processSubstation(
             branchSuffix: m.branchSuffix,
           })),
           skipDuplicates: true,
+        });
+      }
+      // Two-phase realign: park every moving row on an impossible position
+      // first (negative sequence — real ones are >= 1), THEN set the finals.
+      // A row moving into a position another row is vacating in this same
+      // batch would otherwise trip the unique constraint mid-flight.
+      for (let i = 0; i < toRealign.length; i++) {
+        await tx.poleFeederMembership.update({
+          where: { id: toRealign[i].id },
+          data: { sequenceIndex: -(i + 1), branchSuffix: '~repair-tmp' },
         });
       }
       for (const r of toRealign) {
@@ -340,6 +405,7 @@ async function main() {
     poles: 0,
     originSkipped: 0,
     parseFailures: 0,
+    positionConflicts: 0,
     membershipsCreated: 0,
     membershipsRealigned: 0,
     membershipEdgesFixed: 0,
@@ -355,6 +421,7 @@ async function main() {
   console.log(
     `\n# TOTAL: substations=${totals.substations} poles=${totals.poles} ` +
       `originSkipped=${totals.originSkipped} parseFailures=${totals.parseFailures} ` +
+      `positionConflicts=${totals.positionConflicts} ` +
       `created=${totals.membershipsCreated} realigned=${totals.membershipsRealigned} ` +
       `edgeFixes=${totals.membershipEdgesFixed} assetEdgeFixes=${totals.assetEdgesFixed}`,
   );
