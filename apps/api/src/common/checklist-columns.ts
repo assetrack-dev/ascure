@@ -47,6 +47,29 @@ export function normalizeChecklistLabel(label: string): string {
   return label.toUpperCase().replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Label aliases for the pinned Kelegaan reading/photo column, in match-priority
+ * order. Whatever a template calls the clearance field, the Site Visit
+ * Linked-Assets table and the DC correct-reading endpoint must resolve the SAME
+ * item, so both draw from this one list.
+ *
+ * The numbered aliases are the SAVR production template (photo + OCR reading
+ * combined on one "GAMBAR KELEGAAN 1" item — readings 2/3 exist there too but
+ * the pinned column is #1 only, which is why matching is exact, not prefix).
+ * The un-numbered aliases are the SAVT route-survey template, which takes a
+ * single clearance per pole; BACAAN precedes GAMBAR so a correction written
+ * through this list lands on the reading item when a template splits the
+ * reading and the photo into two items.
+ */
+export const KELEGAAN_LABEL_ALIASES = [
+  'GAMBAR KELEGAAN 1',
+  'BACAAN KELEGAAN 1',
+  'KELEGAAN 1',
+  'BACAAN KELEGAAN',
+  'GAMBAR KELEGAAN',
+  'KELEGAAN',
+] as const;
+
 /** Dropdown options for a checklist column's inline editor, mirroring how the
  *  checklist template defines the item: a SELECT exposes its configured options
  *  (via the canonical template parser), a BOOLEAN gets a synthetic Yes/No, and

@@ -49,7 +49,10 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { normalizeOperationalText } from '../common/operational-text';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
-import { checklistResultValue } from '../common/checklist-columns';
+import {
+  checklistResultValue,
+  KELEGAAN_LABEL_ALIASES,
+} from '../common/checklist-columns';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
@@ -721,7 +724,7 @@ export class InspectionsService {
     const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
     const items = inspection.template.sections.flatMap((section) => section.items);
     let matched: (typeof items)[number] | undefined;
-    for (const alias of ['GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1'].map(norm)) {
+    for (const alias of KELEGAAN_LABEL_ALIASES.map(norm)) {
       matched = items.find((templateItem) => norm(templateItem.label) === alias);
       if (matched) {
         break;
@@ -730,7 +733,7 @@ export class InspectionsService {
 
     if (!matched) {
       throw new BadRequestException(
-        'This inspection has no BACAAN KELEGAAN 1 item to correct.',
+        'This inspection has no Bacaan Kelegaan item to correct.',
       );
     }
     const item = matched;
