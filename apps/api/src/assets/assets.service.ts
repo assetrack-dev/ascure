@@ -54,6 +54,7 @@ import {
 } from '../common/checklist-columns';
 import {
   canonicalizeSavtRouteCode,
+  canonicalSegmentsPerFeeder,
   expectedParentKeyChain,
   formatBranchSuffix,
   parsePoleCode,
@@ -2142,7 +2143,11 @@ export class AssetsService {
     }
 
     const feederIdByCode = new Map<string, string>();
-    for (const membership of memberships) {
+    // One membership row per (asset, feeder): a code holding TWO positions on
+    // the SAME feeder ("B 18 & B 23/5B" — a field loop) keeps its LOWEST
+    // position deterministically. Last-one-wins here used to disagree with the
+    // repair script and the stored row oscillated between the two positions.
+    for (const membership of canonicalSegmentsPerFeeder(memberships)) {
       let feederId = feederIdByCode.get(membership.feeder);
       if (!feederId) {
         const feeder = await tx.feeder.upsert({

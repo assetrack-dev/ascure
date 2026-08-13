@@ -317,6 +317,38 @@ export function expectedParentKeyChain(code: BranchAddress): string[] {
   return keys;
 }
 
+/**
+ * Collapse a pole's parsed segments to ONE per feeder — the LOWEST position
+ * (base index, then branch lineage) wins deterministically.
+ *
+ * A code like "B 18 & B 23/5B" puts one pole at TWO positions on the SAME
+ * feeder (a field loop the radial model can't hold): the stored graph keys a
+ * membership by (asset, feeder), so only one position can persist. Without a
+ * deterministic pick, writers disagree run-to-run and the stored row
+ * oscillates between the two positions (seen on the 2026-08-13 prod repair:
+ * 13 edges flip-flopped on every pass). Lowest keeps the trunk-most position —
+ * the better spine for the drawn graph; a real loop belongs in a NOP tie.
+ */
+export function canonicalSegmentsPerFeeder(parsed: ParsedPoleCode[]): ParsedPoleCode[] {
+  const byFeeder = new Map<string, ParsedPoleCode>();
+
+  for (const segment of parsed) {
+    const key = originLineKey(segment);
+    const current = byFeeder.get(key);
+
+    if (
+      !current ||
+      segment.baseNumber < current.baseNumber ||
+      (segment.baseNumber === current.baseNumber &&
+        compareBranchParts(segment.branchParts, current.branchParts) < 0)
+    ) {
+      byFeeder.set(key, segment);
+    }
+  }
+
+  return parsed.filter((segment) => byFeeder.get(originLineKey(segment)) === segment);
+}
+
 export function parsePoleCode(input: string): ParsedPoleCode[] {
   const original = String(input ?? '').trim();
   const normalizedInput = normalizePoleInput(input);
