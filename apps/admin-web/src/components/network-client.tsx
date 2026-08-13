@@ -159,7 +159,9 @@ function PencawangSearchSelect({
         </button>
       ) : null}
       {open ? (
-        <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+        // z above Leaflet's panes (they stack up to ~1000 in the page context),
+        // else the list hides behind the map once a Pencawang is open.
+        <div className="absolute z-[1200] mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
           {matches.map((substation) => (
             <button
               key={substation.id}
