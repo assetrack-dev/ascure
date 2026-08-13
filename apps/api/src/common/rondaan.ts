@@ -1,4 +1,10 @@
-import { formatRondaan, type PoleMembership } from '@ascure/shared-utils';
+import {
+  formatFeederLineCode,
+  formatRondaan,
+  type PoleMembership,
+  type PoleOrigin,
+  type PoleOriginKind,
+} from '@ascure/shared-utils';
 
 /**
  * Server-side NO TIANG RONDAAN rendering — north-star §3 "store the structure,
@@ -7,11 +13,36 @@ import { formatRondaan, type PoleMembership } from '@ascure/shared-utils';
  * rendered string.
  */
 
-/** A pole's feeder membership as stored: Feeder.code + per-feeder index + branch. */
+/** A pole's feeder membership as stored: Feeder line + per-feeder index +
+ *  branch. `originKind`/`originNumber` are the Feeder row's power origin
+ *  (''/0 sentinel = direct line); optional so pre-origin call sites keep
+ *  compiling, rendering as direct when absent. */
 export interface StoredMembership {
   sequenceIndex: number;
   branchSuffix: string;
-  feeder: { code: string };
+  feeder: { code: string; originKind?: string; originNumber?: number };
+}
+
+/** The stored sentinel pair as a grammar origin (undefined = direct line). */
+export function feederOrigin(feeder: {
+  originKind?: string;
+  originNumber?: number;
+}): PoleOrigin | undefined {
+  return feeder.originKind === 'FP' || feeder.originKind === 'TX'
+    ? {
+        kind: feeder.originKind as PoleOriginKind,
+        number: feeder.originNumber ?? 0,
+      }
+    : undefined;
+}
+
+/** Display token for a stored Feeder line: "A", "FP1 A", "TX2 C". */
+export function feederLineCode(feeder: {
+  code: string;
+  originKind?: string;
+  originNumber?: number;
+}): string {
+  return formatFeederLineCode(feeder.code, feederOrigin(feeder));
 }
 
 /**
@@ -27,11 +58,16 @@ export function renderNoTiangRondaan(
   }
 
   const rendered = formatRondaan(
-    memberships.map<PoleMembership>((m) => ({
-      feeder: m.feeder.code,
-      index: m.sequenceIndex,
-      branchSuffix: m.branchSuffix,
-    })),
+    memberships.map<PoleMembership>((m) => {
+      const origin = feederOrigin(m.feeder);
+
+      return {
+        feeder: m.feeder.code,
+        index: m.sequenceIndex,
+        branchSuffix: m.branchSuffix,
+        ...(origin !== undefined ? { origin } : {}),
+      };
+    }),
   );
 
   return rendered || null;

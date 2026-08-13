@@ -8,14 +8,14 @@ import {
 import { FeederKind, Prisma, SwitchState, TieEdgeKind, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
-import { renderNoTiangRondaan } from '../common/rondaan';
+import { feederLineCode, renderNoTiangRondaan } from '../common/rondaan';
 import { CreateTieEdgeDto } from './dto/create-tie-edge.dto';
 
 const MEMBERSHIP_SELECT = {
   sequenceIndex: true,
   branchSuffix: true,
   fedFromAssetId: true,
-  feeder: { select: { code: true } },
+  feeder: { select: { code: true, originKind: true, originNumber: true } },
 } as const;
 
 // This service is the RONDAAN (LV) network graph. SAVT route feeders live in
@@ -35,7 +35,7 @@ type RenderablePole = {
     sequenceIndex: number;
     branchSuffix: string;
     fedFromAssetId: string | null;
-    feeder: { code: string };
+    feeder: { code: string; originKind: string; originNumber: number };
   }[];
 };
 
@@ -67,8 +67,14 @@ export class NetworkService {
     const [feeders, assets, tieEdges] = await Promise.all([
       this.prisma.feeder.findMany({
         where: { substationId, kind: FeederKind.RONDAAN },
-        select: { id: true, code: true, name: true },
-        orderBy: { code: 'asc' },
+        select: {
+          id: true,
+          code: true,
+          originKind: true,
+          originNumber: true,
+          name: true,
+        },
+        orderBy: [{ code: 'asc' }, { originKind: 'asc' }, { originNumber: 'asc' }],
       }),
       this.prisma.asset.findMany({
         where: { substationId },
@@ -97,27 +103,34 @@ export class NetworkService {
         latitude: asset.latitude,
         longitude: asset.longitude,
         fedFromAssetId: asset.fedFromAssetId,
-        feeders: [...new Set(asset.feederMemberships.map((m) => m.feeder.code))].sort(),
+        // LINE display tokens ("A", "FP1 A") — an origin line is its own line.
+        feeders: [...new Set(asset.feederMemberships.map((m) => feederLineCode(m.feeder)))].sort(),
       }));
 
     const poleIds = new Set(poles.map((pole) => pole.id));
     // Per-feeder radial edges: each pole's parent ON EACH FEEDER it sits on, so a
     // multi-feeder pole yields one edge per feeder (the single Asset.fedFromAssetId
     // could only express one — which collapsed every shared run onto the
-    // alphabetically-first feeder). Each edge carries its feeder code.
+    // alphabetically-first feeder). Each edge carries its feeder LINE token.
     const radial = assets.flatMap((asset) =>
       asset.feederMemberships
         .filter((m) => m.fedFromAssetId && poleIds.has(m.fedFromAssetId as string))
         .map((m) => ({
           from: m.fedFromAssetId as string,
           to: asset.id,
-          feeder: m.feeder.code,
+          feeder: feederLineCode(m.feeder),
         })),
     );
 
     return {
       substation,
-      feeders,
+      // The API speaks LINE tokens: the code the admin renders is "FP1 A" for
+      // an origin line — the bare column value stays internal.
+      feeders: feeders.map((feeder) => ({
+        id: feeder.id,
+        code: feederLineCode(feeder),
+        name: feeder.name,
+      })),
       poles,
       edges: {
         radial,
@@ -250,7 +263,14 @@ export class NetworkService {
       // RONDAAN-only: SAVT route isolation is a different electrical question
       // (an HV route de-energizes downstream PENCAWANG, not just poles).
       where: { id: feederId, tenantId: user.tenantId, kind: FeederKind.RONDAAN },
-      select: { id: true, code: true, name: true, substationId: true },
+      select: {
+        id: true,
+        code: true,
+        originKind: true,
+        originNumber: true,
+        name: true,
+        substationId: true,
+      },
     });
     if (!feeder) {
       throw new NotFoundException('Feeder not found.');
@@ -325,7 +345,7 @@ export class NetworkService {
       });
 
     return {
-      feeder: { id: feeder.id, code: feeder.code, name: feeder.name },
+      feeder: { id: feeder.id, code: feederLineCode(feeder), name: feeder.name },
       deEnergizedCount: deEnergized.length,
       deEnergized: deEnergized.map((asset) => this.renderPole(asset)),
       backfeed,

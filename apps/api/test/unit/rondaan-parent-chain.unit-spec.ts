@@ -1,6 +1,9 @@
 import {
   canonicalSegmentsPerFeeder,
   expectedParentKeyChain,
+  formatFeederLineCode,
+  formatRondaan,
+  membershipsFromRondaan,
   parsePoleCode,
 } from '@ascure/shared-utils';
 
@@ -97,5 +100,44 @@ describe('rondaan canonicalSegmentsPerFeeder', () => {
 
   it('an origin namespaces the feeder line, so FP1-A and FP2-A both stay', () => {
     expect(keysOf('FP1 A 5 & FP2 A 9')).toEqual(['FP1 A 5', 'FP2 A 9']);
+  });
+});
+
+/**
+ * Origin lines became first-class Feeder rows on 2026-08-13, which makes the
+ * formatter's origin handling load-bearing: stored origin memberships render
+ * the NO TIANG label, and a wrong render silently renames a pole.
+ */
+describe('rondaan formatRondaan with origins', () => {
+  const roundTrip = (code: string) => formatRondaan(membershipsFromRondaan(code));
+
+  it('renders a display token per feeder line', () => {
+    expect(formatFeederLineCode('A')).toBe('A');
+    expect(formatFeederLineCode('a', { kind: 'FP', number: 1 })).toBe('FP1 A');
+    expect(formatFeederLineCode('C', { kind: 'TX', number: 2 })).toBe('TX2 C');
+  });
+
+  it('a uniform origin hoists to ONE leading prefix (canonical)', () => {
+    expect(roundTrip('FP1 E 4 & FP1 F 2')).toBe('FP1 E 4 & F 2');
+    expect(roundTrip('TX2 B 3')).toBe('TX2 B 3');
+  });
+
+  it('MIXED origins prefix per segment and never collapse across lines', () => {
+    // Hoisting only the first origin would have rewritten the FP2 segment
+    // onto the FP1 line — a silent pole rename.
+    expect(roundTrip('FP1 A 2 & FP2 B 1')).toBe('FP1 A 2 & FP2 B 1');
+  });
+
+  it('a mixed render leads with the BARE segments so re-parsing cannot poison them', () => {
+    // A leading origin token is the parser's default for bare segments — the
+    // direct-line segment must render first.
+    const rendered = formatRondaan(membershipsFromRondaan('A 9 & FP1 C 1'));
+    expect(rendered).toBe('A 9 & FP1 C 1');
+    expect(roundTrip(rendered)).toBe(rendered);
+  });
+
+  it('an origin line and a direct line with the same letter stay distinct groups', () => {
+    const rendered = formatRondaan(membershipsFromRondaan('FP1 A 1 & FP2 A 1'));
+    expect(rendered).toBe('FP1 A 1 & FP2 A 1');
   });
 });
