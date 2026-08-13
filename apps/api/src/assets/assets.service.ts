@@ -53,10 +53,9 @@ import {
   type ChecklistResultValueRow,
 } from '../common/checklist-columns';
 import {
-  buildNormalizedKey,
   canonicalizeSavtRouteCode,
+  expectedParentKeyChain,
   formatBranchSuffix,
-  getExpectedParentKey,
   parsePoleCode,
   parseSavtPoleCode,
 } from '@ascure/shared-utils';
@@ -2092,13 +2091,14 @@ export class AssetsService {
     params: { tenantId: string; substationId: string; assetId: string; assetCode: string },
   ): Promise<void> {
     await this.syncPoleMemberships(tx, params);
-    await this.syncPoleFedFrom(tx, params);
+    await this.reresolvePencawangParents(tx, params.substationId);
   }
 
   /**
    * Batch graph sync for an import: upsert feeders + memberships for every pole
-   * first, then resolve fed-from for every pole — so each parent's membership
-   * exists before its children look it up. Runs inside the caller's transaction.
+   * first, then ONE Pencawang-wide parent re-resolve — so every parent's
+   * membership exists before any child looks it up. Runs inside the caller's
+   * transaction.
    */
   async syncImportedPolesGraph(
     tx: Prisma.TransactionClient,
@@ -2114,13 +2114,7 @@ export class AssetsService {
         assetCode: pole.assetCode,
       });
     }
-    for (const pole of poles) {
-      await this.syncPoleFedFrom(tx, {
-        substationId,
-        assetId: pole.assetId,
-        assetCode: pole.assetCode,
-      });
-    }
+    await this.reresolvePencawangParents(tx, substationId);
   }
 
   /** Upsert a Feeder per feeder token + a PoleFeederMembership per segment from
@@ -2160,12 +2154,8 @@ export class AssetsService {
         feederIdByCode.set(membership.feeder, feederId);
       }
       const branchSuffix = formatBranchSuffix(membership.branchParts);
-      const fedFromAssetId = await this.resolveFeederParentAssetId(
-        tx,
-        substationId,
-        membership,
-        assetId,
-      );
+      // fed-from is NOT resolved here — reresolvePencawangParents recomputes the
+      // whole Pencawang right after, inside the same transaction.
       await tx.poleFeederMembership.upsert({
         where: { assetId_feederId: { assetId, feederId } },
         create: {
@@ -2173,89 +2163,112 @@ export class AssetsService {
           feederId,
           sequenceIndex: membership.baseNumber,
           branchSuffix,
-          fedFromAssetId,
         },
-        update: { sequenceIndex: membership.baseNumber, branchSuffix, fedFromAssetId },
+        update: { sequenceIndex: membership.baseNumber, branchSuffix },
       });
     }
   }
 
   /**
-   * The parent pole ON THIS FEEDER for one membership. Tries the exact expected
-   * parent (branch parent / previous trunk pole); if that pole doesn't exist yet,
-   * falls back to the nearest existing lower-indexed trunk pole on the same feeder
-   * — so a branch / next pole still attaches to the feeder line when an
-   * intermediate bare trunk pole was skipped (mirrors the backfill fallback).
+   * Recompute EVERY RONDAAN fed-from edge in a Pencawang from the memberships on
+   * record. Runs after any pole's membership sync, so a parent that arrives (or
+   * gets its code fixed) AFTER its children immediately adopts them — the old
+   * per-pole resolve-once flow left such children glued to a trunk-pole fallback
+   * forever, drawing every one as a long line straight back to the trunk.
+   *
+   * Parent choice walks the grammar's expected-parent chain
+   * (expectedParentKeyChain): "A 4/2/2" tries "A 4/2/1", then "A 4/2", "A 4/1",
+   * "A 4", "A 3"… — so a missing intermediate pole attaches its child to the
+   * nearest recorded BRANCH ancestor, never straight to the trunk.
+   *
+   * Both edge levels are DERIVED data (no DTO or mobile input ever sets them),
+   * so overwrite is safe: membership.fedFromAssetId drives the network page's
+   * radial edges; Asset.fedFromAssetId (from the primary = lowest feeder/seq
+   * membership) drives getDownstream.
    */
-  private async resolveFeederParentAssetId(
+  private async reresolvePencawangParents(
     tx: Prisma.TransactionClient,
     substationId: string,
-    m: ReturnType<typeof parsePoleCode>[number],
-    selfAssetId: string,
-  ): Promise<string | null> {
-    const exactKey =
-      m.branchParts.length > 0
-        ? getExpectedParentKey(m)
-        : m.baseNumber > 1
-          ? buildNormalizedKey(m.feeder, m.baseNumber - 1)
-          : undefined;
-    if (exactKey) {
-      const id = await this.findAssetIdByMembershipKey(tx, substationId, exactKey);
-      if (id && id !== selfAssetId) {
-        return id;
-      }
-    }
-    const startBase = m.branchParts.length > 0 ? m.baseNumber : m.baseNumber - 1;
-    if (startBase >= 1) {
-      const parent = await tx.poleFeederMembership.findFirst({
-        where: {
-          feeder: { substationId, code: m.feeder },
-          branchSuffix: '',
-          sequenceIndex: { lte: startBase },
-          assetId: { not: selfAssetId },
-        },
-        orderBy: { sequenceIndex: 'desc' },
-        select: { assetId: true },
-      });
-      if (parent) {
-        return parent.assetId;
-      }
-    }
-    return null;
-  }
-
-  /** Best-effort pre-fill the fed-from edge from the primary (lowest) segment's
-   *  parent — observed-by-proxy; the parent pole must already exist in this
-   *  Pencawang with its membership. */
-  private async syncPoleFedFrom(
-    tx: Prisma.TransactionClient,
-    params: { substationId: string; assetId: string; assetCode: string },
   ): Promise<void> {
-    const { substationId, assetId, assetCode } = params;
-    const memberships = parsePoleCode(assetCode).filter((parsed) => parsed.isValid);
+    const memberships = await tx.poleFeederMembership.findMany({
+      where: { feeder: { substationId, kind: FeederKind.RONDAAN } },
+      select: {
+        id: true,
+        assetId: true,
+        sequenceIndex: true,
+        branchSuffix: true,
+        fedFromAssetId: true,
+        feeder: { select: { code: true } },
+      },
+      // Deterministic key-map winner when duplicate codes exist (the RONDAAN
+      // lint flags those separately).
+      orderBy: [{ feeder: { code: 'asc' } }, { sequenceIndex: 'asc' }, { branchSuffix: 'asc' }],
+    });
     if (memberships.length === 0) {
       return;
     }
-    // Feeder-Pillar poles aren't in the structured graph (see syncPoleMemberships),
-    // so there's no membership key to resolve a parent against — skip.
-    if (memberships.some((membership) => membership.origin !== undefined)) {
-      return;
+
+    // (feeder.code, sequenceIndex, branchSuffix) IS the membership's grammar
+    // identity — compose the key and re-parse it for structured branch parts.
+    const rows = memberships.flatMap((row) => {
+      const composed = `${row.feeder.code} ${row.sequenceIndex}${row.branchSuffix}`;
+      const [parsed] = parsePoleCode(composed).filter((entry) => entry.isValid);
+      return parsed ? [{ row, parsed }] : [];
+    });
+    const keyToAssetId = new Map<string, string>();
+    for (const { row, parsed } of rows) {
+      if (!keyToAssetId.has(parsed.normalizedKey)) {
+        keyToAssetId.set(parsed.normalizedKey, row.assetId);
+      }
     }
-    const primary = [...memberships].sort(
-      (a, b) => a.feeder.localeCompare(b.feeder) || a.baseNumber - b.baseNumber,
-    )[0];
-    const parentKey =
-      primary.branchParts.length > 0
-        ? getExpectedParentKey(primary)
-        : primary.baseNumber > 1
-          ? buildNormalizedKey(primary.feeder, primary.baseNumber - 1)
-          : undefined;
-    if (!parentKey) {
-      return;
+
+    // Track each asset's primary (lowest feeder, then seq) membership parent for
+    // the asset-level edge.
+    const assetPrimary = new Map<
+      string,
+      { feeder: string; sequenceIndex: number; parentId: string | null }
+    >();
+    for (const { row, parsed } of rows) {
+      let parentId: string | null = null;
+      for (const candidateKey of expectedParentKeyChain(parsed)) {
+        const candidateId = keyToAssetId.get(candidateKey);
+        if (candidateId && candidateId !== row.assetId) {
+          parentId = candidateId;
+          break;
+        }
+      }
+      if (parentId !== row.fedFromAssetId) {
+        await tx.poleFeederMembership.update({
+          where: { id: row.id },
+          data: { fedFromAssetId: parentId },
+        });
+      }
+      const current = assetPrimary.get(row.assetId);
+      if (
+        !current ||
+        row.feeder.code < current.feeder ||
+        (row.feeder.code === current.feeder && row.sequenceIndex < current.sequenceIndex)
+      ) {
+        assetPrimary.set(row.assetId, {
+          feeder: row.feeder.code,
+          sequenceIndex: row.sequenceIndex,
+          parentId,
+        });
+      }
     }
-    const parentAssetId = await this.findAssetIdByMembershipKey(tx, substationId, parentKey);
-    if (parentAssetId && parentAssetId !== assetId) {
-      await tx.asset.update({ where: { id: assetId }, data: { fedFromAssetId: parentAssetId } });
+
+    const assets = await tx.asset.findMany({
+      where: { id: { in: [...assetPrimary.keys()] } },
+      select: { id: true, fedFromAssetId: true },
+    });
+    for (const asset of assets) {
+      const primary = assetPrimary.get(asset.id);
+      if (primary && primary.parentId !== asset.fedFromAssetId) {
+        await tx.asset.update({
+          where: { id: asset.id },
+          data: { fedFromAssetId: primary.parentId },
+        });
+      }
     }
   }
 
@@ -2328,28 +2341,6 @@ export class AssetsService {
         branchSuffix: identity.branchSuffix,
       });
     }
-  }
-
-  /** Resolve an asset by a normalized RONDAAN key (e.g. "A 2", "B 2/1") within a
-   *  Pencawang, via its stored membership. */
-  private async findAssetIdByMembershipKey(
-    tx: Prisma.TransactionClient,
-    substationId: string,
-    normalizedKey: string,
-  ): Promise<string | null> {
-    const [parsed] = parsePoleCode(normalizedKey).filter((entry) => entry.isValid);
-    if (!parsed) {
-      return null;
-    }
-    const membership = await tx.poleFeederMembership.findFirst({
-      where: {
-        sequenceIndex: parsed.baseNumber,
-        branchSuffix: formatBranchSuffix(parsed.branchParts),
-        feeder: { substationId, code: parsed.feeder },
-      },
-      select: { assetId: true },
-    });
-    return membership?.assetId ?? null;
   }
 
   private assetInclude() {
