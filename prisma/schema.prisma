@@ -1674,6 +1674,14 @@ model Feeder {
   substationId String                 @db.Uuid
   kind         FeederKind             @default(RONDAAN)
   code         String
+  // Power origin of this LINE (north-star §3 grammar): '' = straight off the
+  // Pencawang busbar; 'FP'/'TX' = runs from Feeder Pillar / transformer
+  // originNumber. `FP1 A`, `FP2 A` and the direct `A` are three distinct
+  // Feeder rows with their own sequences — that per-line identity is what the
+  // network graph and isolation traverse. Sentinel ''/0 (NOT nulls) so the
+  // unique below actually enforces (NULLs never collide in Postgres).
+  originKind   String                 @default("")
+  originNumber Int                    @default(0)
   name         String?
   isActive     Boolean                @default(true)
   createdAt    DateTime               @default(now())
@@ -1682,7 +1690,7 @@ model Feeder {
   substation   Substation             @relation(fields: [substationId], references: [id], onDelete: Cascade)
   memberships  PoleFeederMembership[]
 
-  @@unique([substationId, code])
+  @@unique([substationId, code, originKind, originNumber])
   @@index([tenantId])
   @@index([substationId])
 }

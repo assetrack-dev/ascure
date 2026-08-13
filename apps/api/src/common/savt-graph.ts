@@ -28,9 +28,12 @@ export async function upsertSavtMembership(
 ): Promise<void> {
   const feeder = await tx.feeder.upsert({
     where: {
-      substationId_code: {
+      // SAVT routes are always direct lines — origin sentinel ''/0.
+      substationId_code_originKind_originNumber: {
         substationId: params.feederSubstationId,
         code: params.routeCode,
+        originKind: '',
+        originNumber: 0,
       },
     },
     create: {

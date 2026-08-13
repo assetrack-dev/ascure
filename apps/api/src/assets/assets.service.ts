@@ -41,7 +41,11 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { MapQueryDto } from './dto/map-query.dto';
-import { renderNoTiangRondaan, type StoredMembership } from '../common/rondaan';
+import {
+  feederLineCode,
+  renderNoTiangRondaan,
+  type StoredMembership,
+} from '../common/rondaan';
 import { upsertSavtMembership } from '../common/savt-graph';
 import { buildInspectionImagePath } from '../common/uploads.constants';
 import {
@@ -1109,7 +1113,7 @@ export class AssetsService {
           select: {
             sequenceIndex: true,
             branchSuffix: true,
-            feeder: { select: { code: true } },
+            feeder: { select: { code: true, originKind: true, originNumber: true } },
           },
         },
         inspections: {
@@ -1335,7 +1339,7 @@ export class AssetsService {
           select: {
             sequenceIndex: true,
             branchSuffix: true,
-            feeder: { select: { code: true } },
+            feeder: { select: { code: true, originKind: true, originNumber: true } },
           },
         },
         inspections: {
@@ -2130,33 +2134,34 @@ export class AssetsService {
     if (memberships.length === 0) {
       return;
     }
-    // A power origin (FP<n> Feeder Pillar, TX<n> transformer) has no column in
-    // the structured membership graph yet, so skip these poles — persisting
-    // "FP1 A 1" as a bare A-1 Feeder membership would conflate it with the direct
-    // A line and drop the prefix from the rendered NO TIANG RONDAAN. They stay
-    // string-only: with no memberships, renderNoTiangRondaan returns null and
-    // callers fall back to the assetCode mirror (which holds "FP1 A 1" / "TX1 A 1"
-    // verbatim). Structured origin backfill is a later migration
-    // (PoleFeederMembership.origin).
-    if (memberships.some((membership) => membership.origin !== undefined)) {
-      return;
-    }
 
-    const feederIdByCode = new Map<string, string>();
-    // One membership row per (asset, feeder): a code holding TWO positions on
-    // the SAME feeder ("B 18 & B 23/5B" — a field loop) keeps its LOWEST
-    // position deterministically. Last-one-wins here used to disagree with the
-    // repair script and the stored row oscillated between the two positions.
+    const feederIdByLine = new Map<string, string>();
+    // One membership row per (asset, feeder LINE): a code holding TWO positions
+    // on the SAME line ("B 18 & B 23/5B" — a field loop) keeps its LOWEST
+    // position deterministically. A line is (code, origin): `FP1 A`, `FP2 A`
+    // and the direct `A` are three Feeder rows with independent sequences —
+    // origin poles joined the structured graph 2026-08-13 (they were
+    // string-only before).
     for (const membership of canonicalSegmentsPerFeeder(memberships)) {
-      let feederId = feederIdByCode.get(membership.feeder);
+      const originKind = membership.origin?.kind ?? '';
+      const originNumber = membership.origin?.number ?? 0;
+      const lineKey = `${originKind}${originNumber}|${membership.feeder}`;
+      let feederId = feederIdByLine.get(lineKey);
       if (!feederId) {
         const feeder = await tx.feeder.upsert({
-          where: { substationId_code: { substationId, code: membership.feeder } },
-          create: { tenantId, substationId, code: membership.feeder },
+          where: {
+            substationId_code_originKind_originNumber: {
+              substationId,
+              code: membership.feeder,
+              originKind,
+              originNumber,
+            },
+          },
+          create: { tenantId, substationId, code: membership.feeder, originKind, originNumber },
           update: {},
         });
         feederId = feeder.id;
-        feederIdByCode.set(membership.feeder, feederId);
+        feederIdByLine.set(lineKey, feederId);
       }
       const branchSuffix = formatBranchSuffix(membership.branchParts);
       // fed-from is NOT resolved here — reresolvePencawangParents recomputes the
@@ -2203,20 +2208,28 @@ export class AssetsService {
         sequenceIndex: true,
         branchSuffix: true,
         fedFromAssetId: true,
-        feeder: { select: { code: true } },
+        feeder: { select: { code: true, originKind: true, originNumber: true } },
       },
       // Deterministic key-map winner when duplicate codes exist (the RONDAAN
       // lint flags those separately).
-      orderBy: [{ feeder: { code: 'asc' } }, { sequenceIndex: 'asc' }, { branchSuffix: 'asc' }],
+      orderBy: [
+        { feeder: { originKind: 'asc' } },
+        { feeder: { originNumber: 'asc' } },
+        { feeder: { code: 'asc' } },
+        { sequenceIndex: 'asc' },
+        { branchSuffix: 'asc' },
+      ],
     });
     if (memberships.length === 0) {
       return;
     }
 
-    // (feeder.code, sequenceIndex, branchSuffix) IS the membership's grammar
-    // identity — compose the key and re-parse it for structured branch parts.
+    // (feeder line, sequenceIndex, branchSuffix) IS the membership's grammar
+    // identity — compose the key ("FP1 A 4/2" for an origin line) and re-parse
+    // it for structured branch parts. The origin prefix keeps every line's
+    // sequence in its own namespace.
     const rows = memberships.flatMap((row) => {
-      const composed = `${row.feeder.code} ${row.sequenceIndex}${row.branchSuffix}`;
+      const composed = `${feederLineCode(row.feeder)} ${row.sequenceIndex}${row.branchSuffix}`;
       const [parsed] = parsePoleCode(composed).filter((entry) => entry.isValid);
       return parsed ? [{ row, parsed }] : [];
     });
@@ -2227,11 +2240,12 @@ export class AssetsService {
       }
     }
 
-    // Track each asset's primary (lowest feeder, then seq) membership parent for
-    // the asset-level edge.
+    // Track each asset's primary (lowest feeder LINE token, then seq)
+    // membership parent for the asset-level edge — line token so "A" sorts
+    // before "FP1 A" deterministically.
     const assetPrimary = new Map<
       string,
-      { feeder: string; sequenceIndex: number; parentId: string | null }
+      { line: string; sequenceIndex: number; parentId: string | null }
     >();
     for (const { row, parsed } of rows) {
       let parentId: string | null = null;
@@ -2248,14 +2262,15 @@ export class AssetsService {
           data: { fedFromAssetId: parentId },
         });
       }
+      const line = feederLineCode(row.feeder);
       const current = assetPrimary.get(row.assetId);
       if (
         !current ||
-        row.feeder.code < current.feeder ||
-        (row.feeder.code === current.feeder && row.sequenceIndex < current.sequenceIndex)
+        line < current.line ||
+        (line === current.line && row.sequenceIndex < current.sequenceIndex)
       ) {
         assetPrimary.set(row.assetId, {
-          feeder: row.feeder.code,
+          line,
           sequenceIndex: row.sequenceIndex,
           parentId,
         });
@@ -2373,7 +2388,7 @@ export class AssetsService {
         select: {
           sequenceIndex: true,
           branchSuffix: true,
-          feeder: { select: { code: true } },
+          feeder: { select: { code: true, originKind: true, originNumber: true } },
         },
       },
     } satisfies Prisma.AssetInclude;
