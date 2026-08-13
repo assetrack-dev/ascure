@@ -1415,7 +1415,7 @@ function SensorPhotoLightbox({
                 a template IMAGE column opens with no reading. */}
             {view.reading !== null ? (
               <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-                Recorded Bacaan Kelegaan 1:{" "}
+                Recorded reading:{" "}
                 <span className="font-semibold text-[var(--foreground-soft)]">
                   {view.reading}
                 </span>{" "}
@@ -2754,6 +2754,18 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     [selectedMetaKeys],
   );
 
+  // SAVT's checklist records ONE clearance per pole (its labels carry no "1"),
+  // so the pinned Kelegaan column drops the SAVR suffix on a route survey.
+  const kelegaanLabel =
+    visit?.surveyScope === "SAVT" ? "Bacaan Kelegaan" : "Bacaan Kelegaan 1";
+  const leadColumns = useMemo<[string, AssetSortKey][]>(
+    () =>
+      LINKED_ASSET_LEAD_COLUMNS.map(([label, key]) =>
+        key === "bacaan" ? [kelegaanLabel, key] : [label, key],
+      ),
+    [kelegaanLabel],
+  );
+
   // "Show on Map" — open the Asset Map drilled into this visit's Pencawang
   // (same sessionStorage hand-off as the asset page, minus the pole panel).
   const handleShowOnMap = useCallback(() => {
@@ -3093,7 +3105,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                           <table className="min-w-full text-left">
                             <thead>
                               <tr className={`sticky top-0 z-10 border-y border-[var(--line)] ${tableHeadClass}`}>
-                                {LINKED_ASSET_LEAD_COLUMNS.map(([label, key]) => (
+                                {leadColumns.map(([label, key]) => (
                                   <th key={key} className={tableHeadCellClass}>
                                     <SortButton
                                       label={label}
@@ -3204,7 +3216,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                       }
                                       inputMode="decimal"
                                       placeholder="e.g. 5.69"
-                                      ariaLabel={`Bacaan Kelegaan 1 for ${link.asset.assetCode}`}
+                                      ariaLabel={`${kelegaanLabel} for ${link.asset.assetCode}`}
                                       onSave={async (next) => {
                                         const token = session?.token;
                                         const inspectionId = link.asset.latestInspectionId;

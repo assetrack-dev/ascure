@@ -38,6 +38,7 @@ import { describeInspectionRecency } from '../common/inspection-cadence';
 import {
   checklistColumnOptions,
   checklistResultValue,
+  KELEGAAN_LABEL_ALIASES,
   type ChecklistColumnDef,
   type ChecklistImage,
 } from '../common/checklist-columns';
@@ -675,7 +676,7 @@ export class SiteVisitsService {
       throw new NotFoundException('Site visit not found.');
     }
 
-    const [rollup, lastActivityByVisitId, checklistColumns] = await Promise.all([
+    const [rollup, lastActivityByVisitId, checklistMeta] = await Promise.all([
       this.getRollup(siteVisit.id),
       this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
       this.resolveChecklistColumns(siteVisit),
@@ -689,7 +690,7 @@ export class SiteVisitsService {
       lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
       now,
       overdueThresholdHours,
-      checklistColumns,
+      checklistMeta,
     );
   }
 
@@ -708,7 +709,7 @@ export class SiteVisitsService {
       throw new NotFoundException('Site visit not found.');
     }
 
-    const [rollup, lastActivityByVisitId, checklistColumns] = await Promise.all([
+    const [rollup, lastActivityByVisitId, checklistMeta] = await Promise.all([
       this.getRollup(siteVisit.id),
       this.getLastActivityByVisitId([siteVisit.id], [siteVisit]),
       this.resolveChecklistColumns(siteVisit),
@@ -722,7 +723,7 @@ export class SiteVisitsService {
       lastActivityByVisitId.get(siteVisit.id) ?? siteVisit.updatedAt,
       now,
       overdueThresholdHours,
-      checklistColumns,
+      checklistMeta,
     );
   }
 
@@ -2723,15 +2724,19 @@ export class SiteVisitsService {
    * are excluded so the picker never offers a duplicate. Deduped by normalized
    * label, collecting every matching item id across the visit's templates.
    */
-  private async resolveChecklistColumns(
-    siteVisit: SiteVisitDetail,
-  ): Promise<ChecklistColumnDef[]> {
+  private async resolveChecklistColumns(siteVisit: SiteVisitDetail): Promise<{
+    columns: ChecklistColumnDef[];
+    /** Template item ids whose label is a Kelegaan alias, in alias-priority
+     *  order — the pinned photo cell's fallback when the photo's item never
+     *  wrote a result row (a split template's IMAGE-type GAMBAR KELEGAAN
+     *  carries only a tagged photo). */
+    kelegaanItemIds: string[];
+  }> {
     const norm = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
+    const kelegaanKeys = KELEGAAN_LABEL_ALIASES.map(norm);
     const PINNED = new Set(
       [
-        'GAMBAR KELEGAAN 1',
-        'BACAAN KELEGAAN 1',
-        'KELEGAAN 1',
+        ...KELEGAAN_LABEL_ALIASES,
         'CATITAN',
         'CATATAN',
         'CATATAN / REMARK',
@@ -2746,7 +2751,7 @@ export class SiteVisitsService {
       ),
     );
     if (templateIds.length === 0) {
-      return [];
+      return { columns: [], kelegaanItemIds: [] };
     }
 
     const templates = await this.prisma.inspectionTemplate.findMany({
@@ -2769,6 +2774,7 @@ export class SiteVisitsService {
 
     const columns: (ChecklistColumnDef & { s: number; i: number })[] = [];
     const byKey = new Map<string, (typeof columns)[number]>();
+    const kelegaanIdsByAlias = new Map<string, string[]>();
     for (const template of templates) {
       const sectionById = new Map(
         template.sections.map((section) => [section.id, section]),
@@ -2776,6 +2782,11 @@ export class SiteVisitsService {
       for (const item of template.items) {
         const key = norm(item.label);
         if (!key || PINNED.has(key)) {
+          if (kelegaanKeys.includes(key)) {
+            const ids = kelegaanIdsByAlias.get(key) ?? [];
+            ids.push(item.id);
+            kelegaanIdsByAlias.set(key, ids);
+          }
           continue;
         }
         const existing = byKey.get(key);
@@ -2805,16 +2816,21 @@ export class SiteVisitsService {
     }
 
     columns.sort((a, b) => a.s - b.s || a.i - b.i || a.label.localeCompare(b.label));
-    return columns.map(
-      ({ key, label, section, inputType, options, templateItemIds }) => ({
-        key,
-        label,
-        section,
-        inputType,
-        options,
-        templateItemIds,
-      }),
-    );
+    return {
+      columns: columns.map(
+        ({ key, label, section, inputType, options, templateItemIds }) => ({
+          key,
+          label,
+          section,
+          inputType,
+          options,
+          templateItemIds,
+        }),
+      ),
+      kelegaanItemIds: kelegaanKeys.flatMap(
+        (key) => kelegaanIdsByAlias.get(key) ?? [],
+      ),
+    };
   }
 
   private serializeSiteVisitDetail(
@@ -2823,7 +2839,10 @@ export class SiteVisitsService {
     lastActivityAt: Date,
     now: Date,
     overdueThresholdHours: number,
-    checklistColumns: ChecklistColumnDef[] = [],
+    checklistMeta: {
+      columns: ChecklistColumnDef[];
+      kelegaanItemIds: string[];
+    } = { columns: [], kelegaanItemIds: [] },
   ) {
     const teamMembers = this.serializeTeamMembers(siteVisit);
     const isOverdue = isSiteVisitOverdue({
@@ -2850,14 +2869,14 @@ export class SiteVisitsService {
       ...rollup,
       teamMembers,
       visitAssets: siteVisit.visitAssets.map((link) =>
-        this.serializeSiteVisitAssetLink(link),
+        this.serializeSiteVisitAssetLink(link, checklistMeta.kelegaanItemIds),
       ),
       linkedAssets: siteVisit.visitAssets.map((link) =>
-        this.serializeSiteVisitAssetLink(link),
+        this.serializeSiteVisitAssetLink(link, checklistMeta.kelegaanItemIds),
       ),
       // Template-defined checklist fields the DC can toggle on as extra
       // Linked-Assets columns (values ride on each link's checklistValues).
-      checklistColumns,
+      checklistColumns: checklistMeta.columns,
       lastActivityAt: lastActivityAt.toISOString(),
       operationalHealthStatus,
       isOverdue,
@@ -2919,7 +2938,14 @@ export class SiteVisitsService {
     }));
   }
 
-  private serializeSiteVisitAssetLink(link: SiteVisitAssetLink) {
+  private serializeSiteVisitAssetLink(
+    link: SiteVisitAssetLink,
+    // Kelegaan-labeled template item ids (alias-priority order) for the photo
+    // fallback below. The two bare-link endpoints (list/add link) pass nothing
+    // and keep the result-row-only pairing — the client refetches the full
+    // detail for the table anyway.
+    kelegaanItemIds: string[] = [],
+  ) {
     const { inspections, ...asset } = link.asset;
     const latest = inspections[0] ?? null;
     type ResultRow = NonNullable<typeof latest>['results'][number];
@@ -2951,7 +2977,9 @@ export class SiteVisitsService {
       return valueOf(rows.find((r) => valueOf(r)) ?? rows[0] ?? null);
     };
 
-    const kelegaanRows = matchRows('GAMBAR KELEGAAN 1', 'BACAAN KELEGAAN 1', 'KELEGAAN 1');
+    // Whatever the visit's template calls the clearance field (SAVR's numbered
+    // items or SAVT's un-numbered ones), the shared alias list resolves it.
+    const kelegaanRows = matchRows(...KELEGAAN_LABEL_ALIASES);
     const kelegaanValue = valueOf(
       kelegaanRows.find((r) => valueOf(r)) ?? kelegaanRows[0] ?? null,
     );
@@ -2968,6 +2996,21 @@ export class SiteVisitsService {
       if (img) {
         kelegaanImage = img;
         break;
+      }
+    }
+    if (!kelegaanImage) {
+      // A split template keeps the photo on its own IMAGE item (e.g. SAVT's
+      // GAMBAR KELEGAAN), which records a tagged photo but never a result row —
+      // so the alias-matched results above can't reach it. Resolve through the
+      // template's kelegaan item ids instead.
+      for (const itemId of kelegaanItemIds) {
+        const img = latest?.inspectionImages?.find(
+          (i) => i.templateItemId === itemId,
+        );
+        if (img) {
+          kelegaanImage = img;
+          break;
+        }
       }
     }
 
