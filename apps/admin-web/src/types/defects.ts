@@ -124,6 +124,34 @@ export interface DefectEvidenceImage {
   updatedAt?: string;
 }
 
+/** One drill level of the Defects registry (Region → Mainhead → Pencawang). */
+export type DefectRegistryLevel = "region" | "mainhead" | "pencawang";
+
+/** One rollup row at a drill level — counts only, never the defects. */
+export interface DefectRegistryGroup {
+  id: string;
+  name: string;
+  defectCount: number;
+  openCount: number;
+  criticalCount: number;
+  emergencyCount: number;
+  pencawangCount: number;
+}
+
+export interface DefectRegistryTotals {
+  defectCount: number;
+  openCount: number;
+  criticalCount: number;
+  emergencyCount: number;
+  pencawangCount: number;
+}
+
+export interface DefectRegistryRollup {
+  level: DefectRegistryLevel;
+  groups: DefectRegistryGroup[];
+  totals: DefectRegistryTotals;
+}
+
 export interface DefectListItem {
   id: string;
   inspectionItemResultId?: string;

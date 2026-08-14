@@ -2,6 +2,41 @@ import type { ChecklistColumn, SiteVisitSensorPhoto } from "@/types/site-visits"
 
 export type AssetInspectionStatus = "COMPLETED" | "PENDING";
 
+/** One drill level of the Assets registry (Region → Mainhead → Pencawang). */
+export type AssetRegistryLevel = "region" | "mainhead" | "pencawang";
+
+/** Sentinel id for the "Unassigned" bucket — drillable like a real parent. */
+export const REGISTRY_UNASSIGNED = "unassigned";
+
+/** One rollup row at a drill level: a Region, Mainhead, or Pencawang with its
+ *  asset counts (never the assets themselves). */
+export interface AssetRegistryGroup {
+  id: string;
+  name: string;
+  assetCount: number;
+  inspectedCount: number;
+  pendingCount: number;
+  /** Distinct poles carrying an open defect. */
+  defectAssetCount: number;
+  pencawangCount: number;
+  /** Region level only. */
+  mainheadCount?: number;
+}
+
+export interface AssetRegistryTotals {
+  assetCount: number;
+  inspectedCount: number;
+  pendingCount: number;
+  defectAssetCount: number;
+  pencawangCount: number;
+}
+
+export interface AssetRegistryRollup {
+  level: AssetRegistryLevel;
+  groups: AssetRegistryGroup[];
+  totals: AssetRegistryTotals;
+}
+
 export interface AssetListItem {
   id: string;
   assetCode: string;

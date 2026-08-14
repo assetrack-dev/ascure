@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronRight,
+  Loader2,
   MapPin,
   RefreshCw,
   ShieldCheck,
+  Siren,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -23,15 +25,27 @@ import {
   Tag,
   Tbtn,
   filterSelectClass,
+  tableCellClass,
+  tableHeadCellClass,
+  tableHeadClass,
+  tableMonoCellClass,
+  tableRowClass,
   type Tone,
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
-import { fetchDefects } from "@/lib/defects";
+import {
+  fetchDefectRegistryDefects,
+  fetchDefectRegistryRollup,
+  searchDefectRegistry,
+} from "@/lib/defects";
 import type { AuthSession } from "@/types/auth";
 import type {
   DefectListItem,
   DefectLifecycleStatus,
+  DefectRegistryGroup,
+  DefectRegistryLevel,
+  DefectRegistryTotals,
   DefectResolutionOutcome,
   DefectSeverity,
   DefectStatus,
@@ -43,10 +57,9 @@ import { DEFECT_SEVERITIES, MAINTENANCE_CATEGORIES } from "@/types/defects";
 type SeverityFilter = "ALL" | DefectSeverity;
 type StatusFilter = "ALL" | DefectWorkflowStatus;
 type AssignedUserFilter = "ALL" | "UNASSIGNED" | string;
-type PencawangFilter = "ALL" | string;
 
-// The list is grouped Pencawang -> pole. Groups collapse (and paginate) so the
-// page shows at most this many headers instead of every pole of every Pencawang.
+// Search mode can span many Pencawang; groups paginate so the page shows at
+// most this many headers at once. The leaf is a single drilled Pencawang.
 const PENCAWANG_PAGE_SIZE = 20;
 type CategoryFilter = "ALL" | MaintenanceCategory;
 
@@ -71,6 +84,55 @@ const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
   { label: "Resolved", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
 ];
+
+/** Where the user currently is in the Region → Mainhead → Pencawang drill. */
+type DrillState = {
+  regionId: string | null;
+  regionName: string | null;
+  mainheadId: string | null;
+  mainheadName: string | null;
+  pencawangId: string | null;
+  pencawangName: string | null;
+};
+
+const EMPTY_DRILL: DrillState = {
+  regionId: null,
+  regionName: null,
+  mainheadId: null,
+  mainheadName: null,
+  pencawangId: null,
+  pencawangName: null,
+};
+
+// Survives an in-tab visit to the defect detail page, so Back lands on the same
+// drilled view instead of the top of the hierarchy.
+const DRILL_STORAGE_KEY = "ascure.defects.drill";
+
+function readStoredDrill(): DrillState {
+  if (typeof window === "undefined") {
+    return EMPTY_DRILL;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(DRILL_STORAGE_KEY);
+    if (!raw) {
+      return EMPTY_DRILL;
+    }
+    const parsed = JSON.parse(raw) as Partial<DrillState>;
+    return {
+      regionId: typeof parsed.regionId === "string" ? parsed.regionId : null,
+      regionName: typeof parsed.regionName === "string" ? parsed.regionName : null,
+      mainheadId: typeof parsed.mainheadId === "string" ? parsed.mainheadId : null,
+      mainheadName:
+        typeof parsed.mainheadName === "string" ? parsed.mainheadName : null,
+      pencawangId:
+        typeof parsed.pencawangId === "string" ? parsed.pencawangId : null,
+      pencawangName:
+        typeof parsed.pencawangName === "string" ? parsed.pencawangName : null,
+    };
+  } catch {
+    return EMPTY_DRILL;
+  }
+}
 
 function DefectsLoading() {
   return (
@@ -300,17 +362,45 @@ function SlaBadge({ defect }: { defect: DefectListItem }) {
   return <Tag tone={slaTone(defect)}>{formatSlaState(defect.slaState)}</Tag>;
 }
 
+/** Level being LISTED for a given drill position. */
+function listedLevel(drill: DrillState): DefectRegistryLevel {
+  if (drill.mainheadId) {
+    return "pencawang";
+  }
+  if (drill.regionId) {
+    return "mainhead";
+  }
+  return "region";
+}
+
+const LEVEL_NOUN: Record<DefectRegistryLevel, string> = {
+  region: "Region",
+  mainhead: "Mainhead",
+  pencawang: "Pencawang",
+};
+
 function DefectsContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [drill, setDrill] = useState<DrillState>(() => readStoredDrill());
+  // True once a single-Region tenant auto-skips the pointless region list.
+  const [regionAutoSkipped, setRegionAutoSkipped] = useState(false);
+  const [groups, setGroups] = useState<DefectRegistryGroup[]>([]);
+  const [totals, setTotals] = useState<DefectRegistryTotals | null>(null);
   const [defects, setDefects] = useState<DefectListItem[]>([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  // Cross-scope pole search (group views only — the leaf filters locally).
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<{
+    defects: DefectListItem[];
+    truncated: boolean;
+  } | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [assignedUserFilter, setAssignedUserFilter] = useState<AssignedUserFilter>("ALL");
-  const [pencawangFilter, setPencawangFilter] = useState<PencawangFilter>("ALL");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [startDate, setStartDate] = useState("");
@@ -324,14 +414,44 @@ function DefectsContent() {
     router.replace("/login");
   }, [router]);
 
-  const loadDefects = useCallback(
-    async (token: string) => {
+  // Load whatever the current drill position needs: rollup counts for a group
+  // view, or the one drilled Pencawang's defects. Nothing tenant-wide, ever.
+  const loadView = useCallback(
+    async (token: string, current: DrillState) => {
       setIsLoading(true);
       setError("");
 
       try {
-        const nextDefects = await fetchDefects(token);
-        setDefects(nextDefects);
+        if (current.pencawangId) {
+          const nextDefects = await fetchDefectRegistryDefects(
+            token,
+            current.pencawangId,
+          );
+          setDefects(nextDefects);
+          return;
+        }
+
+        const level = listedLevel(current);
+        const rollup = await fetchDefectRegistryRollup(token, level, {
+          regionId: current.regionId ?? undefined,
+          mainheadId: current.mainheadId ?? undefined,
+        });
+
+        if (level === "region" && rollup.groups.length === 1) {
+          setRegionAutoSkipped(true);
+          setDrill((previous) => ({
+            ...previous,
+            regionId: rollup.groups[0].id,
+            regionName: rollup.groups[0].name,
+          }));
+          return;
+        }
+        if (level === "region") {
+          setRegionAutoSkipped(false);
+        }
+
+        setGroups(rollup.groups);
+        setTotals(rollup.totals);
       } catch (defectsError) {
         if (defectsError instanceof ApiError && defectsError.status === 401) {
           handleLogout();
@@ -349,16 +469,65 @@ function DefectsContent() {
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
+  }, []);
 
-    if (storedSession?.token) {
-      void loadDefects(storedSession.token);
+  useEffect(() => {
+    if (session?.token) {
+      void loadView(session.token, drill);
     }
-  }, [loadDefects]);
+  }, [session?.token, drill, loadView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.sessionStorage.setItem(DRILL_STORAGE_KEY, JSON.stringify(drill));
+  }, [drill]);
+
+  // Debounced cross-scope pole search while on a group view.
+  useEffect(() => {
+    if (drill.pencawangId) {
+      setSearchResults(null);
+      return;
+    }
+    const term = globalSearch.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+    if (!session?.token) {
+      return;
+    }
+    const token = session.token;
+    setIsSearching(true);
+    const timer = window.setTimeout(() => {
+      searchDefectRegistry(token, term)
+        .then(setSearchResults)
+        .catch((searchError) => {
+          if (searchError instanceof ApiError && searchError.status === 401) {
+            handleLogout();
+            return;
+          }
+          setSearchResults({ defects: [], truncated: false });
+        })
+        .finally(() => setIsSearching(false));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [globalSearch, drill.pencawangId, session?.token, handleLogout]);
+
+  const mode: "groups" | "leaf" | "search" = drill.pencawangId
+    ? "leaf"
+    : searchResults !== null
+      ? "search"
+      : "groups";
+  const listLevel = listedLevel(drill);
+  const listSource = mode === "leaf" ? defects : (searchResults?.defects ?? []);
 
   const assignedUserOptions = useMemo(() => {
     const options = new Map<string, string>();
 
-    defects.forEach((defect) => {
+    listSource.forEach((defect) => {
       if (!defect.assignedUserId) {
         return;
       }
@@ -375,30 +544,12 @@ function DefectsContent() {
     return Array.from(options.entries()).sort((left, right) =>
       left[1].localeCompare(right[1], "en", { sensitivity: "base" }),
     );
-  }, [defects]);
-
-  const pencawangOptions = useMemo(() => {
-    const options = new Map<string, string>();
-
-    defects.forEach((defect) => {
-      const key = pencawangKeyOf(defect);
-
-      if (!key || options.has(key)) {
-        return;
-      }
-
-      options.set(key, pencawangLabelOf(defect));
-    });
-
-    return Array.from(options.entries()).sort((left, right) =>
-      left[1].localeCompare(right[1], "en", { numeric: true, sensitivity: "base" }),
-    );
-  }, [defects]);
+  }, [listSource]);
 
   const filteredDefects = useMemo(() => {
     const normalizedSearch = normalizeSearchText(search);
 
-    return defects.filter((defect) => {
+    return listSource.filter((defect) => {
       const defectDate = toDateInputValue(defect.date);
       const matchesSeverity =
         severityFilter === "ALL" || defect.severity === severityFilter;
@@ -408,8 +559,6 @@ function DefectsContent() {
         (assignedUserFilter === "UNASSIGNED"
           ? !defect.assignedUserId
           : defect.assignedUserId === assignedUserFilter);
-      const matchesPencawang =
-        pencawangFilter === "ALL" || pencawangKeyOf(defect) === pencawangFilter;
       const matchesCategory =
         categoryFilter === "ALL" || defect.maintenanceCategory === categoryFilter;
       const matchesOverdue = !overdueOnly || Boolean(defect.isOverdue);
@@ -440,7 +589,6 @@ function DefectsContent() {
         matchesSeverity &&
         matchesStatus &&
         matchesAssignedUser &&
-        matchesPencawang &&
         matchesCategory &&
         matchesOverdue &&
         matchesStartDate &&
@@ -450,9 +598,8 @@ function DefectsContent() {
     });
   }, [
     assignedUserFilter,
-    pencawangFilter,
     categoryFilter,
-    defects,
+    listSource,
     endDate,
     overdueOnly,
     search,
@@ -462,7 +609,7 @@ function DefectsContent() {
   ]);
 
   const pencawangGroups = useMemo(() => {
-    const groups = new Map<
+    const grouped = new Map<
       string,
       { key: string; label: string; poles: Map<string, DefectListItem[]> }
     >();
@@ -470,12 +617,12 @@ function DefectsContent() {
     for (const defect of filteredDefects) {
       const key = pencawangKeyOf(defect) || "__unassigned__";
 
-      if (!groups.has(key)) {
-        groups.set(key, { key, label: pencawangLabelOf(defect), poles: new Map() });
+      if (!grouped.has(key)) {
+        grouped.set(key, { key, label: pencawangLabelOf(defect), poles: new Map() });
       }
 
       const poleKey = defect.assetCode || "Unassigned";
-      const group = groups.get(key)!;
+      const group = grouped.get(key)!;
 
       if (!group.poles.has(poleKey)) {
         group.poles.set(poleKey, []);
@@ -484,7 +631,7 @@ function DefectsContent() {
       group.poles.get(poleKey)!.push(defect);
     }
 
-    return Array.from(groups.values())
+    return Array.from(grouped.values())
       .map((group) => ({
         key: group.key,
         label: group.label,
@@ -514,7 +661,17 @@ function DefectsContent() {
     0,
   );
   const isReadOnly = session?.user?.role !== "ADMIN";
-  const overdueCount = defects.filter((defect) => defect.isOverdue).length;
+  const overdueCount = listSource.filter((defect) => defect.isOverdue).length;
+  const openCount = useMemo(
+    () =>
+      listSource.filter(
+        (defect) =>
+          defect.status === "OPEN" ||
+          defect.status === "IN_PROGRESS" ||
+          defect.status === "MONITORING",
+      ).length,
+    [listSource],
+  );
 
   const totalGroupPages = Math.max(
     1,
@@ -527,11 +684,12 @@ function DefectsContent() {
     currentGroupPage * PENCAWANG_PAGE_SIZE,
   );
 
-  // A search — or a filter that narrows to a single Pencawang — must reveal its
-  // hits immediately, otherwise matches hide behind a collapsed header.
+  // The leaf is one Pencawang (a single group) and a search must reveal its
+  // hits immediately — collapsed headers would hide both.
   const forceExpandGroups =
+    mode === "leaf" ||
+    mode === "search" ||
     search.trim() !== "" ||
-    pencawangFilter !== "ALL" ||
     pencawangGroups.length === 1;
 
   // Any filter change rebuilds filteredDefects, so page 1 is the right landing.
@@ -572,16 +730,94 @@ function DefectsContent() {
     setSeverityFilter("ALL");
     setStatusFilter("ALL");
     setAssignedUserFilter("ALL");
-    setPencawangFilter("ALL");
     setCategoryFilter("ALL");
     setOverdueOnly(false);
     setStartDate("");
     setEndDate("");
   }
 
+  function drillInto(group: DefectRegistryGroup) {
+    setGlobalSearch("");
+    resetFilters();
+    if (listLevel === "region") {
+      setDrill((previous) => ({
+        ...previous,
+        regionId: group.id,
+        regionName: group.name,
+      }));
+      return;
+    }
+    if (listLevel === "mainhead") {
+      setDrill((previous) => ({
+        ...previous,
+        mainheadId: group.id,
+        mainheadName: group.name,
+      }));
+      return;
+    }
+    setDrill((previous) => ({
+      ...previous,
+      pencawangId: group.id,
+      pencawangName: group.name,
+    }));
+  }
+
+  function drillUpTo(level: "root" | "region" | "mainhead") {
+    resetFilters();
+    setGlobalSearch("");
+    if (level === "root") {
+      setDrill(EMPTY_DRILL);
+      return;
+    }
+    if (level === "region") {
+      setDrill((previous) => ({
+        ...previous,
+        mainheadId: null,
+        mainheadName: null,
+        pencawangId: null,
+        pencawangName: null,
+      }));
+      return;
+    }
+    setDrill((previous) => ({
+      ...previous,
+      pencawangId: null,
+      pencawangName: null,
+    }));
+  }
+
   function openDefect(defectId: string) {
     router.push(`/defects/${encodeURIComponent(defectId)}`);
   }
+
+  // Breadcrumb entries down to (but excluding) the current view.
+  const crumbs: Array<{ label: string; onClick: () => void }> = [];
+  if (!regionAutoSkipped && drill.regionId) {
+    crumbs.push({ label: "All regions", onClick: () => drillUpTo("root") });
+  }
+  if (drill.regionId && (drill.mainheadId || drill.pencawangId)) {
+    crumbs.push({
+      label: regionAutoSkipped ? "All mainheads" : (drill.regionName ?? "Region"),
+      onClick: () => drillUpTo("region"),
+    });
+  }
+  if (drill.mainheadId && drill.pencawangId) {
+    crumbs.push({
+      label: drill.mainheadName ?? "Mainhead",
+      onClick: () => drillUpTo("mainhead"),
+    });
+  }
+  const currentCrumb = drill.pencawangId
+    ? (drill.pencawangName ?? "Pencawang")
+    : drill.mainheadId
+      ? (drill.mainheadName ?? "Mainhead")
+      : drill.regionId && !regionAutoSkipped
+        ? (drill.regionName ?? "Region")
+        : regionAutoSkipped
+          ? "All mainheads"
+          : "All regions";
+
+  const showList = mode === "leaf" || mode === "search";
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -590,24 +826,46 @@ function DefectsContent() {
           <PageHeader
             eyebrow="Defect Register"
             title="Defects"
+            subtitle="Drill from Region to Mainhead to Pencawang — each step loads only its own counts, and a Pencawang loads only its own defects."
             chips={
               <>
                 <Chip tone="neutral">
                   <ShieldCheck size={13} />
                   {isReadOnly ? "Read-only" : "Full access"}
                 </Chip>
-                <Chip tone="neutral">{defects.length} open</Chip>
-                {overdueCount > 0 ? (
-                  <Chip tone="critical">
-                    <AlertTriangle size={12} />
-                    {overdueCount} overdue
-                  </Chip>
+                {mode === "groups" && totals ? (
+                  <>
+                    <Chip tone="neutral">{totals.defectCount} in scope</Chip>
+                    <Chip tone={totals.openCount > 0 ? "critical" : "success"}>
+                      {totals.openCount} open
+                    </Chip>
+                    {totals.emergencyCount > 0 ? (
+                      <Chip tone="critical">
+                        <Siren size={12} />
+                        {totals.emergencyCount} emergency
+                      </Chip>
+                    ) : null}
+                  </>
+                ) : null}
+                {mode === "leaf" ? (
+                  <>
+                    <Chip tone="neutral">{defects.length} in this Pencawang</Chip>
+                    <Chip tone={openCount > 0 ? "critical" : "success"}>
+                      {openCount} open
+                    </Chip>
+                    {overdueCount > 0 ? (
+                      <Chip tone="critical">
+                        <AlertTriangle size={12} />
+                        {overdueCount} overdue
+                      </Chip>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             }
             actions={
               <Tbtn
-                onClick={() => (session?.token ? loadDefects(session.token) : undefined)}
+                onClick={() => (session?.token ? loadView(session.token, drill) : undefined)}
                 disabled={isLoading || !session?.token}
               >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
@@ -616,13 +874,170 @@ function DefectsContent() {
             }
           />
 
-          <div className="mt-6">
-            {isLoading && defects.length === 0 ? (
+          {/* Drill breadcrumb */}
+          <nav
+            aria-label="Drill-down position"
+            className="mt-4 flex flex-wrap items-center gap-1.5 text-[13px]"
+          >
+            {crumbs.map((crumb) => (
+              <span key={crumb.label} className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={crumb.onClick}
+                  className="font-semibold text-[var(--brand)] transition hover:underline"
+                >
+                  {crumb.label}
+                </button>
+                <ChevronRight size={14} className="text-[var(--muted-2)]" />
+              </span>
+            ))}
+            <span className="font-semibold text-[var(--foreground)]">{currentCrumb}</span>
+          </nav>
+
+          <div className="mt-5">
+            {isLoading && !showList && groups.length === 0 ? (
               <DefectsLoading />
             ) : error ? (
               <div className="rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-[var(--critical-bg)] p-5 text-[13px] text-[var(--critical-text)]">
                 {error}
               </div>
+            ) : mode === "groups" || mode === "search" ? (
+              <Card padded={false}>
+                <div className="border-b border-[var(--line2)] p-[18px]">
+                  <FilterBar>
+                    <SearchField
+                      value={globalSearch}
+                      onChange={(event) => setGlobalSearch(event.target.value)}
+                      placeholder="Find a pole's defects anywhere (code or old number)…"
+                      aria-label="Search all defects by pole"
+                    />
+                    {isSearching ? (
+                      <Chip tone="neutral">
+                        <Loader2 size={13} className="animate-spin" />
+                        Searching
+                      </Chip>
+                    ) : null}
+                    {mode === "search" && searchResults ? (
+                      <>
+                        <Chip tone={searchResults.truncated ? "warning" : "neutral"}>
+                          {searchResults.truncated
+                            ? `Top ${searchResults.defects.length} matches`
+                            : `${searchResults.defects.length} match${
+                                searchResults.defects.length === 1 ? "" : "es"
+                              }`}
+                        </Chip>
+                        <Tbtn variant="ghost" onClick={() => setGlobalSearch("")}>
+                          <X size={16} />
+                          Clear
+                        </Tbtn>
+                      </>
+                    ) : null}
+                  </FilterBar>
+                </div>
+
+                {mode === "groups" ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left">
+                      <thead>
+                        <tr className={`${tableHeadClass} border-b border-[var(--line2)]`}>
+                          <th className={`${tableHeadCellClass} min-w-56`}>
+                            {LEVEL_NOUN[listLevel]}
+                          </th>
+                          {listLevel !== "pencawang" ? (
+                            <th className={`${tableHeadCellClass} whitespace-nowrap`}>
+                              Pencawang
+                            </th>
+                          ) : null}
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>Defects</th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>Open</th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>Critical</th>
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>Emergency</th>
+                          <th className="w-10 px-3.5 py-2.5" aria-hidden />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groups.map((group) => (
+                          <tr
+                            key={group.id}
+                            tabIndex={0}
+                            onClick={() => drillInto(group)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                drillInto(group);
+                              }
+                            }}
+                            className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--panel-muted)]`}
+                            aria-label={`Open ${group.name}`}
+                          >
+                            <td className={`${tableCellClass} font-semibold text-[var(--foreground)]`}>
+                              {group.name}
+                            </td>
+                            {listLevel !== "pencawang" ? (
+                              <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                                {group.pencawangCount}
+                              </td>
+                            ) : null}
+                            <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                              {group.defectCount}
+                            </td>
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
+                              {group.openCount > 0 ? (
+                                <Chip tone="critical">{group.openCount}</Chip>
+                              ) : (
+                                <span className="font-mono text-[var(--muted)]">0</span>
+                              )}
+                            </td>
+                            <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                              {group.criticalCount}
+                            </td>
+                            <td className={`${tableCellClass} whitespace-nowrap`}>
+                              {group.emergencyCount > 0 ? (
+                                <Chip tone="critical">
+                                  <Siren size={12} />
+                                  {group.emergencyCount}
+                                </Chip>
+                              ) : (
+                                <span className="font-mono text-[var(--muted)]">0</span>
+                              )}
+                            </td>
+                            <td className="px-3.5 py-3 text-[var(--muted-2)]">
+                              <ChevronRight size={16} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {groups.length === 0 && !isLoading ? (
+                      <div className="border-t border-[var(--line2)] px-5 py-12 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
+                          <MapPin size={20} />
+                        </div>
+                        <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
+                          No defects in your scope
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <DefectGroupList
+                    visibleGroups={visibleGroups}
+                    pencawangGroups={pencawangGroups}
+                    filteredDefects={filteredDefects}
+                    totalPoleCount={totalPoleCount}
+                    forceExpandGroups={forceExpandGroups}
+                    expandedPencawang={expandedPencawang}
+                    expandedPoles={expandedPoles}
+                    toggleGroup={toggleGroup}
+                    togglePole={togglePole}
+                    openDefect={openDefect}
+                    currentGroupPage={currentGroupPage}
+                    totalGroupPages={totalGroupPages}
+                    setGroupPage={setGroupPage}
+                  />
+                )}
+              </Card>
             ) : (
               <Card padded={false}>
                 <div className="border-b border-[var(--line2)] p-[18px]">
@@ -630,8 +1045,8 @@ function DefectsContent() {
                     <SearchField
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search defects"
-                      aria-label="Search defects"
+                      placeholder="Search this Pencawang's defects"
+                      aria-label="Search defects in this Pencawang"
                     />
 
                     <select
@@ -656,20 +1071,6 @@ function DefectsContent() {
                       {STATUS_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select
-                      aria-label="Pencawang"
-                      value={pencawangFilter}
-                      onChange={(event) => setPencawangFilter(event.target.value as PencawangFilter)}
-                      className={filterSelectClass}
-                    >
-                      <option value="ALL">All Pencawang</option>
-                      {pencawangOptions.map(([key, label]) => (
-                        <option key={key} value={key}>
-                          {label}
                         </option>
                       ))}
                     </select>
@@ -737,143 +1138,20 @@ function DefectsContent() {
                   </FilterBar>
                 </div>
 
-                <div>
-                  {visibleGroups.map((group) => {
-                    const isGroupExpanded =
-                      forceExpandGroups || expandedPencawang.has(group.key);
-
-                    return (
-                      <div key={group.key} className="border-b border-[var(--line2)] last:border-b-0">
-                        <button
-                          type="button"
-                          onClick={() => toggleGroup(group.key)}
-                          aria-expanded={isGroupExpanded}
-                          className="flex w-full flex-wrap items-center justify-between gap-2 bg-[var(--panel-muted)] px-[18px] py-3 text-left transition hover:bg-[var(--surface-pressed)]"
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <ChevronRight
-                              size={16}
-                              className={`shrink-0 text-[var(--muted-2)] transition-transform ${
-                                isGroupExpanded ? "rotate-90" : ""
-                              }`}
-                            />
-                            <MapPin size={15} className="shrink-0 text-[var(--muted-2)]" />
-                            <span className="truncate font-mono text-[12px] font-bold uppercase tracking-[0.05em] text-[var(--foreground-soft)]">
-                              {group.label}
-                            </span>
-                          </div>
-                          <span className="shrink-0 text-[12px] font-medium text-[var(--muted)]">
-                            {group.poles.length} pole{group.poles.length === 1 ? "" : "s"}
-                            {" · "}
-                            {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
-                          </span>
-                        </button>
-
-                        {isGroupExpanded ? (
-                          <div>
-                            {group.poles.map((pole) => {
-                              const poleKey = `${group.key}::${pole.assetCode}`;
-                              const isExpanded = expandedPoles.has(poleKey);
-                              const severities = orderedSeverities(pole.defects);
-                              const categories = orderedCategories(pole.defects);
-                              const poleOverdue = pole.defects.some(
-                                (defect) => defect.isOverdue,
-                              );
-
-                              return (
-                                <div key={poleKey} className="border-t border-[var(--line2)]">
-                                  <button
-                                    type="button"
-                                    onClick={() => togglePole(poleKey)}
-                                    aria-expanded={isExpanded}
-                                    className="flex w-full flex-wrap items-center gap-2 px-[18px] py-2.5 text-left transition hover:bg-[var(--panel-muted)]"
-                                  >
-                                    <ChevronRight
-                                      size={15}
-                                      className={`shrink-0 text-[var(--muted-2)] transition-transform ${
-                                        isExpanded ? "rotate-90" : ""
-                                      }`}
-                                    />
-                                    <span className="text-[13px] font-semibold text-[var(--foreground)]">
-                                      {pole.assetCode}
-                                    </span>
-                                    <Chip tone="neutral">
-                                      {pole.defects.length} defect
-                                      {pole.defects.length === 1 ? "" : "s"}
-                                    </Chip>
-                                    {severities.map((severity) => (
-                                      <SeverityBadge key={severity} severity={severity} />
-                                    ))}
-                                    {categories.map((category) => (
-                                      <CategoryChip key={category} category={category} />
-                                    ))}
-                                    {poleOverdue ? (
-                                      <Chip tone="critical">
-                                        <AlertTriangle size={12} />
-                                        Overdue
-                                      </Chip>
-                                    ) : null}
-                                  </button>
-
-                                  {isExpanded ? (
-                                    <div className="bg-[var(--panel-muted)]">
-                                      {pole.defects.map((defect) => (
-                                        <button
-                                          key={defect.id}
-                                          type="button"
-                                          onClick={() => openDefect(defect.id)}
-                                          className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--line2)] py-2.5 pl-[44px] pr-[18px] text-left transition hover:bg-[var(--brand-tint)]"
-                                        >
-                                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--foreground)]">
-                                            {defect.defectType}
-                                          </span>
-                                          <SeverityBadge severity={defect.severity} />
-                                          {defect.maintenanceCategory ? (
-                                            <CategoryChip category={defect.maintenanceCategory} />
-                                          ) : null}
-                                          <StatusBadge status={defect.status} />
-                                          <LifecycleBadge status={defect.lifecycleStatus} />
-                                          <OutcomeBadge outcome={defect.resolutionOutcome} />
-                                          <SlaBadge defect={defect} />
-                                          <span className="shrink-0 font-mono text-[12px] text-[var(--muted)]">
-                                            {formatDate(defect.date)}
-                                          </span>
-                                        </button>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-
-                  {pencawangGroups.length === 0 ? (
-                    <div className="px-5 py-12 text-center">
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
-                        <SlidersHorizontal size={20} />
-                      </div>
-                      <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
-                        No defects found
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-
-                <TableFooter
-                  summary={
-                    <>
-                      {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects across{" "}
-                      {pencawangGroups.length} Pencawang · {filteredDefects.length} defect
-                      {filteredDefects.length === 1 ? "" : "s"} total
-                    </>
-                  }
-                  page={currentGroupPage}
-                  pageCount={totalGroupPages}
-                  onPageChange={setGroupPage}
+                <DefectGroupList
+                  visibleGroups={visibleGroups}
+                  pencawangGroups={pencawangGroups}
+                  filteredDefects={filteredDefects}
+                  totalPoleCount={totalPoleCount}
+                  forceExpandGroups={forceExpandGroups}
+                  expandedPencawang={expandedPencawang}
+                  expandedPoles={expandedPoles}
+                  toggleGroup={toggleGroup}
+                  togglePole={togglePole}
+                  openDefect={openDefect}
+                  currentGroupPage={currentGroupPage}
+                  totalGroupPages={totalGroupPages}
+                  setGroupPage={setGroupPage}
                 />
               </Card>
             )}
@@ -881,6 +1159,183 @@ function DefectsContent() {
         </div>
       </main>
     </AppShell>
+  );
+}
+
+/** The Pencawang → pole → defect collapsible list + its footer (shared by the
+ *  drilled-Pencawang leaf and cross-scope search results). */
+function DefectGroupList({
+  visibleGroups,
+  pencawangGroups,
+  filteredDefects,
+  totalPoleCount,
+  forceExpandGroups,
+  expandedPencawang,
+  expandedPoles,
+  toggleGroup,
+  togglePole,
+  openDefect,
+  currentGroupPage,
+  totalGroupPages,
+  setGroupPage,
+}: {
+  visibleGroups: Array<{
+    key: string;
+    label: string;
+    defectCount: number;
+    poles: Array<{ assetCode: string; defects: DefectListItem[] }>;
+  }>;
+  pencawangGroups: Array<{ key: string }>;
+  filteredDefects: DefectListItem[];
+  totalPoleCount: number;
+  forceExpandGroups: boolean;
+  expandedPencawang: Set<string>;
+  expandedPoles: Set<string>;
+  toggleGroup: (groupKey: string) => void;
+  togglePole: (poleKey: string) => void;
+  openDefect: (defectId: string) => void;
+  currentGroupPage: number;
+  totalGroupPages: number;
+  setGroupPage: (page: number) => void;
+}) {
+  return (
+    <>
+      <div>
+        {visibleGroups.map((group) => {
+          const isGroupExpanded = forceExpandGroups || expandedPencawang.has(group.key);
+
+          return (
+            <div key={group.key} className="border-b border-[var(--line2)] last:border-b-0">
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.key)}
+                aria-expanded={isGroupExpanded}
+                className="flex w-full flex-wrap items-center justify-between gap-2 bg-[var(--panel-muted)] px-[18px] py-3 text-left transition hover:bg-[var(--surface-pressed)]"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <ChevronRight
+                    size={16}
+                    className={`shrink-0 text-[var(--muted-2)] transition-transform ${
+                      isGroupExpanded ? "rotate-90" : ""
+                    }`}
+                  />
+                  <MapPin size={15} className="shrink-0 text-[var(--muted-2)]" />
+                  <span className="truncate font-mono text-[12px] font-bold uppercase tracking-[0.05em] text-[var(--foreground-soft)]">
+                    {group.label}
+                  </span>
+                </div>
+                <span className="shrink-0 text-[12px] font-medium text-[var(--muted)]">
+                  {group.poles.length} pole{group.poles.length === 1 ? "" : "s"}
+                  {" · "}
+                  {group.defectCount} defect{group.defectCount === 1 ? "" : "s"}
+                </span>
+              </button>
+
+              {isGroupExpanded ? (
+                <div>
+                  {group.poles.map((pole) => {
+                    const poleKey = `${group.key}::${pole.assetCode}`;
+                    const isExpanded = expandedPoles.has(poleKey);
+                    const severities = orderedSeverities(pole.defects);
+                    const categories = orderedCategories(pole.defects);
+                    const poleOverdue = pole.defects.some((defect) => defect.isOverdue);
+
+                    return (
+                      <div key={poleKey} className="border-t border-[var(--line2)]">
+                        <button
+                          type="button"
+                          onClick={() => togglePole(poleKey)}
+                          aria-expanded={isExpanded}
+                          className="flex w-full flex-wrap items-center gap-2 px-[18px] py-2.5 text-left transition hover:bg-[var(--panel-muted)]"
+                        >
+                          <ChevronRight
+                            size={15}
+                            className={`shrink-0 text-[var(--muted-2)] transition-transform ${
+                              isExpanded ? "rotate-90" : ""
+                            }`}
+                          />
+                          <span className="text-[13px] font-semibold text-[var(--foreground)]">
+                            {pole.assetCode}
+                          </span>
+                          <Chip tone="neutral">
+                            {pole.defects.length} defect
+                            {pole.defects.length === 1 ? "" : "s"}
+                          </Chip>
+                          {severities.map((severity) => (
+                            <SeverityBadge key={severity} severity={severity} />
+                          ))}
+                          {categories.map((category) => (
+                            <CategoryChip key={category} category={category} />
+                          ))}
+                          {poleOverdue ? (
+                            <Chip tone="critical">
+                              <AlertTriangle size={12} />
+                              Overdue
+                            </Chip>
+                          ) : null}
+                        </button>
+
+                        {isExpanded ? (
+                          <div className="bg-[var(--panel-muted)]">
+                            {pole.defects.map((defect) => (
+                              <button
+                                key={defect.id}
+                                type="button"
+                                onClick={() => openDefect(defect.id)}
+                                className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--line2)] py-2.5 pl-[44px] pr-[18px] text-left transition hover:bg-[var(--brand-tint)]"
+                              >
+                                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--foreground)]">
+                                  {defect.defectType}
+                                </span>
+                                <SeverityBadge severity={defect.severity} />
+                                {defect.maintenanceCategory ? (
+                                  <CategoryChip category={defect.maintenanceCategory} />
+                                ) : null}
+                                <StatusBadge status={defect.status} />
+                                <LifecycleBadge status={defect.lifecycleStatus} />
+                                <OutcomeBadge outcome={defect.resolutionOutcome} />
+                                <SlaBadge defect={defect} />
+                                <span className="shrink-0 font-mono text-[12px] text-[var(--muted)]">
+                                  {formatDate(defect.date)}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        {pencawangGroups.length === 0 ? (
+          <div className="px-5 py-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
+              <SlidersHorizontal size={20} />
+            </div>
+            <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
+              No defects found
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      <TableFooter
+        summary={
+          <>
+            {totalPoleCount} pole{totalPoleCount === 1 ? "" : "s"} with defects across{" "}
+            {pencawangGroups.length} Pencawang · {filteredDefects.length} defect
+            {filteredDefects.length === 1 ? "" : "s"} total
+          </>
+        }
+        page={currentGroupPage}
+        pageCount={totalGroupPages}
+        onPageChange={setGroupPage}
+      />
+    </>
   );
 }
 

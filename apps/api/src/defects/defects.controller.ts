@@ -27,6 +27,7 @@ import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
 import { UpdateDefectVerificationDto } from './dto/update-defect-verification.dto';
 import { UploadDefectEvidenceImageDto } from './dto/upload-defect-evidence-image.dto';
 import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
+import { DefectRegistryQueryDto } from './dto/registry-query.dto';
 import { DefectsService } from './defects.service';
 
 class DefectIdParamDto {
@@ -73,6 +74,17 @@ export class DefectsController {
   @Get('maintenance-workspace')
   getMaintenanceWorkspace(@CurrentUser() user: RequestUser) {
     return this.defectsService.getMaintenanceWorkspace(user);
+  }
+
+  // The Defects page's lazy Region→Mainhead→Pencawang drill-down (rollup counts
+  // per level, one Pencawang's rows at the leaf, capped cross-scope search).
+  // Declared before `:id` so the literal `registry` segment isn't matched as an id.
+  @Get('registry')
+  listRegistry(
+    @CurrentUser() user: RequestUser,
+    @Query() query: DefectRegistryQueryDto,
+  ) {
+    return this.defectsService.listRegistry(user, query);
   }
 
   @Patch('maintenance-workspace/assign')
