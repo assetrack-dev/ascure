@@ -23,6 +23,7 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { DeleteAssetsDto } from './dto/delete-assets.dto';
 import { MapQueryDto } from './dto/map-query.dto';
+import { RegistryQueryDto } from './dto/registry-query.dto';
 import { AssetsService } from './assets.service';
 
 class AssetIdParamDto {
@@ -50,6 +51,14 @@ export class AssetsController {
   @Get('map/filter-options')
   mapFilterOptions(@CurrentUser() user: RequestUser) {
     return this.assetsService.mapFilterOptions(user);
+  }
+
+  // The Assets page's lazy Region→Mainhead→Pencawang drill-down (rollup counts
+  // per level, one Pencawang's rows at the leaf, capped cross-scope search).
+  // Declared before `:id` so the literal `registry` segment isn't matched as an id.
+  @Get('registry')
+  listRegistry(@CurrentUser() user: RequestUser, @Query() query: RegistryQueryDto) {
+    return this.assetsService.listRegistry(user, query);
   }
 
   @Get(':id')

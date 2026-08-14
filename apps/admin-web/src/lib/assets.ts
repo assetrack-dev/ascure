@@ -4,6 +4,8 @@ import type {
   AssetDetail,
   AssetInspectionStatus,
   AssetListItem,
+  AssetRegistryLevel,
+  AssetRegistryRollup,
   InspectionEvidenceImage,
   InspectionResultItem,
 } from "@/types/assets";
@@ -483,6 +485,84 @@ export async function fetchAssets(token: string): Promise<AssetListItem[]> {
 
     throw error;
   }
+}
+
+/** One rollup level of the Assets registry drill-down (Region → Mainhead →
+ *  Pencawang). Parent ids scope a level to its parent; the 'unassigned'
+ *  sentinel drills into the null-parent bucket. */
+export async function fetchAssetRegistryRollup(
+  token: string,
+  level: AssetRegistryLevel,
+  parents: { regionId?: string; mainheadId?: string } = {},
+): Promise<AssetRegistryRollup> {
+  const params = new URLSearchParams({ level });
+  if (parents.regionId) params.set("regionId", parents.regionId);
+  if (parents.mainheadId) params.set("mainheadId", parents.mainheadId);
+  const payload = await apiRequest<unknown>(`/assets/registry?${params}`, { token });
+  const record = asRecord(payload);
+  const groups = firstArray(record, ["groups"])
+    .map((group) => asRecord(group))
+    .filter((group): group is ApiRecord => Boolean(group))
+    .map((group) => ({
+      id: readString(group, "id") ?? "",
+      name: readString(group, "name") ?? "Unnamed",
+      assetCount: readNumber(group, "assetCount") ?? 0,
+      inspectedCount: readNumber(group, "inspectedCount") ?? 0,
+      pendingCount: readNumber(group, "pendingCount") ?? 0,
+      defectAssetCount: readNumber(group, "defectAssetCount") ?? 0,
+      pencawangCount: readNumber(group, "pencawangCount") ?? 0,
+      mainheadCount: readNumber(group, "mainheadCount") ?? undefined,
+    }))
+    .filter((group) => group.id);
+  const totalsRecord = nestedRecord(record, "totals");
+  return {
+    level,
+    groups,
+    totals: {
+      assetCount: readNumber(totalsRecord, "assetCount") ?? 0,
+      inspectedCount: readNumber(totalsRecord, "inspectedCount") ?? 0,
+      pendingCount: readNumber(totalsRecord, "pendingCount") ?? 0,
+      defectAssetCount: readNumber(totalsRecord, "defectAssetCount") ?? 0,
+      pencawangCount: readNumber(totalsRecord, "pencawangCount") ?? 0,
+    },
+  };
+}
+
+/** The one drilled Pencawang's asset rows — the registry leaf. Light rows only
+ *  (no inspection images), unlike the legacy fetchAssets full list. */
+export async function fetchAssetRegistryAssets(
+  token: string,
+  pencawangId: string,
+): Promise<AssetListItem[]> {
+  const payload = await apiRequest<unknown>(
+    `/assets/registry?level=assets&pencawangId=${encodeURIComponent(pencawangId)}`,
+    { token },
+  );
+  return sortAssets(
+    extractAssetArray(payload)
+      .map(normalizeAsset)
+      .filter((asset): asset is AssetListItem => Boolean(asset)),
+  );
+}
+
+/** Capped cross-scope pole search (asset code / old pole number). */
+export async function searchAssetRegistry(
+  token: string,
+  search: string,
+): Promise<{ assets: AssetListItem[]; truncated: boolean }> {
+  const payload = await apiRequest<unknown>(
+    `/assets/registry?search=${encodeURIComponent(search)}`,
+    { token },
+  );
+  const record = asRecord(payload);
+  return {
+    assets: sortAssets(
+      extractAssetArray(payload)
+        .map(normalizeAsset)
+        .filter((asset): asset is AssetListItem => Boolean(asset)),
+    ),
+    truncated: record?.truncated === true,
+  };
 }
 
 export async function fetchAssetDetail(token: string, assetId: string): Promise<AssetDetail | null> {

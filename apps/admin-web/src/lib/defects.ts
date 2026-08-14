@@ -14,6 +14,8 @@ import type {
   DefectOperationsBoardQueueKey,
   DefectOperationsBoardResponse,
   DefectOperationsBoardSiteVisit,
+  DefectRegistryLevel,
+  DefectRegistryRollup,
   DefectResolutionOutcome,
   DefectSeverity,
   DefectSlaState,
@@ -1062,6 +1064,79 @@ export async function fetchDefects(token: string): Promise<DefectListItem[]> {
   return extractDefectArray(payload)
     .map(normalizeDefect)
     .filter((defect): defect is DefectListItem => Boolean(defect));
+}
+
+/** One rollup level of the Defects registry drill-down (Region → Mainhead →
+ *  Pencawang). Parent ids scope a level to its parent; the 'unassigned'
+ *  sentinel drills into the null-parent bucket. */
+export async function fetchDefectRegistryRollup(
+  token: string,
+  level: DefectRegistryLevel,
+  parents: { regionId?: string; mainheadId?: string } = {},
+): Promise<DefectRegistryRollup> {
+  const params = new URLSearchParams({ level });
+  if (parents.regionId) params.set("regionId", parents.regionId);
+  if (parents.mainheadId) params.set("mainheadId", parents.mainheadId);
+  const payload = await apiRequest<unknown>(`/defects/registry?${params}`, { token });
+  const record = asRecord(payload);
+  const rawGroups = record && Array.isArray(record.groups) ? record.groups : [];
+  const groups = rawGroups
+    .map((group) => asRecord(group))
+    .filter((group): group is ApiRecord => Boolean(group))
+    .map((group) => ({
+      id: readString(group, "id") ?? "",
+      name: readString(group, "name") ?? "Unnamed",
+      defectCount: readNumber(group, "defectCount") ?? 0,
+      openCount: readNumber(group, "openCount") ?? 0,
+      criticalCount: readNumber(group, "criticalCount") ?? 0,
+      emergencyCount: readNumber(group, "emergencyCount") ?? 0,
+      pencawangCount: readNumber(group, "pencawangCount") ?? 0,
+    }))
+    .filter((group) => group.id);
+  const totalsRecord = nestedRecord(record, "totals");
+  return {
+    level,
+    groups,
+    totals: {
+      defectCount: readNumber(totalsRecord, "defectCount") ?? 0,
+      openCount: readNumber(totalsRecord, "openCount") ?? 0,
+      criticalCount: readNumber(totalsRecord, "criticalCount") ?? 0,
+      emergencyCount: readNumber(totalsRecord, "emergencyCount") ?? 0,
+      pencawangCount: readNumber(totalsRecord, "pencawangCount") ?? 0,
+    },
+  };
+}
+
+/** The one drilled Pencawang's defect rows — the registry leaf. */
+export async function fetchDefectRegistryDefects(
+  token: string,
+  pencawangId: string,
+): Promise<DefectListItem[]> {
+  const payload = await apiRequest<unknown>(
+    `/defects/registry?level=defects&pencawangId=${encodeURIComponent(pencawangId)}`,
+    { token },
+  );
+  return extractDefectArray(payload)
+    .map(normalizeDefect)
+    .filter((defect): defect is DefectListItem => Boolean(defect));
+}
+
+/** Capped cross-scope pole-code search over the caller's defects. */
+export async function searchDefectRegistry(
+  token: string,
+  search: string,
+): Promise<{ defects: DefectListItem[]; truncated: boolean }> {
+  const payload = await apiRequest<unknown>(
+    `/defects/registry?search=${encodeURIComponent(search)}`,
+    { token },
+  );
+  const record = asRecord(payload);
+  return {
+    defects: extractDefectArray(payload)
+      .map(normalizeDefect)
+      .filter((defect): defect is DefectListItem => Boolean(defect)),
+    truncated: record?.truncated === true,
+  };
 }
 
 export async function fetchDefectOperationsBoard(

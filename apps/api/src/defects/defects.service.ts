@@ -57,12 +57,81 @@ import { UpdateDefectDueDateDto } from './dto/update-defect-due-date.dto';
 import { UpdateDefectStatusDto } from './dto/update-defect-status.dto';
 import { UpdateDefectVerificationDto } from './dto/update-defect-verification.dto';
 import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
+import { DefectRegistryQueryDto } from './dto/registry-query.dto';
+import { REGISTRY_UNASSIGNED } from '../assets/dto/registry-query.dto';
+
+/** Max rows a cross-scope defect search returns (fetches cap+1 to flag
+ *  truncation). */
+const DEFECT_REGISTRY_SEARCH_CAP = 200;
 
 const ACTIVE_SLA_STATUSES = new Set<DefectStatus>([
   DefectStatus.OPEN,
   DefectStatus.IN_PROGRESS,
   DefectStatus.MONITORING,
 ]);
+
+/** Statuses that still need work — the registry rollup's "open" count. Same
+ *  triple the asset map and the SLA machinery treat as live. */
+const OPEN_DEFECT_STATUSES = [
+  DefectStatus.OPEN,
+  DefectStatus.IN_PROGRESS,
+  DefectStatus.MONITORING,
+] as const;
+
+/** Every relation serializeDefectListItem renders — shared by the legacy full
+ *  list and the registry's per-Pencawang leaf so both return identical rows. */
+const DEFECT_LIST_INCLUDE = Prisma.validator<Prisma.DefectInclude>()({
+  assignedUser: {
+    select: { id: true, email: true, name: true, role: true },
+  },
+  assignedTeam: {
+    select: { id: true, code: true, name: true },
+  },
+  assignedToUser: {
+    select: { id: true, email: true, name: true, role: true },
+  },
+  assignedToTeam: {
+    select: { id: true, code: true, name: true },
+  },
+  verifiedByUser: {
+    select: { id: true, email: true, name: true, role: true },
+  },
+  maintainedByUser: {
+    select: { id: true, email: true, name: true, role: true },
+  },
+  closureVerifiedByUser: {
+    select: { id: true, email: true, name: true, role: true },
+  },
+  inspectionItemResult: {
+    select: {
+      id: true,
+      inspectionId: true,
+      label: true,
+      remark: true,
+      createdAt: true,
+      inspection: {
+        select: {
+          id: true,
+          assetId: true,
+          inspectionCycle: true,
+          submittedAt: true,
+          asset: {
+            select: {
+              id: true,
+              assetCode: true,
+              substation: {
+                select: { code: true, name: true, location: true },
+              },
+              assetType: {
+                select: { code: true, name: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+});
 
 type DefectSlaState = 'OVERDUE' | 'ON_TRACK' | 'NO_DUE_DATE' | 'STOPPED';
 
@@ -464,117 +533,301 @@ export class DefectsService {
       },
       // Newest-first cap (mobile); admin-web omits it and keeps the full list.
       ...(limit ? { take: limit } : {}),
-      include: {
-        assignedUser: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
-        assignedTeam: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-          },
-        },
-        assignedToUser: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
-        assignedToTeam: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
-          },
-        },
-        verifiedByUser: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
-        maintainedByUser: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
-        closureVerifiedByUser: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-          },
-        },
-        inspectionItemResult: {
-          select: {
-            id: true,
-            inspectionId: true,
-            label: true,
-            remark: true,
-            createdAt: true,
-            inspection: {
-              select: {
-                id: true,
-                assetId: true,
-                inspectionCycle: true,
-                submittedAt: true,
-                asset: {
-                  select: {
-                    id: true,
-                    assetCode: true,
-                    substation: {
-                      select: {
-                        code: true,
-                        name: true,
-                        location: true,
-                      },
-                    },
-                    assetType: {
-                      select: {
-                        code: true,
-                        name: true,
-                      },
-                    },
+      include: DEFECT_LIST_INCLUDE,
+    });
+
+    return this.sortDefectsNewestFirst(defects).map((defect) =>
+      this.serializeDefectListItem(defect),
+    );
+  }
+
+  /** Newest inspection first, then newest flagged item — the register's order. */
+  private sortDefectsNewestFirst<
+    T extends {
+      inspectionItemResult: { createdAt: Date; inspection: { submittedAt: Date | null } };
+    },
+  >(defects: T[]): T[] {
+    return defects.sort((left, right) => {
+      const leftSubmittedAt =
+        left.inspectionItemResult.inspection.submittedAt?.getTime() ?? 0;
+      const rightSubmittedAt =
+        right.inspectionItemResult.inspection.submittedAt?.getTime() ?? 0;
+
+      if (leftSubmittedAt !== rightSubmittedAt) {
+        return rightSubmittedAt - leftSubmittedAt;
+      }
+
+      return (
+        right.inspectionItemResult.createdAt.getTime() -
+        left.inspectionItemResult.createdAt.getTime()
+      );
+    });
+  }
+
+  /**
+   * The Defects page's lazy Region → Mainhead → Pencawang drill-down, mirroring
+   * AssetsService.listRegistry: rollup counts per level, one Pencawang's defect
+   * rows at the leaf, capped cross-scope pole-code search. Same access scope as
+   * the legacy full list, so drill counts always sum to what it showed.
+   */
+  async listRegistry(user: RequestUser, query: DefectRegistryQueryDto) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    // Same guarded materialization the legacy list runs — steady state is a
+    // zero-row select, and without it fresh submissions would under-count.
+    await this.ensureDefectsForAccessibleItems(user, ctx);
+    const scope = this.defectAccessScope(user, ctx);
+
+    const search = query.search?.trim();
+    if (search && search.length >= 2) {
+      const rows = await this.prisma.defect.findMany({
+        where: {
+          AND: [
+            scope,
+            {
+              inspectionItemResult: {
+                inspection: {
+                  asset: {
+                    OR: [
+                      { assetCode: { contains: search, mode: 'insensitive' } },
+                      { name: { contains: search, mode: 'insensitive' } },
+                    ],
                   },
                 },
               },
+            },
+          ],
+        },
+        include: DEFECT_LIST_INCLUDE,
+        orderBy: { createdAt: 'desc' },
+        take: DEFECT_REGISTRY_SEARCH_CAP + 1,
+      });
+      const truncated = rows.length > DEFECT_REGISTRY_SEARCH_CAP;
+      return {
+        level: 'search' as const,
+        defects: this.sortDefectsNewestFirst(
+          truncated ? rows.slice(0, DEFECT_REGISTRY_SEARCH_CAP) : rows,
+        ).map((defect) => this.serializeDefectListItem(defect)),
+        truncated,
+      };
+    }
+
+    if (query.level === 'defects') {
+      if (!query.pencawangId || query.pencawangId === REGISTRY_UNASSIGNED) {
+        throw new BadRequestException(
+          'The defects level requires a pencawangId.',
+        );
+      }
+      const rows = await this.prisma.defect.findMany({
+        where: {
+          AND: [
+            scope,
+            {
+              inspectionItemResult: {
+                inspection: { asset: { substationId: query.pencawangId } },
+              },
+            },
+          ],
+        },
+        include: DEFECT_LIST_INCLUDE,
+      });
+      return {
+        level: 'defects' as const,
+        defects: this.sortDefectsNewestFirst(rows).map((defect) =>
+          this.serializeDefectListItem(defect),
+        ),
+      };
+    }
+
+    return this.aggregateDefectRegistry(scope, query.level ?? 'region', query);
+  }
+
+  /**
+   * Count rollups for one drill level. Defects hang off relations (no
+   * substation column), so Prisma can't groupBy — instead fetch one MINIMAL row
+   * per in-scope defect (4 scalars + the pole's substation id) and fold in JS.
+   * Tens of thousands of such rows stay a small payload, unlike the legacy
+   * list's 7-relation rows.
+   */
+  private async aggregateDefectRegistry(
+    scope: Prisma.DefectWhereInput,
+    level: 'region' | 'mainhead' | 'pencawang',
+    query: DefectRegistryQueryDto,
+  ) {
+    const parentFilter: Prisma.DefectWhereInput[] = [];
+    if (level === 'mainhead' && query.regionId) {
+      parentFilter.push({
+        inspectionItemResult: {
+          inspection: {
+            asset:
+              query.regionId === REGISTRY_UNASSIGNED
+                ? {
+                    OR: [
+                      { substation: { mainheadId: null } },
+                      { substation: { mainhead: { operationalRegionId: null } } },
+                    ],
+                  }
+                : {
+                    substation: {
+                      mainhead: { operationalRegionId: query.regionId },
+                    },
+                  },
+          },
+        },
+      });
+    }
+    if (level === 'pencawang' && query.mainheadId) {
+      parentFilter.push({
+        inspectionItemResult: {
+          inspection: {
+            asset:
+              query.mainheadId === REGISTRY_UNASSIGNED
+                ? { substation: { mainheadId: null } }
+                : { substation: { mainheadId: query.mainheadId } },
+          },
+        },
+      });
+    }
+
+    const rows = await this.prisma.defect.findMany({
+      where: { AND: [scope, ...parentFilter] },
+      select: {
+        status: true,
+        severity: true,
+        isEmergency: true,
+        inspectionItemResult: {
+          select: {
+            inspection: {
+              select: { asset: { select: { substationId: true } } },
             },
           },
         },
       },
     });
+    if (rows.length === 0) {
+      return {
+        level,
+        groups: [],
+        totals: {
+          defectCount: 0,
+          openCount: 0,
+          criticalCount: 0,
+          emergencyCount: 0,
+          pencawangCount: 0,
+        },
+      };
+    }
 
-    return defects
-      .sort((left, right) => {
-        const leftSubmittedAt =
-          left.inspectionItemResult.inspection.submittedAt?.getTime() ?? 0;
-        const rightSubmittedAt =
-          right.inspectionItemResult.inspection.submittedAt?.getTime() ?? 0;
+    const substationIds = [
+      ...new Set(
+        rows.map((row) => row.inspectionItemResult.inspection.asset.substationId),
+      ),
+    ];
+    const substations = await this.prisma.substation.findMany({
+      where: { id: { in: substationIds } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        mainheadId: true,
+        mainhead: {
+          select: {
+            id: true,
+            name: true,
+            operationalRegion: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    const subMeta = new Map(substations.map((s) => [s.id, s] as const));
+    const openStatuses = new Set<DefectStatus>(OPEN_DEFECT_STATUSES);
 
-        if (leftSubmittedAt !== rightSubmittedAt) {
-          return rightSubmittedAt - leftSubmittedAt;
-        }
-
-        return (
-          right.inspectionItemResult.createdAt.getTime() -
-          left.inspectionItemResult.createdAt.getTime()
+    type Bucket = {
+      id: string;
+      name: string;
+      defectCount: number;
+      openCount: number;
+      criticalCount: number;
+      emergencyCount: number;
+      pencawangIds: Set<string>;
+    };
+    const buckets = new Map<string, Bucket>();
+    for (const row of rows) {
+      const substationId = row.inspectionItemResult.inspection.asset.substationId;
+      const meta = subMeta.get(substationId);
+      const key =
+        level === 'pencawang'
+          ? { id: substationId, name: meta?.name || meta?.code || 'Pencawang' }
+          : level === 'mainhead'
+            ? {
+                id: meta?.mainheadId ?? REGISTRY_UNASSIGNED,
+                name: meta?.mainhead?.name ?? 'Unassigned',
+              }
+            : {
+                id: meta?.mainhead?.operationalRegion?.id ?? REGISTRY_UNASSIGNED,
+                name: meta?.mainhead?.operationalRegion?.name ?? 'Unassigned',
+              };
+      let bucket = buckets.get(key.id);
+      if (!bucket) {
+        buckets.set(
+          key.id,
+          (bucket = {
+            id: key.id,
+            name: key.name,
+            defectCount: 0,
+            openCount: 0,
+            criticalCount: 0,
+            emergencyCount: 0,
+            pencawangIds: new Set(),
+          }),
         );
-      })
-      .map((defect) => this.serializeDefectListItem(defect));
+      }
+      bucket.defectCount += 1;
+      bucket.pencawangIds.add(substationId);
+      if (openStatuses.has(row.status)) {
+        bucket.openCount += 1;
+        if (row.severity === DefectSeverity.CRITICAL) {
+          bucket.criticalCount += 1;
+        }
+        if (row.isEmergency) {
+          bucket.emergencyCount += 1;
+        }
+      }
+    }
+
+    const groups = [...buckets.values()]
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        defectCount: b.defectCount,
+        openCount: b.openCount,
+        criticalCount: b.criticalCount,
+        emergencyCount: b.emergencyCount,
+        pencawangCount: b.pencawangIds.size,
+      }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' }),
+      );
+
+    return {
+      level,
+      groups,
+      totals: groups.reduce(
+        (totals, group) => ({
+          defectCount: totals.defectCount + group.defectCount,
+          openCount: totals.openCount + group.openCount,
+          criticalCount: totals.criticalCount + group.criticalCount,
+          emergencyCount: totals.emergencyCount + group.emergencyCount,
+          pencawangCount: totals.pencawangCount + group.pencawangCount,
+        }),
+        {
+          defectCount: 0,
+          openCount: 0,
+          criticalCount: 0,
+          emergencyCount: 0,
+          pencawangCount: 0,
+        },
+      ),
+    };
   }
 
   async getOperationsBoard(

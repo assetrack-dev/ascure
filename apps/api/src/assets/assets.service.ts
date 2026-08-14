@@ -42,6 +42,10 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { MapQueryDto } from './dto/map-query.dto';
 import {
+  REGISTRY_UNASSIGNED,
+  RegistryQueryDto,
+} from './dto/registry-query.dto';
+import {
   feederLineCode,
   renderNoTiangRondaan,
   type StoredMembership,
@@ -102,6 +106,34 @@ function splitCsv(value: string | undefined): string[] {
 /** Max poles returned for the Mainhead-wide "show all poles" view — matches the
  *  AppSheet-style cap; the viewport bbox keeps the visible set under this. */
 const MAINHEAD_POINTS_CAP = 1000;
+
+/** Max rows a cross-scope registry search returns (fetches cap+1 to flag
+ *  truncation). Finding one pole by code never needs more. */
+const REGISTRY_SEARCH_CAP = 200;
+
+/** The registry table's feeder / location come from the asset's metadata JSON
+ *  (AppSheet import fields), read with the same key priority the admin-web
+ *  normalizer historically used — so the drill-down rows show exactly what the
+ *  old full-list rows showed. */
+function metadataString(
+  metadata: Prisma.JsonValue | null,
+  keys: string[],
+): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const record = metadata as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
 
 /** Parse a "minLng,minLat,maxLng,maxLat" viewport string → bounds, or null if it
  *  is missing / malformed / degenerate. Tolerant: a bad value disables the clip
@@ -815,6 +847,337 @@ export class AssetsService {
           sensitivity: 'base',
         }),
       );
+  }
+
+  /**
+   * The Assets page's lazy drill-down feed (Region → Mainhead → Pencawang →
+   * one Pencawang's rows), so the page never loads the whole tenant at once.
+   * Scope = assetOversightWhere — the SAME scope the legacy full-list table
+   * (MasterDataService.listAssets) uses, so drill counts always sum to what the
+   * old table showed. Distinct from the map's scope (mapScopeWhere), which adds
+   * the technician same-Mainhead read and drops GPS-less poles; the registry
+   * must list EVERY pole, located or not.
+   */
+  async listRegistry(user: RequestUser, query: RegistryQueryDto) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    // AND rather than spread: the oversight scope and the drill filters can both
+    // constrain relations — same collision guard as the map feed.
+    const scopedWhere = (
+      ...extra: Prisma.AssetWhereInput[]
+    ): Prisma.AssetWhereInput => ({
+      tenantId: user.tenantId,
+      AND: [assetOversightWhere(user, ctx), ...extra],
+    });
+
+    const search = query.search?.trim();
+    if (search && search.length >= 2) {
+      const rows = await this.loadRegistryRows(
+        scopedWhere({
+          OR: [
+            { assetCode: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ],
+        }),
+        REGISTRY_SEARCH_CAP + 1,
+      );
+      const truncated = rows.length > REGISTRY_SEARCH_CAP;
+      return {
+        level: 'search' as const,
+        assets: truncated ? rows.slice(0, REGISTRY_SEARCH_CAP) : rows,
+        truncated,
+      };
+    }
+
+    if (query.level === 'assets') {
+      if (!query.pencawangId || query.pencawangId === REGISTRY_UNASSIGNED) {
+        throw new BadRequestException(
+          'The assets level requires a pencawangId.',
+        );
+      }
+      const assets = await this.loadRegistryRows(
+        scopedWhere({ substationId: query.pencawangId }),
+      );
+      return { level: 'assets' as const, assets };
+    }
+
+    const level = query.level ?? 'region';
+    return this.aggregateRegistry(scopedWhere(), level, query);
+  }
+
+  /**
+   * Light per-asset rows for the registry table — everything the old full-list
+   * row rendered (code, type, feeder, location, Pencawang, status, date) and
+   * NOTHING heavier: no metadata blob, no inspection images (the legacy list
+   * shipped every latest-inspection photo row per pole, which is what made the
+   * page too heavy to open).
+   */
+  private async loadRegistryRows(
+    where: Prisma.AssetWhereInput,
+    take?: number,
+  ) {
+    const rows = await this.prisma.asset.findMany({
+      where,
+      select: {
+        id: true,
+        assetCode: true,
+        name: true,
+        status: true,
+        latitude: true,
+        longitude: true,
+        metadata: true,
+        substationId: true,
+        assetType: { select: { code: true, name: true } },
+        substation: { select: { id: true, code: true, name: true, location: true } },
+        inspections: {
+          // Same latest-SUBMITTED rule as the legacy list, so status/date match.
+          where: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+          take: 1,
+          orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+          select: { submittedAt: true, createdAt: true },
+        },
+      },
+      orderBy: { assetCode: 'asc' },
+      take,
+    });
+
+    return rows.map((row) => {
+      const latest = row.inspections[0] ?? null;
+      const location =
+        metadataString(row.metadata, ['location', 'assetLocation', 'address']) ??
+        row.substation?.location ??
+        row.substation?.name ??
+        row.substation?.code ??
+        (row.latitude != null && row.longitude != null
+          ? `${row.latitude.toFixed(5)}, ${row.longitude.toFixed(5)}`
+          : null);
+      return {
+        id: row.id,
+        assetCode: row.assetCode,
+        noTiangLama: row.name,
+        assetType: row.assetType?.name ?? row.assetType?.code ?? null,
+        feeder: metadataString(row.metadata, [
+          'feeder',
+          'feederName',
+          'feederCode',
+          'feeder_name',
+          'feeder_code',
+        ]),
+        location,
+        pencawangName: row.substation?.name ?? row.substation?.code ?? null,
+        substationId: row.substationId,
+        inspectionStatus: latest ? ('COMPLETED' as const) : ('PENDING' as const),
+        date:
+          latest?.submittedAt?.toISOString() ??
+          latest?.createdAt.toISOString() ??
+          null,
+        assetStatus: row.status,
+      };
+    });
+  }
+
+  /**
+   * Count rollups for one drill level. The DB groups per Pencawang; a light JS
+   * fold rolls Pencawang into Mainhead / Region buckets (same shape as the
+   * hierarchical map's aggregateMap, minus coordinates), so the payload is a
+   * handful of rows no matter how many poles exist. A missing Mainhead/Region
+   * becomes the drillable 'unassigned' bucket — its poles must stay reachable.
+   */
+  private async aggregateRegistry(
+    baseWhere: Prisma.AssetWhereInput,
+    level: 'region' | 'mainhead' | 'pencawang',
+    query: RegistryQueryDto,
+  ) {
+    // Parent drill-down filter (a Region's mainheads, a Mainhead's pencawangs),
+    // with 'unassigned' resolving to the null parent at that level.
+    const parentFilter: Prisma.AssetWhereInput[] = [];
+    if (level === 'mainhead' && query.regionId) {
+      parentFilter.push(
+        query.regionId === REGISTRY_UNASSIGNED
+          ? {
+              OR: [
+                { substation: { mainheadId: null } },
+                { substation: { mainhead: { operationalRegionId: null } } },
+              ],
+            }
+          : { substation: { mainhead: { operationalRegionId: query.regionId } } },
+      );
+    }
+    if (level === 'pencawang' && query.mainheadId) {
+      parentFilter.push(
+        query.mainheadId === REGISTRY_UNASSIGNED
+          ? { substation: { mainheadId: null } }
+          : { substation: { mainheadId: query.mainheadId } },
+      );
+    }
+
+    const where: Prisma.AssetWhereInput = {
+      ...baseWhere,
+      AND: [...(baseWhere.AND as Prisma.AssetWhereInput[]), ...parentFilter],
+    };
+
+    const [grouped, inspectedGrouped] = await Promise.all([
+      this.prisma.asset.groupBy({
+        by: ['substationId'],
+        where,
+        _count: true,
+      }),
+      this.prisma.asset.groupBy({
+        by: ['substationId'],
+        where: {
+          ...where,
+          inspections: {
+            some: { completionStatus: InspectionCompletionStatus.SUBMITTED },
+          },
+        },
+        _count: true,
+      }),
+    ]);
+    if (grouped.length === 0) {
+      return { level, groups: [], totals: this.registryTotals([]) };
+    }
+    const inspectedBySub = new Map(
+      inspectedGrouped.map((g) => [g.substationId, g._count] as const),
+    );
+
+    // Distinct open-defect poles per Pencawang, so a group row can show where
+    // the outstanding work is without loading a single defect record.
+    const openDefects = await this.prisma.defect.findMany({
+      where: {
+        status: { in: [...OPEN_DEFECT_STATUSES] },
+        inspectionItemResult: { isDefect: true, inspection: { asset: where } },
+      },
+      select: {
+        inspectionItemResult: {
+          select: {
+            inspection: {
+              select: { assetId: true, asset: { select: { substationId: true } } },
+            },
+          },
+        },
+      },
+    });
+    const defectAssetsBySub = new Map<string, Set<string>>();
+    for (const defect of openDefects) {
+      const { assetId, asset } = defect.inspectionItemResult.inspection;
+      let set = defectAssetsBySub.get(asset.substationId);
+      if (!set) defectAssetsBySub.set(asset.substationId, (set = new Set()));
+      set.add(assetId);
+    }
+
+    const substations = await this.prisma.substation.findMany({
+      where: { id: { in: grouped.map((g) => g.substationId) } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        mainheadId: true,
+        mainhead: {
+          select: {
+            id: true,
+            name: true,
+            operationalRegion: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    const subMeta = new Map(substations.map((s) => [s.id, s] as const));
+
+    type Bucket = {
+      id: string;
+      name: string;
+      assetCount: number;
+      inspectedCount: number;
+      defectAssetCount: number;
+      pencawangIds: Set<string>;
+      mainheadKeys: Set<string>;
+    };
+    const buckets = new Map<string, Bucket>();
+    for (const g of grouped) {
+      const meta = subMeta.get(g.substationId);
+      const key =
+        level === 'pencawang'
+          ? { id: g.substationId, name: meta?.name || meta?.code || 'Pencawang' }
+          : level === 'mainhead'
+            ? {
+                id: meta?.mainheadId ?? REGISTRY_UNASSIGNED,
+                name: meta?.mainhead?.name ?? 'Unassigned',
+              }
+            : {
+                id: meta?.mainhead?.operationalRegion?.id ?? REGISTRY_UNASSIGNED,
+                name: meta?.mainhead?.operationalRegion?.name ?? 'Unassigned',
+              };
+      let bucket = buckets.get(key.id);
+      if (!bucket) {
+        buckets.set(
+          key.id,
+          (bucket = {
+            id: key.id,
+            name: key.name,
+            assetCount: 0,
+            inspectedCount: 0,
+            defectAssetCount: 0,
+            pencawangIds: new Set(),
+            mainheadKeys: new Set(),
+          }),
+        );
+      }
+      bucket.assetCount += g._count;
+      bucket.inspectedCount += inspectedBySub.get(g.substationId) ?? 0;
+      bucket.defectAssetCount += defectAssetsBySub.get(g.substationId)?.size ?? 0;
+      bucket.pencawangIds.add(g.substationId);
+      bucket.mainheadKeys.add(meta?.mainheadId ?? REGISTRY_UNASSIGNED);
+    }
+
+    const groups = [...buckets.values()]
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        assetCount: b.assetCount,
+        inspectedCount: b.inspectedCount,
+        pendingCount: b.assetCount - b.inspectedCount,
+        defectAssetCount: b.defectAssetCount,
+        pencawangCount: b.pencawangIds.size,
+        ...(level === 'region' ? { mainheadCount: b.mainheadKeys.size } : {}),
+      }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' }),
+      );
+
+    return { level, groups, totals: this.registryTotals(groups) };
+  }
+
+  /** Sums across a level's groups — feeds the page KPI strip in one number set. */
+  private registryTotals(
+    groups: Array<{
+      assetCount: number;
+      inspectedCount: number;
+      defectAssetCount: number;
+      pencawangCount: number;
+    }>,
+  ) {
+    return groups.reduce<{
+      assetCount: number;
+      inspectedCount: number;
+      pendingCount: number;
+      defectAssetCount: number;
+      pencawangCount: number;
+    }>(
+      (totals, group) => ({
+        assetCount: totals.assetCount + group.assetCount,
+        inspectedCount: totals.inspectedCount + group.inspectedCount,
+        pendingCount:
+          totals.pendingCount + (group.assetCount - group.inspectedCount),
+        defectAssetCount: totals.defectAssetCount + group.defectAssetCount,
+        pencawangCount: totals.pencawangCount + group.pencawangCount,
+      }),
+      {
+        assetCount: 0,
+        inspectedCount: 0,
+        pendingCount: 0,
+        defectAssetCount: 0,
+        pencawangCount: 0,
+      },
+    );
   }
 
   async create(user: RequestUser, dto: CreateAssetDto) {
