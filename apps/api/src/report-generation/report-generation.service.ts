@@ -217,12 +217,16 @@ const RUN_RUNNING = 'RUNNING';
 const RUN_COMPLETED = 'COMPLETED';
 const RUN_FAILED = 'FAILED';
 
-/** The lifecycle states a compile may start from (mirrors generateReport's
- *  allowedFrom): the DC's review queue, or the deprecated manager-approved
- *  state for in-flight surveys. */
+/** The lifecycle states a compile may start from: the DC's review queue, the
+ *  deprecated manager-approved state for in-flight surveys, AND an already
+ *  frozen survey (LAPORAN SELESAI) — that last one is a REGENERATE: the report
+ *  is re-issued from current data with the currently-active template as a NEW
+ *  immutable version (downloads always serve the latest; older versions stay
+ *  stored), e.g. after a template upgrade. */
 const COMPILABLE_LIFECYCLE_STATES: SurveyLifecycleStatus[] = [
   SurveyLifecycleStatus.RONDAAN_SELESAI,
   SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+  SurveyLifecycleStatus.LAPORAN_SELESAI,
 ];
 
 @Injectable()
@@ -438,8 +442,8 @@ export class ReportGenerationService implements OnModuleInit {
       )
     ) {
       throw new BadRequestException(
-        'A report is compiled from RONDAAN SELESAI (the DC review queue) ' +
-          'or DISAHKAN PENGURUS.',
+        'A report is compiled from RONDAAN SELESAI (the DC review queue) or ' +
+          'DISAHKAN PENGURUS — or regenerated from LAPORAN SELESAI.',
       );
     }
 
@@ -742,12 +746,20 @@ export class ReportGenerationService implements OnModuleInit {
       );
     }
 
+    // A run started FROM LAPORAN SELESAI is a REGENERATE: the survey stays
+    // where it is (the original laporanSelesaiAt is the completion record),
+    // the new volumes commit as the next version, and the audit trail carries
+    // a self-transition event naming the re-issued version.
+    const isRegenerate =
+      visit.lifecycleStatus === SurveyLifecycleStatus.LAPORAN_SELESAI;
+    const version = createInputs[0]?.version;
+
     const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.siteVisit.update({
         where: { id: siteVisitId },
         data: {
           lifecycleStatus: SurveyLifecycleStatus.LAPORAN_SELESAI,
-          laporanSelesaiAt: new Date(),
+          ...(isRegenerate ? {} : { laporanSelesaiAt: new Date() }),
         },
       }),
       this.prisma.siteVisitLifecycleEvent.create({
@@ -755,6 +767,9 @@ export class ReportGenerationService implements OnModuleInit {
           siteVisitId,
           fromStatus: visit.lifecycleStatus,
           toStatus: SurveyLifecycleStatus.LAPORAN_SELESAI,
+          remark: isRegenerate
+            ? `Laporan dijana semula (v${version}) dengan templat semasa.`
+            : null,
           createdByUserId: user.id,
         },
       }),
@@ -767,7 +782,9 @@ export class ReportGenerationService implements OnModuleInit {
       }),
     ];
 
-    if (releaseDefectsOnReport()) {
+    // The RELEASE_ON_REPORT defect handoff fires only on the FIRST freeze —
+    // a regenerate re-issues the document, not the maintenance handoff.
+    if (!isRegenerate && releaseDefectsOnReport()) {
       const releasePlan = await buildVisitReleasePlan(this.prisma, siteVisitId, {
         scope: 'ALL',
         actorUserId: user.id,

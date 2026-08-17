@@ -649,6 +649,28 @@ function SurveyLifecyclePanel({
 
           {status === "LAPORAN_SELESAI" && canReport ? downloadButtons : null}
 
+          {/* Regenerate: re-issues the frozen report from current data with the
+              currently-active template as a NEW version (downloads serve the
+              latest; older versions stay stored for audit). */}
+          {status === "LAPORAN_SELESAI" && canReport ? (
+            compileRunning && reportRun ? (
+              <span className="inline-flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--info-border)] bg-[var(--info-bg)] px-3 py-2 text-sm font-semibold text-[var(--info-text)]">
+                <RefreshCw size={15} className="animate-spin" />
+                Menjana semula… {reportRun.processedAssets}/{reportRun.totalAssets}{" "}
+                tiang
+              </span>
+            ) : (
+              <Tbtn variant="secondary" onClick={onGenerateReport} disabled={isBusy}>
+                {pendingAction === "generate-report" ? (
+                  <RefreshCw size={15} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={15} />
+                )}
+                Regenerate report (new template)
+              </Tbtn>
+            )
+          ) : null}
+
           {status === "LAPORAN_SELESAI" && canGovern ? (
             <Tbtn variant="primary" onClick={onArchive} disabled={isBusy}>
               {pendingAction === "archive" ? (
