@@ -393,6 +393,7 @@ function normalizeSiteVisit(rawVisit: unknown, index: number): SiteVisitListItem
     displayStatus,
     displayStatusLabel:
       firstString(record, ["displayStatusLabel"]) ?? DISPLAY_STATUS_LABELS[displayStatus],
+    lifecycleStatus: firstString(record, ["lifecycleStatus"]) ?? null,
     validationStatus: normalizeValidationStatus(firstString(record, ["validationStatus"])),
     operationalHealthStatus: normalizeHealthStatus(
       firstString(record, ["operationalHealthStatus", "healthStatus"]),

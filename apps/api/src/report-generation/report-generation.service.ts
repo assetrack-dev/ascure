@@ -8,7 +8,9 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import archiver from 'archiver';
 import { randomUUID } from 'crypto';
+import { existsSync } from 'fs';
 import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
@@ -214,7 +216,13 @@ const REPORT_VOLUME_SIZE = Math.max(
 /** Sanity backstop on a single compile run (well above any real Pencawang). */
 const MAX_ASSETS_PER_COMPILE = 2000;
 
-/** SiteVisitReportRun.status values. */
+/** Most site visits accepted into one batch generate / batch ZIP download. */
+const BATCH_COMPILE_MAX = 20;
+
+/** SiteVisitReportRun.status values. QUEUED runs belong to a batch and are
+ *  waiting their turn — the batch loop compiles them strictly one at a time
+ *  so a 10-survey batch never floods Gotenberg. */
+const RUN_QUEUED = 'QUEUED';
 const RUN_RUNNING = 'RUNNING';
 const RUN_COMPLETED = 'COMPLETED';
 const RUN_FAILED = 'FAILED';
@@ -450,12 +458,12 @@ export class ReportGenerationService implements OnModuleInit {
     }
 
     const running = await this.prisma.siteVisitReportRun.findFirst({
-      where: { siteVisitId, status: RUN_RUNNING },
+      where: { siteVisitId, status: { in: [RUN_RUNNING, RUN_QUEUED] } },
       select: { id: true },
     });
     if (running) {
       throw new ConflictException(
-        'A report compile is already running for this survey.',
+        'A report compile is already queued or running for this survey.',
       );
     }
 
@@ -515,6 +523,14 @@ export class ReportGenerationService implements OnModuleInit {
       });
       if (!run) {
         return;
+      }
+      if (run.status === RUN_QUEUED) {
+        // A batch run's turn has come: flip it live and restart its clock so
+        // the progress panel times the compile, not the time spent queued.
+        await this.prisma.siteVisitReportRun.update({
+          where: { id: runId },
+          data: { status: RUN_RUNNING, startedAt: new Date() },
+        });
       }
       const siteVisit = await this.prisma.siteVisit.findUnique({
         where: { id: run.siteVisitId },
@@ -932,6 +948,391 @@ export class ReportGenerationService implements OnModuleInit {
 
     const buffer = await readFile(resolveUploadPath(report.storageKey));
     return { buffer, filename: report.fileName };
+  }
+
+  // ─── Batch generate + batch download ──────────────────────────────────────
+
+  /**
+   * Queue a compile for several surveys at once. Each visit is fast-validated
+   * with the same rules as {@link startCompileRun}; invalid ones are reported
+   * back as `skipped` (with the reason) instead of failing the whole batch.
+   * Accepted visits get a QUEUED run row each, then a detached loop compiles
+   * them strictly ONE AT A TIME — Gotenberg and the API only ever carry a
+   * single compile's load, exactly as if an operator pressed Generate on each
+   * visit in turn. Progress is polled per-visit via {@link getBatchStatus}.
+   */
+  async startBatchCompile(
+    user: RequestUser,
+    siteVisitIds: string[],
+  ): Promise<{
+    accepted: Array<{ siteVisitId: string; label: string; totalAssets: number }>;
+    skipped: Array<{ siteVisitId: string; label: string; reason: string }>;
+  }> {
+    await this.assertCanReport(user);
+
+    const ids = [...new Set(siteVisitIds)];
+    if (ids.length === 0) {
+      throw new BadRequestException('No site visits were selected.');
+    }
+    if (ids.length > BATCH_COMPILE_MAX) {
+      throw new BadRequestException(
+        `A batch can generate at most ${BATCH_COMPILE_MAX} reports at a time.`,
+      );
+    }
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { id: { in: ids }, tenantId: user.tenantId },
+      select: {
+        id: true,
+        status: true,
+        lifecycleStatus: true,
+        pencawangName: true,
+        pencawangCode: true,
+        substation: { select: { name: true } },
+        _count: { select: { visitAssets: true } },
+      },
+    });
+    const visitById = new Map(visits.map((visit) => [visit.id, visit]));
+
+    const busyRuns = await this.prisma.siteVisitReportRun.findMany({
+      where: {
+        siteVisitId: { in: ids },
+        status: { in: [RUN_RUNNING, RUN_QUEUED] },
+      },
+      select: { siteVisitId: true },
+    });
+    const busy = new Set(busyRuns.map((run) => run.siteVisitId));
+
+    const accepted: Array<{
+      siteVisitId: string;
+      label: string;
+      totalAssets: number;
+    }> = [];
+    const skipped: Array<{
+      siteVisitId: string;
+      label: string;
+      reason: string;
+    }> = [];
+    for (const id of ids) {
+      const visit = visitById.get(id);
+      const label =
+        visit?.substation?.name ??
+        visit?.pencawangName ??
+        visit?.pencawangCode ??
+        id;
+      if (!visit) {
+        skipped.push({ siteVisitId: id, label, reason: 'Visit not found.' });
+        continue;
+      }
+      if (visit.status === SiteVisitStatus.CANCELLED) {
+        skipped.push({ siteVisitId: id, label, reason: 'Visit is cancelled.' });
+        continue;
+      }
+      if (
+        !COMPILABLE_LIFECYCLE_STATES.includes(
+          visit.lifecycleStatus as SurveyLifecycleStatus,
+        )
+      ) {
+        skipped.push({
+          siteVisitId: id,
+          label,
+          reason: 'Not in a report-ready state (needs RONDAAN SELESAI).',
+        });
+        continue;
+      }
+      if (busy.has(id)) {
+        skipped.push({
+          siteVisitId: id,
+          label,
+          reason: 'A compile is already queued or running.',
+        });
+        continue;
+      }
+      const totalAssets = visit._count.visitAssets;
+      if (totalAssets === 0) {
+        skipped.push({ siteVisitId: id, label, reason: 'No linked assets.' });
+        continue;
+      }
+      if (totalAssets > MAX_ASSETS_PER_COMPILE) {
+        skipped.push({
+          siteVisitId: id,
+          label,
+          reason: `Exceeds the ${MAX_ASSETS_PER_COMPILE}-asset compile cap.`,
+        });
+        continue;
+      }
+      accepted.push({ siteVisitId: id, label, totalAssets });
+    }
+
+    if (accepted.length > 0) {
+      // One health check for the whole batch — fail fast before queueing.
+      if (!(await this.gotenberg.isHealthy())) {
+        throw new ServiceUnavailableException(
+          'The document conversion service (Gotenberg) is unavailable. ' +
+            'Ensure the ascure-gotenberg container is running, then retry.',
+        );
+      }
+
+      const runIds: string[] = [];
+      for (const entry of accepted) {
+        const run = await this.prisma.siteVisitReportRun.create({
+          data: {
+            tenantId: user.tenantId,
+            siteVisitId: entry.siteVisitId,
+            status: RUN_QUEUED,
+            totalAssets: entry.totalAssets,
+            startedByUserId: user.id,
+          },
+          select: { id: true },
+        });
+        runIds.push(run.id);
+      }
+
+      // Detached on purpose (same contract as the single-visit path): the
+      // request returns now; the run rows are the progress/result channel.
+      void this.executeBatchRuns(runIds, user);
+    }
+
+    return { accepted, skipped };
+  }
+
+  /** The background body of a batch: compile each queued run in order, one at
+   *  a time. executeCompileRun handles its own failure-marking; a crash there
+   *  must never take down the rest of the queue. */
+  private async executeBatchRuns(
+    runIds: string[],
+    user: RequestUser,
+  ): Promise<void> {
+    for (const runId of runIds) {
+      try {
+        await this.executeCompileRun(runId, user);
+      } catch (error) {
+        this.logger.error(
+          `Batch compile run ${runId} crashed outside its own handler: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  /** One poll for a whole selection: each visit's latest run (queued/running/
+   *  completed/failed + progress) and its latest compiled version, if any. */
+  async getBatchStatus(
+    user: RequestUser,
+    siteVisitIds: string[],
+  ): Promise<
+    Array<{
+      siteVisitId: string;
+      run: {
+        status: string;
+        totalAssets: number;
+        processedAssets: number;
+        error: string | null;
+        startedAt: Date;
+        finishedAt: Date | null;
+      } | null;
+      report: { version: number; partCount: number; generatedAt: Date } | null;
+    }>
+  > {
+    await this.assertCanReport(user);
+
+    const ids = [...new Set(siteVisitIds)].slice(0, 50);
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { id: { in: ids }, tenantId: user.tenantId },
+      select: { id: true },
+    });
+    const validIds = visits.map((visit) => visit.id);
+
+    const [runs, reports] = await Promise.all([
+      this.prisma.siteVisitReportRun.findMany({
+        where: { siteVisitId: { in: validIds } },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          siteVisitId: true,
+          status: true,
+          totalAssets: true,
+          processedAssets: true,
+          error: true,
+          startedAt: true,
+          finishedAt: true,
+        },
+      }),
+      this.prisma.siteVisitReport.findMany({
+        where: { siteVisitId: { in: validIds }, status: 'COMPLETED' },
+        orderBy: [{ version: 'desc' }, { part: 'asc' }],
+        select: {
+          siteVisitId: true,
+          version: true,
+          partCount: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    // Rows are newest-first; the first seen per visit is its latest.
+    const latestRun = new Map<string, (typeof runs)[number]>();
+    for (const run of runs) {
+      if (!latestRun.has(run.siteVisitId)) {
+        latestRun.set(run.siteVisitId, run);
+      }
+    }
+    const latestReport = new Map<string, (typeof reports)[number]>();
+    for (const report of reports) {
+      if (!latestReport.has(report.siteVisitId)) {
+        latestReport.set(report.siteVisitId, report);
+      }
+    }
+
+    return validIds.map((siteVisitId) => {
+      const run = latestRun.get(siteVisitId) ?? null;
+      const report = latestReport.get(siteVisitId) ?? null;
+      return {
+        siteVisitId,
+        run: run
+          ? {
+              status: run.status,
+              totalAssets: run.totalAssets,
+              processedAssets: run.processedAssets,
+              error: run.error,
+              startedAt: run.startedAt,
+              finishedAt: run.finishedAt,
+            }
+          : null,
+        report: report
+          ? {
+              version: report.version,
+              partCount: report.partCount,
+              generatedAt: report.createdAt,
+            }
+          : null,
+      };
+    });
+  }
+
+  /**
+   * Stream the LATEST compiled report of each selected visit into one ZIP.
+   * PDFs are read straight off disk (never buffered whole into memory) and
+   * stored uncompressed — PDF content doesn't deflate meaningfully and store
+   * keeps the stream fast. Visits without a compiled report (or whose file is
+   * missing on disk) are listed in SENARAI.txt instead of silently dropped.
+   */
+  async createBatchZip(
+    user: RequestUser,
+    siteVisitIds: string[],
+  ): Promise<{ archive: archiver.Archiver; fileName: string }> {
+    await this.assertCanReport(user);
+
+    const ids = [...new Set(siteVisitIds)];
+    if (ids.length === 0) {
+      throw new BadRequestException('No site visits were selected.');
+    }
+    if (ids.length > BATCH_COMPILE_MAX) {
+      throw new BadRequestException(
+        `A batch can download at most ${BATCH_COMPILE_MAX} reports at a time.`,
+      );
+    }
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { id: { in: ids }, tenantId: user.tenantId },
+      select: {
+        id: true,
+        pencawangName: true,
+        pencawangCode: true,
+        substation: { select: { name: true } },
+      },
+    });
+    if (visits.length === 0) {
+      throw new NotFoundException('None of the selected site visits exist.');
+    }
+
+    const reports = await this.prisma.siteVisitReport.findMany({
+      where: {
+        siteVisitId: { in: visits.map((visit) => visit.id) },
+        status: 'COMPLETED',
+      },
+      orderBy: [{ version: 'desc' }, { part: 'asc' }],
+      select: {
+        siteVisitId: true,
+        version: true,
+        part: true,
+        partCount: true,
+        storageKey: true,
+      },
+    });
+    // Keep only each visit's latest version (rows are version-desc, part-asc).
+    const latestVersion = new Map<string, number>();
+    for (const report of reports) {
+      if (!latestVersion.has(report.siteVisitId)) {
+        latestVersion.set(report.siteVisitId, report.version);
+      }
+    }
+
+    const archive = archiver('zip', { store: true });
+    const manifest: string[] = [];
+    const usedNames = new Set<string>();
+    let included = 0;
+
+    for (const visit of visits) {
+      const label =
+        visit.substation?.name ??
+        visit.pencawangName ??
+        visit.pencawangCode ??
+        visit.id;
+      const version = latestVersion.get(visit.id);
+      if (version === undefined) {
+        manifest.push(`TIADA LAPORAN — ${label} (belum dijana)`);
+        continue;
+      }
+      const parts = reports.filter(
+        (report) =>
+          report.siteVisitId === visit.id && report.version === version,
+      );
+      for (const part of parts) {
+        const diskPath = resolveUploadPath(part.storageKey);
+        // A missing file must not abort the whole stream mid-response.
+        if (!existsSync(diskPath)) {
+          manifest.push(
+            `FAIL HILANG — ${label} v${version}` +
+              (part.partCount > 1 ? ` jilid ${part.part}` : ''),
+          );
+          continue;
+        }
+        let entryName =
+          `${this.sanitizeForFilename(label)}-laporan-v${version}` +
+          (part.partCount > 1 ? `-jilid-${part.part}` : '') +
+          '.pdf';
+        // Two visits can share a Pencawang name — keep entries unique.
+        if (usedNames.has(entryName)) {
+          entryName = entryName.replace(
+            /\.pdf$/,
+            `-${visit.id.slice(0, 8)}.pdf`,
+          );
+        }
+        usedNames.add(entryName);
+        archive.file(diskPath, { name: entryName });
+        manifest.push(
+          `${entryName} — ${label} v${version}` +
+            (part.partCount > 1 ? ` (jilid ${part.part}/${part.partCount})` : ''),
+        );
+        included += 1;
+      }
+    }
+
+    if (included === 0) {
+      throw new NotFoundException(
+        'None of the selected surveys have a compiled report yet.',
+      );
+    }
+
+    archive.append(
+      `Laporan ASCURE — ${new Date().toISOString()}\n\n` +
+        manifest.join('\n') +
+        '\n',
+      { name: 'SENARAI.txt' },
+    );
+
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return { archive, fileName: `ascure-laporan-${stamp}.zip` };
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────

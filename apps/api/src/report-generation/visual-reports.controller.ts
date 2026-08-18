@@ -1,14 +1,16 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Param,
+  Post,
   Query,
   Res,
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
-import { IsUUID } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsUUID } from 'class-validator';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -23,6 +25,37 @@ class AssetIdParamDto {
 class SiteVisitIdParamDto {
   @IsUUID()
   siteVisitId!: string;
+}
+
+class BatchSiteVisitsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(20)
+  @IsUUID(undefined, { each: true })
+  siteVisitIds!: string[];
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Parse a comma-separated `ids` query into validated UUIDs (capped). */
+function parseIdsQuery(raw: string | undefined, cap: number): string[] {
+  const ids = (raw ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (ids.length === 0) {
+    throw new BadRequestException('ids query parameter is required.');
+  }
+  if (ids.length > cap) {
+    throw new BadRequestException(`At most ${cap} ids per request.`);
+  }
+  for (const id of ids) {
+    if (!UUID_PATTERN.test(id)) {
+      throw new BadRequestException(`"${id}" is not a valid id.`);
+    }
+  }
+  return ids;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -72,6 +105,54 @@ export class VisualReportsController {
       );
     this.setPdfHeaders(res, filename);
     return new StreamableFile(buffer);
+  }
+
+  /** Queue compiles for several surveys; they run one at a time in the
+   *  background. Returns which were accepted and which skipped (with reason). */
+  @Post('batch-generate')
+  batchGenerate(@CurrentUser() user: RequestUser, @Body() dto: BatchSiteVisitsDto) {
+    return this.reportGenerationService.startBatchCompile(
+      user,
+      dto.siteVisitIds,
+    );
+  }
+
+  /** One poll for a whole selection: latest run + latest compiled version per
+   *  visit. `ids` is comma-separated. */
+  @Get('batch-status')
+  batchStatus(@CurrentUser() user: RequestUser, @Query('ids') ids?: string) {
+    return this.reportGenerationService.getBatchStatus(
+      user,
+      parseIdsQuery(ids, 50),
+    );
+  }
+
+  /** Stream the latest compiled report of each selected visit as ONE ZIP
+   *  (SENARAI.txt inside lists what was included/missing). */
+  @Get('batch-download.zip')
+  async batchDownload(
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+    @Query('ids') ids?: string,
+  ): Promise<void> {
+    const { archive, fileName } =
+      await this.reportGenerationService.createBatchZip(
+        user,
+        parseIdsQuery(ids, 20),
+      );
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${fileName}"`,
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    archive.on('error', (error) => {
+      // Headers are already gone — all we can do is cut the stream so the
+      // client sees a failed download instead of a silently truncated ZIP.
+      res.destroy(error);
+    });
+    archive.pipe(res);
+    await archive.finalize();
   }
 
   /** Progress of the (background) report compile + the latest version's volume
