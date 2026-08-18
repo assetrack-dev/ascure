@@ -199,14 +199,16 @@ type AssetReportInspection = Prisma.InspectionGetPayload<{
 const A4_PORTRAIT: [number, number] = [595.28, 841.89];
 
 /**
- * Poles per compiled VOLUME (Jilid). Large surveys compile into several bound
- * PDFs — one huge merged file is unmanageable to download/open/print and the
- * whole-report buffer would spike the API's memory. Overridable via env for
- * testing (REPORT_VOLUME_SIZE=1 forces one volume per pole).
+ * Poles per compiled VOLUME (Jilid). Photos are downscaled before embedding
+ * (report-image.util.ts), so a normal survey — even 300+ poles — compiles into
+ * ONE manageable PDF; volume splitting survives only as a backstop for
+ * enormous surveys where a single file would again strain memory/downloads.
+ * Overridable via env for testing (REPORT_VOLUME_SIZE=1 forces one volume per
+ * pole).
  */
 const REPORT_VOLUME_SIZE = Math.max(
   1,
-  Number(process.env.REPORT_VOLUME_SIZE ?? 120) || 120,
+  Number(process.env.REPORT_VOLUME_SIZE ?? 500) || 500,
 );
 
 /** Sanity backstop on a single compile run (well above any real Pencawang). */
@@ -668,7 +670,11 @@ export class ReportGenerationService implements OnModuleInit {
         }
 
         const bytes = Buffer.from(await volumeDoc.save());
-        const fileName = `${Date.now()}-laporan-v${version}-jilid-${part}.pdf`;
+        // Single-volume reports (the normal case) drop the Jilid suffix.
+        const fileName =
+          volumes.length > 1
+            ? `${Date.now()}-laporan-v${version}-jilid-${part}.pdf`
+            : `${Date.now()}-laporan-v${version}.pdf`;
         await writeFile(resolve(directory, fileName), bytes);
         writtenFiles.push(resolve(directory, fileName));
 
