@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { extname } from 'path';
 import { MimeType } from 'easy-template-x';
 import type { ImageContent } from 'easy-template-x';
+import sharp from 'sharp';
 import { resolveUploadPath } from '../common/uploads.constants';
 
 /** easy-template-x image formats we can embed (LibreOffice renders all of them). */
@@ -28,6 +29,18 @@ const EXTENSION_TO_FORMAT: Record<string, ImageContent['format']> = {
  */
 const MAX_IMAGE_WIDTH = 130;
 const MAX_IMAGE_HEIGHT = 175;
+
+/**
+ * Photos are re-encoded down to ~3× the display box before embedding. Camera
+ * JPEGs arrive at 2–4 MB but render ~1.35 in wide — embedding them verbatim
+ * ballooned a 120-pole volume to ~250 MB. 3× the 96-dpi display box keeps
+ * ~300 dpi print sharpness at ~40–60 KB per photo. The full-resolution
+ * original always stays on disk under /uploads — only the embedded copy
+ * shrinks.
+ */
+const EMBED_MAX_WIDTH = MAX_IMAGE_WIDTH * 3; // 390
+const EMBED_MAX_HEIGHT = MAX_IMAGE_HEIGHT * 3; // 525
+const EMBED_JPEG_QUALITY = 78;
 
 /**
  * Photo records store either a `storageKey` (relative to the uploads dir, e.g.
@@ -79,9 +92,53 @@ export async function loadReportImage(photo: {
     return null;
   }
 
+  const downscaled = await downscaleForEmbed(source, format);
+  if (downscaled) {
+    const { width, height } = fitWithinBox(downscaled);
+    return {
+      _type: 'image',
+      source: downscaled.buffer,
+      format: MimeType.Jpeg,
+      width,
+      height,
+    };
+  }
+
+  // Downscale unavailable (animated GIF/BMP passthrough, or a corrupt file
+  // sharp rejects) — embed the original bytes and sniff the header, as before.
   const { width, height } = fitWithinBox(sniffImageSize(source, format));
 
   return { _type: 'image', source, format, width, height };
+}
+
+/**
+ * Re-encode a still photo down to the embed box as JPEG. Returns `null` for
+ * formats we deliberately pass through (GIF may animate, BMP is rare) and for
+ * anything sharp cannot decode — the caller then embeds the original bytes.
+ */
+async function downscaleForEmbed(
+  source: Buffer,
+  format: ImageContent['format'],
+): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+  if (format !== MimeType.Jpeg && format !== MimeType.Png) {
+    return null;
+  }
+  try {
+    const { data, info } = await sharp(source)
+      // Bake EXIF orientation into the pixels — LibreOffice ignores the tag.
+      .rotate()
+      .resize(EMBED_MAX_WIDTH, EMBED_MAX_HEIGHT, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      // PNG transparency composites onto white rather than JPEG black.
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: EMBED_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer({ resolveWithObject: true });
+    return { buffer: data, width: info.width, height: info.height };
+  } catch {
+    return null;
+  }
 }
 
 /** Largest plausible photo edge; anything beyond is treated as a bad header. */
