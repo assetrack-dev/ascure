@@ -110,6 +110,63 @@ export async function downloadAssetReportPreview(
   );
 }
 
+// ─── Batch report generation + download ─────────────────────────────────────
+
+export interface BatchGenerateResult {
+  accepted: Array<{ siteVisitId: string; label: string; totalAssets: number }>;
+  skipped: Array<{ siteVisitId: string; label: string; reason: string }>;
+}
+
+export interface BatchStatusEntry {
+  siteVisitId: string;
+  run: {
+    status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | string;
+    totalAssets: number;
+    processedAssets: number;
+    error: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+  report: { version: number; partCount: number; generatedAt: string } | null;
+}
+
+/** Queue report compiles for several surveys; the server runs them one at a
+ *  time in the background. Returns which were accepted vs skipped (with why). */
+export function batchGenerateReports(
+  token: string,
+  siteVisitIds: string[],
+): Promise<BatchGenerateResult> {
+  return apiRequest<BatchGenerateResult>("/reports/batch-generate", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ siteVisitIds }),
+  });
+}
+
+/** One poll for a whole selection: latest run + latest compiled version each. */
+export function fetchBatchReportStatus(
+  token: string,
+  siteVisitIds: string[],
+): Promise<BatchStatusEntry[]> {
+  const ids = siteVisitIds.map(encodeURIComponent).join(",");
+  return apiRequest<BatchStatusEntry[]>(`/reports/batch-status?ids=${ids}`, {
+    token,
+  });
+}
+
+/** Download the latest compiled report of each selected visit as ONE ZIP. */
+export async function downloadReportsZip(
+  token: string,
+  siteVisitIds: string[],
+): Promise<void> {
+  const ids = siteVisitIds.map(encodeURIComponent).join(",");
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/batch-download.zip?ids=${ids}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "ascure-laporan.zip");
+}
+
 /** Download a frozen compiled survey report PDF (latest version). `part`
  *  selects the volume (Jilid) when the survey compiled into several. */
 export async function downloadCompiledReport(

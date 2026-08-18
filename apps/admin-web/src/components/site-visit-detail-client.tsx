@@ -412,8 +412,10 @@ function SurveyLifecyclePanel({
   const amendmentVisible = canManagerAmend || canDcAmend;
 
   // The background compile run: progress while it works, an amber note if the
-  // last one failed (the survey stayed put — Generate simply retries).
-  const compileRunning = reportRun?.status === "RUNNING";
+  // last one failed (the survey stayed put — Generate simply retries). QUEUED
+  // runs come from the list page's batch generate — same treatment as RUNNING.
+  const compileRunning =
+    reportRun?.status === "RUNNING" || reportRun?.status === "QUEUED";
   const compileFailed =
     reportRun?.status === "FAILED" &&
     (status === "RONDAAN_SELESAI" || status === "DISAHKAN_PENGURUS");
@@ -2498,7 +2500,8 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   }, [lifecycleStatusValue, refreshReportStatus]);
 
   useEffect(() => {
-    if (reportStatus?.run?.status !== "RUNNING") return;
+    const runStatus = reportStatus?.run?.status;
+    if (runStatus !== "RUNNING" && runStatus !== "QUEUED") return;
     const timer = setInterval(() => {
       void refreshReportStatus();
     }, 3000);
@@ -2509,7 +2512,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   const prevRunStatus = useRef<string | null>(null);
   useEffect(() => {
     const current = reportStatus?.run?.status ?? null;
-    if (prevRunStatus.current === "RUNNING" && current === "COMPLETED") {
+    if (
+      (prevRunStatus.current === "RUNNING" || prevRunStatus.current === "QUEUED") &&
+      current === "COMPLETED"
+    ) {
       const token = session?.token;
       if (token) void loadVisit(token, false);
     }

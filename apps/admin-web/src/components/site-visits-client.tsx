@@ -9,6 +9,9 @@ import {
   CalendarDays,
   ChevronsUpDown,
   CheckCircle2,
+  Download,
+  FileText,
+  Loader2,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -42,6 +45,11 @@ import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import { fetchTeams } from "@/lib/users";
+import {
+  batchGenerateReports,
+  downloadReportsZip,
+  fetchBatchReportStatus,
+} from "@/lib/report-templates";
 import { createSiteVisit, fetchSiteVisits, fetchSubstations } from "@/lib/site-visits";
 import type { AuthSession } from "@/types/auth";
 import type { EnterpriseOptions } from "@/types/enterprise";
@@ -101,6 +109,57 @@ const DEFAULT_SITE_VISIT_CREATE_FORM: SiteVisitCreateForm = {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 const AUTO_REFRESH_MS = 60000;
+
+/** Server-side batch cap (mirrors the API's BATCH_COMPILE_MAX). */
+const BATCH_REPORT_MAX = 20;
+const BATCH_POLL_MS = 4000;
+
+/** Survey lifecycle states the report compiler accepts (mirror of the API):
+ *  RONDAAN_SELESAI / DISAHKAN_PENGURUS compile fresh, LAPORAN_SELESAI
+ *  regenerates a new version. */
+const REPORT_READY_LIFECYCLES = new Set([
+  "RONDAAN_SELESAI",
+  "DISAHKAN_PENGURUS",
+  "LAPORAN_SELESAI",
+]);
+
+function isReportEligible(visit: SiteVisitListItem) {
+  return (
+    visit.lifecycleStatus !== null &&
+    REPORT_READY_LIFECYCLES.has(visit.lifecycleStatus)
+  );
+}
+
+type BatchPhase = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+
+interface BatchItem {
+  siteVisitId: string;
+  label: string;
+  phase: BatchPhase;
+  detail: string;
+  processed: number;
+  total: number;
+}
+
+const BATCH_PHASE_LABELS: Record<BatchPhase, string> = {
+  QUEUED: "Queued",
+  RUNNING: "Generating",
+  COMPLETED: "Done",
+  FAILED: "Failed",
+  SKIPPED: "Skipped",
+};
+
+function batchPhaseTone(phase: BatchPhase): Tone {
+  if (phase === "COMPLETED") return "success";
+  if (phase === "FAILED") return "critical";
+  if (phase === "SKIPPED") return "warning";
+  if (phase === "RUNNING") return "info";
+  return "neutral";
+}
+
+function isTerminalBatchPhase(phase: BatchPhase) {
+  return phase === "COMPLETED" || phase === "FAILED" || phase === "SKIPPED";
+}
 // Per-tab persistence of the Site Visits filter/sort/page view, so returning
 // from a visit detail restores the same filtered list.
 const FILTERS_STORAGE_KEY = "ascure:admin-web:site-visits-filters";
@@ -745,6 +804,14 @@ function SiteVisitsContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Batch report generation: which visits are ticked, the live progress of a
+  // running batch (null = no panel), and the two in-flight button states.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [batchItems, setBatchItems] = useState<BatchItem[] | null>(null);
+  const [batchError, setBatchError] = useState("");
+  const [isStartingBatch, setIsStartingBatch] = useState(false);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+
   // Persist the filter/sort/page view so returning from a visit detail (or any
   // back-navigation) restores the same filtered list instead of resetting.
   const filtersHydrated = useRef(false);
@@ -917,6 +984,154 @@ function SiteVisitsContent() {
       void loadCreateOptions(storedSession.token);
     }
   }, [loadCreateOptions, loadVisits]);
+
+  // ─── Batch report generation ──────────────────────────────────────────────
+
+  const canBatchReport =
+    session?.user?.role === "ADMIN" || session?.user?.canReport === true;
+
+  const toggleSelected = useCallback((visitId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(visitId)) {
+        next.delete(visitId);
+      } else {
+        next.add(visitId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBatchGenerate = useCallback(async () => {
+    if (!session?.token || selectedIds.size === 0) return;
+    setIsStartingBatch(true);
+    setBatchError("");
+    try {
+      const result = await batchGenerateReports(session.token, [...selectedIds]);
+      setBatchItems([
+        ...result.accepted.map((entry) => ({
+          siteVisitId: entry.siteVisitId,
+          label: entry.label,
+          phase: "QUEUED" as const,
+          detail: `${entry.totalAssets} assets`,
+          processed: 0,
+          total: entry.totalAssets,
+        })),
+        ...result.skipped.map((entry) => ({
+          siteVisitId: entry.siteVisitId,
+          label: entry.label,
+          phase: "SKIPPED" as const,
+          detail: entry.reason,
+          processed: 0,
+          total: 0,
+        })),
+      ]);
+      setSelectedIds(new Set());
+    } catch (batchStartError) {
+      if (batchStartError instanceof ApiError && batchStartError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setBatchError(
+        batchStartError instanceof Error
+          ? batchStartError.message
+          : "Unable to start the batch.",
+      );
+    } finally {
+      setIsStartingBatch(false);
+    }
+  }, [handleLogout, selectedIds, session?.token]);
+
+  const handleBatchDownload = useCallback(async () => {
+    if (!session?.token || selectedIds.size === 0) return;
+    setIsDownloadingZip(true);
+    setBatchError("");
+    try {
+      await downloadReportsZip(session.token, [...selectedIds]);
+    } catch (zipError) {
+      if (zipError instanceof ApiError && zipError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setBatchError(
+        zipError instanceof Error ? zipError.message : "Unable to download the ZIP.",
+      );
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  }, [handleLogout, selectedIds, session?.token]);
+
+  // Poll the batch's pending visits until every item is terminal, then refresh
+  // the list once so the flipped lifecycles (→ Completed) show without waiting
+  // for the 60s auto-refresh.
+  useEffect(() => {
+    if (!session?.token || !batchItems) {
+      return;
+    }
+    const pendingIds = batchItems
+      .filter((item) => !isTerminalBatchPhase(item.phase))
+      .map((item) => item.siteVisitId);
+    if (pendingIds.length === 0) {
+      return;
+    }
+    const token = session.token;
+    const intervalId = window.setInterval(async () => {
+      let statuses;
+      try {
+        statuses = await fetchBatchReportStatus(token, pendingIds);
+      } catch {
+        return; // transient poll failure — try again next tick
+      }
+      const byId = new Map(statuses.map((entry) => [entry.siteVisitId, entry]));
+      setBatchItems((current) => {
+        if (!current) return current;
+        let batchFinished = true;
+        const next = current.map((item) => {
+          if (isTerminalBatchPhase(item.phase)) {
+            return item;
+          }
+          const run = byId.get(item.siteVisitId)?.run;
+          const report = byId.get(item.siteVisitId)?.report;
+          if (!run) {
+            batchFinished = false;
+            return item;
+          }
+          if (run.status === "COMPLETED") {
+            return {
+              ...item,
+              phase: "COMPLETED" as const,
+              processed: run.totalAssets,
+              detail: report ? `v${report.version} ready` : "Ready",
+            };
+          }
+          if (run.status === "FAILED") {
+            return {
+              ...item,
+              phase: "FAILED" as const,
+              detail: run.error ?? "Compile failed.",
+            };
+          }
+          batchFinished = false;
+          if (run.status === "RUNNING") {
+            return {
+              ...item,
+              phase: "RUNNING" as const,
+              processed: run.processedAssets,
+              total: run.totalAssets,
+              detail: `${run.processedAssets}/${run.totalAssets} assets`,
+            };
+          }
+          return { ...item, phase: "QUEUED" as const };
+        });
+        if (batchFinished) {
+          void loadVisits(token, false);
+        }
+        return next;
+      });
+    }, BATCH_POLL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [batchItems, loadVisits, session?.token]);
 
   useEffect(() => {
     if (!autoRefresh || !session?.token) {
@@ -1093,6 +1308,18 @@ function SiteVisitsContent() {
     currentPage * pageSize,
   );
   const isReadOnly = session?.user?.role !== "ADMIN";
+  // Batch selection: which rows on this page can be ticked, and whether the
+  // header checkbox should read as "all ticked".
+  const eligiblePageIds = paginatedVisits
+    .filter(isReportEligible)
+    .map((visit) => visit.id);
+  const allPageSelected =
+    eligiblePageIds.length > 0 &&
+    eligiblePageIds.every((id) => selectedIds.has(id));
+  const batchBusy = isStartingBatch || isDownloadingZip;
+  const batchRunning =
+    batchItems !== null &&
+    batchItems.some((item) => !isTerminalBatchPhase(item.phase));
   const activeVisitCount = visits.filter((visit) =>
     ["ACTIVE", "OPEN", "IN_PROGRESS"].includes(visit.status),
   ).length;
@@ -1451,12 +1678,109 @@ function SiteVisitsContent() {
                     </FilterBar>
                   </div>
 
+                  {canBatchReport && selectedIds.size > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2.5 border-t border-[var(--line2)] bg-[var(--brand-tint)] px-5 py-2.5">
+                      <span className="text-[12.5px] font-semibold text-[var(--foreground)]">
+                        {selectedIds.size} selected
+                        {selectedIds.size > BATCH_REPORT_MAX
+                          ? ` — max ${BATCH_REPORT_MAX} per batch`
+                          : ""}
+                      </span>
+                      <Tbtn
+                        onClick={() => void handleBatchGenerate()}
+                        disabled={
+                          batchBusy ||
+                          batchRunning ||
+                          selectedIds.size > BATCH_REPORT_MAX
+                        }
+                        title="Compile the report of every selected survey, one at a time"
+                      >
+                        {isStartingBatch ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <FileText size={15} />
+                        )}
+                        Generate reports
+                      </Tbtn>
+                      <Tbtn
+                        onClick={() => void handleBatchDownload()}
+                        disabled={batchBusy || selectedIds.size > BATCH_REPORT_MAX}
+                        title="Download the latest compiled report of every selected survey as one ZIP"
+                      >
+                        {isDownloadingZip ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Download size={15} />
+                        )}
+                        Download ZIP
+                      </Tbtn>
+                      <Tbtn variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                        Clear
+                      </Tbtn>
+                      {batchError ? (
+                        <span className="text-[12px] font-medium text-[var(--critical-text)]">
+                          {batchError}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {batchItems ? (
+                    <div className="border-t border-[var(--line2)] px-5 py-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[var(--foreground)]">
+                          {batchRunning ? (
+                            <Loader2 size={14} className="animate-spin text-[var(--brand-strong)]" />
+                          ) : (
+                            <CheckCircle2 size={14} className="text-[var(--success-text)]" />
+                          )}
+                          Batch report generation —{" "}
+                          {batchItems.filter((item) => isTerminalBatchPhase(item.phase)).length}
+                          /{batchItems.length} finished
+                        </div>
+                        <Tbtn
+                          variant="ghost"
+                          onClick={() => setBatchItems(null)}
+                          disabled={batchRunning}
+                          title={
+                            batchRunning
+                              ? "The batch is still running on the server"
+                              : undefined
+                          }
+                        >
+                          <X size={14} />
+                          Close
+                        </Tbtn>
+                      </div>
+                      <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                        {batchItems.map((item) => (
+                          <li
+                            key={item.siteVisitId}
+                            className="flex min-w-0 items-center gap-2 text-[12.5px]"
+                          >
+                            <Chip tone={batchPhaseTone(item.phase)} dot>
+                              {BATCH_PHASE_LABELS[item.phase]}
+                            </Chip>
+                            <span
+                              className="truncate font-medium text-[var(--foreground)]"
+                              title={item.label}
+                            >
+                              {item.label}
+                            </span>
+                            <span className="shrink-0 text-[var(--muted-2)]">{item.detail}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[1120px] table-fixed text-left">
                       <colgroup>
+                        {canBatchReport ? <col className="w-[4%]" /> : null}
+                        <col className="w-[11%]" />
+                        <col className="w-[18%]" />
                         <col className="w-[12%]" />
-                        <col className="w-[20%]" />
-                        <col className="w-[13%]" />
                         <col className="w-[11%]" />
                         <col className="w-[18%]" />
                         <col className="w-[12%]" />
@@ -1464,6 +1788,28 @@ function SiteVisitsContent() {
                       </colgroup>
                       <thead>
                         <tr className={`border-b border-[var(--line)] ${tableHeadClass}`}>
+                          {canBatchReport ? (
+                            <th className={tableHeadCellClass}>
+                              <input
+                                type="checkbox"
+                                aria-label="Select every report-ready survey on this page"
+                                checked={allPageSelected}
+                                disabled={eligiblePageIds.length === 0}
+                                onChange={() =>
+                                  setSelectedIds((current) => {
+                                    const next = new Set(current);
+                                    if (allPageSelected) {
+                                      for (const id of eligiblePageIds) next.delete(id);
+                                    } else {
+                                      for (const id of eligiblePageIds) next.add(id);
+                                    }
+                                    return next;
+                                  })
+                                }
+                                className="h-4 w-4 cursor-pointer accent-[var(--brand-strong)]"
+                              />
+                            </th>
+                          ) : null}
                           <th className={tableHeadCellClass}>
                             <SortButton
                               label="Status"
@@ -1544,6 +1890,23 @@ function SiteVisitsContent() {
                             className={`${tableRowClass} cursor-pointer outline-none last:border-b-0 focus-visible:bg-[var(--brand-tint)]`}
                             aria-label={`Open site visit ${displayPencawang(visit)}`}
                           >
+                            {canBatchReport ? (
+                              <td
+                                className={tableCellClass}
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
+                              >
+                                {isReportEligible(visit) ? (
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select ${displayPencawang(visit)} for batch reports`}
+                                    checked={selectedIds.has(visit.id)}
+                                    onChange={() => toggleSelected(visit.id)}
+                                    className="h-4 w-4 cursor-pointer accent-[var(--brand-strong)]"
+                                  />
+                                ) : null}
+                              </td>
+                            ) : null}
                             <td className={tableCellClass}>
                               <StatusBadge
                                 displayStatus={visit.displayStatus}

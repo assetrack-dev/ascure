@@ -105,6 +105,9 @@ export interface SiteVisitListItem extends SiteVisitSummary {
   status: SiteVisitStatus;
   displayStatus: DisplayStatus;
   displayStatusLabel: string;
+  /** Raw survey lifecycle state (DALAM_RONDAAN … ARKIB); null for legacy rows.
+   *  Drives batch-report eligibility on the list (compilable states only). */
+  lifecycleStatus: string | null;
   validationStatus: SiteVisitValidationStatus;
   operationalHealthStatus: OperationalHealthStatus;
   isOverdue: boolean;
