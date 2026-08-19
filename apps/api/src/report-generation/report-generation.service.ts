@@ -946,8 +946,51 @@ export class ReportGenerationService implements OnModuleInit {
       );
     }
 
+    // Serve under the OWNER-FACING name (live Pencawang name), whatever the
+    // stored on-disk name is — old versions get the friendly name too.
+    const visit = await this.prisma.siteVisit.findUnique({
+      where: { id: siteVisitId },
+      select: {
+        pencawangName: true,
+        pencawangCode: true,
+        substation: { select: { name: true } },
+      },
+    });
+    const label =
+      visit?.substation?.name ?? visit?.pencawangName ?? visit?.pencawangCode;
+
     const buffer = await readFile(resolveUploadPath(report.storageKey));
-    return { buffer, filename: report.fileName };
+    return {
+      buffer,
+      filename: label
+        ? this.reportDisplayFilename(label, report.part, report.partCount)
+        : report.fileName,
+    };
+  }
+
+  /**
+   * The filename a human receives: `LAPORAN VISUAL <PENCAWANG>.pdf`, plus a
+   * JILID suffix when the survey compiled into several volumes. Spaces are
+   * kept (it's a document title, not a storage key); characters illegal on
+   * Windows/macOS are stripped. Version is intentionally omitted — it lives on
+   * the cover page and in the admin UI.
+   */
+  private reportDisplayFilename(
+    label: string,
+    part: number,
+    partCount: number,
+  ): string {
+    const cleaned =
+      label
+        .replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'LAPORAN';
+    return (
+      `LAPORAN VISUAL ${cleaned}` +
+      (partCount > 1 ? ` JILID ${part}` : '') +
+      '.pdf'
+    );
   }
 
   // ─── Batch generate + batch download ──────────────────────────────────────
@@ -1297,15 +1340,16 @@ export class ReportGenerationService implements OnModuleInit {
           );
           continue;
         }
-        let entryName =
-          `${this.sanitizeForFilename(label)}-laporan-v${version}` +
-          (part.partCount > 1 ? `-jilid-${part.part}` : '') +
-          '.pdf';
+        let entryName = this.reportDisplayFilename(
+          label,
+          part.part,
+          part.partCount,
+        );
         // Two visits can share a Pencawang name — keep entries unique.
         if (usedNames.has(entryName)) {
           entryName = entryName.replace(
             /\.pdf$/,
-            `-${visit.id.slice(0, 8)}.pdf`,
+            ` (${visit.id.slice(0, 8)}).pdf`,
           );
         }
         usedNames.add(entryName);
