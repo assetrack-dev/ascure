@@ -1457,7 +1457,12 @@ export class ReportGenerationService implements OnModuleInit {
         asset.latitude != null && asset.longitude != null
           ? `${asset.latitude}, ${asset.longitude}`
           : '',
-      noTiangLama: asset.noTiangLama ?? '',
+      // NO TIANG LAMA: the SAVR mobile workflow captures the painted label as
+      // the asset NAME (Asset Code = NO TIANG RONDAAN); only the F2 import
+      // populates asset.noTiangLama. Prefer the dedicated field, fall back to
+      // the name so field-created poles aren't blank — same rule as the Excel
+      // masterlist export (reports.service.ts).
+      noTiangLama: asset.noTiangLama ?? asset.name ?? '',
       // Live entity names first (what every screen shows since Deploy 127);
       // the visit's frozen snapshot is only a fallback.
       pencawang:
