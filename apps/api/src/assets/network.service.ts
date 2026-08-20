@@ -5,7 +5,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { FeederKind, Prisma, SwitchState, TieEdgeKind, UserRole } from '@prisma/client';
+import {
+  DefectStatus,
+  FeederKind,
+  InspectionCompletionStatus,
+  Prisma,
+  SwitchState,
+  TieEdgeKind,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { feederLineCode, renderNoTiangRondaan } from '../common/rondaan';
@@ -45,6 +53,32 @@ const POLE_SELECT = {
   noTiangLama: true,
   feederMemberships: RONDAAN_MEMBERSHIPS,
 } as const;
+
+/**
+ * Checklist item keys the route drawing (Lukisan Laluan) renders — the
+ * SAVR-KLB data-capture items that correspond to the layers of the DC's
+ * manual CAD drawing. Cable keys color the span feeding the pole; the rest
+ * become symbols/annotations at the pole.
+ */
+const ROUTE_DRAWING_KEYS = [
+  'saiz_tiang',
+  'jenis_tiang',
+  'cable_185_nmp',
+  'cable_95_nmp',
+  'cable_3x16_nmp',
+  'cable_1x16_nmp',
+  'cable_pvc_9064_4_cable',
+  'cable_pvc_7083_2_cable_1_cable',
+  'cable_pvc_7044',
+  'bare_7173',
+  'bare_7122',
+  'jumlah_umbang',
+  'umbang_terbang_support_pole',
+  'jumlah_blackbox',
+  'lvpt',
+  'jumlah_service',
+  'catatan_cable',
+];
 
 @Injectable()
 export class NetworkService {
@@ -358,6 +392,118 @@ export class NetworkService {
       noTiangRondaan: renderNoTiangRondaan(asset.feederMemberships) ?? asset.assetCode,
       noTiangLama: asset.noTiangLama,
     };
+  }
+
+  /**
+   * The TNB route drawing (Lukisan Laluan): the substation graph PLUS each
+   * pole's drawing attributes read from its latest SUBMITTED inspection — the
+   * SAVR-KLB checklist keys that the DC's manual CAD drawing encodes as layers
+   * (cable per span, pole height, stays, blackboxes, LVPT, service count) —
+   * and its open defect labels (the orange notes on the DC's sheet).
+   * Keys missing from a template simply come back absent — the drawing shows
+   * "Tiada Data Kabel" styling rather than failing.
+   */
+  async getRouteDrawing(user: RequestUser, substationId: string) {
+    const network = await this.getSubstationNetwork(user, substationId);
+    const assetIds = network.poles.map((pole) => pole.id);
+    if (assetIds.length === 0) {
+      return { ...network, drawing: {} };
+    }
+
+    // Latest SUBMITTED inspection per pole (newest-first, first seen wins).
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        assetId: { in: assetIds },
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      select: { id: true, assetId: true },
+    });
+    const latestByAsset = new Map<string, string>();
+    for (const inspection of inspections) {
+      if (!latestByAsset.has(inspection.assetId)) {
+        latestByAsset.set(inspection.assetId, inspection.id);
+      }
+    }
+    const latestIds = [...latestByAsset.values()];
+    const assetByInspection = new Map(
+      [...latestByAsset.entries()].map(([assetId, id]) => [id, assetId]),
+    );
+
+    const [results, defects] = await Promise.all([
+      latestIds.length === 0
+        ? []
+        : this.prisma.inspectionResult.findMany({
+            where: {
+              inspectionId: { in: latestIds },
+              templateItem: { key: { in: ROUTE_DRAWING_KEYS } },
+            },
+            select: {
+              inspectionId: true,
+              valueText: true,
+              valueNumber: true,
+              valueBoolean: true,
+              valueJson: true,
+              templateItem: { select: { key: true } },
+            },
+          }),
+      this.prisma.defect.findMany({
+        where: {
+          status: {
+            in: [
+              DefectStatus.OPEN,
+              DefectStatus.IN_PROGRESS,
+              DefectStatus.MONITORING,
+            ],
+          },
+          inspectionItemResult: {
+            inspection: { tenantId: user.tenantId, assetId: { in: assetIds } },
+          },
+        },
+        select: {
+          severity: true,
+          isEmergency: true,
+          inspectionItemResult: {
+            select: { label: true, inspection: { select: { assetId: true } } },
+          },
+        },
+      }),
+    ]);
+
+    const drawing: Record<
+      string,
+      {
+        items: Record<string, string | number | boolean | unknown>;
+        defects: Array<{ label: string; severity: string; isEmergency: boolean }>;
+      }
+    > = {};
+    const entryFor = (assetId: string) =>
+      (drawing[assetId] ??= { items: {}, defects: [] });
+
+    for (const result of results) {
+      const assetId = assetByInspection.get(result.inspectionId);
+      if (!assetId) continue;
+      const value =
+        result.valueText ??
+        (result.valueNumber != null ? Number(result.valueNumber) : null) ??
+        result.valueBoolean ??
+        result.valueJson;
+      if (value === null || value === undefined || value === '') continue;
+      entryFor(assetId).items[result.templateItem.key] = value;
+    }
+
+    for (const defect of defects) {
+      const assetId = defect.inspectionItemResult.inspection.assetId;
+      if (!assetId) continue;
+      entryFor(assetId).defects.push({
+        label: defect.inspectionItemResult.label,
+        severity: defect.severity,
+        isEmergency: defect.isEmergency,
+      });
+    }
+
+    return { ...network, drawing };
   }
 
   private assertCanMutate(user: RequestUser) {

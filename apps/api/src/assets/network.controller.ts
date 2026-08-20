@@ -41,6 +41,17 @@ export class NetworkController {
     return this.networkService.getSubstationNetwork(user, params.substationId);
   }
 
+  /** GET /api/v1/network/substations/:substationId/route-drawing — the graph
+   *  plus per-pole drawing attributes (cables, stays, services, defects) for
+   *  the TNB-style Lukisan Laluan. */
+  @Get('substations/:substationId/route-drawing')
+  getRouteDrawing(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SubstationIdParamDto,
+  ) {
+    return this.networkService.getRouteDrawing(user, params.substationId);
+  }
+
   /** GET /api/v1/network/assets/:assetId/downstream — radial isolation set. */
   @Get('assets/:assetId/downstream')
   getDownstream(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
