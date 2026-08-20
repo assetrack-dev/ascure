@@ -60,6 +60,40 @@ function dominantCable(items: Record<string, unknown> | undefined) {
 export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
   const [zoom, setZoom] = useState(1);
 
+  // Continuous cable runs (DC-sheet convention): a pole with no recorded
+  // cable inherits the type of the run feeding it — colours only break where
+  // the crews actually recorded a different cable, never into grey gaps.
+  // Iterative walk with a seen-set: the graph can contain loops.
+  const resolveCable = useMemo(() => {
+    const parentOf = new Map<string, string>();
+    for (const edge of data.edges.radial) {
+      if (!parentOf.has(edge.to)) parentOf.set(edge.to, edge.from);
+    }
+    const memo = new Map<string, { label: string; color: string } | null>();
+    return (poleId: string) => {
+      const path: string[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined = poleId;
+      let found: { label: string; color: string } | null = null;
+      while (cursor && !seen.has(cursor)) {
+        if (memo.has(cursor)) {
+          found = memo.get(cursor) ?? null;
+          break;
+        }
+        const own = dominantCable(data.drawing[cursor]?.items);
+        if (own) {
+          found = own;
+          break;
+        }
+        seen.add(cursor);
+        path.push(cursor);
+        cursor = parentOf.get(cursor);
+      }
+      for (const id of path) memo.set(id, found);
+      return found;
+    };
+  }, [data]);
+
   const scene = useMemo(() => {
     const located = data.poles.filter(
       (pole): pole is typeof pole & { latitude: number; longitude: number } =>
@@ -118,11 +152,12 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
 
   const { positions, height, barMetres, barPx, centreLat, centreLng } = scene;
 
-  // Legend: cable classes actually present + the no-data class when used.
+  // Legend: cable classes actually drawn (incl. inherited runs) + the
+  // no-data class when some run never resolved.
   const presentCables = new Set<string>();
   let hasNoCable = false;
-  for (const pole of data.poles) {
-    const cls = dominantCable(data.drawing[pole.id]?.items);
+  for (const edge of data.edges.radial) {
+    const cls = resolveCable(edge.to);
     if (cls) presentCables.add(cls.label);
     else hasNoCable = true;
   }
@@ -183,12 +218,13 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
           </text>
         </g>
 
-        {/* Spans — coloured by the CHILD pole's dominant recorded cable. */}
+        {/* Spans — coloured by the fed pole's cable run (recorded, or
+            inherited from upstream so runs stay continuous). */}
         {data.edges.radial.map((edge, index) => {
           const a = positions.get(edge.from);
           const b = positions.get(edge.to);
           if (!a || !b) return null;
-          const cls = dominantCable(data.drawing[edge.to]?.items);
+          const cls = resolveCable(edge.to);
           return (
             <line
               key={`r-${edge.from}-${edge.to}-${edge.feeder ?? index}`}
