@@ -6,7 +6,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  DefectStatus,
   FeederKind,
   InspectionCompletionStatus,
   Prisma,
@@ -55,30 +54,46 @@ const POLE_SELECT = {
 } as const;
 
 /**
- * Checklist item keys the route drawing (Lukisan Laluan) renders — the
- * SAVR-KLB data-capture items that correspond to the layers of the DC's
- * manual CAD drawing. Cable keys color the span feeding the pole; the rest
- * become symbols/annotations at the pole.
+ * The route drawing (Lukisan Laluan) classifies checklist items by NORMALIZED
+ * LABEL (and key), not by exact key — prod templates were created through
+ * different paths (F2 import, admin editor) and their keys differ while the
+ * labels crews see are stable ("Cable 185 Nmp", "JUMLAH UMBANG", …).
+ * Classification emits CANONICAL keys the admin renderer understands. First
+ * pattern that matches wins.
  */
-const ROUTE_DRAWING_KEYS = [
-  'saiz_tiang',
-  'jenis_tiang',
-  'cable_185_nmp',
-  'cable_95_nmp',
-  'cable_3x16_nmp',
-  'cable_1x16_nmp',
-  'cable_pvc_9064_4_cable',
-  'cable_pvc_7083_2_cable_1_cable',
-  'cable_pvc_7044',
-  'bare_7173',
-  'bare_7122',
-  'jumlah_umbang',
-  'umbang_terbang_support_pole',
-  'jumlah_blackbox',
-  'lvpt',
-  'jumlah_service',
-  'catatan_cable',
+const ROUTE_DRAWING_PATTERNS: Array<{ canonical: string; test: RegExp }> = [
+  // Cable classes — the DC drawing's span-colour layers.
+  { canonical: 'cable_185_nmp', test: /(CABLE|ABC).*185|185.*NMP/ },
+  { canonical: 'cable_95_nmp', test: /(CABLE|ABC).*95(?!.*BARE)|95.*NMP/ },
+  { canonical: 'cable_3x16_nmp', test: /3X16/ },
+  { canonical: 'cable_1x16_nmp', test: /1X16/ },
+  { canonical: 'cable_pvc_9064_4_cable', test: /9064/ },
+  { canonical: 'cable_pvc_7083_2_cable_1_cable', test: /7083/ },
+  { canonical: 'cable_pvc_7044', test: /7044/ },
+  { canonical: 'bare_7173', test: /7173/ },
+  { canonical: 'bare_7122', test: /7122/ },
+  // Pole annotations the owner wants on the drawing.
+  { canonical: 'jumlah_umbang', test: /JUMLAHUMBANG|BILUMBANG/ },
+  { canonical: 'jumlah_blackbox', test: /BLACKBOX/ },
+  { canonical: 'jumlah_service', test: /JUMLAHSERVICE|BILSERVICE|JUMLAHSERVIS|BILSERVIS/ },
+  { canonical: 'saiz_tiang', test: /SAIZTIANG/ },
 ];
+
+/** Uppercase and strip everything non-alphanumeric so "Cable Pvc (9064) / 4
+ *  Cable" and "cable_pvc_9064_4_cable" both normalize comparably. */
+function normalizeDrawingText(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, '');
+}
+
+function classifyDrawingItem(key: string, label: string): string | null {
+  const haystack = `${normalizeDrawingText(key)} ${normalizeDrawingText(label)}`;
+  for (const pattern of ROUTE_DRAWING_PATTERNS) {
+    if (pattern.test.test(haystack)) {
+      return pattern.canonical;
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class NetworkService {
@@ -396,12 +411,11 @@ export class NetworkService {
 
   /**
    * The TNB route drawing (Lukisan Laluan): the substation graph PLUS each
-   * pole's drawing attributes read from its latest SUBMITTED inspection — the
-   * SAVR-KLB checklist keys that the DC's manual CAD drawing encodes as layers
-   * (cable per span, pole height, stays, blackboxes, LVPT, service count) —
-   * and its open defect labels (the orange notes on the DC's sheet).
-   * Keys missing from a template simply come back absent — the drawing shows
-   * "Tiada Data Kabel" styling rather than failing.
+   * pole's drawing attributes read from its latest SUBMITTED inspection —
+   * cable class per span, stays (umbang), blackboxes and service count, the
+   * exact set the owner wants on the sheet (assets only, no defects).
+   * Items a template doesn't carry simply come back absent — the drawing
+   * shows "Tiada Data Kabel" styling rather than failing.
    */
   async getRouteDrawing(user: RequestUser, substationId: string) {
     const network = await this.getSubstationNetwork(user, substationId);
@@ -431,76 +445,43 @@ export class NetworkService {
       [...latestByAsset.entries()].map(([assetId, id]) => [id, assetId]),
     );
 
-    const [results, defects] = await Promise.all([
+    // ALL answers of each pole's latest inspection — classification happens
+    // here by normalized key+label, so any template naming scheme works.
+    const results =
       latestIds.length === 0
         ? []
-        : this.prisma.inspectionResult.findMany({
-            where: {
-              inspectionId: { in: latestIds },
-              templateItem: { key: { in: ROUTE_DRAWING_KEYS } },
-            },
+        : await this.prisma.inspectionResult.findMany({
+            where: { inspectionId: { in: latestIds } },
             select: {
               inspectionId: true,
               valueText: true,
               valueNumber: true,
               valueBoolean: true,
               valueJson: true,
-              templateItem: { select: { key: true } },
+              templateItem: { select: { key: true, label: true } },
             },
-          }),
-      this.prisma.defect.findMany({
-        where: {
-          status: {
-            in: [
-              DefectStatus.OPEN,
-              DefectStatus.IN_PROGRESS,
-              DefectStatus.MONITORING,
-            ],
-          },
-          inspectionItemResult: {
-            inspection: { tenantId: user.tenantId, assetId: { in: assetIds } },
-          },
-        },
-        select: {
-          severity: true,
-          isEmergency: true,
-          inspectionItemResult: {
-            select: { label: true, inspection: { select: { assetId: true } } },
-          },
-        },
-      }),
-    ]);
+          });
 
     const drawing: Record<
       string,
-      {
-        items: Record<string, string | number | boolean | unknown>;
-        defects: Array<{ label: string; severity: string; isEmergency: boolean }>;
-      }
+      { items: Record<string, string | number | boolean | unknown> }
     > = {};
-    const entryFor = (assetId: string) =>
-      (drawing[assetId] ??= { items: {}, defects: [] });
 
     for (const result of results) {
       const assetId = assetByInspection.get(result.inspectionId);
       if (!assetId) continue;
+      const canonical = classifyDrawingItem(
+        result.templateItem.key,
+        result.templateItem.label,
+      );
+      if (!canonical) continue;
       const value =
         result.valueText ??
         (result.valueNumber != null ? Number(result.valueNumber) : null) ??
         result.valueBoolean ??
         result.valueJson;
       if (value === null || value === undefined || value === '') continue;
-      entryFor(assetId).items[result.templateItem.key] = value;
-    }
-
-    for (const defect of defects) {
-      const assetId = defect.inspectionItemResult.inspection.assetId;
-      if (!assetId) continue;
-      entryFor(assetId).defects.push({
-        label: defect.inspectionItemResult.label,
-        severity: defect.severity,
-        isEmergency: defect.isEmergency,
-      });
+      (drawing[assetId] ??= { items: {} }).items[canonical] = value;
     }
 
     return { ...network, drawing };
