@@ -61,6 +61,24 @@ export function fetchSubstationNetwork(token: string, substationId: string) {
   );
 }
 
+/** Per-pole attributes for the route drawing: the latest submitted
+ *  inspection's checklist values (by item key) + open defect labels. */
+export interface RouteDrawingPoleData {
+  items: Record<string, string | number | boolean | unknown>;
+  defects: Array<{ label: string; severity: string; isEmergency: boolean }>;
+}
+
+export interface RouteDrawing extends SubstationNetwork {
+  drawing: Record<string, RouteDrawingPoleData>;
+}
+
+export function fetchRouteDrawing(token: string, substationId: string) {
+  return apiRequest<RouteDrawing>(
+    `/network/substations/${encodeURIComponent(substationId)}/route-drawing`,
+    { token },
+  );
+}
+
 export function fetchFeederIsolation(token: string, feederId: string) {
   return apiRequest<FeederIsolation>(
     `/network/feeders/${encodeURIComponent(feederId)}/isolation`,

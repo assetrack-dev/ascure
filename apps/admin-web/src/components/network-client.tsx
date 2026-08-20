@@ -7,6 +7,7 @@ import {
   Download,
   GitBranch,
   Map as MapIcon,
+  PencilRuler,
   Plus,
   RefreshCw,
   Search,
@@ -26,12 +27,15 @@ import { downloadSchematicPdf, fetchReportSubstations } from "@/lib/reports";
 import {
   createTieEdge,
   fetchFeederIsolation,
+  fetchRouteDrawing,
   fetchSubstationNetwork,
   setTieEdgeState,
   type FeederIsolation,
   type RadialEdge,
+  type RouteDrawing,
   type SubstationNetwork,
 } from "@/lib/network";
+import { RouteDrawingView } from "@/components/route-drawing";
 import type { AuthSession } from "@/types/auth";
 import type { ReportSubstation } from "@/types/reports";
 
@@ -206,7 +210,9 @@ function NetworkContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingNetwork, setIsLoadingNetwork] = useState(false);
   const [error, setError] = useState("");
-  const [view, setView] = useState<"schematic" | "map">("schematic");
+  const [view, setView] = useState<"schematic" | "map" | "route">("schematic");
+  const [routeDrawing, setRouteDrawing] = useState<RouteDrawing | null>(null);
+  const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [newFrom, setNewFrom] = useState("");
   const [newTo, setNewTo] = useState("");
   const [isMutating, setIsMutating] = useState(false);
@@ -265,6 +271,7 @@ function NetworkContent() {
       setIsLoadingNetwork(true);
       setError("");
       setIsolation(null);
+      setRouteDrawing(null);
       try {
         setNetwork(await fetchSubstationNetwork(session.token, substationId));
       } catch (loadError) {
@@ -280,6 +287,35 @@ function NetworkContent() {
     },
     [session?.token, handleLogout],
   );
+
+  // Lazy-load the route drawing the first time its tab is opened for the
+  // selected Pencawang (loadNetwork clears it on substation change).
+  useEffect(() => {
+    if (view !== "route" || !session?.token || !selectedId || routeDrawing) {
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingRoute(true);
+    fetchRouteDrawing(session.token, selectedId)
+      .then((drawing) => {
+        if (!cancelled) setRouteDrawing(drawing);
+      })
+      .catch((routeError) => {
+        if (routeError instanceof ApiError && routeError.status === 401) {
+          handleLogout();
+          return;
+        }
+        if (!cancelled) {
+          setError(requestErrorMessage(routeError, "Unable to load the route drawing."));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingRoute(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, session?.token, selectedId, routeDrawing, handleLogout]);
 
   const handleIsolate = useCallback(
     async (feederId: string) => {
@@ -567,6 +603,13 @@ function NetworkContent() {
                 >
                   <MapIcon size={15} /> Map
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setView("route")}
+                  className={viewTabClass(view === "route")}
+                >
+                  <PencilRuler size={15} /> Lukisan
+                </button>
               </div>
             ) : null}
           </div>
@@ -588,6 +631,16 @@ function NetworkContent() {
                     backfeedEdgeIds={backfeedEdgeIds}
                     colorForFeeder={(code) => feederColor(code, network.feeders)}
                   />
+                ) : view === "route" ? (
+                  routeDrawing ? (
+                    <RouteDrawingView data={routeDrawing} />
+                  ) : (
+                    <p className="p-6 text-sm text-[var(--muted)]">
+                      {isLoadingRoute
+                        ? "Loading the route drawing…"
+                        : "Route drawing unavailable."}
+                    </p>
+                  )
                 ) : layout && network.poles.length > 0 ? (
                   <svg
                     width={layout.width}
