@@ -229,11 +229,9 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
           const info = data.drawing[pole.id];
           const services = toNumber(info?.items["jumlah_service"]);
           const umbang = toNumber(info?.items["jumlah_umbang"]);
-          const lvpt = toNumber(info?.items["lvpt"]);
           const blackbox = toText(info?.items["jumlah_blackbox"]);
+          const cable = dominantCable(info?.items);
           const saiz = toText(info?.items["saiz_tiang"]);
-          const defects = info?.defects ?? [];
-          const hasEmergency = defects.some((d) => d.isEmergency);
           // Stacked label: shared poles render each feeder line on its own
           // row, "&" kept at the end of every line but the last (DC style).
           const labelLines = pole.noTiangRondaan.split(" & ");
@@ -242,12 +240,11 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
               <title>
                 {[
                   pole.noTiangRondaan,
-                  saiz ? `Saiz: ${saiz}` : "",
-                  services ? `Service: ${services}` : "",
+                  saiz ? `Saiz tiang: ${saiz}` : "",
+                  cable ? `Kabel: ${cable.label}` : "Kabel: tiada data",
+                  services ? `Servis: ${services}` : "",
                   umbang ? `Umbang: ${umbang}` : "",
                   blackbox ? `Blackbox: ${blackbox}` : "",
-                  lvpt ? `LVPT: ${lvpt}` : "",
-                  ...defects.map((d) => `⚠ ${d.label}`),
                 ]
                   .filter(Boolean)
                   .join("\n")}
@@ -257,8 +254,8 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
                 cy={pos.y}
                 r={4.5}
                 fill="#ffffff"
-                stroke={hasEmergency ? "#DC2626" : defects.length > 0 ? "#F59E0B" : "#0F172A"}
-                strokeWidth={defects.length > 0 ? 2.4 : 1.6}
+                stroke="#0F172A"
+                strokeWidth={1.6}
               />
               <text x={pos.x + 8} y={pos.y - 6} fontSize={10.5} fontWeight={600} fill="#0F172A">
                 {labelLines.map((line, i) => (
@@ -289,17 +286,6 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
                   </text>
                 </g>
               ) : null}
-              {lvpt > 0 ? (
-                <rect
-                  x={pos.x - 4}
-                  y={pos.y + 8}
-                  width={9}
-                  height={7}
-                  fill="#2563EB"
-                  stroke="#F97316"
-                  strokeWidth={1.2}
-                />
-              ) : null}
               {blackbox ? (
                 <text x={pos.x + 8} y={pos.y + 16} fontSize={8.5} fill="#334155">
                   {blackbox}
@@ -325,18 +311,6 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
                     </text>
                   ) : null}
                 </g>
-              ) : null}
-              {defects.length > 0 ? (
-                <text
-                  x={pos.x + 8}
-                  y={pos.y + 16 + (blackbox ? 10 : 0)}
-                  fontSize={9}
-                  fontWeight={600}
-                  fill={hasEmergency ? "#DC2626" : "#EA580C"}
-                >
-                  {defects[0].label.toUpperCase().slice(0, 28)}
-                  {defects.length > 1 ? ` +${defects.length - 1}` : ""}
-                </text>
               ) : null}
             </g>
           );
@@ -387,14 +361,20 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
               n
             </text>
             <text x={20} y={8} fontSize={10.5} fill="#0F172A">
-              Bil. service
+              Bil. servis
             </text>
-            <rect x={1} y={14} width={9} height={7} fill="#2563EB" stroke="#F97316" strokeWidth={1} />
+            <g stroke="#0F172A" strokeWidth={1.4}>
+              <line x1={2} y1={22} x2={11} y2={13} />
+              <polygon points="11,13 6.5,15 9,17.5" fill="#0F172A" stroke="none" />
+            </g>
             <text x={20} y={24} fontSize={10.5} fill="#0F172A">
-              LVPT
+              Umbang
             </text>
-            <text x={0} y={40} fontSize={10.5} fontWeight={600} fill="#EA580C">
-              Defek terbuka
+            <text x={0} y={40} fontSize={9} fill="#334155">
+              1 x 160A
+            </text>
+            <text x={50} y={40} fontSize={10.5} fill="#0F172A">
+              Blackbox
             </text>
           </g>
         </g>

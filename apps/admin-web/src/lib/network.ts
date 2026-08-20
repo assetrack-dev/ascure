@@ -62,10 +62,10 @@ export function fetchSubstationNetwork(token: string, substationId: string) {
 }
 
 /** Per-pole attributes for the route drawing: the latest submitted
- *  inspection's checklist values (by item key) + open defect labels. */
+ *  inspection's checklist values, classified to canonical drawing keys
+ *  (cable classes, jumlah_umbang, jumlah_blackbox, jumlah_service). */
 export interface RouteDrawingPoleData {
   items: Record<string, string | number | boolean | unknown>;
-  defects: Array<{ label: string; severity: string; isEmergency: boolean }>;
 }
 
 export interface RouteDrawing extends SubstationNetwork {
