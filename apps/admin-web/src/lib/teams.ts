@@ -5,6 +5,8 @@ export interface TeamOption {
   name: string | null;
   code: string | null;
   organizationId: string | null;
+  organizationName: string | null;
+  isActive: boolean;
 }
 
 function asArray(payload: unknown): unknown[] {
@@ -46,11 +48,20 @@ export async function fetchTeams(token: string): Promise<TeamOption[]> {
         return null;
       }
 
+      const organization =
+        record.organization && typeof record.organization === "object"
+          ? (record.organization as Record<string, unknown>)
+          : null;
+
       return {
         id,
         name: readStr(record, "name"),
         code: readStr(record, "code"),
         organizationId: readStr(record, "organizationId"),
+        organizationName: organization
+          ? (readStr(organization, "name") ?? readStr(organization, "code"))
+          : null,
+        isActive: record.isActive !== false,
       };
     })
     .filter((team): team is TeamOption => team !== null);
