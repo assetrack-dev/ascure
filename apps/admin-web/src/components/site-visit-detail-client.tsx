@@ -987,11 +987,13 @@ function ReassignTeamPanel({
   visit,
   token,
   canReassign,
+  allowCrossCompany,
   onReassigned,
 }: {
   visit: SiteVisitDetail;
   token: string | null;
   canReassign: boolean;
+  allowCrossCompany: boolean;
   onReassigned: (next: SiteVisitDetail) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1041,14 +1043,51 @@ function ReassignTeamPanel({
   const currentTeamId = visit.team?.id ?? null;
   const currentTeamLabel =
     visit.team?.name?.trim() || visit.team?.code?.trim() || "Unassigned";
-  // Only same-company teams are valid targets — derive the company from the
-  // current team (the /teams list includes it) and filter to it.
+  // Same-company teams are the default targets; an ADMIN may hand the survey
+  // to ANY company's team (the API permits cross-org reassign for ADMIN only,
+  // so widening the picker for anyone else would just earn a 403). The API also
+  // rejects an inactive target team, so those never make useful options.
   const currentTeam = teams.find((team) => team.id === currentTeamId);
   const options = teams.filter(
     (team) =>
       team.id !== currentTeamId &&
-      (!currentTeam ||
+      team.isActive &&
+      (allowCrossCompany ||
+        !currentTeam ||
         (team.organizationId ?? null) === (currentTeam.organizationId ?? null)),
+  );
+  // Cross-company picker groups by company, current team's company first.
+  const companyGroups = allowCrossCompany
+    ? [...options]
+        .sort((a, b) =>
+          (a.organizationName ?? "￿").localeCompare(b.organizationName ?? "￿"),
+        )
+        .reduce<{ key: string; label: string; teams: TeamOption[] }[]>((acc, team) => {
+          const key = team.organizationId ?? "";
+          const group = acc.find((entry) => entry.key === key);
+          if (group) {
+            group.teams.push(team);
+          } else {
+            acc.push({
+              key,
+              label: team.organizationName ?? "No company",
+              teams: [team],
+            });
+          }
+          return acc;
+        }, [])
+        .sort((a, b) =>
+          a.key === (currentTeam?.organizationId ?? "")
+            ? -1
+            : b.key === (currentTeam?.organizationId ?? "")
+              ? 1
+              : 0,
+        )
+    : null;
+  const selectedTeam = options.find((team) => team.id === toTeamId);
+  const isCrossCompanyTarget = Boolean(
+    selectedTeam &&
+      (selectedTeam.organizationId ?? null) !== (currentTeam?.organizationId ?? null),
   );
   const canSubmit =
     Boolean(token) && Boolean(toTeamId) && reason.trim().length > 0 && !submitting;
@@ -1121,12 +1160,36 @@ function ReassignTeamPanel({
             className={`${filterSelectClass} mt-1.5 w-full`}
           >
             <option value="">{teamsLoaded ? "Select a team…" : "Loading teams…"}</option>
-            {options.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.name?.trim() || team.code?.trim() || team.id}
-              </option>
-            ))}
+            {companyGroups
+              ? companyGroups.map((group) => (
+                  <optgroup key={group.key || "none"} label={group.label}>
+                    {group.teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name?.trim() || team.code?.trim() || team.id}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))
+              : options.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name?.trim() || team.code?.trim() || team.id}
+                  </option>
+                ))}
           </select>
+
+          {isCrossCompanyTarget ? (
+            <div className="mt-2 rounded-[var(--radius-control)] border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-sm text-[var(--warning-text)]">
+              This hands the survey to a <span className="font-semibold">different company</span>
+              {selectedTeam?.organizationName ? (
+                <>
+                  {" "}
+                  (<span className="font-semibold">{selectedTeam.organizationName}</span>)
+                </>
+              ) : null}
+              . Every inspection, photo and defect transfers with it, and the outgoing
+              team&apos;s contribution is snapshotted for billing.
+            </div>
+          ) : null}
 
           <label className={`${filterLabelClass} mt-3 block`}>Reason (required)</label>
           <textarea
@@ -2938,6 +3001,7 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   visit={visit}
                   token={session?.token ?? null}
                   canReassign={canReassign}
+                  allowCrossCompany={isAdmin}
                   onReassigned={(next) => {
                     setVisit(next);
                     if (session?.token) {
