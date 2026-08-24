@@ -48,10 +48,10 @@ import {
   expectedParentKeyChain,
   formatBranchSuffix,
   formatFeederLineCode,
+  isPoleOriginKind,
   parsePoleCode,
   type ParsedPoleCode,
   type PoleOrigin,
-  type PoleOriginKind,
 } from '@ascure/shared-utils';
 
 const APPLY = process.argv.includes('--apply');
@@ -72,8 +72,8 @@ function storedOrigin(line: {
   originKind: string;
   originNumber: number;
 }): PoleOrigin | undefined {
-  return line.originKind === 'FP' || line.originKind === 'TX'
-    ? { kind: line.originKind as PoleOriginKind, number: line.originNumber }
+  return isPoleOriginKind(line.originKind)
+    ? { kind: line.originKind, number: line.originNumber }
     : undefined;
 }
 

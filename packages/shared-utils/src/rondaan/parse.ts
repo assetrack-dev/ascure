@@ -9,8 +9,11 @@ export interface PoleBranchPart {
  *   - `FP` — a Feeder Pillar (Pencawang→FP→pole).
  *   - `TX` — a specific outgoing TRANSFORMER, for a Pencawang that has more than
  *     one and where TNB wants each feeder attributed to the right one.
+ *   - `LV` — a numbered LOW-VOLTAGE circuit, for a Pencawang whose pole plates
+ *     label lines `LV1`, `LV2`, … (field-reported 2026-08; crews write
+ *     `LV1 A 1` by analogy with FP/TX).
  *
- * Both behave identically: a pure LABEL that namespaces the feeder line, so
+ * All kinds behave identically: a pure LABEL that namespaces the feeder line, so
  * `TX1 A 1`, `FP1 A 1` and `A 1` are three different poles on three different
  * lines, each with its own sequence.
  *
@@ -18,7 +21,7 @@ export interface PoleBranchPart {
  * NOT grammar today — if TNB needs to record both levels, this becomes two
  * slots rather than a kind, and `buildNormalizedKey` has to render both.
  */
-export type PoleOriginKind = 'FP' | 'TX';
+export type PoleOriginKind = 'FP' | 'TX' | 'LV';
 
 export interface PoleOrigin {
   kind: PoleOriginKind;
@@ -26,8 +29,15 @@ export interface PoleOrigin {
 }
 
 /** Origin tokens, longest-first, safe to drop into a regex alternation. */
-const ORIGIN_KINDS: PoleOriginKind[] = ['FP', 'TX'];
+const ORIGIN_KINDS: PoleOriginKind[] = ['FP', 'TX', 'LV'];
 const ORIGIN_TOKEN = ORIGIN_KINDS.join('|');
+
+/** True when `value` is a known origin kind token. Callers holding a plain
+ *  string (e.g. a stored `Feeder.originKind`) must use this instead of
+ *  hard-coding the kind list, so adding a kind here is the whole change. */
+export function isPoleOriginKind(value: unknown): value is PoleOriginKind {
+  return typeof value === 'string' && (ORIGIN_KINDS as string[]).includes(value);
+}
 
 /** Render an origin back to its canonical prefix token, e.g. `TX2`. */
 export function formatPoleOrigin(origin: PoleOrigin): string {
@@ -195,7 +205,8 @@ export function normalizePoleInput(input: string): string {
   // that run from one is written per-segment, e.g. `FP1 C 1 & FP1 G 1` (or
   // `FP1 A 1 & FP2 B 1` for two different pillars). Only collapse when it
   // prefixes a feeder line, so a bare `FP 1` (feeders F & P at index 1) — or
-  // `TX 1` (feeders T & X) — is left as the normal feeder grammar.
+  // `TX 1` (feeders T & X), `LV 1` (feeders L & V) — is left as the normal
+  // feeder grammar.
   return normalized.replace(
     new RegExp(`(^|& )(${ORIGIN_TOKEN})\\s+([1-9]\\d*)\\s+(?=[A-Z])`, 'g'),
     '$1$2$3 ',
