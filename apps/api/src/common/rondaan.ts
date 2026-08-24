@@ -1,9 +1,9 @@
 import {
   formatFeederLineCode,
   formatRondaan,
+  isPoleOriginKind,
   type PoleMembership,
   type PoleOrigin,
-  type PoleOriginKind,
 } from '@ascure/shared-utils';
 
 /**
@@ -28,9 +28,9 @@ export function feederOrigin(feeder: {
   originKind?: string;
   originNumber?: number;
 }): PoleOrigin | undefined {
-  return feeder.originKind === 'FP' || feeder.originKind === 'TX'
+  return isPoleOriginKind(feeder.originKind)
     ? {
-        kind: feeder.originKind as PoleOriginKind,
+        kind: feeder.originKind,
         number: feeder.originNumber ?? 0,
       }
     : undefined;
