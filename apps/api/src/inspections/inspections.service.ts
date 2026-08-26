@@ -114,7 +114,7 @@ export class InspectionsService {
         status: {
           in: [...ACTIVE_SITE_VISIT_STATUSES],
         },
-        ...this.siteVisitAccessScope(user),
+        ...(await this.siteVisitMutationScope(user)),
       },
       include: {
         team: {
@@ -1658,21 +1658,19 @@ export class InspectionsService {
     return inspection;
   }
 
-  private siteVisitAccessScope(user: RequestUser) {
-    if (user.role === 'ADMIN') {
-      return {};
-    }
-
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
-        },
-      },
-    };
+  // Which site visits a user may CREATE an inspection on. Delegates to the
+  // canonical role-aware SiteVisit filter (strict variant — never the widened
+  // oversight scope) so create matches the read/amend paths below: ADMIN =
+  // tenant, MANAGER = their whole company, SUPERVISOR = supervised teams, DC =
+  // their mainheads, everyone else = own teams. Previously this was a narrow
+  // own-team-membership filter, which locked a MANAGER out of inspecting their
+  // own company's poles (they oversee teams but aren't members of them) — the
+  // same lockout inspectionAccessScope already fixed for reads.
+  private async siteVisitMutationScope(
+    user: RequestUser,
+  ): Promise<Prisma.SiteVisitWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return siteVisitAccessWhere(user, ctx);
   }
 
   // Which inspections a user may read/mutate. Delegates to the canonical
@@ -1896,8 +1894,11 @@ export class InspectionsService {
   }
 
   private assertCanMutate(user: RequestUser) {
-    if (user.role === UserRole.VIEWER) {
-      throw new ForbiddenException('VIEWER role is read-only for inspection actions.');
+    // CLIENT blocked too (matches assets.assertCanMutate): the canonical visit
+    // scope gives a client viewer mainhead-wide READ visibility, which must
+    // never become the ability to create/submit an inspection.
+    if (user.role === UserRole.VIEWER || user.role === UserRole.CLIENT) {
+      throw new ForbiddenException('This role is read-only for inspection actions.');
     }
   }
 
