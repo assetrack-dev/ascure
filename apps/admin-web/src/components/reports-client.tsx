@@ -173,23 +173,24 @@ function ReportsContent() {
     void loadData(storedSession.token);
   }, [loadData]);
 
-  // Selection is per-scope (Pencawang ids vs route codes) — clear it on a switch.
+  // Selection is per-scope (Pencawang ids vs route codes) — clear it on a
+  // switch, along with the Mainhead filter (the option sets differ per scope).
   useEffect(() => {
     setSelectedKeys(new Set());
+    setMainhead("ALL");
     setNotice("");
   }, [scope]);
 
-  const mainheadOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          substations
-            .map((substation) => substation.mainhead?.trim())
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ).sort((a, b) => a.localeCompare(b)),
-    [substations],
-  );
+  // Scope-aware: SAVR draws from the Pencawang list, SAVT from the routes
+  // (a route's Mainhead = its most recent visit's).
+  const mainheadOptions = useMemo(() => {
+    const values = isSavt
+      ? routes.map((route) => route.mainhead?.trim())
+      : substations.map((substation) => substation.mainhead?.trim());
+    return Array.from(
+      new Set(values.filter((value): value is string => Boolean(value))),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [isSavt, routes, substations]);
 
   const filteredSubstations = useMemo(() => {
     return substations.filter((substation) => {
@@ -200,10 +201,12 @@ function ReportsContent() {
   }, [substations, status, mainhead]);
 
   const filteredRoutes = useMemo(() => {
-    return routes.filter(
-      (route) => status === "ALL" || route.displayStatus === status,
-    );
-  }, [routes, status]);
+    return routes.filter((route) => {
+      const matchesStatus = status === "ALL" || route.displayStatus === status;
+      const matchesMainhead = mainhead === "ALL" || route.mainhead === mainhead;
+      return matchesStatus && matchesMainhead;
+    });
+  }, [routes, status, mainhead]);
 
   // Keys currently shown (for select-all + bulk).
   const visibleKeys = useMemo(
@@ -356,9 +359,12 @@ function ReportsContent() {
     }
   }
 
-  // DC master reference: download EVERY accessible Pencawang (id, code, name,
-  // Functional Location, lat/long) as .xlsx — independent of the on-screen
-  // filters. Blank lat/long = never visited.
+  // DC master reference as .xlsx. With Pencawang rows ticked (SAVR view), only
+  // the selection is exported; otherwise EVERY accessible Pencawang —
+  // independent of the on-screen filters. Blank lat/long = never visited.
+  const pencawangListSelection =
+    !isSavt && selectedKeys.size > 0 ? [...selectedKeys] : undefined;
+
   async function handleDownloadPencawangList() {
     if (!session?.token || isListDownloading) {
       return;
@@ -367,8 +373,12 @@ function ReportsContent() {
     setError("");
     setNotice("");
     try {
-      await downloadPencawangList(session.token);
-      setNotice("Pencawang list downloaded.");
+      await downloadPencawangList(session.token, pencawangListSelection);
+      setNotice(
+        pencawangListSelection
+          ? `Pencawang list downloaded for ${pencawangListSelection.length} selected Pencawang.`
+          : "Pencawang list downloaded.",
+      );
     } catch (downloadError) {
       handleDownloadError(downloadError);
     } finally {
@@ -424,22 +434,20 @@ function ReportsContent() {
                   <option value="SAVT">SAVT (by route)</option>
                 </select>
 
-                {!isSavt ? (
-                  <select
-                    aria-label="Mainhead"
-                    value={mainhead}
-                    onChange={(event) => setMainhead(event.target.value)}
-                    disabled={isLoading || mainheadOptions.length === 0}
-                    className={filterSelectClass}
-                  >
-                    <option value="ALL">All mainheads</option>
-                    {mainheadOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
+                <select
+                  aria-label="Mainhead"
+                  value={mainhead}
+                  onChange={(event) => setMainhead(event.target.value)}
+                  disabled={isLoading || mainheadOptions.length === 0}
+                  className={filterSelectClass}
+                >
+                  <option value="ALL">All mainheads</option>
+                  {mainheadOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
 
                 <select
                   aria-label="Status"
@@ -466,10 +474,20 @@ function ReportsContent() {
                     variant="secondary"
                     onClick={handleDownloadPencawangList}
                     disabled={isListDownloading || isBulkDownloading || !!downloadingKey}
-                    title="Download every Pencawang (ID, Nama, Functional Location, lat/long) as XLSX — blank lat/long = never visited"
+                    title={
+                      pencawangListSelection
+                        ? `Download the ${pencawangListSelection.length} ticked Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date) as XLSX`
+                        : "Download every Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date) as XLSX — blank lat/long = never visited"
+                    }
                   >
                     <Download size={16} />
-                    {isListDownloading ? "Preparing…" : "Pencawang list"}
+                    {isListDownloading
+                      ? "Preparing…"
+                      : `Pencawang list${
+                          pencawangListSelection
+                            ? ` (${pencawangListSelection.length})`
+                            : ""
+                        }`}
                   </Tbtn>
                   <Tbtn
                     variant="primary"

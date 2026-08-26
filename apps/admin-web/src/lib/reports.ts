@@ -61,14 +61,21 @@ export async function downloadCrewPerformance(
 }
 
 /**
- * Downloads the full Pencawang list (.xlsx) — DC's master reference: Pencawang
- * ID, Kod Pencawang, Nama Pencawang, Functional Location and lat/long. A blank
- * lat/long means the Pencawang has never been visited.
+ * Downloads the Pencawang list (.xlsx) — DC's master reference: Pencawang ID,
+ * Kod Pencawang, Nama Pencawang, Functional Location, lat/long, pole count and
+ * survey start date. A blank lat/long means the Pencawang has never been
+ * visited. `ids` (the report page's checkbox selection) narrows the file to
+ * just those Pencawang; omitted/empty = every accessible one.
  */
-export async function downloadPencawangList(token: string): Promise<void> {
-  const { blob, filename } = await apiRequestBlob("/reports/pencawang-list.xlsx", {
-    token,
-  });
+export async function downloadPencawangList(
+  token: string,
+  ids?: string[],
+): Promise<void> {
+  const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/pencawang-list.xlsx${query}`,
+    { token },
+  );
   triggerBrowserDownload(blob, filename ?? "pencawang-list.xlsx");
 }
 

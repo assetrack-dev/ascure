@@ -34,6 +34,8 @@ export interface ReportSavtRoute {
   fromFunctionalLocation: string;
   toName: string;
   toCode: string;
+  /** Derived from the route's most recent visit; null if none/unknown. */
+  mainhead: string | null;
   /** Distinct inspected poles on this route. */
   poleCount: number;
   /** The route's coordinate — its most recent visit's check-in GPS (null if none). */

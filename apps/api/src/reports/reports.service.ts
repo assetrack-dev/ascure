@@ -580,6 +580,9 @@ export class ReportsService {
    */
   async buildPencawangList(
     user: RequestUser,
+    // Explicit checkbox selection from the report page — omitted/empty = every
+    // accessible Pencawang (the DC master reference), ids = just those rows.
+    substationIds?: string[],
   ): Promise<{ buffer: Buffer; filename: string }> {
     // Assign a stable ref code to any newly-eligible Pencawang first. Best-effort:
     // a hiccup here must NEVER break the download — uncoded rows just come out blank.
@@ -593,7 +596,13 @@ export class ReportsService {
       );
     }
 
-    const substations = await this.listSubstations(user);
+    const allSubstations = await this.listSubstations(user);
+    const idFilter = new Set(
+      (substationIds ?? []).map((id) => id.trim()).filter(Boolean),
+    );
+    const substations = idFilter.size
+      ? allSubstations.filter((substation) => idFilter.has(substation.id))
+      : allSubstations;
 
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet('PENCAWANG');
@@ -1499,6 +1508,8 @@ export class ReportsService {
         functionalLocation: true,
         pencawangName: true,
         pencawangCode: true,
+        mainhead: true,
+        mainheadRecord: { select: { name: true } },
         fromPencawang: { select: { name: true, code: true } },
         toPencawang: { select: { name: true, code: true } },
         status: true,
@@ -1541,6 +1552,8 @@ export class ReportsService {
         fromFunctionalLocation: string;
         toName: string;
         toCode: string;
+        /** From the route's most recent visit — the report page's Mainhead filter. */
+        mainhead: string | null;
         poleCount: number;
       }
     >();
@@ -1603,6 +1616,8 @@ export class ReportsService {
         fromFunctionalLocation: visit.functionalLocation ?? '',
         toName: visit.toPencawang?.name ?? '',
         toCode: visit.toPencawang?.code ?? '',
+        mainhead:
+          visit.mainheadRecord?.name?.trim() || visit.mainhead?.trim() || null,
         poleCount: polesByRoute.get(code)?.size ?? 0,
       });
     }
