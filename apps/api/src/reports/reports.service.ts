@@ -1533,6 +1533,7 @@ export class ReportsService {
         toPencawang: { select: { name: true, code: true } },
         status: true,
         lifecycleStatus: true,
+        startedAt: true,
         checkInLatitude: true,
         checkInLongitude: true,
       },
@@ -1579,6 +1580,7 @@ export class ReportsService {
     // Every lifecycle status seen on a route (across cycles) for the status filter.
     const statusesByRoute = new Map<string, Set<SurveyLifecycleStatus>>();
     const displayStatusByRoute = new Map<string, DisplayStatus>();
+    const startedAtByRoute = new Map<string, Date>();
     // Newest visit on the route that actually HAS a compiled visual report.
     const reportVisitByRoute = new Map<string, string>();
     const coordsByRoute = new Map<
@@ -1606,6 +1608,11 @@ export class ReportsService {
           code,
           deriveDisplayStatus(visit.status, visit.lifecycleStatus),
         );
+      }
+      // The CURRENT survey's start date (most recent visit — same source as the
+      // Status, so the two always describe the same cycle).
+      if (!startedAtByRoute.has(code)) {
+        startedAtByRoute.set(code, visit.startedAt);
       }
       if (
         !coordsByRoute.has(code) &&
@@ -1655,12 +1662,80 @@ export class ReportsService {
             ? DISPLAY_STATUS_LABEL[displayStatus]
             : null,
           statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
+          // The current (most recent) survey's start date; null = never started.
+          surveyStartedAt: startedAtByRoute.get(route.routeCode) ?? null,
           // Drives the "Visual Report" download button (null => nothing compiled).
           reportVisitId,
           hasReport: reportVisitId != null,
         };
       })
       .sort((a, b) => a.routeCode.localeCompare(b.routeCode));
+  }
+
+  /**
+   * DC master-reference export for SAVT: a flat list of every accessible route
+   * (KOD TIANG) with its From/To Pencawang, Mainhead, check-in lat/long, the
+   * NUMBER OF POLES incorporated in the route, the current survey's start date
+   * and its unified Status. The route analogue of buildPencawangList — built for
+   * the owner's "how many poles does each route carry" reconcile. Pole count =
+   * DISTINCT poles inspected on the route across all cycles (a pole shared by
+   * two routes counts in each; a pole linked but never inspected does not).
+   * `routeCodes` (the report page's checkbox selection) narrows the file;
+   * omitted/empty = every route.
+   */
+  async buildSavtRouteList(
+    user: RequestUser,
+    routeCodes?: string[],
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const allRoutes = await this.listSavtRoutes(user);
+    const codeFilter = new Set(
+      (routeCodes ?? []).map((code) => code.trim()).filter(Boolean),
+    );
+    const routes = codeFilter.size
+      ? allRoutes.filter((route) => codeFilter.has(route.routeCode))
+      : allRoutes;
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('SAVT ROUTES');
+    const header = sheet.addRow([
+      'No',
+      'Route (KOD TIANG)',
+      'From Pencawang',
+      'To Pencawang',
+      'Mainhead',
+      'Latitude',
+      'Longitude',
+      'Number of Poles',
+      'Start Survey Date',
+      'Status',
+    ]);
+    header.font = { bold: true };
+
+    routes.forEach((route, index) => {
+      sheet.addRow([
+        index + 1,
+        route.routeCode,
+        route.fromName || route.fromCode || '',
+        route.toName || route.toCode || '',
+        route.mainhead ?? '',
+        // The route's most recent check-in GPS; blank = never checked in.
+        route.latitude ?? '',
+        route.longitude ?? '',
+        route.poleCount,
+        formatDate(route.surveyStartedAt),
+        route.displayStatusLabel ?? '',
+      ]);
+    });
+
+    const columnWidths = [6, 20, 30, 30, 20, 14, 14, 14, 16, 18];
+    columnWidths.forEach((width, index) => {
+      sheet.getColumn(index + 1).width = width;
+    });
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename = `savt-route-list-${stamp}.xlsx`;
+    return { buffer: Buffer.from(arrayBuffer), filename };
   }
 
   /**
