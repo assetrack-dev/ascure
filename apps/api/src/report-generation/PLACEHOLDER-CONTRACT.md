@@ -25,6 +25,9 @@ Delimiters are curly braces: `{tagName}`. Whitespace inside braces is allowed.
 | `{pencawangCode}` / `{pencawangName}` | Pencawang code / name (live entity first) |
 | `{functionalLocation}` | Functional location / operational alamat (from the visit) |
 | `{mainhead}` | MAINHEAD — the linked MAINHEAD record's name (visit free-text as fallback) |
+| `{routeCode}` | SAVT route code (KOD TIANG); blank on non-route surveys |
+| `{fromPencawang}` / `{toPencawang}` | SAVT route endpoints (names; code as fallback) |
+| `{route}` | Ready-made "FROM → TO" (blank on non-route surveys) |
 | `{inspector}` / `{inspectorEmail}` | Inspector who submitted |
 | `{inspectionDate}` | Inspection created date-time (MYT) |
 | `{submittedDate}` | Submission date-time (MYT) |
