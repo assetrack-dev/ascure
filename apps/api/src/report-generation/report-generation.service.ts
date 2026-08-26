@@ -67,6 +67,12 @@ interface AssetReportData {
   pencawangName: string;
   functionalLocation: string;
   mainhead: string;
+  // SAVT route identity (blank on non-route surveys): the KOD TIANG route code,
+  // the From/To Pencawang names, and `route` = "FROM → TO" ready-made.
+  routeCode: string;
+  fromPencawang: string;
+  toPencawang: string;
+  route: string;
   inspector: string;
   inspectorEmail: string;
   inspectionDate: string;
@@ -137,6 +143,11 @@ const assetReportInclude = {
       visitType: true,
       startedAt: true,
       completedAt: true,
+      // SAVT route identity for the {routeCode}/{fromPencawang}/{toPencawang}
+      // template tags — null/absent on SAVR visits.
+      routeCode: true,
+      fromPencawang: { select: { name: true, code: true } },
+      toPencawang: { select: { name: true, code: true } },
     },
   },
   createdBy: { select: { name: true, email: true } },
@@ -543,6 +554,10 @@ export class ReportGenerationService implements OnModuleInit {
           startedAt: true,
           completedAt: true,
           substation: { select: { name: true, code: true } },
+          // SAVT route identity for the cover page — null on SAVR visits.
+          routeCode: true,
+          fromPencawang: { select: { name: true, code: true } },
+          toPencawang: { select: { name: true, code: true } },
           visitAssets: {
             orderBy: { addedAt: 'asc' },
             select: { assetId: true },
@@ -1489,6 +1504,15 @@ export class ReportGenerationService implements OnModuleInit {
     const { photos, photoItems, otherPhotos, namedImages, itemImageLoops } =
       await this.collectPhotos(inspection, itemImageMap);
 
+    // SAVT route identity — a route visit's From Pencawang doubles as its
+    // check-in Pencawang, so the From label falls back to the visit snapshot.
+    const fromPencawangLabel =
+      visit?.fromPencawang?.name ??
+      visit?.fromPencawang?.code ??
+      (visit?.routeCode ? (visit?.pencawangName ?? visit?.pencawangCode ?? '') : '');
+    const toPencawangLabel =
+      visit?.toPencawang?.name ?? visit?.toPencawang?.code ?? '';
+
     const data: AssetReportData = {
       assetCode: asset.assetCode,
       assetName: asset.name ?? '',
@@ -1518,6 +1542,13 @@ export class ReportGenerationService implements OnModuleInit {
       pencawangName: asset.substation?.name ?? visit?.pencawangName ?? '',
       functionalLocation: visit?.functionalLocation ?? '',
       mainhead: visit?.mainheadRecord?.name ?? visit?.mainhead ?? '',
+      routeCode: visit?.routeCode ?? '',
+      fromPencawang: fromPencawangLabel,
+      toPencawang: toPencawangLabel,
+      route:
+        fromPencawangLabel && toPencawangLabel
+          ? `${fromPencawangLabel} → ${toPencawangLabel}`
+          : fromPencawangLabel || toPencawangLabel,
       inspector: inspection.createdBy?.name ?? '',
       inspectorEmail: inspection.createdBy?.email ?? '',
       inspectionDate: this.fmtDateTime(inspection.createdAt),
@@ -1757,6 +1788,11 @@ export class ReportGenerationService implements OnModuleInit {
       // The live Pencawang entity — its name leads, the visit snapshot is the
       // fallback (same rule as every screen and export).
       substation?: { name: string | null; code: string | null } | null;
+      // SAVT route identity — when routeCode is set, the cover leads with the
+      // route (From → To) instead of a single Pencawang.
+      routeCode?: string | null;
+      fromPencawang?: { name: string | null; code: string | null } | null;
+      toPencawang?: { name: string | null; code: string | null } | null;
     },
     info: {
       version: number;
@@ -1789,18 +1825,37 @@ export class ReportGenerationService implements OnModuleInit {
     });
     y -= 40;
 
+    // A SAVT survey is a ROUTE (From → To), not a single Pencawang — its cover
+    // leads with the route identity; SAVR keeps the Pencawang rows unchanged.
+    const isRoute = Boolean(siteVisit.routeCode?.trim());
+    const fromLabel =
+      siteVisit.fromPencawang?.name ??
+      siteVisit.fromPencawang?.code ??
+      siteVisit.substation?.name ??
+      siteVisit.pencawangName ??
+      '—';
+    const toLabel =
+      siteVisit.toPencawang?.name ?? siteVisit.toPencawang?.code ?? '—';
+    const identityRows: Array<[string, string]> = isRoute
+      ? [
+          ['Laluan', `${fromLabel} → ${toLabel}`],
+          ['Kod Laluan (KOD TIANG)', siteVisit.routeCode?.trim() ?? '—'],
+        ]
+      : [
+          [
+            'Pencawang',
+            siteVisit.substation?.name ??
+              siteVisit.pencawangName ??
+              siteVisit.pencawangCode ??
+              '—',
+          ],
+          [
+            'Kod Pencawang',
+            siteVisit.substation?.code ?? siteVisit.pencawangCode ?? '—',
+          ],
+        ];
     const rows: Array<[string, string]> = [
-      [
-        'Pencawang',
-        siteVisit.substation?.name ??
-          siteVisit.pencawangName ??
-          siteVisit.pencawangCode ??
-          '—',
-      ],
-      [
-        'Kod Pencawang',
-        siteVisit.substation?.code ?? siteVisit.pencawangCode ?? '—',
-      ],
+      ...identityRows,
       ['Jenis Lawatan', siteVisit.visitType ?? '—'],
       ['Tarikh Mula', this.fmtDate(siteVisit.startedAt) || '—'],
       ['Tarikh Siap', this.fmtDate(siteVisit.completedAt) || '—'],
