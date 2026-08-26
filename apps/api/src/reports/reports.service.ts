@@ -1765,12 +1765,6 @@ export class ReportsService {
           ),
         ),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
-        sanitizeText(
-          this.savtSharedWithCell(
-            membershipIndex.get(insp.assetId),
-            canonicalRoute,
-          ),
-        ),
       ];
 
       const itemCells = templateFlatCells(
@@ -1941,12 +1935,6 @@ export class ReportsService {
           : '',
         sanitizeText(rowNoTiang(insp, code)),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
-        sanitizeText(
-          this.savtSharedWithCell(
-            membershipIndex.get(insp.assetId),
-            canonicalizeSavtRouteCode(code),
-          ),
-        ),
       ];
 
       const itemCells = templateFlatCells(
@@ -1968,7 +1956,7 @@ export class ReportsService {
    * Per-asset SAVT route memberships (docs/PLAN-savt-shared-poles.md): each
    * pole's canonical route codes with its per-route No. Tiang. Drives the
    * membership-first "No. Tiang" cell (a shared pole's assetCode carries only
-   * its primary route's number) and the KONGSI DENGAN column.
+   * its primary route's number).
    */
   private async getSavtMembershipIndex(
     tenantId: string,
@@ -2013,19 +2001,6 @@ export class ReportsService {
       ? memberships?.find((m) => m.code === canonicalRoute)
       : undefined;
     return onRoute?.noTiang ?? stripRoutePrefix(assetCode, rawRoute);
-  }
-
-  /** The pole's codes on its OTHER routes, e.g. "KK - MM 12" — so a shared
-   *  pole reads as shared, not as a duplicate. */
-  private savtSharedWithCell(
-    memberships: { code: string; noTiang: string }[] | undefined,
-    canonicalRoute: string | null,
-  ): string {
-    return (memberships ?? [])
-      .filter((m) => m.code !== canonicalRoute)
-      .map((m) => `${m.code} ${m.noTiang}`)
-      .sort()
-      .join(', ');
   }
 
   /**
@@ -2995,10 +2970,10 @@ const SAVT_META_HEADERS = [
   'LOCATION',
   'No. Tiang',
   'NO TIANG LAMA',
-  // A shared-corridor pole's codes on its OTHER routes ("KK - MM 12") — the
-  // same physical pole appearing in several per-feeder reports is by design
-  // (docs/PLAN-savt-shared-poles.md), not a duplicate.
-  'KONGSI DENGAN',
+  // NOTE: no KONGSI DENGAN column — the DC asked for it to be excluded
+  // (2026-08-26). A shared-corridor pole still appears in several per-feeder
+  // reports by design (docs/PLAN-savt-shared-poles.md); its cross-route codes
+  // just aren't printed. The membership data itself is untouched.
 ];
 
 /**
