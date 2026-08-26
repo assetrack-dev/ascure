@@ -63,6 +63,10 @@ import type {
   SiteVisitType,
   SurveyScope,
 } from "@/types/site-visits";
+import {
+  STANDALONE_SURVEY_SCOPES,
+  SURVEY_SCOPE_LABELS,
+} from "@/types/site-visits";
 
 type SortKey =
   | "status"
@@ -185,6 +189,10 @@ const ASSET_TYPE_OPTIONS: Array<{ label: string; value: AssetTypeFilter }> = [
   { label: "All asset types", value: "ALL" },
   { label: "SAVR", value: "SAVR" },
   { label: "SAVT", value: "SAVT" },
+  { label: "Pencawang", value: "PENCAWANG" },
+  { label: "Feeder Pillar", value: "FEEDER_PILLAR" },
+  { label: "Link Box", value: "LINK_BOX" },
+  { label: "Cable Bridge", value: "CABLE_BRIDGE" },
 ];
 const OPERATIONAL_DOMAIN_OPTIONS: Array<{ label: string; value: OperationalDomainFilter }> = [
   { label: "All domains", value: "ALL" },
@@ -307,12 +315,22 @@ function displayTeam(visit: SiteVisitListItem) {
 }
 
 function displayPencawang(visit: SiteVisitListItem) {
-  return (
-    [visit.pencawangCode, visit.pencawangName]
-      .map((value) => value?.trim())
-      .filter(Boolean)
-      .join(" - ") || "Not recorded"
-  );
+  const pencawang = [visit.pencawangCode, visit.pencawangName]
+    .map((value) => value?.trim())
+    .filter(Boolean)
+    .join(" - ");
+
+  if (pencawang) {
+    return pencawang;
+  }
+
+  // A standalone equipment survey has no Pencawang by design — title it by
+  // its scope instead of "Not recorded".
+  if (STANDALONE_SURVEY_SCOPES.has(visit.surveyScope)) {
+    return `${SURVEY_SCOPE_LABELS[visit.surveyScope]} survey`;
+  }
+
+  return "Not recorded";
 }
 
 function displayMainhead(visit: SiteVisitListItem) {

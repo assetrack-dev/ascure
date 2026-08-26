@@ -26,6 +26,8 @@ import { normalizeOperationalText } from '../common/operational-text';
 import {
   inferOperationalScopeFromAssetTypeCode,
   isNetworkScope,
+  isStandaloneScope,
+  standaloneRefCodePrefix,
 } from '../common/operational-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -743,6 +745,8 @@ export class AssetsService {
     for (const defect of openDefects) {
       const { assetId, asset } = defect.inspectionItemResult.inspection;
       const subId = asset.substationId;
+      // Standalone equipment (no Pencawang) is not on the pole map roll-up.
+      if (!subId) continue;
       let withDefect = defectAssetsBySub.get(subId);
       if (!withDefect) defectAssetsBySub.set(subId, (withDefect = new Set()));
       withDefect.add(assetId);
@@ -755,7 +759,10 @@ export class AssetsService {
     }
 
     // Pencawang metadata (name + its mainhead + region) for the roll-up keys.
-    const substationIds = grouped.map((g) => g.substationId);
+    // Standalone equipment carries no substationId — it has no bucket here.
+    const substationIds = grouped
+      .map((g) => g.substationId)
+      .filter((subId): subId is string => subId !== null);
     const substations = await this.prisma.substation.findMany({
       where: { id: { in: substationIds } },
       select: {
@@ -789,11 +796,13 @@ export class AssetsService {
     const buckets = new Map<string, Bucket>();
 
     for (const g of grouped) {
-      const meta = subMeta.get(g.substationId);
+      const groupSubId = g.substationId;
+      if (!groupSubId) continue;
+      const meta = subMeta.get(groupSubId);
       const count = g._count;
       const key =
         level === 'pencawang'
-          ? { id: g.substationId, name: meta?.name || meta?.code || 'Pencawang' }
+          ? { id: groupSubId, name: meta?.name || meta?.code || 'Pencawang' }
           : level === 'mainhead'
             ? {
                 id: meta?.mainheadId ?? UNASSIGNED,
@@ -823,9 +832,9 @@ export class AssetsService {
       bucket.count += count;
       bucket.sumLat += (g._avg.latitude ?? 0) * count;
       bucket.sumLng += (g._avg.longitude ?? 0) * count;
-      bucket.inspected += inspectedBySub.get(g.substationId) ?? 0;
-      bucket.openDefects += defectAssetsBySub.get(g.substationId)?.size ?? 0;
-      bucket.emergency += emergencyAssetsBySub.get(g.substationId)?.size ?? 0;
+      bucket.inspected += inspectedBySub.get(groupSubId) ?? 0;
+      bucket.openDefects += defectAssetsBySub.get(groupSubId)?.size ?? 0;
+      bucket.emergency += emergencyAssetsBySub.get(groupSubId)?.size ?? 0;
     }
 
     return [...buckets.values()]
@@ -876,6 +885,9 @@ export class AssetsService {
           OR: [
             { assetCode: { contains: search, mode: 'insensitive' } },
             { name: { contains: search, mode: 'insensitive' } },
+            // Standalone equipment: searchable by TNB's printed ID too (the
+            // refCode is already covered — it doubles as assetCode).
+            { externalRef: { contains: search, mode: 'insensitive' } },
           ],
         }),
         REGISTRY_SEARCH_CAP + 1,
@@ -1059,13 +1071,21 @@ export class AssetsService {
     const defectAssetsBySub = new Map<string, Set<string>>();
     for (const defect of openDefects) {
       const { assetId, asset } = defect.inspectionItemResult.inspection;
+      // Standalone equipment (no Pencawang) has no registry bucket.
+      if (!asset.substationId) continue;
       let set = defectAssetsBySub.get(asset.substationId);
       if (!set) defectAssetsBySub.set(asset.substationId, (set = new Set()));
       set.add(assetId);
     }
 
     const substations = await this.prisma.substation.findMany({
-      where: { id: { in: grouped.map((g) => g.substationId) } },
+      where: {
+        id: {
+          in: grouped
+            .map((g) => g.substationId)
+            .filter((subId): subId is string => subId !== null),
+        },
+      },
       select: {
         id: true,
         code: true,
@@ -1093,10 +1113,12 @@ export class AssetsService {
     };
     const buckets = new Map<string, Bucket>();
     for (const g of grouped) {
-      const meta = subMeta.get(g.substationId);
+      const groupSubId = g.substationId;
+      if (!groupSubId) continue;
+      const meta = subMeta.get(groupSubId);
       const key =
         level === 'pencawang'
-          ? { id: g.substationId, name: meta?.name || meta?.code || 'Pencawang' }
+          ? { id: groupSubId, name: meta?.name || meta?.code || 'Pencawang' }
           : level === 'mainhead'
             ? {
                 id: meta?.mainheadId ?? REGISTRY_UNASSIGNED,
@@ -1122,9 +1144,9 @@ export class AssetsService {
         );
       }
       bucket.assetCount += g._count;
-      bucket.inspectedCount += inspectedBySub.get(g.substationId) ?? 0;
-      bucket.defectAssetCount += defectAssetsBySub.get(g.substationId)?.size ?? 0;
-      bucket.pencawangIds.add(g.substationId);
+      bucket.inspectedCount += inspectedBySub.get(groupSubId) ?? 0;
+      bucket.defectAssetCount += defectAssetsBySub.get(groupSubId)?.size ?? 0;
+      bucket.pencawangIds.add(groupSubId);
       bucket.mainheadKeys.add(meta?.mainheadId ?? REGISTRY_UNASSIGNED);
     }
 
@@ -1185,23 +1207,31 @@ export class AssetsService {
 
     const assetCode = this.normalizeOperationalString(dto.assetCode);
 
-    if (!assetCode) {
-      throw new BadRequestException('Asset code is required.');
-    }
+    // STANDALONE equipment (Pencawang / Feeder Pillar / Link Box / Cable
+    // Bridge) has no Pencawang, and its code is the server-assigned refCode —
+    // so both substationId and assetCode become optional together. A network
+    // asset (SAVR/SAVT pole) still requires both.
+    let substation: { id: string } | null = null;
 
-    const substation = await this.prisma.substation.findFirst({
-      where: {
-        id: dto.substationId,
-        tenantId: user.tenantId,
-        isActive: true,
-      },
-      select: {
-        id: true,
-      },
-    });
+    if (dto.substationId) {
+      substation = await this.prisma.substation.findFirst({
+        where: {
+          id: dto.substationId,
+          tenantId: user.tenantId,
+          isActive: true,
+        },
+        select: {
+          id: true,
+        },
+      });
 
-    if (!substation) {
-      throw new NotFoundException('Substation not found.');
+      if (!substation) {
+        throw new NotFoundException('Substation not found.');
+      }
+
+      if (!assetCode) {
+        throw new BadRequestException('Asset code is required.');
+      }
     }
 
     const assetType = await this.prisma.assetType.findFirst({
@@ -1227,7 +1257,7 @@ export class AssetsService {
           operationalScope: OperationalScope | null;
           routeCode: string | null;
           fromPencawangId: string | null;
-          substationId: string;
+          substationId: string | null;
         }
       | null = null;
 
@@ -1236,7 +1266,9 @@ export class AssetsService {
         where: {
           id: dto.createdDuringVisitId,
           tenantId: user.tenantId,
-          substationId: dto.substationId,
+          // A Pencawang asset must be born in a visit at that Pencawang; a
+          // standalone asset (no substation) in a standalone visit (ditto).
+          substationId: dto.substationId ?? null,
           status: {
             in: this.activeSiteVisitStatuses(),
           },
@@ -1258,6 +1290,18 @@ export class AssetsService {
       linkedSiteVisit = siteVisit;
     }
 
+    // Without a Pencawang, the asset must be standalone-scoped — resolved from
+    // the visit first (the authority once linked), else the asset type.
+    const standaloneScope = substation
+      ? null
+      : (linkedSiteVisit?.operationalScope ?? assetType.operationalScope);
+
+    if (!substation && !isStandaloneScope(standaloneScope)) {
+      throw new BadRequestException(
+        'A Pencawang is required unless the asset type is a standalone equipment scope (Pencawang / Feeder Pillar / Link Box / Cable Bridge).',
+      );
+    }
+
     // A pole created during a SAVR/SAVT survey must carry that survey's asset type,
     // or its inspection binds to the wrong checklist template and its answers are
     // rejected on sync. Offline clients can send the wrong type when they can't read
@@ -1269,27 +1313,38 @@ export class AssetsService {
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
-        const existingAsset = await tx.asset.findFirst({
-          where: {
-            tenantId: user.tenantId,
-            substationId: dto.substationId,
-            assetCode,
-          },
-          select: {
-            id: true,
-          },
-        });
+        if (substation && assetCode) {
+          const existingAsset = await tx.asset.findFirst({
+            where: {
+              tenantId: user.tenantId,
+              substationId: substation.id,
+              assetCode,
+            },
+            select: {
+              id: true,
+            },
+          });
 
-        if (existingAsset) {
-          throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
+          if (existingAsset) {
+            throw new ConflictException(ASSET_CODE_SCOPE_CONFLICT_MESSAGE);
+          }
         }
+
+        // Standalone equipment gets its tenant-wide refCode here (PC-0001,
+        // FP-0001, …) — the stable re-inspection handle. It doubles as the
+        // assetCode when the crew typed none.
+        const refCode = substation
+          ? null
+          : await this.nextStandaloneRefCode(tx, user.tenantId, standaloneScope);
 
         const asset = await tx.asset.create({
           data: {
             tenantId: user.tenantId,
-            substationId: dto.substationId,
+            substationId: substation?.id ?? null,
             assetTypeId: effectiveAssetTypeId,
-            assetCode,
+            assetCode: assetCode ?? refCode ?? '',
+            refCode,
+            externalRef: this.normalizeOperationalString(dto.externalRef),
             name: this.normalizeOperationalString(dto.name),
             latitude: dto.latitude,
             longitude: dto.longitude,
@@ -1322,17 +1377,28 @@ export class AssetsService {
           });
         }
 
-        await this.syncPoleGraph(tx, {
-          tenantId: user.tenantId,
-          substationId: dto.substationId,
-          assetId: asset.id,
-          assetCode,
-        });
+        // The pole graph is NO TIANG feeder topology — Pencawang-keyed, so a
+        // standalone asset (no Pencawang, no pole grammar) has nothing to sync.
+        if (substation && assetCode) {
+          await this.syncPoleGraph(tx, {
+            tenantId: user.tenantId,
+            substationId: substation.id,
+            assetId: asset.id,
+            assetCode,
+          });
+        }
 
         // A pole born in a SAVT route survey joins that route's feeder (shared
         // poles get further memberships via the link endpoint, one per route).
+        // (A SAVT visit always has a substation, so the feeder source below is
+        // never null in practice — the guard keeps the types honest.)
+        const savtFeederSubstationId =
+          linkedSiteVisit?.fromPencawangId ?? linkedSiteVisit?.substationId ?? null;
+
         if (
           linkedSiteVisit &&
+          assetCode &&
+          savtFeederSubstationId &&
           linkedSiteVisit.operationalScope === OperationalScope.SAVT
         ) {
           await this.syncSavtPoleMembership(tx, {
@@ -1340,8 +1406,7 @@ export class AssetsService {
             assetId: asset.id,
             assetCode,
             routeCode: linkedSiteVisit.routeCode,
-            feederSubstationId:
-              linkedSiteVisit.fromPencawangId ?? linkedSiteVisit.substationId,
+            feederSubstationId: savtFeederSubstationId,
           });
         }
 
@@ -1362,6 +1427,49 @@ export class AssetsService {
 
       throw error;
     }
+  }
+
+  /**
+   * Next tenant-wide refCode for a standalone asset: `<prefix>-<NNNN>`
+   * (PC-0001, FP-0001, LB-0001, CB-0001), numbered per scope prefix. Numbers
+   * are derived from the existing codes (numeric max + 1, so a deleted asset's
+   * number is never reissued below the high-water mark) and the
+   * [tenantId, refCode] unique constraint backstops a concurrent create — the
+   * loser's P2002 surfaces as a conflict and the client simply retries.
+   * Mirrors Substation.refCode (`ensurePencawangRefCodes`).
+   */
+  private async nextStandaloneRefCode(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    scope: OperationalScope | null,
+  ): Promise<string> {
+    const prefix = standaloneRefCodePrefix(scope);
+
+    if (!prefix) {
+      throw new BadRequestException(
+        'A standalone asset needs a standalone equipment scope.',
+      );
+    }
+
+    const existing = await tx.asset.findMany({
+      where: {
+        tenantId,
+        refCode: { startsWith: `${prefix}-` },
+      },
+      select: { refCode: true },
+    });
+
+    let highest = 0;
+
+    for (const row of existing) {
+      const parsed = Number(row.refCode?.slice(prefix.length + 1));
+
+      if (Number.isSafeInteger(parsed) && parsed > highest) {
+        highest = parsed;
+      }
+    }
+
+    return `${prefix}-${String(highest + 1).padStart(4, '0')}`;
   }
 
   /**
@@ -1630,8 +1738,12 @@ export class AssetsService {
       latitude: asset.latitude,
       longitude: asset.longitude,
       metadata: asset.metadata,
-      location: asset.substation.location,
-      pencawangName: asset.substation.name,
+      // Standalone equipment (Pencawang / FP / LB / CB scopes) has no
+      // Pencawang: its stable handle is refCode + optional TNB externalRef.
+      refCode: asset.refCode,
+      externalRef: asset.externalRef,
+      location: asset.substation?.location ?? null,
+      pencawangName: asset.substation?.name ?? null,
       substation: asset.substation,
       createdAt: asset.createdAt.toISOString(),
       updatedAt: asset.updatedAt.toISOString(),
@@ -1802,8 +1914,8 @@ export class AssetsService {
       status: asset.status,
       latitude: asset.latitude,
       longitude: asset.longitude,
-      location: asset.substation.location,
-      pencawangName: asset.substation.name,
+      location: asset.substation?.location ?? null,
+      pencawangName: asset.substation?.name ?? null,
       latestInspection: latestInspection
         ? {
             status: latestInspection.completionStatus,
@@ -2085,7 +2197,12 @@ export class AssetsService {
       const updated = await this.prisma.$transaction(async (tx) => {
         await tx.asset.update({ where: { id }, data });
 
-        if (data.assetCode !== undefined || data.substationId !== undefined) {
+        // Feeder-graph upkeep is pole territory — a standalone asset (no
+        // Pencawang) has no NO TIANG grammar and no memberships to sync.
+        if (
+          effectiveSubstationId &&
+          (data.assetCode !== undefined || data.substationId !== undefined)
+        ) {
           // Wipe-and-resync applies to RONDAAN memberships only: they are fully
           // derivable from the (new) assetCode. SAVT memberships are NOT — a
           // shared pole's assetCode carries only its primary route's code, and
@@ -2109,7 +2226,7 @@ export class AssetsService {
         // Moving a pole to a new Pencawang carries its in-progress survey with
         // it, so the inspection follows the pole instead of being stranded on the
         // old Pencawang's visit. `data.substationId` is set only when it changed.
-        if (data.substationId !== undefined) {
+        if (data.substationId !== undefined && asset.substationId) {
           await this.migrateOpenSurveyOnPencawangChange(tx, {
             tenantId: user.tenantId,
             assetId: id,

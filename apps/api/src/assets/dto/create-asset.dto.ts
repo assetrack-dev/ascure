@@ -15,16 +15,29 @@ const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
 export class CreateAssetDto {
+  /** Omitted for STANDALONE-scope equipment (Pencawang / Feeder Pillar /
+   *  Link Box / Cable Bridge) — those belong to no Pencawang. */
+  @IsOptional()
   @IsUUID()
-  substationId!: string;
+  substationId?: string;
 
   @IsUUID()
   assetTypeId!: string;
 
+  /** Optional for standalone equipment — the server assigns the tenant-wide
+   *  refCode (PC-0001, FP-0001, …) and uses it as the code when none is sent. */
   @Transform(trimString)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  assetCode!: string;
+  assetCode?: string;
+
+  /** TNB's printed equipment ID (functional-location style), when it has one.
+   *  Standalone scopes only; free-format, searchable, never identity. */
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  externalRef?: string;
 
   @Transform(trimString)
   @IsOptional()

@@ -35,10 +35,35 @@ export type OperationalDomain =
   | "OTHER"
   | "UNSPECIFIED";
 
-/** The asset-type / survey scope a visit belongs to: SAVR (Pencawang-based pole
- *  survey, the default) or SAVT (HV route survey). Derived from the visit's
- *  operationalScope, mirroring the Reports page's two-way SAVR/SAVT split. */
-export type SurveyScope = "SAVR" | "SAVT";
+/** The survey scope a visit belongs to: SAVR (Pencawang-based pole survey, the
+ *  default), SAVT (HV route survey), or one of the STANDALONE equipment scopes
+ *  (Pencawang / Feeder Pillar / Link Box / Cable Bridge — no Pencawang
+ *  check-in). Derived from the visit's operationalScope; visits from before
+ *  `operationalScope` existed fall into the SAVR bucket. */
+export type SurveyScope =
+  | "SAVR"
+  | "SAVT"
+  | "PENCAWANG"
+  | "FEEDER_PILLAR"
+  | "LINK_BOX"
+  | "CABLE_BRIDGE";
+
+export const SURVEY_SCOPE_LABELS: Record<SurveyScope, string> = {
+  SAVR: "SAVR",
+  SAVT: "SAVT",
+  PENCAWANG: "Pencawang",
+  FEEDER_PILLAR: "Feeder Pillar",
+  LINK_BOX: "Link Box",
+  CABLE_BRIDGE: "Cable Bridge",
+};
+
+/** The standalone equipment scopes — visits with no Pencawang check-in. */
+export const STANDALONE_SURVEY_SCOPES: ReadonlySet<SurveyScope> = new Set([
+  "PENCAWANG",
+  "FEEDER_PILLAR",
+  "LINK_BOX",
+  "CABLE_BRIDGE",
+]);
 
 export interface SiteVisitTeam {
   id?: string;

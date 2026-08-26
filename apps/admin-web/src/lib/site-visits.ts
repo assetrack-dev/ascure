@@ -243,11 +243,12 @@ function normalizeOperationalDomain(value: string | null): OperationalDomain {
   return "UNSPECIFIED";
 }
 
-/** Derive SAVR vs SAVT for a visit. A visit is SAVT when its operational scope is
- *  SAVT, its session is a ROUTE, or it carries a route code — any one of these is
- *  a reliable route-survey signal. Everything else is treated as SAVR (the system
- *  default scope), which also keeps visits created before `operationalScope` was
- *  populated in the SAVR bucket. Mirrors the Reports page's two-way SAVR/SAVT split. */
+/** Derive the survey scope for a visit. A visit is SAVT when its operational
+ *  scope is SAVT, its session is a ROUTE, or it carries a route code — any one
+ *  of these is a reliable route-survey signal. The four standalone equipment
+ *  scopes pass through as themselves. Everything else is treated as SAVR (the
+ *  system default scope), which also keeps visits created before
+ *  `operationalScope` was populated in the SAVR bucket. */
 function normalizeSurveyScope(record: ApiRecord | null): SurveyScope {
   const scope = firstString(record, ["operationalScope"])?.toUpperCase();
   const sessionKind = firstString(record, ["sessionKind"])?.toUpperCase();
@@ -255,6 +256,15 @@ function normalizeSurveyScope(record: ApiRecord | null): SurveyScope {
 
   if (scope === "SAVT" || sessionKind === "ROUTE" || Boolean(routeCode)) {
     return "SAVT";
+  }
+
+  if (
+    scope === "PENCAWANG" ||
+    scope === "FEEDER_PILLAR" ||
+    scope === "LINK_BOX" ||
+    scope === "CABLE_BRIDGE"
+  ) {
+    return scope;
   }
 
   return "SAVR";

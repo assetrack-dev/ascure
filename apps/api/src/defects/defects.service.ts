@@ -380,12 +380,13 @@ type OperationsBoardItem = {
     startedAt: string;
     endedAt: string | null;
     team: NonNullable<OperationsBoardTeam>;
+    // null = a standalone equipment survey (no Pencawang check-in).
     substation: {
       id: string;
       code: string;
       name: string;
       location: string | null;
-    };
+    } | null;
   };
   asset: {
     id: string;
@@ -590,6 +591,8 @@ export class DefectsService {
                     OR: [
                       { assetCode: { contains: search, mode: 'insensitive' } },
                       { name: { contains: search, mode: 'insensitive' } },
+                      // Standalone equipment: TNB's printed ID finds it too.
+                      { externalRef: { contains: search, mode: 'insensitive' } },
                     ],
                   },
                 },
@@ -717,9 +720,12 @@ export class DefectsService {
       };
     }
 
+    // Standalone equipment (no Pencawang) has no bucket in this drill-down.
     const substationIds = [
       ...new Set(
-        rows.map((row) => row.inspectionItemResult.inspection.asset.substationId),
+        rows
+          .map((row) => row.inspectionItemResult.inspection.asset.substationId)
+          .filter((subId): subId is string => subId !== null),
       ),
     ];
     const substations = await this.prisma.substation.findMany({
@@ -753,6 +759,7 @@ export class DefectsService {
     const buckets = new Map<string, Bucket>();
     for (const row of rows) {
       const substationId = row.inspectionItemResult.inspection.asset.substationId;
+      if (!substationId) continue;
       const meta = subMeta.get(substationId);
       const key =
         level === 'pencawang'
@@ -982,9 +989,11 @@ export class DefectsService {
           label: defect.inspectionItemResult.label,
           assetCode: asset.assetCode,
           location:
-            asset.substation.location ||
-            asset.substation.name ||
-            asset.substation.code,
+            asset.substation?.location ||
+            asset.substation?.name ||
+            asset.substation?.code ||
+            // Standalone equipment: its own code is the only locator.
+            asset.assetCode,
           createdAt: defect.createdAt.toISOString(),
         };
       }),
@@ -1075,7 +1084,14 @@ export class DefectsService {
 
     for (const defect of defects) {
       const inspection = defect.inspectionItemResult.inspection;
-      const substation = inspection.asset.substation;
+      // Standalone equipment (no Pencawang) still needs dispatching — it pools
+      // into one synthetic package instead of silently dropping out.
+      const substation = inspection.asset.substation ?? {
+        id: '__standalone__',
+        code: 'STANDALONE',
+        name: 'Standalone equipment',
+        location: null,
+      };
       const mainhead = inspection.siteVisit?.mainheadRecord ?? null;
 
       let pkg = packages.get(substation.id);
@@ -2535,8 +2551,9 @@ export class DefectsService {
     const bySubstation = new Map<string, DisplayStatus>();
 
     for (const visit of visits) {
-      // First seen per Pencawang = the most recent visit (ordered desc).
-      if (!bySubstation.has(visit.substationId)) {
+      // First seen per Pencawang = the most recent visit (ordered desc). The
+      // `in` filter above only matches real ids, so null never occurs here.
+      if (visit.substationId && !bySubstation.has(visit.substationId)) {
         bySubstation.set(
           visit.substationId,
           deriveDisplayStatus(visit.status, visit.lifecycleStatus),
@@ -3700,11 +3717,13 @@ export class DefectsService {
         submittedAt: Date | null;
         asset: {
           assetCode: string;
+          // null = standalone equipment (Pencawang / FP / LB / CB scope) —
+          // the defect renders with no Pencawang column.
           substation: {
             code: string;
             name: string;
             location: string | null;
-          };
+          } | null;
           assetType: {
             code: string;
             name: string;
@@ -3748,14 +3767,17 @@ export class DefectsService {
       assetCode: inspection.asset.assetCode,
       assetType: inspection.asset.assetType.name || inspection.asset.assetType.code,
       location:
-        inspection.asset.substation.location ||
-        inspection.asset.substation.name ||
-        inspection.asset.substation.code,
-      substation: {
-        code: inspection.asset.substation.code,
-        name: inspection.asset.substation.name,
-        location: inspection.asset.substation.location,
-      },
+        inspection.asset.substation?.location ||
+        inspection.asset.substation?.name ||
+        inspection.asset.substation?.code ||
+        null,
+      substation: inspection.asset.substation
+        ? {
+            code: inspection.asset.substation.code,
+            name: inspection.asset.substation.name,
+            location: inspection.asset.substation.location,
+          }
+        : null,
       cycleNumber: inspection.inspectionCycle,
       label: item.label,
       result: 'FAIL' as const,
@@ -3850,14 +3872,17 @@ export class DefectsService {
       assetCode: inspection.asset.assetCode,
       assetType: inspection.asset.assetType.name || inspection.asset.assetType.code,
       location:
-        inspection.asset.substation.location ||
-        inspection.asset.substation.name ||
-        inspection.asset.substation.code,
-      substation: {
-        code: inspection.asset.substation.code,
-        name: inspection.asset.substation.name,
-        location: inspection.asset.substation.location,
-      },
+        inspection.asset.substation?.location ||
+        inspection.asset.substation?.name ||
+        inspection.asset.substation?.code ||
+        null,
+      substation: inspection.asset.substation
+        ? {
+            code: inspection.asset.substation.code,
+            name: inspection.asset.substation.name,
+            location: inspection.asset.substation.location,
+          }
+        : null,
       asset: {
         id: inspection.asset.id,
         assetCode: inspection.asset.assetCode,
@@ -3869,12 +3894,14 @@ export class DefectsService {
           code: inspection.asset.assetType.code,
           name: inspection.asset.assetType.name,
         },
-        substation: {
-          id: inspection.asset.substation.id,
-          code: inspection.asset.substation.code,
-          name: inspection.asset.substation.name,
-          location: inspection.asset.substation.location,
-        },
+        substation: inspection.asset.substation
+          ? {
+              id: inspection.asset.substation.id,
+              code: inspection.asset.substation.code,
+              name: inspection.asset.substation.name,
+              location: inspection.asset.substation.location,
+            }
+          : null,
       },
       cycleNumber: inspection.inspectionCycle,
       inspection: {

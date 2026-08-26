@@ -20,7 +20,9 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
+import { isStandaloneScope } from '../../common/operational-scope';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -41,6 +43,15 @@ export class CreateSiteVisitDto {
   @IsUUID()
   branchId?: string;
 
+  /** Required for the network surveys (SAVR/SAVT) — the Mainhead drives the
+   *  hierarchical map, client scoping and billing. A STANDALONE equipment
+   *  survey (Pencawang / FP / LB / CB scope) may omit it: there is no check-in
+   *  ceremony to pick one in. */
+  @ValidateIf(
+    (dto: CreateSiteVisitDto) =>
+      !isStandaloneScope(dto.operationalScope ?? null) ||
+      dto.mainheadId !== undefined,
+  )
   @IsUUID()
   mainheadId!: string;
 

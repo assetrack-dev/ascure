@@ -51,6 +51,7 @@ import {
   DEFAULT_OPERATION_MODE,
   DEFAULT_OPERATIONAL_SCOPE,
   getSessionKindForScope,
+  isStandaloneScope,
   scopeRequiresQAQC,
 } from '../common/operational-scope';
 import { normalizeOperationalText } from '../common/operational-text';
@@ -527,7 +528,16 @@ export class SiteVisitsService {
       }
     }
 
-    const substation = await this.resolveCreateSubstation(user, dto);
+    // A STANDALONE-scope survey (Pencawang / Feeder Pillar / Link Box / Cable
+    // Bridge equipment) has no Pencawang check-in at all — the crew just adds
+    // the equipment and inspects it. Everything Pencawang-flavoured below is
+    // therefore conditional on `substation`.
+    const standalone = isStandaloneScope(
+      dto.operationalScope ?? DEFAULT_OPERATIONAL_SCOPE,
+    );
+    const substation = standalone
+      ? null
+      : await this.resolveCreateSubstation(user, dto);
     const operationalLinks = await this.resolveCreateOperationalLinks(dto);
     const operationalSession = await this.resolveCreateOperationalSession(user, dto);
 
@@ -540,7 +550,7 @@ export class SiteVisitsService {
     // makes it idempotent: it only fills an unset link (never overwrites a real
     // one), so it ALSO self-heals any pre-existing Pencawang the next time it's
     // visited. See [[project_hierarchical_map]].
-    if (operationalLinks.mainheadId) {
+    if (substation && operationalLinks.mainheadId) {
       await this.prisma.substation.updateMany({
         where: { id: substation.id, mainheadId: null },
         data: { mainheadId: operationalLinks.mainheadId },
@@ -567,7 +577,7 @@ export class SiteVisitsService {
         data: {
           tenantId: user.tenantId,
           teamId: dto.teamId,
-          substationId: substation.id,
+          substationId: substation?.id ?? null,
           createdByUserId: user.id,
           organizationId: operationalLinks.organizationId,
           branchId: operationalLinks.branchId,
@@ -589,19 +599,23 @@ export class SiteVisitsService {
           mainhead:
             this.normalizeOperationalString(dto.mainhead) ??
             operationalLinks.mainheadLabel,
-          pencawangCode: dto.substationId
-            ? this.normalizePencawangCode(dto.pencawangCode) ??
-              this.normalizePencawangCode(substation.code) ??
-              substation.code
-            : substation.code,
-          pencawangName:
-            this.normalizeOperationalString(dto.pencawangName) ??
-            this.normalizeOperationalString(substation.name) ??
-            substation.name,
-          functionalLocation:
-            this.normalizeOperationalString(dto.functionalLocation) ??
-            this.normalizeOperationalString(substation.location) ??
-            substation.location,
+          pencawangCode: !substation
+            ? null
+            : dto.substationId
+              ? this.normalizePencawangCode(dto.pencawangCode) ??
+                this.normalizePencawangCode(substation.code) ??
+                substation.code
+              : substation.code,
+          pencawangName: substation
+            ? this.normalizeOperationalString(dto.pencawangName) ??
+              this.normalizeOperationalString(substation.name) ??
+              substation.name
+            : null,
+          functionalLocation: substation
+            ? this.normalizeOperationalString(dto.functionalLocation) ??
+              this.normalizeOperationalString(substation.location) ??
+              substation.location
+            : null,
           checkInLatitude: dto.checkInLatitude,
           checkInLongitude: dto.checkInLongitude,
           checkInAccuracyMeters: dto.checkInAccuracyMeters,
@@ -1219,12 +1233,15 @@ export class SiteVisitsService {
           include: SITE_VISIT_ASSET_INCLUDE,
         });
 
-        if (isSharedPoleLink && routeCode) {
+        // (A SAVT visit always has a substation; the guard keeps types honest.)
+        const feederSubstationId =
+          siteVisit.fromPencawangId ?? siteVisit.substationId;
+
+        if (isSharedPoleLink && routeCode && feederSubstationId) {
           await upsertSavtMembership(tx, {
             tenantId: user.tenantId,
             assetId: asset.id,
-            feederSubstationId:
-              siteVisit.fromPencawangId ?? siteVisit.substationId,
+            feederSubstationId,
             routeCode,
             noTiang: dto.savtNoTiang as number,
             branchSuffix: dto.savtBranchSuffix ?? '',
@@ -1598,6 +1615,16 @@ export class SiteVisitsService {
       where: {
         tenantId: user.tenantId,
         substationId: visit.substationId,
+        // Same survey scope only: one Pencawang can host both a SAVR pole
+        // survey and (say) a LINK_BOX equipment survey — and every STANDALONE
+        // visit shares substationId null, so without this filter the delta
+        // would pair a prior visit from a different scope and report its
+        // whole asset set as removed.
+        operationalScope: visit.operationalScope,
+        // A standalone delta must also stay within the same team's thread of
+        // work — substationId null would otherwise match every standalone
+        // visit in the tenant.
+        ...(visit.substationId ? {} : { teamId: visit.teamId }),
         id: { not: visit.id },
         status: { not: SiteVisitStatus.CANCELLED },
         startedAt: { lt: visit.startedAt },
@@ -2611,12 +2638,24 @@ export class SiteVisitsService {
       missingFields.push('at least one linked asset');
     }
 
-    if (!this.normalizeOptionalString(siteVisit.pencawangCode ?? siteVisit.substation.code)) {
-      missingFields.push('KOD PENCAWANG');
-    }
+    // KOD/NAMA PENCAWANG are Pencawang-survey requirements — a standalone
+    // equipment survey (no substation) has neither and completes without them.
+    if (siteVisit.substation) {
+      if (
+        !this.normalizeOptionalString(
+          siteVisit.pencawangCode ?? siteVisit.substation.code,
+        )
+      ) {
+        missingFields.push('KOD PENCAWANG');
+      }
 
-    if (!this.normalizeOptionalString(siteVisit.pencawangName ?? siteVisit.substation.name)) {
-      missingFields.push('NAMA PENCAWANG');
+      if (
+        !this.normalizeOptionalString(
+          siteVisit.pencawangName ?? siteVisit.substation.name,
+        )
+      ) {
+        missingFields.push('NAMA PENCAWANG');
+      }
     }
 
     const hasPartialCheckInCoordinate =
@@ -2640,21 +2679,28 @@ export class SiteVisitsService {
   private buildSnapshotBackfill(
     siteVisit: Awaited<ReturnType<SiteVisitsService['findAccessibleSiteVisit']>>,
   ): Prisma.SiteVisitUpdateInput {
+    const substation = siteVisit.substation;
+
+    // A standalone equipment survey has no Pencawang to snapshot from.
+    if (!substation) {
+      return {};
+    }
+
     return {
       pencawangCode:
-        this.normalizePencawangCode(siteVisit.pencawangCode ?? siteVisit.substation.code) ??
+        this.normalizePencawangCode(siteVisit.pencawangCode ?? substation.code) ??
         siteVisit.pencawangCode ??
-        siteVisit.substation.code,
+        substation.code,
       pencawangName:
-        this.normalizeOperationalString(siteVisit.pencawangName ?? siteVisit.substation.name) ??
+        this.normalizeOperationalString(siteVisit.pencawangName ?? substation.name) ??
         siteVisit.pencawangName ??
-        siteVisit.substation.name,
+        substation.name,
       functionalLocation:
         this.normalizeOperationalString(
-          siteVisit.functionalLocation ?? siteVisit.substation.location,
+          siteVisit.functionalLocation ?? substation.location,
         ) ??
         siteVisit.functionalLocation ??
-        siteVisit.substation.location,
+        substation.location,
     };
   }
 
@@ -2893,10 +2939,12 @@ export class SiteVisitsService {
         requiresQAQC: siteVisit.requiresQAQC,
         reportingGroup: siteVisit.reportingGroup,
         mainhead: siteVisit.mainhead,
-        pencawangCode: siteVisit.pencawangCode ?? siteVisit.substation.code,
-        pencawangName: siteVisit.pencawangName ?? siteVisit.substation.name,
+        pencawangCode:
+          siteVisit.pencawangCode ?? siteVisit.substation?.code ?? null,
+        pencawangName:
+          siteVisit.pencawangName ?? siteVisit.substation?.name ?? null,
         functionalLocation:
-          siteVisit.functionalLocation ?? siteVisit.substation.location,
+          siteVisit.functionalLocation ?? siteVisit.substation?.location ?? null,
         visitType: siteVisit.visitType,
         cycleNumber: siteVisit.cycleNumber,
         checkInLatitude: siteVisit.checkInLatitude,

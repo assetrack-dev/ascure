@@ -1010,9 +1010,19 @@ model AssetType {
 model Asset {
   id                       String                    @id @default(uuid()) @db.Uuid
   tenantId                 String                    @db.Uuid
-  substationId             String                    @db.Uuid
+  /// Nullable for STANDALONE-scope assets (Pencawang / Feeder Pillar / Link
+  /// Box / Cable Bridge equipment surveys) — they belong to no Pencawang.
+  /// Network-survey poles (SAVR/SAVT) always carry one.
+  substationId             String?                   @db.Uuid
   assetTypeId              String                    @db.Uuid
   assetCode                String                    @map("code")
+  /// Server-assigned tenant-wide unique code for STANDALONE assets
+  /// (PC-0001 / FP-0001 / LB-0001 / CB-0001) — the stable handle a crew uses
+  /// to find the same equipment again next cycle. Mirrors Substation.refCode.
+  refCode                  String?
+  /// TNB's printed ID on the equipment (functional-location style), when it
+  /// has one. Optional, free-format, searchable; never identity (ADR 0003).
+  externalRef              String?
   name                     String?
   noTiangLama              String?
   latitude                 Float?
@@ -1025,7 +1035,7 @@ model Asset {
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  substation               Substation                @relation(fields: [substationId], references: [id], onDelete: Cascade)
+  substation               Substation?               @relation(fields: [substationId], references: [id], onDelete: Cascade)
   assetType                AssetType                 @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   createdDuringVisit       SiteVisit?                @relation(fields: [createdDuringVisitId], references: [id], onDelete: SetNull)
   createdBy                User?                     @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -1043,8 +1053,10 @@ model Asset {
   shareLinks               AssetShareLink[]
 
   @@unique([tenantId, substationId, assetCode], map: "Asset_tenantId_substationId_code_key")
+  @@unique([tenantId, refCode])
   @@index([tenantId])
   @@index([substationId])
+  @@index([externalRef])
   @@index([latitude, longitude])
   @@index([assetTypeId])
   @@index([createdDuringVisitId])
@@ -1103,7 +1115,10 @@ model SiteVisit {
   id                    String                      @id @default(uuid()) @db.Uuid
   tenantId              String                      @db.Uuid
   teamId                String                      @db.Uuid
-  substationId          String                      @db.Uuid
+  /// Nullable for STANDALONE-scope surveys (sessionKind STANDALONE) — they
+  /// have no Pencawang check-in. SAVR (PENCENTRIC) and SAVT (ROUTE) visits
+  /// always carry one.
+  substationId          String?                     @db.Uuid
   createdByUserId       String                      @db.Uuid
   validatedByUserId     String?                     @db.Uuid
   organizationId        String?                     @db.Uuid
@@ -1154,7 +1169,7 @@ model SiteVisit {
   updatedAt             DateTime                    @updatedAt
   tenant                Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   team                  Team                        @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  substation            Substation                  @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  substation            Substation?                 @relation(fields: [substationId], references: [id], onDelete: Restrict)
   createdBy             User                        @relation("SiteVisitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   validatedBy           User?                       @relation("SiteVisitValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
   organization          Organization?               @relation(fields: [organizationId], references: [id], onDelete: SetNull)

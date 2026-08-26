@@ -100,6 +100,10 @@ import type {
   SurveyDueStatus,
   SurveyLifecycleStatus,
 } from "@/types/site-visits";
+import {
+  STANDALONE_SURVEY_SCOPES,
+  SURVEY_SCOPE_LABELS,
+} from "@/types/site-visits";
 
 type LifecycleAction =
   | "rondaan-selesai"
@@ -205,12 +209,21 @@ function DueBadge({ status }: { status: SurveyDueStatus }) {
 }
 
 function displayPencawang(visit: SiteVisitDetail) {
-  return (
-    [visit.pencawangCode, visit.pencawangName]
-      .map((value) => value?.trim())
-      .filter(Boolean)
-      .join(" - ") || "Site Visit"
-  );
+  const pencawang = [visit.pencawangCode, visit.pencawangName]
+    .map((value) => value?.trim())
+    .filter(Boolean)
+    .join(" - ");
+
+  if (pencawang) {
+    return pencawang;
+  }
+
+  // A standalone equipment survey has no Pencawang by design.
+  if (STANDALONE_SURVEY_SCOPES.has(visit.surveyScope)) {
+    return `${SURVEY_SCOPE_LABELS[visit.surveyScope]} survey`;
+  }
+
+  return "Site Visit";
 }
 
 function displayTeam(visit: SiteVisitDetail) {
@@ -2903,6 +2916,9 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                     />
                     Auto-refresh 60s
                   </label>
+                  {visit ? (
+                    <Chip tone="neutral">{SURVEY_SCOPE_LABELS[visit.surveyScope]}</Chip>
+                  ) : null}
                   {visit ? <HealthBadge status={visit.operationalHealthStatus} /> : null}
                   {visit ? <StatusBadge status={visit.status} /> : null}
                   {visit ? <ValidationBadge status={visit.validationStatus} /> : null}
@@ -3037,9 +3053,19 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                       />
                       <dl className="mt-5 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                         <MainheadDetailField visit={visit} />
-                        <DetailField label="Pencawang Code" value={formatNullable(visit.pencawangCode)} />
-                        <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
-                        <DetailField label="Functional Location" value={formatNullable(visit.functionalLocation)} />
+                        <DetailField
+                          label="Survey Scope"
+                          value={SURVEY_SCOPE_LABELS[visit.surveyScope]}
+                        />
+                        {/* A standalone equipment survey has no Pencawang —
+                            hide the three fields instead of "Not recorded" x3. */}
+                        {STANDALONE_SURVEY_SCOPES.has(visit.surveyScope) ? null : (
+                          <>
+                            <DetailField label="Pencawang Code" value={formatNullable(visit.pencawangCode)} />
+                            <DetailField label="Pencawang Name" value={formatNullable(visit.pencawangName)} />
+                            <DetailField label="Functional Location" value={formatNullable(visit.functionalLocation)} />
+                          </>
+                        )}
                         <DetailField label="Visit Type" value={formatEnum(visit.visitType)} />
                         <DetailField
                           label="Operational Domain"
@@ -3129,7 +3155,12 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                         }
                       />
 
-                      {operationalAssetRows.length > 0 ? (
+                      {/* NO TIANG RONDAAN is pole-grammar territory — a
+                          standalone equipment survey's PC/FP/LB/CB refCodes
+                          are not pole codes, so the badge would only shout
+                          false errors there. */}
+                      {operationalAssetRows.length > 0 &&
+                      !STANDALONE_SURVEY_SCOPES.has(visit.surveyScope) ? (
                         rondaanCheck.ok ? (
                           <div className="mt-4 flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--success-border)] bg-[var(--success-bg)] px-3 py-2 text-[13px] text-[var(--success-text)]">
                             <CheckCircle2 size={15} className="shrink-0" />

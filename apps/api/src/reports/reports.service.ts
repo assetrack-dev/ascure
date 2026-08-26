@@ -489,46 +489,48 @@ export class ReportsService {
     // keying the download off the latest visit would hide an existing report.
     const reportVisitBySubstation = new Map<string, string>();
     for (const visit of visits) {
+      // The `in` filter above only matches real Pencawang ids — a standalone
+      // visit (substationId null) can never appear here.
+      const subId = visit.substationId;
+      if (!subId) continue;
+
       if (visit.lifecycleStatus) {
-        let statuses = statusesBySubstation.get(visit.substationId);
+        let statuses = statusesBySubstation.get(subId);
         if (!statuses) {
           statuses = new Set<SurveyLifecycleStatus>();
-          statusesBySubstation.set(visit.substationId, statuses);
+          statusesBySubstation.set(subId, statuses);
         }
         statuses.add(visit.lifecycleStatus);
       }
 
       // First seen per Pencawang = most recent (ordered desc): its current status.
-      if (!displayStatusBySubstation.has(visit.substationId)) {
+      if (!displayStatusBySubstation.has(subId)) {
         displayStatusBySubstation.set(
-          visit.substationId,
+          subId,
           deriveDisplayStatus(visit.status, visit.lifecycleStatus),
         );
       }
 
       // First visit (most recent) that carries a check-in fix = the Pencawang point.
       if (
-        !coordsBySubstation.has(visit.substationId) &&
+        !coordsBySubstation.has(subId) &&
         visit.checkInLatitude != null &&
         visit.checkInLongitude != null
       ) {
-        coordsBySubstation.set(visit.substationId, {
+        coordsBySubstation.set(subId, {
           latitude: visit.checkInLatitude,
           longitude: visit.checkInLongitude,
         });
       }
 
       // First (most recent) visit carrying a report wins.
-      if (
-        visit.reports.length > 0 &&
-        !reportVisitBySubstation.has(visit.substationId)
-      ) {
-        reportVisitBySubstation.set(visit.substationId, visit.id);
+      if (visit.reports.length > 0 && !reportVisitBySubstation.has(subId)) {
+        reportVisitBySubstation.set(subId, visit.id);
       }
 
       const name = (visit.mainheadRecord?.name ?? visit.mainhead ?? '').trim();
-      if (name && !mainheadBySubstation.has(visit.substationId)) {
-        mainheadBySubstation.set(visit.substationId, name);
+      if (name && !mainheadBySubstation.has(subId)) {
+        mainheadBySubstation.set(subId, name);
       }
     }
 

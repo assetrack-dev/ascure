@@ -54,6 +54,25 @@ export function isStandaloneScope(scope?: OperationalScope | null) {
   return Boolean(scope && STANDALONE_SCOPES.has(scope));
 }
 
+/**
+ * refCode prefix per standalone scope: the server-assigned tenant-wide asset
+ * code is `<prefix>-<NNNN>` (PC-0001, FP-0001, …) — the stable handle a crew
+ * uses to find the same equipment again next cycle. Network scopes (SAVR/SAVT)
+ * have no prefix: pole identity is the NO TIANG grammar, not a refCode.
+ */
+const STANDALONE_REF_CODE_PREFIXES: Partial<Record<OperationalScope, string>> = {
+  [OperationalScope.PENCAWANG]: 'PC',
+  [OperationalScope.FEEDER_PILLAR]: 'FP',
+  [OperationalScope.LINK_BOX]: 'LB',
+  [OperationalScope.CABLE_BRIDGE]: 'CB',
+};
+
+export function standaloneRefCodePrefix(
+  scope?: OperationalScope | null,
+): string | null {
+  return (scope && STANDALONE_REF_CODE_PREFIXES[scope]) || null;
+}
+
 export function canShowInInspectionMobileQueue(status?: string | null) {
   return normalizeInspectionQueueStatus(status) !== 'APPROVED';
 }

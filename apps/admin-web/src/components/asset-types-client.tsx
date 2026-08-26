@@ -25,7 +25,11 @@ import {
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import type { AuthSession } from "@/types/auth";
-import type { ManagedAssetType } from "@/types/asset-types";
+import type {
+  AssetTypeOperationalScope,
+  ManagedAssetType,
+} from "@/types/asset-types";
+import { ASSET_TYPE_SCOPE_OPTIONS } from "@/types/asset-types";
 import type { EnterpriseOptionRecord } from "@/types/enterprise";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -35,6 +39,7 @@ interface AssetTypeFormState {
   code: string;
   name: string;
   capabilityId: string;
+  operationalScope: string;
   description: string;
   sortOrder: string;
   isActive: boolean;
@@ -58,6 +63,7 @@ function defaultForm(): AssetTypeFormState {
     code: "",
     name: "",
     capabilityId: "",
+    operationalScope: "",
     description: "",
     sortOrder: "",
     isActive: true,
@@ -211,6 +217,31 @@ function AssetTypeModal({
                 onChange={(event) => onChange({ ...values, sortOrder: event.target.value })}
                 className={`${inputClassName} mt-1.5`}
               />
+            </label>
+
+            <label className="block md:col-span-2">
+              <span className="text-sm font-semibold text-slate-700">
+                Operational Scope
+              </span>
+              <select
+                value={values.operationalScope}
+                onChange={(event) =>
+                  onChange({ ...values, operationalScope: event.target.value })
+                }
+                className={`${inputClassName} mt-1.5`}
+              >
+                {ASSET_TYPE_SCOPE_OPTIONS.map((option) => (
+                  <option key={option.value || "none"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">
+                Binds this asset type to a survey scope. The four standalone
+                equipment scopes (Pencawang / Feeder Pillar / Link Box / Cable
+                Bridge) let crews add and inspect the asset with no Pencawang
+                check-in, and pick the scope&apos;s .docx report template.
+              </span>
             </label>
           </div>
 
@@ -367,6 +398,7 @@ function AssetTypesContent() {
       code: assetType.code,
       name: assetType.name,
       capabilityId: assetType.capabilityId ?? "",
+      operationalScope: assetType.operationalScope ?? "",
       description: assetType.description ?? "",
       sortOrder: assetType.sortOrder === null || assetType.sortOrder === undefined
         ? ""
@@ -407,6 +439,8 @@ function AssetTypesContent() {
       code,
       name,
       capabilityId: formValues.capabilityId || null,
+      operationalScope:
+        (formValues.operationalScope || null) as AssetTypeOperationalScope | null,
       description: formValues.description.trim() || null,
       isActive: formValues.isActive,
       sortOrder: sortOrder ? Number(sortOrder) : null,
@@ -639,6 +673,13 @@ function AssetTypesContent() {
                           {assetType.capability?.code ? (
                             <div className="text-xs text-[var(--muted)]">
                               {assetType.capability.code}
+                            </div>
+                          ) : null}
+                          {assetType.operationalScope ? (
+                            <div className="mt-1 text-xs font-semibold text-[var(--brand)]">
+                              {ASSET_TYPE_SCOPE_OPTIONS.find(
+                                (option) => option.value === assetType.operationalScope,
+                              )?.label ?? assetType.operationalScope}
                             </div>
                           ) : null}
                         </td>
