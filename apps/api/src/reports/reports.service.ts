@@ -1725,9 +1725,9 @@ export class ReportsService {
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    // TNB matrix layout: dropdown items span one sub-column per answer with a
-    // "1" under the crew's pick (see writeTemplateMatrixHeader).
-    writeTemplateMatrixHeader(sheet, SAVT_META_HEADERS, columns);
+    // FLAT layout (DC-requested, 2026-08-24): one column per item, the answer
+    // text in the cell — the pre-matrix format (see writeTemplateFlatHeader).
+    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -1771,7 +1771,7 @@ export class ReportsService {
         ),
       ];
 
-      const itemCells = templateMatrixCells(
+      const itemCells = templateFlatCells(
         columns,
         resultByItemId,
         verdictByItemId,
@@ -1907,9 +1907,9 @@ export class ReportsService {
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    // TNB matrix layout: dropdown items span one sub-column per answer with a
-    // "1" under the crew's pick (see writeTemplateMatrixHeader).
-    writeTemplateMatrixHeader(sheet, SAVT_META_HEADERS, columns);
+    // FLAT layout (DC-requested, 2026-08-24): one column per item, the answer
+    // text in the cell — the pre-matrix format (see writeTemplateFlatHeader).
+    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -1947,7 +1947,7 @@ export class ReportsService {
         ),
       ];
 
-      const itemCells = templateMatrixCells(
+      const itemCells = templateFlatCells(
         columns,
         resultByItemId,
         verdictByItemId,
@@ -2593,6 +2593,47 @@ function isMatrixColumn(column: TemplateExportColumn): boolean {
       column.inputType === InspectionItemInputType.MULTI_SELECT) &&
     (column.options?.length ?? 0) > 0
   );
+}
+
+/**
+ * The FLAT checklist layout (the original, pre-matrix format): ONE bold header
+ * row — meta columns then one column per checklist item — and each pole's row
+ * carries the ANSWER TEXT in the item's cell ("KEADAAN BAIK", "PERLU CAT
+ * SEMULA", …) via resolveTemplateCell. The DC team reviewed the TNB one-hot
+ * matrix (writeTemplateMatrixHeader below) on real SAVT deliverables and asked
+ * for this format back (2026-08-24); the matrix writer stays for the
+ * per-Pencawang dynamic export.
+ */
+function writeTemplateFlatHeader(
+  sheet: Worksheet,
+  metaHeaders: string[],
+  columns: TemplateExportColumn[],
+): void {
+  sheet.addRow([...metaHeaders, ...columns.map((column) => column.label)]);
+  sheet.getRow(1).font = { bold: true };
+  sheet.columns.forEach((column, index) => {
+    column.width = index < metaHeaders.length ? 18 : 16;
+  });
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+}
+
+/** One pole's item cells for the flat layout: every column resolves to its
+ *  recorded value via resolveTemplateCell (a dropdown prints the picked answer
+ *  text, not a 1-mark). */
+function templateFlatCells(
+  columns: TemplateExportColumn[],
+  resultByItemId: ReadonlyMap<string, RecordedResult>,
+  verdictByItemId: ReadonlyMap<string, InspectionItemResultValue>,
+): (string | number)[] {
+  return columns.map((column) => {
+    let result: RecordedResult | undefined;
+    let verdict: InspectionItemResultValue | undefined;
+    for (const id of column.itemIds) {
+      if (!result) result = resultByItemId.get(id);
+      if (!verdict) verdict = verdictByItemId.get(id);
+    }
+    return resolveTemplateCell(column.inputType, result, verdict);
+  });
 }
 
 /**
