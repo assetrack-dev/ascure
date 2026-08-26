@@ -67,6 +67,13 @@ per-item photos you placed individually (see below) are **not** duplicated.
 **Per-item photos — labelled** — one entry per IMAGE checklist item that has a
 photo (`{#photoItems}` … `{/photoItems}`): `{label}`, `{key}`, `{tag}`, `{image}`.
 
+**Per-item photos — two-up grid** — the same labelled photos paired two per loop
+entry for a 2-column layout (`{#photoItemRows}` … `{/photoItemRows}`):
+`{label1}`, `{image1}`, `{label2}`, `{image2}`. Put the open tag in the first
+cell of a label row and the close tag in the last cell of the image row below it
+— the two-row range repeats per pair. An odd photo count leaves the second
+column of the last pair blank.
+
 ## Place a specific item's photo — `{img_<KEY>}`
 
 Every IMAGE-type checklist item's photo is also exposed as a **flat tag**, so you

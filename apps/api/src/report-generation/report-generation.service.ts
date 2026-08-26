@@ -107,6 +107,16 @@ interface AssetReportData {
   // Per-IMAGE-item photos for the labelled loop ({#photoItems}); each item's
   // photo is ALSO exposed as a flat {img_<KEY>} tag for direct placement.
   photoItems: Array<{ key: string; label: string; tag: string; image: ImageContent }>;
+  // The same labelled photos PAIRED for a two-column grid ({#photoItemRows}):
+  // one loop row = two label/image pairs; an odd tail leaves label2/image2 as
+  // empty strings (renders as a blank cell). A row loop can't wrap across
+  // columns, so the pairing happens here instead of in the template.
+  photoItemRows: Array<{
+    label1: string;
+    image1: ImageContent | string;
+    label2: string;
+    image2: ImageContent | string;
+  }>;
   // Everything NOT tied to a checklist IMAGE item (ad-hoc captures + defect
   // evidence) — use {#otherPhotos} so placed item photos aren't duplicated.
   otherPhotos: Array<{ image: ImageContent; caption: string; source: string }>;
@@ -1569,6 +1579,15 @@ export class ReportGenerationService implements OnModuleInit {
       defects,
       photos,
       photoItems,
+      photoItemRows: Array.from(
+        { length: Math.ceil(photoItems.length / 2) },
+        (_, row) => ({
+          label1: photoItems[row * 2].label,
+          image1: photoItems[row * 2].image,
+          label2: photoItems[row * 2 + 1]?.label ?? '',
+          image2: photoItems[row * 2 + 1]?.image ?? '',
+        }),
+      ),
       otherPhotos,
       hasPhotoItems: photoItems.length > 0,
       hasOtherPhotos: otherPhotos.length > 0,
