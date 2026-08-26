@@ -1796,6 +1796,30 @@ export class ReportGenerationService implements OnModuleInit {
     return (max._max.version ?? 0) + 1;
   }
 
+  /**
+   * pdf-lib's StandardFonts use WinAnsi (cp1252) encoding — any character
+   * outside it (→, typographic quotes, CJK, …) makes drawText THROW and the
+   * whole report compile fails. Map the common typographic characters to their
+   * ASCII cousins and replace anything else non-encodable with '?'.
+   */
+  // The >0xFF codepoints WinAnsi CAN encode (the cp1252 0x80–0x9F block):
+  // typographic quotes/dashes, ellipsis, €, ™, Š/Œ/Ž… — these pass through.
+  private static readonly WINANSI_EXTRAS = new Set(
+    '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'.split('').map((ch) => ch.charCodeAt(0)),
+  );
+
+  private winAnsiSafe(value: string): string {
+    return [...value.replace(/→/g, '-')]
+      .map((ch) => {
+        const code = ch.charCodeAt(0);
+        const encodable =
+          (code >= 0x20 && code <= 0xff) ||
+          ReportGenerationService.WINANSI_EXTRAS.has(code);
+        return encodable ? ch : '?';
+      })
+      .join('');
+  }
+
   private async drawCoverPage(
     doc: PDFDocument,
     siteVisit: {
@@ -1857,7 +1881,10 @@ export class ReportGenerationService implements OnModuleInit {
       siteVisit.toPencawang?.name ?? siteVisit.toPencawang?.code ?? '—';
     const identityRows: Array<[string, string]> = isRoute
       ? [
-          ['Laluan', `${fromLabel} → ${toLabel}`],
+          // Plain hyphen, NOT "→": the cover is drawn with pdf-lib's standard
+          // Helvetica (WinAnsi encoding), which cannot encode U+2192 and threw,
+          // killing the whole compile ("WinAnsi cannot encode").
+          ['Laluan', `${fromLabel} - ${toLabel}`],
           ['Kod Laluan (KOD TIANG)', siteVisit.routeCode?.trim() ?? '—'],
         ]
       : [
@@ -1894,7 +1921,14 @@ export class ReportGenerationService implements OnModuleInit {
 
     for (const [label, value] of rows) {
       page.drawText(`${label}:`, { x: left, y, size: 12, font: bold });
-      page.drawText(value, { x: left + 150, y, size: 12, font: regular });
+      // Values carry DB content (Pencawang/route names) — sanitize so one odd
+      // character can never abort the whole compile.
+      page.drawText(this.winAnsiSafe(value), {
+        x: left + 150,
+        y,
+        size: 12,
+        font: regular,
+      });
       y -= 26;
     }
   }
