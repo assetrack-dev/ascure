@@ -52,12 +52,22 @@ export class ReportsController {
 
   // DC master reference: every accessible Pencawang (id, code, name, Functional
   // Location, lat/long) as a downloadable .xlsx. Blank lat/long = never visited.
+  // `ids` (comma-separated substation ids — the report page's checkbox
+  // selection) narrows the list to just those rows; omitted = everything.
   @Get('pencawang-list.xlsx')
   async exportPencawangList(
     @CurrentUser() user: RequestUser,
+    @Query('ids') ids: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const { buffer, filename } = await this.reportsService.buildPencawangList(user);
+    const selected = (ids ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const { buffer, filename } = await this.reportsService.buildPencawangList(
+      user,
+      selected,
+    );
 
     res.setHeader(
       'Content-Type',
