@@ -979,10 +979,12 @@ export class ReportGenerationService implements OnModuleInit {
         pencawangName: true,
         pencawangCode: true,
         substation: { select: { name: true } },
+        routeCode: true,
+        fromPencawang: { select: { name: true, code: true } },
+        toPencawang: { select: { name: true, code: true } },
       },
     });
-    const label =
-      visit?.substation?.name ?? visit?.pencawangName ?? visit?.pencawangCode;
+    const label = this.visitReportLabel(visit);
 
     const buffer = await readFile(resolveUploadPath(report.storageKey));
     return {
@@ -994,7 +996,44 @@ export class ReportGenerationService implements OnModuleInit {
   }
 
   /**
-   * The filename a human receives: `LAPORAN VISUAL <PENCAWANG>.pdf`, plus a
+   * Owner-facing survey label for report filenames: a ROUTE survey (routeCode
+   * set) is named by its endpoints "FROM - TO" (the DC deliverable naming
+   * convention); a Pencawang survey keeps the live Pencawang name. The From
+   * endpoint falls back to the visit's check-in Pencawang — a SAVT visit's
+   * substation IS its From Pencawang.
+   */
+  private visitReportLabel(
+    visit:
+      | {
+          routeCode?: string | null;
+          fromPencawang?: { name: string | null; code: string | null } | null;
+          toPencawang?: { name: string | null; code: string | null } | null;
+          pencawangName: string | null;
+          pencawangCode: string | null;
+          substation?: { name: string | null } | null;
+        }
+      | null
+      | undefined,
+  ): string | null {
+    if (!visit) {
+      return null;
+    }
+    const base =
+      visit.substation?.name ?? visit.pencawangName ?? visit.pencawangCode ?? null;
+    if (visit.routeCode?.trim()) {
+      const from = visit.fromPencawang?.name ?? visit.fromPencawang?.code ?? base;
+      const to = visit.toPencawang?.name ?? visit.toPencawang?.code ?? null;
+      if (from && to) {
+        return `${from} - ${to}`;
+      }
+      return from ?? to ?? base;
+    }
+    return base;
+  }
+
+  /**
+   * The filename a human receives: `LAPORAN VISUAL <PENCAWANG>.pdf` — for a
+   * route survey `LAPORAN VISUAL <FROM> - <TO>.pdf` — plus a
    * JILID suffix when the survey compiled into several volumes. Spaces are
    * kept (it's a document title, not a storage key); characters illegal on
    * Windows/macOS are stripped. Version is intentionally omitted — it lives on
@@ -1057,6 +1096,9 @@ export class ReportGenerationService implements OnModuleInit {
         pencawangName: true,
         pencawangCode: true,
         substation: { select: { name: true } },
+        routeCode: true,
+        fromPencawang: { select: { name: true, code: true } },
+        toPencawang: { select: { name: true, code: true } },
         _count: { select: { visitAssets: true } },
       },
     });
@@ -1083,11 +1125,7 @@ export class ReportGenerationService implements OnModuleInit {
     }> = [];
     for (const id of ids) {
       const visit = visitById.get(id);
-      const label =
-        visit?.substation?.name ??
-        visit?.pencawangName ??
-        visit?.pencawangCode ??
-        id;
+      const label = this.visitReportLabel(visit) ?? id;
       if (!visit) {
         skipped.push({ siteVisitId: id, label, reason: 'Visit not found.' });
         continue;
@@ -1307,6 +1345,9 @@ export class ReportGenerationService implements OnModuleInit {
         pencawangName: true,
         pencawangCode: true,
         substation: { select: { name: true } },
+        routeCode: true,
+        fromPencawang: { select: { name: true, code: true } },
+        toPencawang: { select: { name: true, code: true } },
       },
     });
     if (visits.length === 0) {
@@ -1341,11 +1382,7 @@ export class ReportGenerationService implements OnModuleInit {
     let included = 0;
 
     for (const visit of visits) {
-      const label =
-        visit.substation?.name ??
-        visit.pencawangName ??
-        visit.pencawangCode ??
-        visit.id;
+      const label = this.visitReportLabel(visit) ?? visit.id;
       const version = latestVersion.get(visit.id);
       if (version === undefined) {
         manifest.push(`TIADA LAPORAN — ${label} (belum dijana)`);
