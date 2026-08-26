@@ -462,6 +462,7 @@ export class ReportsService {
         id: true,
         substationId: true,
         status: true,
+        startedAt: true,
         mainhead: true,
         mainheadRecord: { select: { name: true } },
         lifecycleStatus: true,
@@ -479,6 +480,9 @@ export class ReportsService {
     // The current survey's unified status + the Pencawang's coordinate (its most
     // recent visit's check-in GPS) — the report table's Status + Lokasi columns.
     const displayStatusBySubstation = new Map<string, DisplayStatus>();
+    // The CURRENT survey's start date (most recent visit — same source as the
+    // Status column, so the two always describe the same survey).
+    const startedAtBySubstation = new Map<string, Date>();
     const coordsBySubstation = new Map<
       string,
       { latitude: number; longitude: number }
@@ -509,6 +513,10 @@ export class ReportsService {
           subId,
           deriveDisplayStatus(visit.status, visit.lifecycleStatus),
         );
+      }
+
+      if (!startedAtBySubstation.has(subId)) {
+        startedAtBySubstation.set(subId, visit.startedAt);
       }
 
       // First visit (most recent) that carries a check-in fix = the Pencawang point.
@@ -554,6 +562,8 @@ export class ReportsService {
           : null,
         statuses: [...(statusesBySubstation.get(substation.id) ?? [])],
         assetCount: _count.assets,
+        // The current (most recent) survey's start date; null = never surveyed.
+        surveyStartedAt: startedAtBySubstation.get(substation.id) ?? null,
         // Drives the "Visual Report" download button (null => nothing compiled).
         reportVisitId,
         hasReport: reportVisitId != null,
@@ -596,6 +606,8 @@ export class ReportsService {
       'Functional Location',
       'Latitude',
       'Longitude',
+      'Number of Poles',
+      'Start Survey Date',
     ]);
     header.font = { bold: true };
 
@@ -611,10 +623,15 @@ export class ReportsService {
         // Pencawang that has not been surveyed. Numeric otherwise.
         substation.latitude ?? '',
         substation.longitude ?? '',
+        // Poles registered under this Pencawang (all cycles).
+        substation.assetCount,
+        // The current (most recent) survey's start date — same survey the
+        // report page's Status describes. Blank = never surveyed.
+        formatDate(substation.surveyStartedAt),
       ]);
     });
 
-    const columnWidths = [6, 16, 34, 34, 14, 14];
+    const columnWidths = [6, 16, 34, 34, 14, 14, 14, 16];
     columnWidths.forEach((width, index) => {
       sheet.getColumn(index + 1).width = width;
     });
