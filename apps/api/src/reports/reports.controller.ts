@@ -79,6 +79,35 @@ export class ReportsController {
     return new StreamableFile(buffer);
   }
 
+  // SAVT analogue of pencawang-list: every accessible route (KOD TIANG) with
+  // From/To Pencawang, Mainhead, lat/long, pole count, survey start date and
+  // Status. `ids` = comma-separated ROUTE CODES from the report page's checkbox
+  // selection; omitted = every route.
+  @Get('savt-route-list.xlsx')
+  async exportSavtRouteList(
+    @CurrentUser() user: RequestUser,
+    @Query('ids') ids: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const selected = (ids ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const { buffer, filename } = await this.reportsService.buildSavtRouteList(
+      user,
+      selected,
+    );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   // Per-user output for a period (default: this month) — the manager's monitor
   // + pay view. JSON for the table; .xlsx for the downloadable pay sheet.
   @Get('crew-performance')

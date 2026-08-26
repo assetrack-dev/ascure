@@ -80,6 +80,24 @@ export async function downloadPencawangList(
 }
 
 /**
+ * Downloads the SAVT Route list (.xlsx) — the route analogue of the Pencawang
+ * list: KOD TIANG, From/To Pencawang, Mainhead, lat/long, number of poles on
+ * the route, survey start date and Status. `ids` (route codes from the report
+ * page's checkbox selection) narrows the file; omitted/empty = every route.
+ */
+export async function downloadSavtRouteList(
+  token: string,
+  ids?: string[],
+): Promise<void> {
+  const query = ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : "";
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/savt-route-list.xlsx${query}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "savt-route-list.xlsx");
+}
+
+/**
  * Downloads the per-route SAVT checklist (.xlsx, 1 pole per row, route-flavoured
  * meta columns + one column per live SAVT checklist item). `status` filters by
  * survey lifecycle; "ALL"/omitted = no filter. Server names it

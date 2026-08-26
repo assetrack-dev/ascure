@@ -29,6 +29,7 @@ import {
   downloadPencawangList,
   downloadPencawangTemplateMasterlist,
   downloadSavtRouteChecklist,
+  downloadSavtRouteList,
   fetchReportSubstations,
   fetchSavtRoutes,
 } from "@/lib/reports";
@@ -359,11 +360,13 @@ function ReportsContent() {
     }
   }
 
-  // DC master reference as .xlsx. With Pencawang rows ticked (SAVR view), only
-  // the selection is exported; otherwise EVERY accessible Pencawang —
-  // independent of the on-screen filters. Blank lat/long = never visited.
-  const pencawangListSelection =
-    !isSavt && selectedKeys.size > 0 ? [...selectedKeys] : undefined;
+  // DC master reference as .xlsx — scope-aware: the SAVR view downloads the
+  // Pencawang list, the SAVT view the Route list (KOD TIANG + From/To + pole
+  // count per route). With rows ticked, only the selection is exported;
+  // otherwise EVERY accessible row — independent of the on-screen filters.
+  const listSelection = selectedKeys.size > 0 ? [...selectedKeys] : undefined;
+  const listNoun = isSavt ? "route" : "Pencawang";
+  const listLabel = isSavt ? "Route list" : "Pencawang list";
 
   async function handleDownloadPencawangList() {
     if (!session?.token || isListDownloading) {
@@ -373,11 +376,17 @@ function ReportsContent() {
     setError("");
     setNotice("");
     try {
-      await downloadPencawangList(session.token, pencawangListSelection);
+      if (isSavt) {
+        await downloadSavtRouteList(session.token, listSelection);
+      } else {
+        await downloadPencawangList(session.token, listSelection);
+      }
       setNotice(
-        pencawangListSelection
-          ? `Pencawang list downloaded for ${pencawangListSelection.length} selected Pencawang.`
-          : "Pencawang list downloaded.",
+        listSelection
+          ? `${listLabel} downloaded for ${listSelection.length} selected ${listNoun}${
+              listSelection.length === 1 ? "" : "s"
+            }.`
+          : `${listLabel} downloaded.`,
       );
     } catch (downloadError) {
       handleDownloadError(downloadError);
@@ -475,18 +484,20 @@ function ReportsContent() {
                     onClick={handleDownloadPencawangList}
                     disabled={isListDownloading || isBulkDownloading || !!downloadingKey}
                     title={
-                      pencawangListSelection
-                        ? `Download the ${pencawangListSelection.length} ticked Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date) as XLSX`
-                        : "Download every Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date) as XLSX — blank lat/long = never visited"
+                      isSavt
+                        ? listSelection
+                          ? `Download the ${listSelection.length} ticked routes (KOD TIANG, From/To Pencawang, Mainhead, lat/long, number of poles, survey date, status) as XLSX`
+                          : "Download every route (KOD TIANG, From/To Pencawang, Mainhead, lat/long, number of poles, survey date, status) as XLSX"
+                        : listSelection
+                          ? `Download the ${listSelection.length} ticked Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date, status) as XLSX`
+                          : "Download every Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date, status) as XLSX — blank lat/long = never visited"
                     }
                   >
                     <Download size={16} />
                     {isListDownloading
                       ? "Preparing…"
-                      : `Pencawang list${
-                          pencawangListSelection
-                            ? ` (${pencawangListSelection.length})`
-                            : ""
+                      : `${listLabel}${
+                          listSelection ? ` (${listSelection.length})` : ""
                         }`}
                   </Tbtn>
                   <Tbtn
