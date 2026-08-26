@@ -429,11 +429,20 @@ export class ReportsService {
    *  Substation isn't linked to a MAINHEAD directly, so it's derived from the
    *  Pencawang's site visits (linked MAINHEAD record, else free-text), taking
    *  the most recent visit's. */
-  async listSubstations(user: RequestUser) {
+  async listSubstations(
+    user: RequestUser,
+    // includeInactive: the Pencawang-list EXPORT wants deactivated rows too (they
+    // still hold poles and still count on Progress) — the report-page selector
+    // stays active-only.
+    options?: { includeInactive?: boolean },
+  ) {
     await this.assertCanReport(user);
 
     const substations = await this.prisma.substation.findMany({
-      where: { tenantId: user.tenantId, isActive: true },
+      where: {
+        tenantId: user.tenantId,
+        ...(options?.includeInactive ? {} : { isActive: true }),
+      },
       orderBy: [{ name: 'asc' }],
       select: {
         id: true,
@@ -444,6 +453,7 @@ export class ReportsService {
         // Manual office pin — wins over the check-in-derived coordinate below.
         latitude: true,
         longitude: true,
+        isActive: true,
         _count: { select: { assets: true } },
       },
     });
@@ -598,7 +608,12 @@ export class ReportsService {
       );
     }
 
-    const allSubstations = await this.listSubstations(user);
+    // Deactivated Pencawang stay in the export: they still hold poles, still
+    // count on the Progress page, and DC cross-checks the list against their
+    // own register — the Status column is how a deactivated row is spotted.
+    const allSubstations = await this.listSubstations(user, {
+      includeInactive: true,
+    });
     const idFilter = new Set(
       (substationIds ?? []).map((id) => id.trim()).filter(Boolean),
     );
@@ -617,6 +632,7 @@ export class ReportsService {
       'Longitude',
       'Number of Poles',
       'Start Survey Date',
+      'Status',
     ]);
     header.font = { bold: true };
 
@@ -637,10 +653,13 @@ export class ReportsService {
         // The current (most recent) survey's start date — same survey the
         // report page's Status describes. Blank = never surveyed.
         formatDate(substation.surveyStartedAt),
+        // Deactivated Pencawang still count on the Progress page while they
+        // hold poles — this column is what DC reconciles against.
+        substation.isActive ? 'Active' : 'Inactive',
       ]);
     });
 
-    const columnWidths = [6, 16, 34, 34, 14, 14, 14, 16];
+    const columnWidths = [6, 16, 34, 34, 14, 14, 14, 16, 12];
     columnWidths.forEach((width, index) => {
       sheet.getColumn(index + 1).width = width;
     });
