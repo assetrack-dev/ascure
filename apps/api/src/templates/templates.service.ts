@@ -14,6 +14,8 @@ import {
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { buildScopeContext } from '../common/authorization/scope-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { CreateTemplateItemDto, UpdateTemplateItemDto } from './dto/create-template-item.dto';
@@ -292,7 +294,7 @@ export class TemplatesService {
         where: {
           id: input.siteVisitId,
           tenantId: user.tenantId,
-          ...this.siteVisitAccessScope(user),
+          ...(await this.siteVisitAccessScope(user)),
         },
         select: {
           organizationId: true,
@@ -469,21 +471,14 @@ export class TemplatesService {
     };
   }
 
-  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
-    if (user.role === UserRole.ADMIN) {
-      return {};
-    }
-
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
-        },
-      },
-    };
+  // Canonical role-aware SiteVisit filter — see the identical delegation in
+  // ChecklistTemplatesService: the old own-team-membership filter 404'd a
+  // MANAGER's template resolution on their own company's visits.
+  private async siteVisitAccessScope(
+    user: RequestUser,
+  ): Promise<Prisma.SiteVisitWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return siteVisitAccessWhere(user, ctx);
   }
 
   private findActiveTemplate(where: {

@@ -37,6 +37,7 @@ import {
 import {
   assetAccessWhere,
   assetOversightWhere,
+  siteVisitAccessWhere,
   siteVisitMapWhere,
 } from '../common/authorization/site-visit-scope';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -1272,7 +1273,7 @@ export class AssetsService {
           status: {
             in: this.activeSiteVisitStatuses(),
           },
-          ...this.siteVisitAccessScope(user),
+          ...(await this.siteVisitAccessScope(user)),
         },
         select: {
           id: true,
@@ -2412,21 +2413,15 @@ export class AssetsService {
     ]);
   }
 
-  private siteVisitAccessScope(user: RequestUser) {
-    if (user.role === 'ADMIN') {
-      return {};
-    }
-
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
-        },
-      },
-    };
+  // Which site visits a user may CREATE an asset under. Canonical role-aware
+  // filter (strict — never oversight): MANAGER = own company's teams, DC =
+  // their mainheads, others = own teams. The old own-team-membership filter
+  // blocked a MANAGER from adding a pole to their own team's visit.
+  private async siteVisitAccessScope(
+    user: RequestUser,
+  ): Promise<Prisma.SiteVisitWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return siteVisitAccessWhere(user, ctx);
   }
 
   private inspectionAccessScope(user: RequestUser) {

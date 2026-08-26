@@ -15,6 +15,8 @@ import {
   UserRole,
 } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { buildScopeContext } from '../common/authorization/scope-context';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ChecklistTemplateGroupInputDto,
@@ -513,7 +515,7 @@ export class ChecklistTemplatesService {
         where: {
           id: input.siteVisitId,
           tenantId: user.tenantId,
-          ...this.siteVisitAccessScope(user),
+          ...(await this.siteVisitAccessScope(user)),
         },
         select: {
           organizationId: true,
@@ -690,21 +692,16 @@ export class ChecklistTemplatesService {
     };
   }
 
-  private siteVisitAccessScope(user: RequestUser): Prisma.SiteVisitWhereInput {
-    if (user.role === UserRole.ADMIN) {
-      return {};
-    }
-
-    return {
-      team: {
-        members: {
-          some: {
-            userId: user.id,
-            isActive: true,
-          },
-        },
-      },
-    };
+  // Canonical role-aware SiteVisit filter (ADMIN = tenant, MANAGER = own
+  // company, SUPERVISOR = supervised teams, DC = their mainheads, others = own
+  // teams). Previously a narrow own-team-membership filter, which 404'd the
+  // visit lookup for a MANAGER resolving a checklist on their team's visit —
+  // surfacing on mobile as a bogus "No active SAVR checklist template found".
+  private async siteVisitAccessScope(
+    user: RequestUser,
+  ): Promise<Prisma.SiteVisitWhereInput> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return siteVisitAccessWhere(user, ctx);
   }
 
   private findActiveTemplate(where: {
