@@ -1,14 +1,21 @@
 import { PDFDocument, PDFFont, PDFImage, PDFPage, StandardFonts, rgb } from 'pdf-lib';
 import type { RGB } from 'pdf-lib';
+import {
+  ASCURE_LOGO_PNG_BASE64,
+  TNB_LOGO_PNG_BASE64,
+} from './defect-report-assets';
 
 /**
- * Pure layout for the "Laporan Kejanggalan" (defect visual report): the
- * client-requested compact format — per pole, a KEJANGGALAN table with a
- * colour-coded KATEGORI column (A red / B yellow / C green) and a strip of up
- * to three photos, ~3 poles per A4 page. Drawn directly with pdf-lib because
- * the docx pipeline can't drive per-cell shading from data, and the colour
- * cells ARE this report. Callers pass a WinAnsi sanitiser — StandardFonts
- * throw on any character outside cp1252 (the SAVT "→" incident).
+ * Pure layout for the "Laporan Kejanggalan" (defect visual report): per pole,
+ * a KEJANGGALAN table with a colour-coded KATEGORI column (A red / B yellow /
+ * C green) and the pole's photos in rows of three, ~3 poles per A4 page.
+ * Styled after the SAVR visual-report template (owner's direction): ASCURE +
+ * TNB logos in a per-page title block, Arial-like type, the navy #1F3864
+ * title colour, #EDEDED label cells and the grey "Dijana secara automatik"
+ * footer. Drawn directly with pdf-lib because the docx pipeline can't drive
+ * per-cell shading from data, and the colour cells ARE this report. Callers
+ * pass a WinAnsi sanitiser — StandardFonts throw on any character outside
+ * cp1252 (the SAVT "→" incident).
  */
 
 export type DefectCategory = 'A' | 'B' | 'C';
@@ -27,6 +34,8 @@ export interface DefectReportPole {
 export interface DefectReportInput {
   pencawangName: string;
   functionalLocation: string;
+  /** Pre-formatted MYT timestamp for the footer's "Dijana … pada" line. */
+  generatedAt: string;
   poles: DefectReportPole[];
   /** Map text into WinAnsi-encodable characters (see winAnsiSafe). */
   sanitize: (value: string) => string;
@@ -37,9 +46,15 @@ const PAGE_HEIGHT = 841.89;
 const MARGIN = 40;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
-// Sized so a typical block (2 header rows + 5 defect rows + photo strip)
-// lands at ~240pt — THREE poles per A4 page, like the client's sample.
-const HEADER_ROW_HEIGHT = 14;
+// ── Per-page title block ──
+const LOGO_HEIGHT = 30;
+const TITLE_SIZE = 13;
+const INFO_ROW_HEIGHT = 15;
+const INFO_LABEL_COL = 150;
+const HEADER_GAP = 10;
+
+// ── Pole blocks — sized so a typical block (5 defect rows + one photo row)
+// lands at ~220pt: THREE poles per page under the title block. ──
 const COL_HEADER_HEIGHT = 14;
 const DEFECT_ROW_MIN_HEIGHT = 13;
 /** Blank (but numbered) filler rows keep short blocks visually uniform. */
@@ -47,9 +62,11 @@ const MIN_DEFECT_ROWS = 5;
 const PHOTO_BOX_HEIGHT = 115;
 const PHOTO_GAP = 10;
 const PHOTO_ROW_PAD = 6;
+const PHOTOS_PER_ROW = 3;
 const BLOCK_GAP = 12;
+/** Room reserved under the content for the footer line. */
+const FOOTER_SPACE = 16;
 
-const HEADER_LABEL_COL = 110;
 const TIANG_COL = 80;
 const KATEGORI_COL = 80;
 const NUM_COL = 22;
@@ -59,10 +76,12 @@ const TEXT_SIZE = 8.5;
 const LINE_HEIGHT = 10;
 const CELL_PAD_X = 4;
 
-// The sample report's palette: gold Pencawang band, light-blue column header,
-// traffic-light KATEGORI cells matching the mobile mark-circle colours.
-const YELLOW = rgb(1, 0.8, 0.2);
-const BLUE = rgb(0.66, 0.81, 0.92);
+// The SAVR template's palette: navy titles, grey label cells, muted footer.
+const NAVY = rgb(0.122, 0.22, 0.392); // #1F3864
+const GRAY_FILL = rgb(0.929, 0.929, 0.929); // #EDEDED
+const MUTED = rgb(0.467, 0.467, 0.467); // #777777
+const WHITE = rgb(1, 1, 1);
+// Traffic-light KATEGORI cells, matching the mobile mark-circle colours.
 const CATEGORY_FILL: Record<DefectCategory, RGB> = {
   A: rgb(0.937, 0.267, 0.267), // #EF4444
   B: rgb(0.98, 0.8, 0.082), // #FACC15
@@ -175,14 +194,82 @@ export async function renderDefectReportPdf(
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const ascureLogo = await doc.embedPng(
+    Buffer.from(ASCURE_LOGO_PNG_BASE64, 'base64'),
+  );
+  const tnbLogo = await doc.embedPng(Buffer.from(TNB_LOGO_PNG_BASE64, 'base64'));
   const s = input.sanitize;
 
-  let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let cursorY = PAGE_HEIGHT - MARGIN;
+  // ── Per-page title block: logos, title, Pencawang identity ──
+  const drawPageHeader = (target: PDFPage): number => {
+    let y = PAGE_HEIGHT - MARGIN;
 
+    const ascureScale = LOGO_HEIGHT / ascureLogo.height;
+    target.drawImage(ascureLogo, {
+      x: MARGIN,
+      y: y - LOGO_HEIGHT,
+      width: ascureLogo.width * ascureScale,
+      height: LOGO_HEIGHT,
+    });
+    const tnbScale = LOGO_HEIGHT / tnbLogo.height;
+    const tnbWidth = tnbLogo.width * tnbScale;
+    target.drawImage(tnbLogo, {
+      x: PAGE_WIDTH - MARGIN - tnbWidth,
+      y: y - LOGO_HEIGHT,
+      width: tnbWidth,
+      height: LOGO_HEIGHT,
+    });
+
+    const title = 'LAPORAN KEJANGGALAN';
+    const titleWidth = bold.widthOfTextAtSize(title, TITLE_SIZE);
+    target.drawText(title, {
+      x: (PAGE_WIDTH - titleWidth) / 2,
+      y: y - LOGO_HEIGHT / 2 - TITLE_SIZE / 2 + 2,
+      size: TITLE_SIZE,
+      font: bold,
+      color: NAVY,
+    });
+    y -= LOGO_HEIGHT + 6;
+
+    target.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: PAGE_WIDTH - MARGIN, y },
+      thickness: 1,
+      color: NAVY,
+    });
+    y -= HEADER_GAP;
+
+    const infoRows: Array<[string, string]> = [
+      ['NAMA PENCAWANG', s(input.pencawangName)],
+      ['FUNCTIONAL LOCATION', s(input.functionalLocation)],
+    ];
+    for (const [label, value] of infoRows) {
+      drawCell(target, MARGIN, y, INFO_LABEL_COL, INFO_ROW_HEIGHT, GRAY_FILL, {
+        lines: [label],
+        font: bold,
+        size: 8,
+        align: 'left',
+      });
+      drawCell(
+        target,
+        MARGIN + INFO_LABEL_COL,
+        y,
+        CONTENT_WIDTH - INFO_LABEL_COL,
+        INFO_ROW_HEIGHT,
+        null,
+        { lines: [value], font, size: 8.5, align: 'left' },
+      );
+      y -= INFO_ROW_HEIGHT;
+    }
+
+    return y - HEADER_GAP;
+  };
+
+  let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let cursorY = drawPageHeader(page);
   const newPage = () => {
     page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    cursorY = PAGE_HEIGHT - MARGIN;
+    cursorY = drawPageHeader(page);
   };
 
   for (const pole of input.poles) {
@@ -217,64 +304,27 @@ export async function renderDefectReportPdf(
     }
 
     const rowsHeight = rows.reduce((sum, row) => sum + row.height, 0);
-    const photoRowHeight = embedded.length
-      ? PHOTO_BOX_HEIGHT + PHOTO_ROW_PAD * 2
+    const photoRowCount = Math.ceil(embedded.length / PHOTOS_PER_ROW);
+    const photoAreaHeight = photoRowCount
+      ? photoRowCount * (PHOTO_BOX_HEIGHT + PHOTO_ROW_PAD) + PHOTO_ROW_PAD
       : 0;
-    const blockHeight =
-      HEADER_ROW_HEIGHT * 2 + COL_HEADER_HEIGHT + rowsHeight + photoRowHeight;
+    const blockHeight = COL_HEADER_HEIGHT + rowsHeight + photoAreaHeight;
 
     // Keep each pole block whole: break to a fresh page when it doesn't fit.
-    // (A block taller than a whole page — 50+ defect lines — would clip; no
-    // real checklist gets near that.)
-    if (blockHeight > cursorY - MARGIN && cursorY < PAGE_HEIGHT - MARGIN) {
+    // (A block taller than a whole page — dozens of photos — would clip; no
+    // real pole gets near that.)
+    const bottomLimit = MARGIN + FOOTER_SPACE;
+    if (blockHeight > cursorY - bottomLimit && cursorY < PAGE_HEIGHT - MARGIN - 60) {
       newPage();
     }
 
-    // ── Pencawang header band (repeated per block, like the sample) ──
-    drawCell(page, MARGIN, cursorY, HEADER_LABEL_COL, HEADER_ROW_HEIGHT, YELLOW, {
-      lines: ['PENCAWANG'],
-      font: bold,
-      size: 9,
-      align: 'left',
-    });
-    drawCell(
-      page,
-      MARGIN + HEADER_LABEL_COL,
-      cursorY,
-      CONTENT_WIDTH - HEADER_LABEL_COL,
-      HEADER_ROW_HEIGHT,
-      YELLOW,
-      { lines: [`:  ${s(input.pencawangName)}`], font: bold, size: 9, align: 'left' },
-    );
-    cursorY -= HEADER_ROW_HEIGHT;
-    drawCell(page, MARGIN, cursorY, HEADER_LABEL_COL, HEADER_ROW_HEIGHT, YELLOW, {
-      lines: ['FL NO.'],
-      font: bold,
-      size: 9,
-      align: 'left',
-    });
-    drawCell(
-      page,
-      MARGIN + HEADER_LABEL_COL,
-      cursorY,
-      CONTENT_WIDTH - HEADER_LABEL_COL,
-      HEADER_ROW_HEIGHT,
-      YELLOW,
-      {
-        lines: [`:  ${s(input.functionalLocation)}`],
-        font: bold,
-        size: 9,
-        align: 'left',
-      },
-    );
-    cursorY -= HEADER_ROW_HEIGHT;
-
     // ── Column header ──
-    drawCell(page, MARGIN, cursorY, TIANG_COL, COL_HEADER_HEIGHT, BLUE, {
+    drawCell(page, MARGIN, cursorY, TIANG_COL, COL_HEADER_HEIGHT, NAVY, {
       lines: ['No. Tiang'],
       font: bold,
       size: 8.5,
       align: 'center',
+      color: WHITE,
     });
     drawCell(
       page,
@@ -282,8 +332,8 @@ export async function renderDefectReportPdf(
       cursorY,
       NUM_COL + LABEL_COL,
       COL_HEADER_HEIGHT,
-      BLUE,
-      { lines: ['KEJANGGALAN'], font: bold, size: 8.5, align: 'left' },
+      NAVY,
+      { lines: ['KEJANGGALAN'], font: bold, size: 8.5, align: 'left', color: WHITE },
     );
     drawCell(
       page,
@@ -291,14 +341,20 @@ export async function renderDefectReportPdf(
       cursorY,
       KATEGORI_COL,
       COL_HEADER_HEIGHT,
-      BLUE,
-      { lines: ['KATEGORI'], font: bold, size: 8.5, align: 'center' },
+      NAVY,
+      { lines: ['KATEGORI'], font: bold, size: 8.5, align: 'center', color: WHITE },
     );
     cursorY -= COL_HEADER_HEIGHT;
 
     // ── Defect rows; the No. Tiang cell spans them all ──
-    // Stack the code's space-separated parts, as crews write it (PB2 / C / 19).
-    const codeLines = s(pole.assetCode).split(/\s+/).filter(Boolean);
+    // Stack the code's space-separated parts, as crews write it (PB2 / C / 19)
+    // — but a long shared-pole code ("D 1 & E 1 & H 1") stacks taller than the
+    // cell, so fall back to width-wrapping when the stack doesn't fit.
+    const code = s(pole.assetCode);
+    let codeLines = code.split(/\s+/).filter(Boolean);
+    if (codeLines.length * LINE_HEIGHT > rowsHeight - 2) {
+      codeLines = wrapText(code, bold, 9, TIANG_COL - CELL_PAD_X * 2);
+    }
     drawCell(page, MARGIN, cursorY, TIANG_COL, rowsHeight, null, {
       lines: codeLines.length ? codeLines : [''],
       font: bold,
@@ -335,48 +391,61 @@ export async function renderDefectReportPdf(
     });
     cursorY = rowY;
 
-    // ── Photo strip ──
+    // ── Photos, in rows of three ──
     if (embedded.length) {
-      drawCell(page, MARGIN, cursorY, CONTENT_WIDTH, photoRowHeight, null);
-      const boxWidth =
-        (CONTENT_WIDTH - PHOTO_GAP * (embedded.length + 1)) / embedded.length;
-      const sizes = embedded.map((image) => {
-        const scale = Math.min(
-          boxWidth / image.width,
-          PHOTO_BOX_HEIGHT / image.height,
-          1,
-        );
-        return { width: image.width * scale, height: image.height * scale };
-      });
-      const totalWidth =
-        sizes.reduce((sum, size) => sum + size.width, 0) +
-        PHOTO_GAP * (embedded.length - 1);
-      let photoX = MARGIN + (CONTENT_WIDTH - totalWidth) / 2;
-      embedded.forEach((image, index) => {
-        const size = sizes[index];
-        page.drawImage(image, {
-          x: photoX,
-          y: cursorY - PHOTO_ROW_PAD - size.height,
-          width: size.width,
-          height: size.height,
+      drawCell(page, MARGIN, cursorY, CONTENT_WIDTH, photoAreaHeight, null);
+      const boxWidth = (CONTENT_WIDTH - PHOTO_GAP * (PHOTOS_PER_ROW + 1)) / PHOTOS_PER_ROW;
+      let rowTop = cursorY - PHOTO_ROW_PAD;
+      for (let start = 0; start < embedded.length; start += PHOTOS_PER_ROW) {
+        const rowImages = embedded.slice(start, start + PHOTOS_PER_ROW);
+        const sizes = rowImages.map((image) => {
+          const scale = Math.min(
+            boxWidth / image.width,
+            PHOTO_BOX_HEIGHT / image.height,
+            1,
+          );
+          return { width: image.width * scale, height: image.height * scale };
         });
-        photoX += size.width + PHOTO_GAP;
-      });
-      cursorY -= photoRowHeight;
+        const totalWidth =
+          sizes.reduce((sum, size) => sum + size.width, 0) +
+          PHOTO_GAP * (rowImages.length - 1);
+        let photoX = MARGIN + (CONTENT_WIDTH - totalWidth) / 2;
+        rowImages.forEach((image, index) => {
+          const size = sizes[index];
+          page.drawImage(image, {
+            x: photoX,
+            y: rowTop - size.height,
+            width: size.width,
+            height: size.height,
+          });
+          photoX += size.width + PHOTO_GAP;
+        });
+        rowTop -= PHOTO_BOX_HEIGHT + PHOTO_ROW_PAD;
+      }
+      cursorY -= photoAreaHeight;
     }
 
     cursorY -= BLOCK_GAP;
   }
 
+  // ── Footer: generation line (SAVR-template style) + page numbers ──
   const pages = doc.getPages();
+  const footerText = s(`Dijana secara automatik oleh ASCURE pada ${input.generatedAt}`);
   pages.forEach((p, index) => {
+    p.drawText(footerText, {
+      x: MARGIN,
+      y: 24,
+      size: 7,
+      font,
+      color: MUTED,
+    });
     const label = `${index + 1} / ${pages.length}`;
     p.drawText(label, {
       x: PAGE_WIDTH - MARGIN - font.widthOfTextAtSize(label, 8),
-      y: 22,
+      y: 24,
       size: 8,
       font,
-      color: rgb(0.4, 0.4, 0.4),
+      color: MUTED,
     });
   });
 

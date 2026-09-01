@@ -515,6 +515,7 @@ export class ReportGenerationService implements OnModuleInit {
     const buffer = await renderDefectReportPdf({
       pencawangName,
       functionalLocation: visit.functionalLocation ?? '',
+      generatedAt: this.fmtDateTime(new Date()),
       poles,
       sanitize: (value) => this.winAnsiSafe(value),
     });
@@ -523,9 +524,6 @@ export class ReportGenerationService implements OnModuleInit {
     )}.pdf`;
     return { buffer, filename };
   }
-
-  /** How many photos each pole block shows (the sample format fits three). */
-  private static readonly DEFECT_REPORT_MAX_PHOTOS = 3;
 
   /** One defect-report block, or null when the pole has no live defect. */
   private async buildDefectReportPole(
@@ -552,10 +550,12 @@ export class ReportGenerationService implements OnModuleInit {
       ),
     }));
 
-    // Photo order mirrors the client's sample: the full-pole shot leads, then
-    // the captures tied to defect checklist items (those carry the burned-in
-    // mark circles), then defect evidence; first inspection photo as a last
-    // resort so a block is never image-less when photos exist.
+    // EVERY photo the pole has (owner's choice), ordered like the client's
+    // sample: the full-pole shot leads, then captures tied to defect checklist
+    // items (those carry the burned-in mark circles), then all remaining
+    // inspection photos — the mobile defect flow saves its close-ups UNTAGGED
+    // (no templateItemId), so the untagged remainder IS mostly the defect
+    // photos — then defect evidence.
     const images = inspection.inspectionImages;
     const itemImageMap = await this.buildItemImageMap(images);
     const defectChecklistIds = new Set(
@@ -584,18 +584,17 @@ export class ReportGenerationService implements OnModuleInit {
         candidates.push(image);
       }
     }
+    for (const image of images) {
+      if (!candidates.includes(image)) {
+        candidates.push(image);
+      }
+    }
     for (const item of defectItems) {
       candidates.push(...(item.defect?.evidenceImages ?? []));
-    }
-    if (candidates.length === 0 && images.length > 0) {
-      candidates.push(images[0]);
     }
 
     const photos: DefectReportPole['photos'] = [];
     for (const candidate of candidates) {
-      if (photos.length >= ReportGenerationService.DEFECT_REPORT_MAX_PHOTOS) {
-        break;
-      }
       const loaded = await loadReportImage(candidate);
       if (!loaded) {
         continue;
