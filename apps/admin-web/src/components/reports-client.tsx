@@ -489,8 +489,8 @@ function ReportsContent() {
                           ? `Download the ${listSelection.length} ticked routes (KOD TIANG, From/To Pencawang, Mainhead, lat/long, number of poles, survey date, status) as XLSX`
                           : "Download every route (KOD TIANG, From/To Pencawang, Mainhead, lat/long, number of poles, survey date, status) as XLSX"
                         : listSelection
-                          ? `Download the ${listSelection.length} ticked Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date, status) as XLSX`
-                          : "Download every Pencawang (ID, Nama, Functional Location, lat/long, poles, survey date, status) as XLSX — blank lat/long = never visited"
+                          ? `Download the ${listSelection.length} ticked Pencawang (ID, Nama, Functional Location, lat/long, poles, start/complete dates, days on site, team, status) as XLSX`
+                          : "Download every Pencawang (ID, Nama, Functional Location, lat/long, poles, start/complete dates, days on site, team, status) as XLSX — blank lat/long = never visited"
                     }
                   >
                     <Download size={16} />

@@ -619,6 +619,11 @@ export class ReportsService {
       ? allSubstations.filter((substation) => idFilter.has(substation.id))
       : allSubstations;
 
+    const savrActivity = await this.collectSavrSiteActivity(
+      user,
+      substations.map((substation) => substation.id),
+    );
+
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet('PENCAWANG');
     const header = sheet.addRow([
@@ -629,12 +634,18 @@ export class ReportsService {
       'Latitude',
       'Longitude',
       'Number of Poles',
-      'Start Survey Date',
+      'Start Date',
+      'Complete Date',
+      'Days on Site',
+      'Team',
       'Status',
     ]);
     header.font = { bold: true };
 
     substations.forEach((substation, index) => {
+      // SAVR field activity only — SAVT routes have their own Route list.
+      // Blank quartet = no SAVR pole inspected here yet.
+      const activity = savrActivity.get(substation.id);
       sheet.addRow([
         index + 1,
         // Blank until the Pencawang has a Mainhead whose code is set.
@@ -648,16 +659,20 @@ export class ReportsService {
         substation.longitude ?? '',
         // Poles registered under this Pencawang (all cycles).
         substation.assetCount,
-        // The current (most recent) survey's start date — same survey the
-        // report page's Status describes. Blank = never surveyed.
-        formatDate(substation.surveyStartedAt),
+        // First / last SAVR pole inspection at this Pencawang (all cycles).
+        formatDate(activity?.startAt ?? null),
+        formatDate(activity?.completeAt ?? null),
+        // Distinct calendar days (MYT) with at least one inspection — actual
+        // days the crew worked the site, not the start→complete span.
+        activity?.siteDays ?? '',
+        activity?.teams.join(', ') ?? '',
         // Deactivated Pencawang still count on the Progress page while they
         // hold poles — this column is what DC reconciles against.
         substation.isActive ? 'Active' : 'Inactive',
       ]);
     });
 
-    const columnWidths = [6, 16, 34, 34, 14, 14, 14, 16, 12];
+    const columnWidths = [6, 16, 34, 34, 14, 14, 14, 13, 13, 12, 24, 12];
     columnWidths.forEach((width, index) => {
       sheet.getColumn(index + 1).width = width;
     });
@@ -666,6 +681,125 @@ export class ReportsService {
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `pencawang-list-${stamp}.xlsx`;
     return { buffer: Buffer.from(arrayBuffer), filename };
+  }
+
+  /**
+   * Per-Pencawang SAVR field-activity aggregates for the Pencawang list export.
+   * Start/Complete = the first/last SAVR pole inspection at the Pencawang (all
+   * cycles); Days on site = distinct MYT calendar days with at least one
+   * inspection (crews skip days, so a start→complete span would overcount);
+   * Teams = every team that inspected there, in order of first appearance.
+   * SAVR only by design — SAVT routes span Pencawang pairs and are covered by
+   * the Route list export instead.
+   */
+  private async collectSavrSiteActivity(
+    user: RequestUser,
+    substationIds: string[],
+  ): Promise<
+    Map<
+      string,
+      { startAt: Date; completeAt: Date; siteDays: number; teams: string[] }
+    >
+  > {
+    const activity = new Map<
+      string,
+      { startAt: Date; completeAt: Date; siteDays: number; teams: string[] }
+    >();
+    if (substationIds.length === 0) {
+      return activity;
+    }
+
+    // The no-selection export covers every Pencawang in the tenant — chunk the
+    // id filter so the IN clause stays bounded. Aggregates are per Pencawang
+    // and each chunk holds whole Pencawang, so chunking never splits a group.
+    const CHUNK_SIZE = 200;
+    type ActivityAccumulator = {
+      startAt: Date;
+      completeAt: Date;
+      days: Set<string>;
+      // team name -> earliest inspection time, for first-appearance ordering.
+      teams: Map<string, number>;
+    };
+    const accumulators = new Map<string, ActivityAccumulator>();
+
+    for (let i = 0; i < substationIds.length; i += CHUNK_SIZE) {
+      const inspections = await this.prisma.inspection.findMany({
+        where: {
+          tenantId: user.tenantId,
+          asset: { substationId: { in: substationIds.slice(i, i + CHUNK_SIZE) } },
+          ...EXPORTABLE_INSPECTION_WHERE,
+        },
+        select: {
+          operationalScope: true,
+          submittedAt: true,
+          createdAt: true,
+          asset: {
+            select: {
+              substationId: true,
+              assetType: { select: { operationalScope: true, code: true } },
+            },
+          },
+          siteVisit: { select: { team: { select: { name: true } } } },
+        },
+      });
+
+      for (const inspection of inspections) {
+        const substationId = inspection.asset.substationId;
+        if (!substationId) {
+          continue;
+        }
+        const scope =
+          inspection.operationalScope ??
+          inspection.asset.assetType?.operationalScope ??
+          inferOperationalScopeFromAssetTypeCode(
+            inspection.asset.assetType?.code,
+          ) ??
+          DEFAULT_OPERATIONAL_SCOPE;
+        if (scope !== OperationalScope.SAVR) {
+          continue;
+        }
+
+        // Legacy rows predate submittedAt — their createdAt is the field time.
+        const at = inspection.submittedAt ?? inspection.createdAt;
+        let acc = accumulators.get(substationId);
+        if (!acc) {
+          acc = {
+            startAt: at,
+            completeAt: at,
+            days: new Set<string>(),
+            teams: new Map<string, number>(),
+          };
+          accumulators.set(substationId, acc);
+        }
+        if (at < acc.startAt) {
+          acc.startAt = at;
+        }
+        if (at > acc.completeAt) {
+          acc.completeAt = at;
+        }
+        acc.days.add(formatDate(at));
+
+        const teamName = inspection.siteVisit?.team?.name?.trim();
+        if (teamName) {
+          const earliest = acc.teams.get(teamName);
+          if (earliest === undefined || at.getTime() < earliest) {
+            acc.teams.set(teamName, at.getTime());
+          }
+        }
+      }
+    }
+
+    for (const [substationId, acc] of accumulators) {
+      activity.set(substationId, {
+        startAt: acc.startAt,
+        completeAt: acc.completeAt,
+        siteDays: acc.days.size,
+        teams: [...acc.teams.entries()]
+          .sort((a, b) => a[1] - b[1])
+          .map(([name]) => name),
+      });
+    }
+    return activity;
   }
 
   /**
