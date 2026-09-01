@@ -6,16 +6,16 @@ import {
 } from './defect-report-assets';
 
 /**
- * Pure layout for the "Laporan Kejanggalan" (defect visual report): per pole,
- * a KEJANGGALAN table with a colour-coded KATEGORI column (A red / B yellow /
- * C green) and the pole's photos in rows of three, ~3 poles per A4 page.
- * Styled after the SAVR visual-report template (owner's direction): ASCURE +
- * TNB logos in a per-page title block, Arial-like type, the navy #1F3864
- * title colour, #EDEDED label cells and the grey "Dijana secara automatik"
- * footer. Drawn directly with pdf-lib because the docx pipeline can't drive
- * per-cell shading from data, and the colour cells ARE this report. Callers
- * pass a WinAnsi sanitiser — StandardFonts throw on any character outside
- * cp1252 (the SAVT "→" incident).
+ * Pure layout for the "Laporan Kejanggalan" (defect visual report), in the
+ * owner-picked "Kad Kerja" design: every defect pole is a bordered work card —
+ * a grey header band with the pole code, GPS and per-card severity chips, then
+ * the defect lines each led by a coloured A/B/C badge, then ALL of the pole's
+ * photos in rows of five. Each page carries the branded title block (ASCURE +
+ * TNB logos, navy title, Pencawang identity) and a workload summary strip
+ * (pole count + defect counts by category + the severity legend). Drawn
+ * directly with pdf-lib because the docx pipeline can't drive per-cell
+ * shading from data. Callers pass a WinAnsi sanitiser — StandardFonts throw
+ * on any character outside cp1252 (the SAVT "→" incident).
  */
 
 export type DefectCategory = 'A' | 'B' | 'C';
@@ -27,6 +27,10 @@ export interface DefectReportPhoto {
 
 export interface DefectReportPole {
   assetCode: string;
+  /** "3.81452, 103.32541" — empty when the pole has no coordinates. */
+  gps: string;
+  /** Pre-formatted inspection date (may be empty). */
+  inspectedOn: string;
   defects: Array<{ label: string; category: DefectCategory | null }>;
   photos: DefectReportPhoto[];
 }
@@ -34,6 +38,8 @@ export interface DefectReportPole {
 export interface DefectReportInput {
   pencawangName: string;
   functionalLocation: string;
+  /** Pre-formatted survey date range for the meta row (may be empty). */
+  rondaanRange: string;
   /** Pre-formatted MYT timestamp for the footer's "Dijana … pada" line. */
   generatedAt: string;
   poles: DefectReportPole[];
@@ -43,52 +49,51 @@ export interface DefectReportInput {
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
-const MARGIN = 40;
+const MARGIN = 36;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
 // ── Per-page title block ──
-const LOGO_HEIGHT = 30;
+const LOGO_HEIGHT = 34; // ASCURE (tight-cropped, so it reads large)
+const TNB_LOGO_HEIGHT = 26;
 const TITLE_SIZE = 13;
-const INFO_ROW_HEIGHT = 15;
-const INFO_LABEL_COL = 150;
-const HEADER_GAP = 10;
 
-// ── Pole blocks — sized so a typical block (5 defect rows + one photo row)
-// lands at ~220pt: THREE poles per page under the title block. ──
-const COL_HEADER_HEIGHT = 14;
-const DEFECT_ROW_MIN_HEIGHT = 13;
-/** Blank (but numbered) filler rows keep short blocks visually uniform. */
-const MIN_DEFECT_ROWS = 5;
-const PHOTO_BOX_HEIGHT = 115;
-const PHOTO_GAP = 10;
-const PHOTO_ROW_PAD = 6;
-const PHOTOS_PER_ROW = 3;
-const BLOCK_GAP = 12;
-/** Room reserved under the content for the footer line. */
-const FOOTER_SPACE = 16;
+// ── Pole cards ──
+const CARD_BAND_HEIGHT = 20;
+const DEFECT_ROW_MIN_HEIGHT = 15;
+const CARD_PAD = 9;
+const PHOTO_BOX_HEIGHT = 86;
+const PHOTO_GAP = 7;
+const PHOTOS_PER_ROW = 5;
+const CARD_GAP = 10;
+/** Room reserved under the content for the footer rule + line. */
+const FOOTER_SPACE = 22;
 
-const TIANG_COL = 80;
-const KATEGORI_COL = 80;
-const NUM_COL = 22;
-const LABEL_COL = CONTENT_WIDTH - TIANG_COL - KATEGORI_COL - NUM_COL;
+const BADGE_SIZE = 15;
+const TEXT_SIZE = 9.5;
+const LINE_HEIGHT = 11;
 
-const TEXT_SIZE = 8.5;
-const LINE_HEIGHT = 10;
-const CELL_PAD_X = 4;
-
-// The SAVR template's palette: navy titles, grey label cells, muted footer.
+// SAVR-brand palette + the traffic-light categories (mobile mark colours).
 const NAVY = rgb(0.122, 0.22, 0.392); // #1F3864
-const GRAY_FILL = rgb(0.929, 0.929, 0.929); // #EDEDED
-const MUTED = rgb(0.467, 0.467, 0.467); // #777777
+const BAND_FILL = rgb(0.957, 0.965, 0.973); // #F4F6F8
+const CHIP_FILL = rgb(0.933, 0.941, 0.953); // #EEF0F3
+const BORDER = rgb(0.796, 0.824, 0.851); // #CBD2D9
+const MUTED = rgb(0.4, 0.44, 0.52); // #667085
+const FAINT = rgb(0.596, 0.635, 0.702); // #98A2B3
+const INK = rgb(0.102, 0.125, 0.173); // #1A202C
 const WHITE = rgb(1, 1, 1);
-// Traffic-light KATEGORI cells, matching the mobile mark-circle colours.
 const CATEGORY_FILL: Record<DefectCategory, RGB> = {
   A: rgb(0.937, 0.267, 0.267), // #EF4444
   B: rgb(0.98, 0.8, 0.082), // #FACC15
   C: rgb(0.133, 0.773, 0.369), // #22C55E
 };
-const BORDER = rgb(0.3, 0.3, 0.3);
-const INK = rgb(0.05, 0.05, 0.15);
+/** B's yellow needs dark text; A/C carry white. */
+const CATEGORY_TEXT: Record<DefectCategory, RGB> = {
+  A: WHITE,
+  B: INK,
+  C: WHITE,
+};
+
+const LEGEND_TEXT = 'A Kritikal - segera   B Serius - dirancang   C Minor';
 
 /** Greedy word wrap; hard-splits a single word wider than the column. */
 function wrapText(
@@ -106,7 +111,6 @@ function wrapText(
   const width = (value: string) => font.widthOfTextAtSize(value, size);
   for (let word of words) {
     while (width(word) > maxWidth && word.length > 1) {
-      // Peel off the largest prefix that fits, flushing the current line first.
       if (current) {
         lines.push(current);
         current = '';
@@ -132,56 +136,6 @@ function wrapText(
   return lines;
 }
 
-interface CellText {
-  lines: string[];
-  font: PDFFont;
-  size: number;
-  align: 'left' | 'center';
-  color?: RGB;
-}
-
-/** Bordered rectangle with optional fill and vertically-centred text. */
-function drawCell(
-  page: PDFPage,
-  x: number,
-  yTop: number,
-  width: number,
-  height: number,
-  fill: RGB | null,
-  text?: CellText,
-): void {
-  page.drawRectangle({
-    x,
-    y: yTop - height,
-    width,
-    height,
-    borderColor: BORDER,
-    borderWidth: 0.6,
-    ...(fill ? { color: fill } : {}),
-  });
-  if (!text) {
-    return;
-  }
-  const blockHeight = text.lines.length * LINE_HEIGHT;
-  // Baseline offset ≈ 0.28 × size below the line's visual centre.
-  let lineY = yTop - (height - blockHeight) / 2 - LINE_HEIGHT + text.size * 0.28;
-  for (const line of text.lines) {
-    const lineWidth = text.font.widthOfTextAtSize(line, text.size);
-    const textX =
-      text.align === 'center'
-        ? x + (width - lineWidth) / 2
-        : x + CELL_PAD_X;
-    page.drawText(line, {
-      x: textX,
-      y: lineY,
-      size: text.size,
-      font: text.font,
-      color: text.color ?? INK,
-    });
-    lineY -= LINE_HEIGHT;
-  }
-}
-
 interface MeasuredRow {
   lines: string[];
   category: DefectCategory | null;
@@ -194,35 +148,69 @@ export async function renderDefectReportPdf(
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const mono = await doc.embedFont(StandardFonts.Courier);
   const ascureLogo = await doc.embedPng(
     Buffer.from(ASCURE_LOGO_PNG_BASE64, 'base64'),
   );
   const tnbLogo = await doc.embedPng(Buffer.from(TNB_LOGO_PNG_BASE64, 'base64'));
   const s = input.sanitize;
 
-  // ── Per-page title block: logos, title, Pencawang identity ──
-  const drawPageHeader = (target: PDFPage): number => {
+  // Defect counts across the whole report, for the summary strip.
+  const counts: Record<DefectCategory, number> = { A: 0, B: 0, C: 0 };
+  for (const pole of input.poles) {
+    for (const defect of pole.defects) {
+      if (defect.category) {
+        counts[defect.category] += 1;
+      }
+    }
+  }
+
+  /** Filled chip with centred text; returns its width. */
+  const drawChip = (
+    page: PDFPage,
+    x: number,
+    yTop: number,
+    text: string,
+    fill: RGB,
+    color: RGB,
+    size: number,
+    chipFont: PDFFont,
+    height: number,
+  ): number => {
+    const textWidth = chipFont.widthOfTextAtSize(text, size);
+    const chipWidth = textWidth + 10;
+    page.drawRectangle({ x, y: yTop - height, width: chipWidth, height, color: fill });
+    page.drawText(text, {
+      x: x + 5,
+      y: yTop - height + (height - size) / 2 + size * 0.08,
+      size,
+      font: chipFont,
+      color,
+    });
+    return chipWidth;
+  };
+
+  // ── Per-page title block: logos, title, identity, summary strip ──
+  const drawPageHeader = (page: PDFPage): number => {
     let y = PAGE_HEIGHT - MARGIN;
 
-    const ascureScale = LOGO_HEIGHT / ascureLogo.height;
-    target.drawImage(ascureLogo, {
+    const ascureWidth = (ascureLogo.width / ascureLogo.height) * LOGO_HEIGHT;
+    page.drawImage(ascureLogo, {
       x: MARGIN,
       y: y - LOGO_HEIGHT,
-      width: ascureLogo.width * ascureScale,
+      width: ascureWidth,
       height: LOGO_HEIGHT,
     });
-    const tnbScale = LOGO_HEIGHT / tnbLogo.height;
-    const tnbWidth = tnbLogo.width * tnbScale;
-    target.drawImage(tnbLogo, {
+    const tnbWidth = (tnbLogo.width / tnbLogo.height) * TNB_LOGO_HEIGHT;
+    page.drawImage(tnbLogo, {
       x: PAGE_WIDTH - MARGIN - tnbWidth,
-      y: y - LOGO_HEIGHT,
+      y: y - LOGO_HEIGHT + (LOGO_HEIGHT - TNB_LOGO_HEIGHT) / 2,
       width: tnbWidth,
-      height: LOGO_HEIGHT,
+      height: TNB_LOGO_HEIGHT,
     });
-
     const title = 'LAPORAN KEJANGGALAN';
     const titleWidth = bold.widthOfTextAtSize(title, TITLE_SIZE);
-    target.drawText(title, {
+    page.drawText(title, {
       x: (PAGE_WIDTH - titleWidth) / 2,
       y: y - LOGO_HEIGHT / 2 - TITLE_SIZE / 2 + 2,
       size: TITLE_SIZE,
@@ -231,38 +219,84 @@ export async function renderDefectReportPdf(
     });
     y -= LOGO_HEIGHT + 6;
 
-    target.drawLine({
+    page.drawLine({
       start: { x: MARGIN, y },
       end: { x: PAGE_WIDTH - MARGIN, y },
-      thickness: 1,
+      thickness: 1.2,
       color: NAVY,
     });
-    y -= HEADER_GAP;
+    y -= 14;
 
-    const infoRows: Array<[string, string]> = [
-      ['NAMA PENCAWANG', s(input.pencawangName)],
-      ['FUNCTIONAL LOCATION', s(input.functionalLocation)],
-    ];
-    for (const [label, value] of infoRows) {
-      drawCell(target, MARGIN, y, INFO_LABEL_COL, INFO_ROW_HEIGHT, GRAY_FILL, {
-        lines: [label],
-        font: bold,
-        size: 8,
-        align: 'left',
+    // Identity row: Pencawang + FL left, survey date range right.
+    page.drawText(s(input.pencawangName), {
+      x: MARGIN,
+      y: y - 4,
+      size: 10,
+      font: bold,
+      color: INK,
+    });
+    const nameWidth = bold.widthOfTextAtSize(s(input.pencawangName), 10);
+    if (input.functionalLocation) {
+      page.drawText(s(input.functionalLocation), {
+        x: MARGIN + nameWidth + 12,
+        y: y - 4,
+        size: 8.5,
+        font,
+        color: MUTED,
       });
-      drawCell(
-        target,
-        MARGIN + INFO_LABEL_COL,
-        y,
-        CONTENT_WIDTH - INFO_LABEL_COL,
-        INFO_ROW_HEIGHT,
-        null,
-        { lines: [value], font, size: 8.5, align: 'left' },
-      );
-      y -= INFO_ROW_HEIGHT;
     }
+    if (input.rondaanRange) {
+      const range = s(`Rondaan ${input.rondaanRange}`);
+      page.drawText(range, {
+        x: PAGE_WIDTH - MARGIN - font.widthOfTextAtSize(range, 8),
+        y: y - 4,
+        size: 8,
+        font,
+        color: MUTED,
+      });
+    }
+    y -= 18;
 
-    return y - HEADER_GAP;
+    // Summary strip: pole count + per-category defect counts + legend.
+    let chipX = MARGIN;
+    chipX +=
+      drawChip(
+        page,
+        chipX,
+        y,
+        `${input.poles.length} TIANG BERKECACATAN`,
+        CHIP_FILL,
+        INK,
+        8.5,
+        bold,
+        14,
+      ) + 6;
+    for (const category of ['A', 'B', 'C'] as DefectCategory[]) {
+      if (counts[category] > 0) {
+        chipX +=
+          drawChip(
+            page,
+            chipX,
+            y,
+            `${counts[category]} x ${category}`,
+            CATEGORY_FILL[category],
+            CATEGORY_TEXT[category],
+            8.5,
+            bold,
+            14,
+          ) + 6;
+      }
+    }
+    page.drawText(LEGEND_TEXT, {
+      x: PAGE_WIDTH - MARGIN - font.widthOfTextAtSize(LEGEND_TEXT, 7),
+      y: y - 14 + (14 - 7) / 2 + 0.5,
+      size: 7,
+      font,
+      color: MUTED,
+    });
+    y -= 14;
+
+    return y - 12;
   };
 
   let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
@@ -286,159 +320,192 @@ export async function renderDefectReportPdf(
       }
     }
 
+    // Dynamic rows — exactly the defects the pole has, no filler.
+    const labelWidth = CONTENT_WIDTH - CARD_PAD * 2 - BADGE_SIZE - 8;
     const rows: MeasuredRow[] = pole.defects.map((defect) => {
-      const lines = wrapText(s(defect.label), font, TEXT_SIZE, LABEL_COL - CELL_PAD_X * 2);
+      const lines = wrapText(s(defect.label), font, TEXT_SIZE, labelWidth);
       return {
         lines,
         category: defect.category,
-        // Single-line rows stay at the compact minimum; only wrapped labels
-        // grow the row (a taller default would cost the 3-blocks-per-page fit).
         height:
           lines.length === 1
             ? DEFECT_ROW_MIN_HEIGHT
-            : lines.length * LINE_HEIGHT + 4,
+            : lines.length * LINE_HEIGHT + 5,
       };
     });
-    while (rows.length < MIN_DEFECT_ROWS) {
-      rows.push({ lines: [''], category: null, height: DEFECT_ROW_MIN_HEIGHT });
-    }
-
     const rowsHeight = rows.reduce((sum, row) => sum + row.height, 0);
     const photoRowCount = Math.ceil(embedded.length / PHOTOS_PER_ROW);
     const photoAreaHeight = photoRowCount
-      ? photoRowCount * (PHOTO_BOX_HEIGHT + PHOTO_ROW_PAD) + PHOTO_ROW_PAD
+      ? photoRowCount * (PHOTO_BOX_HEIGHT + PHOTO_GAP)
       : 0;
-    const blockHeight = COL_HEADER_HEIGHT + rowsHeight + photoAreaHeight;
+    const cardHeight =
+      CARD_BAND_HEIGHT + CARD_PAD + rowsHeight + photoAreaHeight + CARD_PAD;
 
-    // Keep each pole block whole: break to a fresh page when it doesn't fit.
-    // (A block taller than a whole page — dozens of photos — would clip; no
-    // real pole gets near that.)
+    // Keep each card whole: break to a fresh page when it doesn't fit. (A card
+    // taller than a whole page — dozens of photos — would clip; no real pole
+    // gets near that.)
     const bottomLimit = MARGIN + FOOTER_SPACE;
-    if (blockHeight > cursorY - bottomLimit && cursorY < PAGE_HEIGHT - MARGIN - 60) {
+    if (cardHeight > cursorY - bottomLimit && cursorY < PAGE_HEIGHT - MARGIN - 80) {
       newPage();
     }
 
-    // ── Column header ──
-    drawCell(page, MARGIN, cursorY, TIANG_COL, COL_HEADER_HEIGHT, NAVY, {
-      lines: ['No. Tiang'],
-      font: bold,
-      size: 8.5,
-      align: 'center',
-      color: WHITE,
+    // ── Card frame + header band ──
+    page.drawRectangle({
+      x: MARGIN,
+      y: cursorY - cardHeight,
+      width: CONTENT_WIDTH,
+      height: cardHeight,
+      borderColor: BORDER,
+      borderWidth: 0.8,
     });
-    drawCell(
-      page,
-      MARGIN + TIANG_COL,
-      cursorY,
-      NUM_COL + LABEL_COL,
-      COL_HEADER_HEIGHT,
-      NAVY,
-      { lines: ['KEJANGGALAN'], font: bold, size: 8.5, align: 'left', color: WHITE },
-    );
-    drawCell(
-      page,
-      MARGIN + TIANG_COL + NUM_COL + LABEL_COL,
-      cursorY,
-      KATEGORI_COL,
-      COL_HEADER_HEIGHT,
-      NAVY,
-      { lines: ['KATEGORI'], font: bold, size: 8.5, align: 'center', color: WHITE },
-    );
-    cursorY -= COL_HEADER_HEIGHT;
-
-    // ── Defect rows; the No. Tiang cell spans them all ──
-    // Stack the code's space-separated parts, as crews write it (PB2 / C / 19)
-    // — but a long shared-pole code ("D 1 & E 1 & H 1") stacks taller than the
-    // cell, so fall back to width-wrapping when the stack doesn't fit.
+    page.drawRectangle({
+      x: MARGIN,
+      y: cursorY - CARD_BAND_HEIGHT,
+      width: CONTENT_WIDTH,
+      height: CARD_BAND_HEIGHT,
+      color: BAND_FILL,
+      borderColor: BORDER,
+      borderWidth: 0.8,
+    });
     const code = s(pole.assetCode);
-    let codeLines = code.split(/\s+/).filter(Boolean);
-    if (codeLines.length * LINE_HEIGHT > rowsHeight - 2) {
-      codeLines = wrapText(code, bold, 9, TIANG_COL - CELL_PAD_X * 2);
-    }
-    drawCell(page, MARGIN, cursorY, TIANG_COL, rowsHeight, null, {
-      lines: codeLines.length ? codeLines : [''],
+    page.drawText(code, {
+      x: MARGIN + CARD_PAD,
+      y: cursorY - CARD_BAND_HEIGHT + 6,
+      size: 11,
       font: bold,
-      size: 9,
-      align: 'center',
+      color: NAVY,
     });
+    if (pole.gps) {
+      page.drawText(s(pole.gps), {
+        x: MARGIN + CARD_PAD + bold.widthOfTextAtSize(code, 11) + 12,
+        y: cursorY - CARD_BAND_HEIGHT + 6.5,
+        size: 7.5,
+        font: mono,
+        color: MUTED,
+      });
+    }
+    // Right side of the band: inspection date, then per-card severity chips.
+    let rightX = PAGE_WIDTH - MARGIN - CARD_PAD;
+    const cardCounts: Record<DefectCategory, number> = { A: 0, B: 0, C: 0 };
+    for (const defect of pole.defects) {
+      if (defect.category) {
+        cardCounts[defect.category] += 1;
+      }
+    }
+    for (const category of ['C', 'B', 'A'] as DefectCategory[]) {
+      if (cardCounts[category] > 0) {
+        const text = `${cardCounts[category]} ${category}`;
+        const chipWidth = bold.widthOfTextAtSize(text, 8) + 10;
+        rightX -= chipWidth;
+        drawChip(
+          page,
+          rightX,
+          cursorY - (CARD_BAND_HEIGHT - 13) / 2,
+          text,
+          CATEGORY_FILL[category],
+          CATEGORY_TEXT[category],
+          8,
+          bold,
+          13,
+        );
+        rightX -= 5;
+      }
+    }
+    if (pole.inspectedOn) {
+      const inspected = s(`Diperiksa ${pole.inspectedOn}`);
+      const inspectedWidth = font.widthOfTextAtSize(inspected, 7.5);
+      rightX -= inspectedWidth + 4;
+      page.drawText(inspected, {
+        x: rightX,
+        y: cursorY - CARD_BAND_HEIGHT + 7,
+        size: 7.5,
+        font,
+        color: MUTED,
+      });
+    }
+    let rowY = cursorY - CARD_BAND_HEIGHT - CARD_PAD;
 
-    let rowY = cursorY;
-    rows.forEach((row, index) => {
-      drawCell(page, MARGIN + TIANG_COL, rowY, NUM_COL, row.height, null, {
-        lines: [String(index + 1)],
-        font,
-        size: TEXT_SIZE,
-        align: 'center',
-      });
-      drawCell(page, MARGIN + TIANG_COL + NUM_COL, rowY, LABEL_COL, row.height, null, {
-        lines: row.lines,
-        font,
-        size: TEXT_SIZE,
-        align: 'left',
-      });
-      drawCell(
-        page,
-        MARGIN + TIANG_COL + NUM_COL + LABEL_COL,
-        rowY,
-        KATEGORI_COL,
-        row.height,
-        row.category ? CATEGORY_FILL[row.category] : null,
-        row.category
-          ? { lines: [row.category], font: bold, size: 8.5, align: 'center' }
-          : undefined,
-      );
+    // ── Defect lines: coloured badge + label ──
+    for (const row of rows) {
+      if (row.category) {
+        page.drawRectangle({
+          x: MARGIN + CARD_PAD,
+          y: rowY - (row.height + BADGE_SIZE) / 2 + 1,
+          width: BADGE_SIZE,
+          height: BADGE_SIZE,
+          color: CATEGORY_FILL[row.category],
+        });
+        page.drawText(row.category, {
+          x:
+            MARGIN +
+            CARD_PAD +
+            (BADGE_SIZE - bold.widthOfTextAtSize(row.category, 9)) / 2,
+          y: rowY - (row.height + BADGE_SIZE) / 2 + 5,
+          size: 9,
+          font: bold,
+          color: CATEGORY_TEXT[row.category],
+        });
+      }
+      let lineY =
+        rowY - (row.height - row.lines.length * LINE_HEIGHT) / 2 - LINE_HEIGHT + 3;
+      for (const line of row.lines) {
+        page.drawText(line, {
+          x: MARGIN + CARD_PAD + BADGE_SIZE + 8,
+          y: lineY,
+          size: TEXT_SIZE,
+          font,
+          color: INK,
+        });
+        lineY -= LINE_HEIGHT;
+      }
       rowY -= row.height;
-    });
-    cursorY = rowY;
+    }
 
-    // ── Photos, in rows of three ──
+    // ── Photos, in rows of five ──
     if (embedded.length) {
-      drawCell(page, MARGIN, cursorY, CONTENT_WIDTH, photoAreaHeight, null);
-      const boxWidth = (CONTENT_WIDTH - PHOTO_GAP * (PHOTOS_PER_ROW + 1)) / PHOTOS_PER_ROW;
-      let rowTop = cursorY - PHOTO_ROW_PAD;
+      const boxWidth =
+        (CONTENT_WIDTH - CARD_PAD * 2 - PHOTO_GAP * (PHOTOS_PER_ROW - 1)) /
+        PHOTOS_PER_ROW;
+      let rowTop = rowY - PHOTO_GAP;
       for (let start = 0; start < embedded.length; start += PHOTOS_PER_ROW) {
         const rowImages = embedded.slice(start, start + PHOTOS_PER_ROW);
-        const sizes = rowImages.map((image) => {
+        let photoX = MARGIN + CARD_PAD;
+        for (const image of rowImages) {
           const scale = Math.min(
             boxWidth / image.width,
             PHOTO_BOX_HEIGHT / image.height,
             1,
           );
-          return { width: image.width * scale, height: image.height * scale };
-        });
-        const totalWidth =
-          sizes.reduce((sum, size) => sum + size.width, 0) +
-          PHOTO_GAP * (rowImages.length - 1);
-        let photoX = MARGIN + (CONTENT_WIDTH - totalWidth) / 2;
-        rowImages.forEach((image, index) => {
-          const size = sizes[index];
+          const width = image.width * scale;
+          const height = image.height * scale;
           page.drawImage(image, {
-            x: photoX,
-            y: rowTop - size.height,
-            width: size.width,
-            height: size.height,
+            x: photoX + (boxWidth - width) / 2,
+            y: rowTop - PHOTO_BOX_HEIGHT + (PHOTO_BOX_HEIGHT - height) / 2,
+            width,
+            height,
           });
-          photoX += size.width + PHOTO_GAP;
-        });
-        rowTop -= PHOTO_BOX_HEIGHT + PHOTO_ROW_PAD;
+          photoX += boxWidth + PHOTO_GAP;
+        }
+        rowTop -= PHOTO_BOX_HEIGHT + PHOTO_GAP;
       }
-      cursorY -= photoAreaHeight;
     }
 
-    cursorY -= BLOCK_GAP;
+    cursorY -= cardHeight + CARD_GAP;
   }
 
-  // ── Footer: generation line (SAVR-template style) + page numbers ──
+  // ── Footer: rule + generation line + page numbers ──
   const pages = doc.getPages();
-  const footerText = s(`Dijana secara automatik oleh ASCURE pada ${input.generatedAt}`);
+  const footerText = s(
+    `Dijana secara automatik oleh ASCURE pada ${input.generatedAt}`,
+  );
   pages.forEach((p, index) => {
-    p.drawText(footerText, {
-      x: MARGIN,
-      y: 24,
-      size: 7,
-      font,
-      color: MUTED,
+    p.drawLine({
+      start: { x: MARGIN, y: 34 },
+      end: { x: PAGE_WIDTH - MARGIN, y: 34 },
+      thickness: 0.6,
+      color: BORDER,
     });
+    p.drawText(footerText, { x: MARGIN, y: 24, size: 7, font, color: FAINT });
     const label = `${index + 1} / ${pages.length}`;
     p.drawText(label, {
       x: PAGE_WIDTH - MARGIN - font.widthOfTextAtSize(label, 8),

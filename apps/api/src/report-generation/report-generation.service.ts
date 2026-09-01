@@ -496,10 +496,19 @@ export class ReportGenerationService implements OnModuleInit {
     );
 
     const poles: DefectReportPole[] = [];
+    let firstAt: Date | null = null;
+    let lastAt: Date | null = null;
     for (const inspection of chosen) {
       const pole = await this.buildDefectReportPole(inspection);
       if (pole) {
         poles.push(pole);
+        const at = inspection.submittedAt ?? inspection.createdAt;
+        if (!firstAt || at < firstAt) {
+          firstAt = at;
+        }
+        if (!lastAt || at > lastAt) {
+          lastAt = at;
+        }
       }
     }
     if (poles.length === 0) {
@@ -515,6 +524,12 @@ export class ReportGenerationService implements OnModuleInit {
     const buffer = await renderDefectReportPdf({
       pencawangName,
       functionalLocation: visit.functionalLocation ?? '',
+      rondaanRange:
+        firstAt && lastAt
+          ? this.fmtDate(firstAt) === this.fmtDate(lastAt)
+            ? this.fmtDate(firstAt)
+            : `${this.fmtDate(firstAt)} - ${this.fmtDate(lastAt)}`
+          : '',
       generatedAt: this.fmtDateTime(new Date()),
       poles,
       sanitize: (value) => this.winAnsiSafe(value),
@@ -556,8 +571,19 @@ export class ReportGenerationService implements OnModuleInit {
     // inspection photos — the mobile defect flow saves its close-ups UNTAGGED
     // (no templateItemId), so the untagged remainder IS mostly the defect
     // photos — then defect evidence.
-    const images = inspection.inspectionImages;
-    const itemImageMap = await this.buildItemImageMap(images);
+    const itemImageMap = await this.buildItemImageMap(
+      inspection.inspectionImages,
+    );
+    // GAMBAR KELEGAAN captures are clearance-measurement evidence (rangefinder
+    // screens) — noise in a defect handover, so they are excluded (owner call).
+    const images = inspection.inspectionImages.filter((image) => {
+      const item = image.templateItemId
+        ? itemImageMap.get(image.templateItemId)
+        : undefined;
+      return !(
+        item && `${item.key} ${item.label}`.toUpperCase().includes('KELEGAAN')
+      );
+    });
     const defectChecklistIds = new Set(
       defectItems
         .map((item) => item.checklistItemId)
@@ -613,7 +639,17 @@ export class ReportGenerationService implements OnModuleInit {
       photos.push({ data: loaded.source as Buffer, format });
     }
 
-    return { assetCode: inspection.asset.assetCode, defects, photos };
+    const asset = inspection.asset;
+    return {
+      assetCode: asset.assetCode,
+      gps:
+        asset.latitude != null && asset.longitude != null
+          ? `${Number(asset.latitude).toFixed(5)}, ${Number(asset.longitude).toFixed(5)}`
+          : '',
+      inspectedOn: this.fmtDate(inspection.submittedAt ?? inspection.createdAt),
+      defects,
+      photos,
+    };
   }
 
   /** A/B/C = the mobile mark-circle mapping (CRITICAL/HIGH→A, MEDIUM→B, LOW→C). */
