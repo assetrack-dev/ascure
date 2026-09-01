@@ -74,7 +74,10 @@ import {
   requestSurveyAmendment,
   type SurveyDeletePreview,
 } from "@/lib/site-visits";
-import { downloadCompiledReport } from "@/lib/report-templates";
+import {
+  downloadCompiledReport,
+  downloadDefectReport,
+} from "@/lib/report-templates";
 import { updateAssetCode } from "@/lib/assets";
 import { getImageSourceUrl } from "@/components/inspection-evidence-grid";
 import {
@@ -368,6 +371,7 @@ interface SurveyLifecyclePanelProps {
   pendingAction: LifecycleAction | null;
   error: string;
   downloadingReport: boolean;
+  downloadingDefectReport: boolean;
   /** The latest background compile run (null = never compiled). */
   reportRun: SurveyReportStatus["run"];
   /** The latest frozen version's volumes (1 for small surveys, N Jilid for big). */
@@ -379,6 +383,7 @@ interface SurveyLifecyclePanelProps {
   onGenerateReport: () => void;
   onArchive: () => void;
   onDownloadReport: (part?: number) => void;
+  onDownloadDefectReport: () => void;
   onOpenNextCycle: () => void;
 }
 
@@ -391,6 +396,7 @@ function SurveyLifecyclePanel({
   pendingAction,
   error,
   downloadingReport,
+  downloadingDefectReport,
   reportRun,
   reportVolumes,
   onRondaanSelesai,
@@ -400,6 +406,7 @@ function SurveyLifecyclePanel({
   onGenerateReport,
   onArchive,
   onDownloadReport,
+  onDownloadDefectReport,
   onOpenNextCycle,
 }: SurveyLifecyclePanelProps) {
   const [amendmentOpen, setAmendmentOpen] = useState(false);
@@ -469,6 +476,26 @@ function SurveyLifecyclePanel({
         Download compiled report
       </Tbtn>
     );
+
+  // On-demand defect handover report (Laporan Kejanggalan): defect poles only,
+  // colour-coded A/B/C categories + photos, ~3 poles per page — what the
+  // maintenance team receives. Never frozen; always reflects current data, so
+  // it's offered at every lifecycle stage.
+  const defectReportButton = (
+    <Tbtn
+      variant="secondary"
+      onClick={onDownloadDefectReport}
+      disabled={isBusy || downloadingDefectReport}
+      title="Tiang berkecacatan sahaja — kategori A/B/C berwarna + gambar, untuk serahan kepada pasukan penyelenggaraan"
+    >
+      {downloadingDefectReport ? (
+        <RefreshCw size={15} className="animate-spin" />
+      ) : (
+        <AlertTriangle size={15} />
+      )}
+      Laporan Kejanggalan
+    </Tbtn>
+  );
 
   // The console has no warning-toned button variant, so a secondary Tbtn is
   // repainted with the `medium` (amber) status tokens for the amendment actions.
@@ -581,6 +608,7 @@ function SurveyLifecyclePanel({
             .
           </p>
           {canReport ? downloadButtons : null}
+          {canReport ? defectReportButton : null}
           {canInspect ? (
             <Tbtn variant="secondary" onClick={onOpenNextCycle} disabled={isBusy}>
               {pendingAction === "open-next-cycle" ? (
@@ -685,6 +713,8 @@ function SurveyLifecyclePanel({
               </Tbtn>
             )
           ) : null}
+
+          {canReport ? defectReportButton : null}
 
           {status === "LAPORAN_SELESAI" && canGovern ? (
             <Tbtn variant="primary" onClick={onArchive} disabled={isBusy}>
@@ -2675,6 +2705,32 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
     }
   }, [session?.token, visit, handleLogout]);
 
+  const [downloadingDefectReport, setDownloadingDefectReport] = useState(false);
+  const handleDownloadDefectReport = useCallback(async () => {
+    const token = session?.token;
+    if (!token || !visit) return;
+    setDownloadingDefectReport(true);
+    setLifecycleError("");
+    try {
+      await downloadDefectReport(token, {
+        id: visit.id,
+        pencawangCode: visit.pencawangCode ?? undefined,
+      });
+    } catch (downloadError) {
+      if (downloadError instanceof ApiError && downloadError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setLifecycleError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "Unable to download the defect report.",
+      );
+    } finally {
+      setDownloadingDefectReport(false);
+    }
+  }, [session?.token, visit, handleLogout]);
+
   const handleOpenNextCycle = useCallback(async () => {
     const token = session?.token;
     if (!token) return;
@@ -3007,9 +3063,11 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                   onManagerRequestAmendment={handleManagerRequestAmendment}
                   onRequestAmendment={handleRequestAmendment}
                   downloadingReport={downloadingReport}
+                  downloadingDefectReport={downloadingDefectReport}
                   onGenerateReport={handleGenerateReport}
                   onArchive={handleArchive}
                   onDownloadReport={handleDownloadReport}
+                  onDownloadDefectReport={handleDownloadDefectReport}
                   onOpenNextCycle={handleOpenNextCycle}
                 />
 

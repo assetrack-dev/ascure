@@ -81,6 +81,25 @@ export class VisualReportsController {
     return new StreamableFile(buffer);
   }
 
+  /** On-demand compact defect report (Laporan Kejanggalan): only the poles
+   *  with live defects, colour-coded A/B/C categories + photos, ~3 poles per
+   *  page — the handover format the maintenance team receives. Never frozen:
+   *  always reflects current data. */
+  @Get('site-visit/:siteVisitId/defect-report.pdf')
+  async defectReport(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } =
+      await this.reportGenerationService.generateDefectReport(
+        user,
+        params.siteVisitId,
+      );
+    this.setPdfHeaders(res, filename);
+    return new StreamableFile(buffer);
+  }
+
   /** The frozen, compiled survey report (latest version). `?part=n` selects a
    *  volume (Jilid) when the survey compiled into several. */
   @Get('site-visit/:siteVisitId/report.pdf')

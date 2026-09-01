@@ -14,6 +14,7 @@ import { existsSync } from 'fs';
 import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
+  DefectSeverity,
   InspectionCompletionStatus,
   OperationalScope,
   Prisma,
@@ -23,7 +24,7 @@ import {
   SurveyLifecycleStatus,
   UserRole,
 } from '@prisma/client';
-import { TemplateHandler } from 'easy-template-x';
+import { MimeType, TemplateHandler } from 'easy-template-x';
 import type { ImageContent, TemplateData } from 'easy-template-x';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
@@ -44,6 +45,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { GotenbergService } from './gotenberg.service';
+import {
+  renderDefectReportPdf,
+  type DefectCategory,
+  type DefectReportPole,
+} from './defect-report-layout';
 import { loadReportImage } from './report-image.util';
 
 /**
@@ -430,6 +436,199 @@ export class ReportGenerationService implements OnModuleInit {
       inspection.asset.assetCode,
     )}.pdf`;
     return { buffer: pdf, filename };
+  }
+
+  // ─── Defect visual report (Laporan Kejanggalan, on demand) ────────────────
+
+  /**
+   * Compact defect report for one survey, for handover to the maintenance
+   * team: ONLY the poles carrying at least one live defect, each as a
+   * KEJANGGALAN table with a colour-coded KATEGORI column (A/B/C from
+   * severity — the same mapping the mobile mark circles use) plus up to
+   * three photos, ~3 poles per A4 page. Rendered directly with pdf-lib —
+   * no docx template, no Gotenberg — because per-cell colour is the point
+   * of this format and the docx pipeline can't drive cell shading from data.
+   * Always reflects CURRENT data (never frozen, like the per-asset preview).
+   */
+  async generateDefectReport(
+    user: RequestUser,
+    siteVisitId: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.assertCanReport(user);
+
+    const visit = await this.prisma.siteVisit.findFirst({
+      where: { id: siteVisitId, tenantId: user.tenantId },
+      select: {
+        id: true,
+        pencawangName: true,
+        pencawangCode: true,
+        functionalLocation: true,
+        substation: { select: { name: true, code: true } },
+      },
+    });
+    if (!visit) {
+      throw new NotFoundException('Site visit not found.');
+    }
+
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        siteVisitId,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+      },
+      orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+      include: assetReportInclude,
+    });
+
+    // One block per pole = its latest submitted inspection (list is
+    // newest-first), in natural pole-code order.
+    const latestByAsset = new Map<string, AssetReportInspection>();
+    for (const inspection of inspections) {
+      if (!latestByAsset.has(inspection.assetId)) {
+        latestByAsset.set(inspection.assetId, inspection);
+      }
+    }
+    const chosen = [...latestByAsset.values()].sort((a, b) =>
+      a.asset.assetCode.localeCompare(b.asset.assetCode, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    );
+
+    const poles: DefectReportPole[] = [];
+    for (const inspection of chosen) {
+      const pole = await this.buildDefectReportPole(inspection);
+      if (pole) {
+        poles.push(pole);
+      }
+    }
+    if (poles.length === 0) {
+      throw new BadRequestException(
+        'No poles with recorded defects in this survey — nothing to report.',
+      );
+    }
+
+    // Live Pencawang entity first, visit snapshot as fallback — the same rule
+    // as every screen and export.
+    const pencawangName =
+      visit.substation?.name ?? visit.pencawangName ?? visit.pencawangCode ?? '';
+    const buffer = await renderDefectReportPdf({
+      pencawangName,
+      functionalLocation: visit.functionalLocation ?? '',
+      poles,
+      sanitize: (value) => this.winAnsiSafe(value),
+    });
+    const filename = `laporan-kejanggalan-${this.sanitizeForFilename(
+      pencawangName || 'pencawang',
+    )}.pdf`;
+    return { buffer, filename };
+  }
+
+  /** How many photos each pole block shows (the sample format fits three). */
+  private static readonly DEFECT_REPORT_MAX_PHOTOS = 3;
+
+  /** One defect-report block, or null when the pole has no live defect. */
+  private async buildDefectReportPole(
+    inspection: AssetReportInspection,
+  ): Promise<DefectReportPole | null> {
+    const liveRowFor = this.buildLiveValueResolver(inspection);
+    const defectItems = inspection.itemResults.filter((item) => {
+      if (!item.isDefect) {
+        return false;
+      }
+      // An office-cleared value withdraws the verdict (same rule as the
+      // screens and the compiled report).
+      const live = liveRowFor(item);
+      return !(live && this.readingValue(live).trim() === '');
+    });
+    if (defectItems.length === 0) {
+      return null;
+    }
+
+    const defects = defectItems.map((item) => ({
+      label: item.label,
+      category: this.defectCategoryFor(
+        item.severity ?? item.defect?.severity ?? null,
+      ),
+    }));
+
+    // Photo order mirrors the client's sample: the full-pole shot leads, then
+    // the captures tied to defect checklist items (those carry the burned-in
+    // mark circles), then defect evidence; first inspection photo as a last
+    // resort so a block is never image-less when photos exist.
+    const images = inspection.inspectionImages;
+    const itemImageMap = await this.buildItemImageMap(images);
+    const defectChecklistIds = new Set(
+      defectItems
+        .map((item) => item.checklistItemId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const fullPole = images.find((image) => {
+      const item = image.templateItemId
+        ? itemImageMap.get(image.templateItemId)
+        : undefined;
+      return `${item?.key ?? ''} ${item?.label ?? ''}`
+        .toUpperCase()
+        .includes('PENUH');
+    });
+    const candidates: Array<Parameters<typeof loadReportImage>[0]> = [];
+    if (fullPole) {
+      candidates.push(fullPole);
+    }
+    for (const image of images) {
+      if (
+        image !== fullPole &&
+        image.templateItemId &&
+        defectChecklistIds.has(image.templateItemId)
+      ) {
+        candidates.push(image);
+      }
+    }
+    for (const item of defectItems) {
+      candidates.push(...(item.defect?.evidenceImages ?? []));
+    }
+    if (candidates.length === 0 && images.length > 0) {
+      candidates.push(images[0]);
+    }
+
+    const photos: DefectReportPole['photos'] = [];
+    for (const candidate of candidates) {
+      if (photos.length >= ReportGenerationService.DEFECT_REPORT_MAX_PHOTOS) {
+        break;
+      }
+      const loaded = await loadReportImage(candidate);
+      if (!loaded) {
+        continue;
+      }
+      const format =
+        loaded.format === MimeType.Jpeg
+          ? ('jpeg' as const)
+          : loaded.format === MimeType.Png
+            ? ('png' as const)
+            : null;
+      if (!format) {
+        // GIF/BMP passthroughs — pdf-lib can't embed them; skip.
+        continue;
+      }
+      // loadReportImage always sources from readFile/sharp, so this is a Buffer.
+      photos.push({ data: loaded.source as Buffer, format });
+    }
+
+    return { assetCode: inspection.asset.assetCode, defects, photos };
+  }
+
+  /** A/B/C = the mobile mark-circle mapping (CRITICAL/HIGH→A, MEDIUM→B, LOW→C). */
+  private defectCategoryFor(severity: DefectSeverity | null): DefectCategory {
+    switch (severity) {
+      case DefectSeverity.CRITICAL:
+      case DefectSeverity.HIGH:
+        return 'A';
+      case DefectSeverity.LOW:
+        return 'C';
+      default:
+        // MEDIUM and unset — checklist items default to MEDIUM severity.
+        return 'B';
+    }
   }
 
   // ─── Compile + freeze (LAPORAN SELESAI) — background run + volumes ────────
@@ -1480,36 +1679,7 @@ export class ReportGenerationService implements OnModuleInit {
         value: this.readingValue(result),
       }));
 
-    // The LIVE recorded value per checklist item (InspectionResult) — the
-    // itemResult remark/verdict is a copy frozen at submit that office edits
-    // never update. Same rules as the screens (overlayItemResult in
-    // assets.service): a live value overlays the remark; a CLEARED value (row
-    // exists, every column blank) withdraws the whole verdict; no row keeps
-    // the frozen copy — it is the only record there is.
-    const liveRowById = new Map<string, AssetReportInspection['results'][number]>();
-    const liveIdsByLabel = new Map<string, string[]>();
-    for (const result of inspection.results) {
-      liveRowById.set(result.templateItemId, result);
-      const label = result.templateItem?.label;
-      if (label) {
-        const key = normalizeChecklistLabel(label);
-        const ids = liveIdsByLabel.get(key) ?? [];
-        ids.push(result.templateItemId);
-        liveIdsByLabel.set(key, ids);
-      }
-    }
-    const liveRowFor = (item: { checklistItemId: string | null; label: string }) => {
-      if (item.checklistItemId && liveRowById.has(item.checklistItemId)) {
-        return liveRowById.get(item.checklistItemId);
-      }
-      for (const id of liveIdsByLabel.get(normalizeChecklistLabel(item.label)) ?? []) {
-        const row = liveRowById.get(id);
-        if (row && this.readingValue(row).trim() !== '') {
-          return row;
-        }
-      }
-      return undefined;
-    };
+    const liveRowFor = this.buildLiveValueResolver(inspection);
     const withdrawnItemIds = new Set<string>();
 
     const checks = inspection.itemResults.map((item) => {
@@ -1645,6 +1815,46 @@ export class ReportGenerationService implements OnModuleInit {
     }
 
     return data;
+  }
+
+  /**
+   * The LIVE recorded value per checklist item (InspectionResult) — the
+   * itemResult remark/verdict is a copy frozen at submit that office edits
+   * never update. Same rules as the screens (overlayItemResult in
+   * assets.service): a live value overlays the remark; a CLEARED value (row
+   * exists, every column blank) withdraws the whole verdict; no row keeps
+   * the frozen copy — it is the only record there is.
+   */
+  private buildLiveValueResolver(
+    inspection: AssetReportInspection,
+  ): (item: {
+    checklistItemId: string | null;
+    label: string;
+  }) => AssetReportInspection['results'][number] | undefined {
+    const liveRowById = new Map<string, AssetReportInspection['results'][number]>();
+    const liveIdsByLabel = new Map<string, string[]>();
+    for (const result of inspection.results) {
+      liveRowById.set(result.templateItemId, result);
+      const label = result.templateItem?.label;
+      if (label) {
+        const key = normalizeChecklistLabel(label);
+        const ids = liveIdsByLabel.get(key) ?? [];
+        ids.push(result.templateItemId);
+        liveIdsByLabel.set(key, ids);
+      }
+    }
+    return (item) => {
+      if (item.checklistItemId && liveRowById.has(item.checklistItemId)) {
+        return liveRowById.get(item.checklistItemId);
+      }
+      for (const id of liveIdsByLabel.get(normalizeChecklistLabel(item.label)) ?? []) {
+        const row = liveRowById.get(id);
+        if (row && this.readingValue(row).trim() !== '') {
+          return row;
+        }
+      }
+      return undefined;
+    };
   }
 
   private async buildItemImageMap(

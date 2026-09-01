@@ -167,6 +167,23 @@ export async function downloadReportsZip(
   triggerBrowserDownload(blob, filename ?? "ascure-laporan.zip");
 }
 
+/** Download the on-demand defect report (Laporan Kejanggalan): defect poles
+ *  only, colour-coded A/B/C categories + photos, ~3 poles per page — the
+ *  handover format for the maintenance team. Always current data. */
+export async function downloadDefectReport(
+  token: string,
+  siteVisit: { id: string; pencawangCode?: string },
+): Promise<void> {
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/site-visit/${encodeURIComponent(siteVisit.id)}/defect-report.pdf`,
+    { token },
+  );
+  triggerBrowserDownload(
+    blob,
+    filename ?? `laporan-kejanggalan-${siteVisit.pencawangCode || "survey"}.pdf`,
+  );
+}
+
 /** Download a frozen compiled survey report PDF (latest version). `part`
  *  selects the volume (Jilid) when the survey compiled into several. */
 export async function downloadCompiledReport(
