@@ -47,9 +47,11 @@ import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import { fetchTeams } from "@/lib/users";
 import {
   batchGenerateReports,
-  downloadDefectReportsZip,
+  downloadDefectReportsZipFile,
   downloadReportsZip,
   fetchBatchReportStatus,
+  fetchDefectReportsZipStatus,
+  startDefectReportsZip,
 } from "@/lib/report-templates";
 import { createSiteVisit, fetchSiteVisits, fetchSubstations } from "@/lib/site-visits";
 import type { AuthSession } from "@/types/auth";
@@ -117,6 +119,9 @@ const AUTO_REFRESH_MS = 60000;
 
 /** Server-side batch cap (mirrors the API's BATCH_COMPILE_MAX). */
 const BATCH_REPORT_MAX = 20;
+// Defect-report ZIPs allow bigger selections than compile batches — the owner
+// hands over whole Mainheads (30+ Pencawang) to the maintenance team at once.
+const DEFECT_ZIP_MAX = 40;
 const BATCH_POLL_MS = 4000;
 
 /** Survey lifecycle states the report compiler accepts (mirror of the API):
@@ -830,7 +835,12 @@ function SiteVisitsContent() {
   const [batchError, setBatchError] = useState("");
   const [isStartingBatch, setIsStartingBatch] = useState(false);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
-  const [isDownloadingDefectZip, setIsDownloadingDefectZip] = useState(false);
+  // Non-null while a defect-report ZIP job runs (the ZIP builds server-side;
+  // this drives the button's "Menjana… n/m" progress).
+  const [defectZipProgress, setDefectZipProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
 
   // Persist the filter/sort/page view so returning from a visit detail (or any
   // back-navigation) restores the same filtered list instead of resetting.
@@ -1082,11 +1092,41 @@ function SiteVisitsContent() {
   }, [handleLogout, selectedIds, session?.token]);
 
   const handleDefectZipDownload = useCallback(async () => {
-    if (!session?.token || selectedIds.size === 0) return;
-    setIsDownloadingDefectZip(true);
+    const token = session?.token;
+    if (!token || selectedIds.size === 0) return;
     setBatchError("");
+    setDefectZipProgress({ processed: 0, total: selectedIds.size });
     try {
-      await downloadDefectReportsZip(session.token, [...selectedIds]);
+      const job = await startDefectReportsZip(token, [...selectedIds]);
+      setDefectZipProgress({ processed: 0, total: job.total });
+      // Poll until the server-side build finishes; a few transient poll
+      // failures are tolerated (network blips must not orphan the job).
+      let pollFailures = 0;
+      for (;;) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 2500));
+        let status;
+        try {
+          status = await fetchDefectReportsZipStatus(token, job.jobId);
+          pollFailures = 0;
+        } catch (pollError) {
+          if (pollError instanceof ApiError && pollError.status === 401) {
+            handleLogout();
+            return;
+          }
+          pollFailures += 1;
+          if (pollFailures >= 5) throw pollError;
+          continue;
+        }
+        setDefectZipProgress({
+          processed: status.processed,
+          total: status.total,
+        });
+        if (status.status === "COMPLETED") break;
+        if (status.status === "FAILED") {
+          throw new Error(status.error || "Penjanaan ZIP gagal.");
+        }
+      }
+      await downloadDefectReportsZipFile(token, job.jobId);
     } catch (zipError) {
       if (zipError instanceof ApiError && zipError.status === 401) {
         handleLogout();
@@ -1098,7 +1138,7 @@ function SiteVisitsContent() {
           : "Unable to download the defect-report ZIP.",
       );
     } finally {
-      setIsDownloadingDefectZip(false);
+      setDefectZipProgress(null);
     }
   }, [handleLogout, selectedIds, session?.token]);
 
@@ -1358,7 +1398,7 @@ function SiteVisitsContent() {
     eligiblePageIds.length > 0 &&
     eligiblePageIds.every((id) => selectedIds.has(id));
   const batchBusy =
-    isStartingBatch || isDownloadingZip || isDownloadingDefectZip;
+    isStartingBatch || isDownloadingZip || defectZipProgress !== null;
   const batchRunning =
     batchItems !== null &&
     batchItems.some((item) => !isTerminalBatchPhase(item.phase));
@@ -1724,9 +1764,11 @@ function SiteVisitsContent() {
                     <div className="flex flex-wrap items-center gap-2.5 border-t border-[var(--line2)] bg-[var(--brand-tint)] px-5 py-2.5">
                       <span className="text-[12.5px] font-semibold text-[var(--foreground)]">
                         {selectedIds.size} selected
-                        {selectedIds.size > BATCH_REPORT_MAX
-                          ? ` — max ${BATCH_REPORT_MAX} per batch`
-                          : ""}
+                        {selectedIds.size > DEFECT_ZIP_MAX
+                          ? ` — max ${DEFECT_ZIP_MAX} per batch`
+                          : selectedIds.size > BATCH_REPORT_MAX
+                            ? ` — compiled-report batch max ${BATCH_REPORT_MAX}; Laporan Kejanggalan up to ${DEFECT_ZIP_MAX}`
+                            : ""}
                       </span>
                       <Tbtn
                         onClick={() => void handleBatchGenerate()}
@@ -1758,15 +1800,17 @@ function SiteVisitsContent() {
                       </Tbtn>
                       <Tbtn
                         onClick={() => void handleDefectZipDownload()}
-                        disabled={batchBusy || selectedIds.size > BATCH_REPORT_MAX}
-                        title="Generate the Laporan Kejanggalan of every selected survey and download them as one ZIP — generated on the fly, so a big selection takes a while"
+                        disabled={batchBusy || selectedIds.size > DEFECT_ZIP_MAX}
+                        title={`Generate the Laporan Kejanggalan of every selected survey (max ${DEFECT_ZIP_MAX}) as one ZIP — built in the background, downloads when ready`}
                       >
-                        {isDownloadingDefectZip ? (
+                        {defectZipProgress ? (
                           <Loader2 size={15} className="animate-spin" />
                         ) : (
                           <Download size={15} />
                         )}
-                        Laporan Kejanggalan (ZIP)
+                        {defectZipProgress
+                          ? `Menjana… ${defectZipProgress.processed}/${defectZipProgress.total}`
+                          : "Laporan Kejanggalan (ZIP)"}
                       </Tbtn>
                       <Tbtn variant="ghost" onClick={() => setSelectedIds(new Set())}>
                         Clear

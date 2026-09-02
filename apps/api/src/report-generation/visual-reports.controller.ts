@@ -10,6 +10,7 @@ import {
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import { createReadStream } from 'fs';
 import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsUUID } from 'class-validator';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -33,6 +34,21 @@ class BatchSiteVisitsDto {
   @ArrayMaxSize(20)
   @IsUUID(undefined, { each: true })
   siteVisitIds!: string[];
+}
+
+/** Wider cap than the compile batch — a defect ZIP costs no Gotenberg time
+ *  and the owner hands over whole Mainheads (30+ Pencawang) at once. */
+class DefectZipDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(40)
+  @IsUUID(undefined, { each: true })
+  siteVisitIds!: string[];
+}
+
+class JobIdParamDto {
+  @IsUUID()
+  jobId!: string;
 }
 
 const UUID_PATTERN =
@@ -174,32 +190,47 @@ export class VisualReportsController {
     await archive.finalize();
   }
 
-  /** Stream a freshly-generated Laporan Kejanggalan of each selected visit as
-   *  ONE ZIP. Reports are generated on the fly, one at a time, while the ZIP
-   *  streams — so per-survey failures (e.g. no defects) land in SENARAI.txt
-   *  rather than failing the download. */
-  @Get('defect-reports.zip')
-  async defectReportsZip(
+  /** Start a BACKGROUND build of one ZIP holding a freshly-generated Laporan
+   *  Kejanggalan per selected survey. Returns immediately with a job id —
+   *  the client polls the status route, then fetches the finished file. (A
+   *  streamed-while-generating response died to proxy read-timeouts during
+   *  generation gaps, and a 30-survey batch is minutes long.) */
+  @Post('defect-reports/jobs')
+  startDefectReportsZip(
     @CurrentUser() user: RequestUser,
-    @Res() res: Response,
-    @Query('ids') ids?: string,
-  ): Promise<void> {
-    const { archive, fileName, populate } =
-      await this.reportGenerationService.createDefectReportZip(
-        user,
-        parseIdsQuery(ids, 20),
-      );
+    @Body() dto: DefectZipDto,
+  ) {
+    return this.reportGenerationService.startDefectZipJob(
+      user,
+      dto.siteVisitIds,
+    );
+  }
+
+  /** Progress of a defect-report ZIP job (processed/total + current survey). */
+  @Get('defect-reports/jobs/:jobId')
+  defectReportsZipStatus(
+    @CurrentUser() user: RequestUser,
+    @Param() params: JobIdParamDto,
+  ) {
+    return this.reportGenerationService.getDefectZipJobStatus(
+      user,
+      params.jobId,
+    );
+  }
+
+  /** Download a COMPLETED defect-report ZIP (kept ~2h, wiped on API restart). */
+  @Get('defect-reports/jobs/:jobId/download.zip')
+  async downloadDefectReportsZip(
+    @CurrentUser() user: RequestUser,
+    @Param() params: JobIdParamDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filePath, fileName } =
+      await this.reportGenerationService.getDefectZipFile(user, params.jobId);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-    archive.on('error', (error) => {
-      // Headers are already gone — all we can do is cut the stream so the
-      // client sees a failed download instead of a silently truncated ZIP.
-      res.destroy(error);
-    });
-    archive.pipe(res);
-    // Generates + appends each report, then finalizes the archive.
-    await populate();
+    return new StreamableFile(createReadStream(filePath));
   }
 
   /** Progress of the (background) report compile + the latest version's volume

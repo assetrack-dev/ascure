@@ -72,6 +72,15 @@ export function buildSiteVisitReportUrl(siteVisitId: string, filename: string) {
 }
 
 /**
+ * Scratch directory for background-built defect-report ZIPs. Contents are
+ * ephemeral: jobs are tracked in-memory only, so the whole directory is wiped
+ * on API boot and entries expire on a TTL sweep.
+ */
+export function buildDefectZipDirectory() {
+  return resolve(UPLOADS_DIRECTORY, 'defect-zips');
+}
+
+/**
  * Absolute on-disk path for a stored `storageKey` (e.g. an inspection photo or a
  * report template) so generators can read the bytes to embed/convert.
  */

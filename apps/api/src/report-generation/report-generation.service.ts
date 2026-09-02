@@ -10,8 +10,8 @@ import {
 } from '@nestjs/common';
 import archiver from 'archiver';
 import { randomUUID } from 'crypto';
-import { existsSync } from 'fs';
-import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
+import { createWriteStream, existsSync } from 'fs';
+import { mkdir, readFile, rm, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
   DefectSeverity,
@@ -34,6 +34,7 @@ import { buildVisitReleasePlan } from '../defects/defect-release.util';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
 import {
+  buildDefectZipDirectory,
   buildReportTemplatePath,
   buildReportTemplateUrl,
   buildReportTemplatesDirectory,
@@ -246,6 +247,39 @@ const MAX_ASSETS_PER_COMPILE = 2000;
 /** Most site visits accepted into one batch generate / batch ZIP download. */
 const BATCH_COMPILE_MAX = 20;
 
+/** Most surveys in one background defect-report ZIP job. Higher than the
+ *  compile batch cap — the owner hands over whole Mainheads (30+ Pencawang)
+ *  to the maintenance team at once, and a job costs no Gotenberg time. */
+const DEFECT_ZIP_MAX = 40;
+
+/** How long a finished defect-report ZIP stays downloadable. */
+const DEFECT_ZIP_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** In-memory record of one background defect-report ZIP build. */
+interface DefectZipJob {
+  id: string;
+  tenantId: string;
+  status: 'RUNNING' | 'COMPLETED' | 'FAILED';
+  processed: number;
+  total: number;
+  currentLabel: string | null;
+  fileName: string;
+  filePath: string;
+  error: string | null;
+  createdAt: number;
+}
+
+/** The visit fields visitReportLabel needs, as selected by the ZIP job. */
+interface DefectZipVisit {
+  id: string;
+  pencawangName: string | null;
+  pencawangCode: string | null;
+  substation: { name: string } | null;
+  routeCode: string | null;
+  fromPencawang: { name: string | null; code: string | null } | null;
+  toPencawang: { name: string | null; code: string | null } | null;
+}
+
 /** SiteVisitReportRun.status values. QUEUED runs belong to a batch and are
  *  waiting their turn — the batch loop compiles them strictly one at a time
  *  so a 10-survey batch never floods Gotenberg. */
@@ -293,6 +327,13 @@ export class ReportGenerationService implements OnModuleInit {
         `Marked ${swept.count} interrupted report compile run(s) as FAILED.`,
       );
     }
+
+    // Defect-report ZIP jobs live in this process only — a restart orphans
+    // both the in-memory registry and any half-written files, so wipe the
+    // scratch directory outright (best-effort).
+    await rm(buildDefectZipDirectory(), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 
   // ─── Template management (ADMIN) ──────────────────────────────────────────
@@ -1675,35 +1716,33 @@ export class ReportGenerationService implements OnModuleInit {
     return { archive, fileName: `ascure-laporan-${stamp}.zip` };
   }
 
-  /**
-   * One ZIP holding a freshly-generated Laporan Kejanggalan per selected
-   * survey. Unlike {@link createBatchZip} there are no stored files — defect
-   * reports are never frozen — so `populate()` GENERATES each PDF and appends
-   * it while the archive is already streaming to the client: call it after
-   * piping. Sequential on purpose (one report's photo buffers in memory at a
-   * time — the api already leaks under export load), and the stream staying
-   * active between entries is what keeps the proxy from timing out a large
-   * batch. A survey with no defects (or any per-survey failure) is noted in
-   * SENARAI.txt, never fatal — once streaming starts an error can no longer
-   * become an HTTP status.
-   */
-  async createDefectReportZip(
+  // ─── Defect-report ZIP (background job — Laporan Kejanggalan batch) ───────
+  //
+  // Defect reports are never frozen, so a batch ZIP must GENERATE every PDF.
+  // v1 generated them while streaming the HTTP response — the proxy killed
+  // the connection during quiet generation gaps ("Failed to fetch"), and one
+  // connection for a 30-survey batch is minutes long. Now the ZIP builds in
+  // the BACKGROUND to a scratch file (in-memory job registry, single pm2
+  // fork), the client polls progress, and the finished file downloads fast.
+  // Sequential generation on purpose: one report's photo buffers in memory
+  // at a time — the api already leaks under export load.
+
+  private readonly defectZipJobs = new Map<string, DefectZipJob>();
+
+  /** Validate + register a job, kick off the background build, return its id. */
+  async startDefectZipJob(
     user: RequestUser,
     siteVisitIds: string[],
-  ): Promise<{
-    archive: archiver.Archiver;
-    fileName: string;
-    populate: () => Promise<void>;
-  }> {
+  ): Promise<{ jobId: string; total: number }> {
     await this.assertCanReport(user);
 
     const ids = [...new Set(siteVisitIds)];
     if (ids.length === 0) {
       throw new BadRequestException('No site visits were selected.');
     }
-    if (ids.length > BATCH_COMPILE_MAX) {
+    if (ids.length > DEFECT_ZIP_MAX) {
       throw new BadRequestException(
-        `A batch can download at most ${BATCH_COMPILE_MAX} reports at a time.`,
+        `At most ${DEFECT_ZIP_MAX} surveys per defect-report ZIP.`,
       );
     }
 
@@ -1723,14 +1762,60 @@ export class ReportGenerationService implements OnModuleInit {
       throw new NotFoundException('None of the selected site visits exist.');
     }
 
-    const archive = archiver('zip', { store: true });
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Lazy TTL sweep: expired jobs lose their file and registry entry.
+    const now = Date.now();
+    for (const [jobId, job] of this.defectZipJobs) {
+      if (now - job.createdAt > DEFECT_ZIP_TTL_MS) {
+        this.defectZipJobs.delete(jobId);
+        void unlink(job.filePath).catch(() => undefined);
+      }
+    }
 
-    const populate = async () => {
+    const directory = buildDefectZipDirectory();
+    await mkdir(directory, { recursive: true });
+    const jobId = randomUUID();
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const job: DefectZipJob = {
+      id: jobId,
+      tenantId: user.tenantId,
+      status: 'RUNNING',
+      processed: 0,
+      total: visits.length,
+      currentLabel: null,
+      fileName: `laporan-kejanggalan-${stamp}.zip`,
+      filePath: resolve(directory, `${jobId}.zip`),
+      error: null,
+      createdAt: now,
+    };
+    this.defectZipJobs.set(jobId, job);
+
+    // Detached on purpose (same contract as the compile batch): the request
+    // returns now; the job entry is the progress/result channel.
+    void this.runDefectZipJob(job, visits, user);
+
+    return { jobId, total: visits.length };
+  }
+
+  private async runDefectZipJob(
+    job: DefectZipJob,
+    visits: DefectZipVisit[],
+    user: RequestUser,
+  ): Promise<void> {
+    try {
+      const output = createWriteStream(job.filePath);
+      const archive = archiver('zip', { store: true });
+      const closed = new Promise<void>((resolveClosed, rejectClosed) => {
+        output.on('close', () => resolveClosed());
+        output.on('error', rejectClosed);
+        archive.on('error', rejectClosed);
+      });
+      archive.pipe(output);
+
       const manifest: string[] = [];
       const usedNames = new Set<string>();
       for (const visit of visits) {
         const label = this.visitReportLabel(visit) ?? visit.id;
+        job.currentLabel = label;
         try {
           const { buffer, filename } = await this.generateDefectReport(
             user,
@@ -1748,12 +1833,15 @@ export class ReportGenerationService implements OnModuleInit {
           archive.append(buffer, { name: entryName });
           manifest.push(`${entryName} — ${label}`);
         } catch (error) {
+          // A survey with no defects (or any per-survey failure) is noted in
+          // SENARAI.txt, never fatal to the batch.
           manifest.push(
             `TIADA — ${label} (${
               error instanceof Error ? error.message : String(error)
             })`,
           );
         }
+        job.processed += 1;
       }
       archive.append(
         `Laporan Kejanggalan ASCURE — ${new Date().toISOString()}\n\n` +
@@ -1762,13 +1850,71 @@ export class ReportGenerationService implements OnModuleInit {
         { name: 'SENARAI.txt' },
       );
       await archive.finalize();
-    };
+      await closed;
+      job.currentLabel = null;
+      job.status = 'COMPLETED';
+    } catch (error) {
+      job.status = 'FAILED';
+      job.error = error instanceof Error ? error.message : String(error);
+      job.currentLabel = null;
+      void unlink(job.filePath).catch(() => undefined);
+      this.logger.error(`Defect-report ZIP job ${job.id} failed: ${job.error}`);
+    }
+  }
 
+  /** Progress poll for a running/finished job (tenant-guarded). */
+  async getDefectZipJobStatus(
+    user: RequestUser,
+    jobId: string,
+  ): Promise<{
+    status: string;
+    processed: number;
+    total: number;
+    currentLabel: string | null;
+    error: string | null;
+  }> {
+    await this.assertCanReport(user);
+    const job = this.defectZipJobs.get(jobId);
+    if (!job || job.tenantId !== user.tenantId) {
+      throw new NotFoundException(
+        'ZIP job not found — it may have expired or the API restarted; start it again.',
+      );
+    }
     return {
-      archive,
-      fileName: `laporan-kejanggalan-${stamp}.zip`,
-      populate,
+      status: job.status,
+      processed: job.processed,
+      total: job.total,
+      currentLabel: job.currentLabel,
+      error: job.error,
     };
+  }
+
+  /** The finished ZIP's on-disk path (kept until the TTL sweep). */
+  async getDefectZipFile(
+    user: RequestUser,
+    jobId: string,
+  ): Promise<{ filePath: string; fileName: string }> {
+    await this.assertCanReport(user);
+    const job = this.defectZipJobs.get(jobId);
+    if (!job || job.tenantId !== user.tenantId) {
+      throw new NotFoundException(
+        'ZIP job not found — it may have expired or the API restarted; start it again.',
+      );
+    }
+    if (job.status !== 'COMPLETED') {
+      throw new BadRequestException(
+        job.status === 'FAILED'
+          ? `The ZIP job failed: ${job.error ?? 'unknown error'}`
+          : 'The ZIP is still being generated.',
+      );
+    }
+    if (!existsSync(job.filePath)) {
+      this.defectZipJobs.delete(jobId);
+      throw new NotFoundException(
+        'The ZIP file is gone (expired or the API restarted) — start the job again.',
+      );
+    }
+    return { filePath: job.filePath, fileName: job.fileName };
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────

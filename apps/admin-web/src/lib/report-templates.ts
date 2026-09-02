@@ -167,17 +167,47 @@ export async function downloadReportsZip(
   triggerBrowserDownload(blob, filename ?? "ascure-laporan.zip");
 }
 
-/** Download a freshly-generated Laporan Kejanggalan of each selected visit as
- *  ONE ZIP (SENARAI.txt inside notes surveys without defects). Reports are
- *  generated server-side while the ZIP streams, so a large batch can take a
- *  while to finish. */
-export async function downloadDefectReportsZip(
+// ─── Defect-report ZIP (background job) ─────────────────────────────────────
+// The ZIP builds server-side (each Laporan Kejanggalan is generated fresh —
+// a 30-survey batch takes minutes): start a job, poll it, then download the
+// finished file. Surveys without defects land in the ZIP's SENARAI.txt.
+
+export interface DefectZipJobStatus {
+  status: "RUNNING" | "COMPLETED" | "FAILED" | string;
+  processed: number;
+  total: number;
+  currentLabel: string | null;
+  error: string | null;
+}
+
+/** Kick off the background ZIP build; returns the job to poll. Max 40. */
+export function startDefectReportsZip(
   token: string,
   siteVisitIds: string[],
+): Promise<{ jobId: string; total: number }> {
+  return apiRequest<{ jobId: string; total: number }>(
+    "/reports/defect-reports/jobs",
+    { method: "POST", token, body: JSON.stringify({ siteVisitIds }) },
+  );
+}
+
+export function fetchDefectReportsZipStatus(
+  token: string,
+  jobId: string,
+): Promise<DefectZipJobStatus> {
+  return apiRequest<DefectZipJobStatus>(
+    `/reports/defect-reports/jobs/${encodeURIComponent(jobId)}`,
+    { token },
+  );
+}
+
+/** Download a COMPLETED job's ZIP (kept ~2h server-side). */
+export async function downloadDefectReportsZipFile(
+  token: string,
+  jobId: string,
 ): Promise<void> {
-  const ids = siteVisitIds.map(encodeURIComponent).join(",");
   const { blob, filename } = await apiRequestBlob(
-    `/reports/defect-reports.zip?ids=${ids}`,
+    `/reports/defect-reports/jobs/${encodeURIComponent(jobId)}/download.zip`,
     { token },
   );
   triggerBrowserDownload(blob, filename ?? "laporan-kejanggalan.zip");
