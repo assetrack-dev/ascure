@@ -174,6 +174,34 @@ export class VisualReportsController {
     await archive.finalize();
   }
 
+  /** Stream a freshly-generated Laporan Kejanggalan of each selected visit as
+   *  ONE ZIP. Reports are generated on the fly, one at a time, while the ZIP
+   *  streams — so per-survey failures (e.g. no defects) land in SENARAI.txt
+   *  rather than failing the download. */
+  @Get('defect-reports.zip')
+  async defectReportsZip(
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+    @Query('ids') ids?: string,
+  ): Promise<void> {
+    const { archive, fileName, populate } =
+      await this.reportGenerationService.createDefectReportZip(
+        user,
+        parseIdsQuery(ids, 20),
+      );
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    archive.on('error', (error) => {
+      // Headers are already gone — all we can do is cut the stream so the
+      // client sees a failed download instead of a silently truncated ZIP.
+      res.destroy(error);
+    });
+    archive.pipe(res);
+    // Generates + appends each report, then finalizes the archive.
+    await populate();
+  }
+
   /** Progress of the (background) report compile + the latest version's volume
    *  list — the admin visit page polls this after pressing Generate. */
   @Get('site-visit/:siteVisitId/report-status')

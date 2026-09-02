@@ -47,6 +47,7 @@ import { fetchEnterpriseOptions } from "@/lib/enterprise";
 import { fetchTeams } from "@/lib/users";
 import {
   batchGenerateReports,
+  downloadDefectReportsZip,
   downloadReportsZip,
   fetchBatchReportStatus,
 } from "@/lib/report-templates";
@@ -829,6 +830,7 @@ function SiteVisitsContent() {
   const [batchError, setBatchError] = useState("");
   const [isStartingBatch, setIsStartingBatch] = useState(false);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [isDownloadingDefectZip, setIsDownloadingDefectZip] = useState(false);
 
   // Persist the filter/sort/page view so returning from a visit detail (or any
   // back-navigation) restores the same filtered list instead of resetting.
@@ -1076,6 +1078,27 @@ function SiteVisitsContent() {
       );
     } finally {
       setIsDownloadingZip(false);
+    }
+  }, [handleLogout, selectedIds, session?.token]);
+
+  const handleDefectZipDownload = useCallback(async () => {
+    if (!session?.token || selectedIds.size === 0) return;
+    setIsDownloadingDefectZip(true);
+    setBatchError("");
+    try {
+      await downloadDefectReportsZip(session.token, [...selectedIds]);
+    } catch (zipError) {
+      if (zipError instanceof ApiError && zipError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setBatchError(
+        zipError instanceof Error
+          ? zipError.message
+          : "Unable to download the defect-report ZIP.",
+      );
+    } finally {
+      setIsDownloadingDefectZip(false);
     }
   }, [handleLogout, selectedIds, session?.token]);
 
@@ -1334,7 +1357,8 @@ function SiteVisitsContent() {
   const allPageSelected =
     eligiblePageIds.length > 0 &&
     eligiblePageIds.every((id) => selectedIds.has(id));
-  const batchBusy = isStartingBatch || isDownloadingZip;
+  const batchBusy =
+    isStartingBatch || isDownloadingZip || isDownloadingDefectZip;
   const batchRunning =
     batchItems !== null &&
     batchItems.some((item) => !isTerminalBatchPhase(item.phase));
@@ -1731,6 +1755,18 @@ function SiteVisitsContent() {
                           <Download size={15} />
                         )}
                         Download ZIP
+                      </Tbtn>
+                      <Tbtn
+                        onClick={() => void handleDefectZipDownload()}
+                        disabled={batchBusy || selectedIds.size > BATCH_REPORT_MAX}
+                        title="Generate the Laporan Kejanggalan of every selected survey and download them as one ZIP — generated on the fly, so a big selection takes a while"
+                      >
+                        {isDownloadingDefectZip ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Download size={15} />
+                        )}
+                        Laporan Kejanggalan (ZIP)
                       </Tbtn>
                       <Tbtn variant="ghost" onClick={() => setSelectedIds(new Set())}>
                         Clear

@@ -1675,6 +1675,102 @@ export class ReportGenerationService implements OnModuleInit {
     return { archive, fileName: `ascure-laporan-${stamp}.zip` };
   }
 
+  /**
+   * One ZIP holding a freshly-generated Laporan Kejanggalan per selected
+   * survey. Unlike {@link createBatchZip} there are no stored files — defect
+   * reports are never frozen — so `populate()` GENERATES each PDF and appends
+   * it while the archive is already streaming to the client: call it after
+   * piping. Sequential on purpose (one report's photo buffers in memory at a
+   * time — the api already leaks under export load), and the stream staying
+   * active between entries is what keeps the proxy from timing out a large
+   * batch. A survey with no defects (or any per-survey failure) is noted in
+   * SENARAI.txt, never fatal — once streaming starts an error can no longer
+   * become an HTTP status.
+   */
+  async createDefectReportZip(
+    user: RequestUser,
+    siteVisitIds: string[],
+  ): Promise<{
+    archive: archiver.Archiver;
+    fileName: string;
+    populate: () => Promise<void>;
+  }> {
+    await this.assertCanReport(user);
+
+    const ids = [...new Set(siteVisitIds)];
+    if (ids.length === 0) {
+      throw new BadRequestException('No site visits were selected.');
+    }
+    if (ids.length > BATCH_COMPILE_MAX) {
+      throw new BadRequestException(
+        `A batch can download at most ${BATCH_COMPILE_MAX} reports at a time.`,
+      );
+    }
+
+    const visits = await this.prisma.siteVisit.findMany({
+      where: { id: { in: ids }, tenantId: user.tenantId },
+      select: {
+        id: true,
+        pencawangName: true,
+        pencawangCode: true,
+        substation: { select: { name: true } },
+        routeCode: true,
+        fromPencawang: { select: { name: true, code: true } },
+        toPencawang: { select: { name: true, code: true } },
+      },
+    });
+    if (visits.length === 0) {
+      throw new NotFoundException('None of the selected site visits exist.');
+    }
+
+    const archive = archiver('zip', { store: true });
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+    const populate = async () => {
+      const manifest: string[] = [];
+      const usedNames = new Set<string>();
+      for (const visit of visits) {
+        const label = this.visitReportLabel(visit) ?? visit.id;
+        try {
+          const { buffer, filename } = await this.generateDefectReport(
+            user,
+            visit.id,
+          );
+          let entryName = filename;
+          // Two visits can share a Pencawang name — keep entries unique.
+          if (usedNames.has(entryName)) {
+            entryName = entryName.replace(
+              /\.pdf$/,
+              ` (${visit.id.slice(0, 8)}).pdf`,
+            );
+          }
+          usedNames.add(entryName);
+          archive.append(buffer, { name: entryName });
+          manifest.push(`${entryName} — ${label}`);
+        } catch (error) {
+          manifest.push(
+            `TIADA — ${label} (${
+              error instanceof Error ? error.message : String(error)
+            })`,
+          );
+        }
+      }
+      archive.append(
+        `Laporan Kejanggalan ASCURE — ${new Date().toISOString()}\n\n` +
+          manifest.join('\n') +
+          '\n',
+        { name: 'SENARAI.txt' },
+      );
+      await archive.finalize();
+    };
+
+    return {
+      archive,
+      fileName: `laporan-kejanggalan-${stamp}.zip`,
+      populate,
+    };
+  }
+
   // ─── Internals ────────────────────────────────────────────────────────────
 
   private async renderAssetPdf(
