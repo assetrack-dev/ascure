@@ -167,6 +167,22 @@ export async function downloadReportsZip(
   triggerBrowserDownload(blob, filename ?? "ascure-laporan.zip");
 }
 
+/** Download a freshly-generated Laporan Kejanggalan of each selected visit as
+ *  ONE ZIP (SENARAI.txt inside notes surveys without defects). Reports are
+ *  generated server-side while the ZIP streams, so a large batch can take a
+ *  while to finish. */
+export async function downloadDefectReportsZip(
+  token: string,
+  siteVisitIds: string[],
+): Promise<void> {
+  const ids = siteVisitIds.map(encodeURIComponent).join(",");
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/defect-reports.zip?ids=${ids}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "laporan-kejanggalan.zip");
+}
+
 /** Download the on-demand defect report (Laporan Kejanggalan): defect poles
  *  only, colour-coded A/B/C categories + photos, ~3 poles per page — the
  *  handover format for the maintenance team. Always current data. */
