@@ -15,6 +15,11 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  * ADMIN / QA actor are also allowed; a technician (crew) is not. The free-text
  * value is coerced to the item's stored type.
  *
+ * The edit also RE-RUNS THE VERDICT (checklist-verdict.util.ts): the seed item
+ * is a defect-trigger BOOLEAN, so under the ASCURE SAVR polarity YES = "the
+ * defect exists" = FAIL → the InspectionItemResult and its Defect follow the
+ * edited value, unless maintenance has locked the defect.
+ *
  * Seed: template item "Pole condition" (BOOLEAN) on every inspection; Company S
  * (SUBCONTRACTOR) is a child of Company A (MAIN_CONTRACTOR); Company B unrelated.
  */
@@ -36,9 +41,36 @@ describe('Authz · generalized checklist-value edit', () => {
   }, 30000);
 
   afterAll(async () => {
-    // Restore the shared seed: drop the InspectionResult rows these tests created.
+    // Restore the shared seed: drop the InspectionResult rows these tests
+    // created, put the two item-results back to their seeded verdict, and
+    // re-create the seeded defects (the re-verdict deletes/re-raises them with
+    // fresh ids along the way).
     await prisma?.inspectionResult.deleteMany({
       where: { inspectionId: { in: [IDS.inspection.a, IDS.sub.inspection] } },
+    });
+    await prisma?.defect.deleteMany({
+      where: {
+        inspectionItemResultId: { in: [IDS.itemResult.a, IDS.sub.itemResult] },
+      },
+    });
+    for (const id of [IDS.itemResult.a, IDS.sub.itemResult]) {
+      await prisma?.inspectionItemResult.update({
+        where: { id },
+        data: {
+          checklistItemId: null,
+          result: 'FAIL',
+          isDefect: true,
+          isEmergency: false,
+          severity: 'MEDIUM',
+          maintenanceCategory: null,
+        },
+      });
+    }
+    await prisma?.defect.createMany({
+      data: [
+        { id: IDS.defect.a, inspectionItemResultId: IDS.itemResult.a, status: 'OPEN', severity: 'MEDIUM', lifecycleStatus: 'VERIFIED' },
+        { id: IDS.sub.defect, inspectionItemResultId: IDS.sub.itemResult, status: 'OPEN', severity: 'MEDIUM', lifecycleStatus: 'VERIFIED' },
+      ],
     });
     await app?.close();
   });
@@ -52,9 +84,21 @@ describe('Authz · generalized checklist-value edit', () => {
       where: { inspectionId: IDS.inspection.a },
     });
     expect(row?.valueBoolean).toBe(true);
+    // Defect-trigger BOOLEAN: YES = "the defect exists" = FAIL — the seeded
+    // verdict and defect stand (and the item-result is now template-linked).
+    const item = await prisma.inspectionItemResult.findUnique({
+      where: { id: IDS.itemResult.a },
+    });
+    expect(item?.result).toBe('FAIL');
+    expect(item?.isDefect).toBe(true);
+    expect(item?.checklistItemId).toBe(IDS.template.item);
+    const defect = await prisma.defect.findUnique({
+      where: { inspectionItemResultId: IDS.itemResult.a },
+    });
+    expect(defect).not.toBeNull();
   });
 
-  it('main-contractor MANAGER edits a SUBCONTRACTOR inspection item (200 — the new cross-company write)', async () => {
+  it('main-contractor MANAGER edits a SUBCONTRACTOR inspection item (200 — the new cross-company write) and NO withdraws its defect', async () => {
     await http(app, token.mgrA)
       .patch(url(IDS.sub.inspection))
       .send({ columnKey: POLE, value: 'No', siteVisitId: IDS.sub.visit })
@@ -63,6 +107,36 @@ describe('Authz · generalized checklist-value edit', () => {
       where: { inspectionId: IDS.sub.inspection },
     });
     expect(row?.valueBoolean).toBe(false);
+    // NO = the defect does not exist → PASS, defect gone (it was VERIFIED,
+    // i.e. not yet claimed by maintenance).
+    const item = await prisma.inspectionItemResult.findUnique({
+      where: { id: IDS.sub.itemResult },
+    });
+    expect(item?.result).toBe('PASS');
+    expect(item?.isDefect).toBe(false);
+    expect(item?.severity).toBeNull();
+    const defect = await prisma.defect.findUnique({
+      where: { inspectionItemResultId: IDS.sub.itemResult },
+    });
+    expect(defect).toBeNull();
+  });
+
+  it('editing the answer back to YES re-raises the defect (item-level severity)', async () => {
+    await http(app, token.mgrA)
+      .patch(url(IDS.sub.inspection))
+      .send({ columnKey: POLE, value: 'Yes', siteVisitId: IDS.sub.visit })
+      .expect(200);
+    const item = await prisma.inspectionItemResult.findUnique({
+      where: { id: IDS.sub.itemResult },
+    });
+    expect(item?.result).toBe('FAIL');
+    expect(item?.isDefect).toBe(true);
+    expect(item?.severity).toBe('MEDIUM');
+    const defect = await prisma.defect.findUnique({
+      where: { inspectionItemResultId: IDS.sub.itemResult },
+    });
+    expect(defect?.severity).toBe('MEDIUM');
+    expect(defect?.status).toBe('OPEN');
   });
 
   it('an unrelated main contractor (B) canNOT edit the subcontractor inspection (404)', () =>
@@ -95,7 +169,7 @@ describe('Authz · generalized checklist-value edit', () => {
       .send({ columnKey: 'NO SUCH ITEM', value: 'x' })
       .expect(400));
 
-  it('an empty value clears the recorded value (200 → null)', async () => {
+  it('an empty value clears the recorded value (200 → null) and withdraws the verdict + defect', async () => {
     await http(app, token.mgrA)
       .patch(url(IDS.inspection.a))
       .send({ columnKey: POLE, value: '' })
@@ -104,5 +178,41 @@ describe('Authz · generalized checklist-value edit', () => {
       where: { inspectionId: IDS.inspection.a },
     });
     expect(row?.valueBoolean).toBeNull();
+    const item = await prisma.inspectionItemResult.findUnique({
+      where: { id: IDS.itemResult.a },
+    });
+    expect(item?.result).toBe('NA');
+    expect(item?.isDefect).toBe(false);
+    const defect = await prisma.defect.findUnique({
+      where: { inspectionItemResultId: IDS.itemResult.a },
+    });
+    expect(defect).toBeNull();
+  });
+
+  it('a maintenance-locked defect survives an edit that clears the answer (item verdict updates, defect stays)', async () => {
+    // Re-raise on inspection.a, then hand the defect to maintenance.
+    await http(app, token.mgrA)
+      .patch(url(IDS.inspection.a))
+      .send({ columnKey: POLE, value: 'Yes', siteVisitId: IDS.visit.a })
+      .expect(200);
+    await prisma.defect.update({
+      where: { inspectionItemResultId: IDS.itemResult.a },
+      data: { lifecycleStatus: 'IN_PROGRESS' },
+    });
+
+    await http(app, token.mgrA)
+      .patch(url(IDS.inspection.a))
+      .send({ columnKey: POLE, value: 'No', siteVisitId: IDS.visit.a })
+      .expect(200);
+
+    const item = await prisma.inspectionItemResult.findUnique({
+      where: { id: IDS.itemResult.a },
+    });
+    expect(item?.isDefect).toBe(false);
+    // Someone is working this defect — the edit must not delete it.
+    const defect = await prisma.defect.findUnique({
+      where: { inspectionItemResultId: IDS.itemResult.a },
+    });
+    expect(defect?.lifecycleStatus).toBe('IN_PROGRESS');
   });
 });
