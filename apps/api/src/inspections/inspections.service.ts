@@ -58,6 +58,10 @@ import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { CorrectReadingDto } from './dto/correct-reading.dto';
 import { EditChecklistResultDto } from './dto/edit-checklist-result.dto';
 import { RequestReinspectionDto } from './dto/request-reinspection.dto';
+import {
+  deriveEditedChecklistVerdict,
+  type EditedChecklistValue,
+} from './checklist-verdict.util';
 import { isQaActor } from '../common/authorization/qa-actor';
 import {
   SaveInspectionItemResultDto,
@@ -794,6 +798,14 @@ export class InspectionsService {
    * oversight-scoped (own teams + subcontractor subtree), bypasses the submitted
    * lock, blocked only on a CANCELLED visit, old->new logged (owner chose
    * log-only, no DB audit, 2026-07-21).
+   *
+   * The edit then RE-RUNS THE VERDICT (2026-09-04): the new value is put through
+   * the same PASS/FAIL derivation the mobile applies at capture
+   * (checklist-verdict.util.ts), the matching InspectionItemResult is upserted,
+   * and the Defect is materialized or withdrawn to match — so an office-edited
+   * defect answer reaches the Laporan Kejanggalan, the defect lists, and mobile
+   * exactly as if the crew had recorded it. Defects already claimed by
+   * maintenance are never touched.
    */
   async editChecklistResult(
     user: RequestUser,
@@ -863,29 +875,144 @@ export class InspectionsService {
       item.optionsJson,
     );
 
-    await this.prisma.inspectionResult.upsert({
-      where: {
-        inspectionId_templateItemId: {
-          inspectionId: inspection.id,
-          templateItemId: item.id,
+    // Re-run the verdict the mobile would have computed for this answer, so an
+    // office edit COUNTS — it raises or clears the defect, not just the value.
+    // (Before 2026-09, only the InspectionResult value was written; the frozen
+    // InspectionItemResult/Defect never changed, so an edited defect answer was
+    // invisible to the Laporan Kejanggalan, the defect lists, and mobile.)
+    const editedValue: EditedChecklistValue = {
+      ...data,
+      // `data.valueJson` is Prisma's DbNull sentinel when cleared — the verdict
+      // (and the log reader below) want a plain array-or-null.
+      valueJson: Array.isArray(data.valueJson) ? (data.valueJson as string[]) : null,
+    };
+    const result = deriveEditedChecklistVerdict(item, editedValue);
+    const isDefect =
+      result === InspectionItemResultValue.FAIL && item.isDefectTrigger !== false;
+    // Chosen option value(s) so a defect option's per-option severity applies
+    // (same inputs buildChosenValuesByTemplateItem feeds the submit path).
+    const chosenValues = [
+      ...(editedValue.valueText ? [editedValue.valueText] : []),
+      ...(editedValue.valueJson ?? []),
+    ];
+    const severity = isDefect
+      ? this.resolveDefectSeverity(item, chosenValues)
+      : null;
+
+    // The item-result this verdict lands on: prefer the row already linked to
+    // the template item, else match by label like the submit path does —
+    // skipping standalone per-pole emergencies (label = free-text note).
+    const labelKey = this.normalizeLabelKey(item.label);
+    const existingItemResult =
+      inspection.itemResults.find(
+        (itemResult) => itemResult.checklistItemId === item.id,
+      ) ??
+      inspection.itemResults.find(
+        (itemResult) =>
+          !(itemResult.isEmergency && itemResult.checklistItemId === null) &&
+          this.normalizeLabelKey(itemResult.label) === labelKey,
+      );
+
+    const itemResultData = {
+      checklistItemId: item.id,
+      result,
+      isDefect,
+      // An office edit never declares an emergency; clearing the defect clears
+      // the flag with it (an emergency only carries meaning on a defect).
+      isEmergency: isDefect ? (existingItemResult?.isEmergency ?? false) : false,
+      severity,
+      maintenanceCategory: item.maintenanceCategory ?? null,
+    };
+    // Emergency-flagged defects are CRITICAL regardless of template severity —
+    // mirrors buildInitialDefectData so the synced Defect row can't disagree.
+    const defectSeverity = itemResultData.isEmergency
+      ? DefectSeverity.CRITICAL
+      : (severity ?? DefectSeverity.MEDIUM);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.inspectionResult.upsert({
+        where: {
+          inspectionId_templateItemId: {
+            inspectionId: inspection.id,
+            templateItemId: item.id,
+          },
         },
-      },
-      create: { inspectionId: inspection.id, templateItemId: item.id, ...data },
-      update: data,
+        create: { inspectionId: inspection.id, templateItemId: item.id, ...data },
+        update: data,
+      });
+
+      // A cleared/NA answer on a pole that never had this row needs no verdict
+      // row at all — nothing was asserted and nothing needs withdrawing.
+      if (!existingItemResult && result === InspectionItemResultValue.NA) {
+        return;
+      }
+
+      const itemResultId = existingItemResult
+        ? (
+            await tx.inspectionItemResult.update({
+              where: { id: existingItemResult.id },
+              data: itemResultData,
+              select: { id: true },
+            })
+          ).id
+        : (
+            await tx.inspectionItemResult.create({
+              data: {
+                inspectionId: inspection.id,
+                label: item.label,
+                ...itemResultData,
+              },
+              select: { id: true },
+            })
+          ).id;
+
+      if (isDefect) {
+        // Materialize the defect the way submit would; one already open keeps
+        // its lifecycle but follows the edited severity/work-type — unless it
+        // is maintenance-locked (someone is working it), which stays untouched.
+        await tx.defect.upsert({
+          where: { inspectionItemResultId: itemResultId },
+          create: buildInitialDefectData(
+            {
+              id: itemResultId,
+              severity,
+              isEmergency: itemResultData.isEmergency,
+              maintenanceCategory: itemResultData.maintenanceCategory,
+            },
+            new Date(),
+          ),
+          update: {},
+        });
+        await tx.defect.updateMany({
+          where: {
+            inspectionItemResultId: itemResultId,
+            lifecycleStatus: { notIn: MAINTENANCE_LOCKED_DEFECT_STATUSES },
+          },
+          data: {
+            severity: defectSeverity,
+            maintenanceCategory:
+              itemResultData.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN,
+          },
+        });
+      } else {
+        // The edit withdrew/changed the answer to a non-defect — the same rule
+        // re-submission applies: drop the defect unless maintenance holds it.
+        await tx.defect.deleteMany({
+          where: {
+            inspectionItemResultId: itemResultId,
+            lifecycleStatus: { notIn: MAINTENANCE_LOCKED_DEFECT_STATUSES },
+          },
+        });
+      }
     });
 
-    const newValue = this.stringifyResultValue({
-      ...data,
-      // `data.valueJson` is Prisma's DbNull sentinel when cleared — the reader
-      // wants a plain JSON value, so normalize the sentinel to null.
-      valueJson: Array.isArray(data.valueJson) ? data.valueJson : null,
-    });
+    const newValue = this.stringifyResultValue(editedValue);
 
     this.logger.warn(
-      `Checklist item "${item.label}" edited on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}"`,
+      `Checklist item "${item.label}" edited on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}" (verdict ${result}${isDefect ? `, defect ${severity ?? ''}`.trimEnd() : ''})`,
     );
 
-    return { ok: true, value: newValue };
+    return { ok: true, value: newValue, result, isDefect, severity };
   }
 
   /**
