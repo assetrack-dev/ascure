@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { captureWithCamera } from '../camera/captureWithCamera';
+import {
+  captureWithCamera,
+  type DefectMark,
+} from '../camera/captureWithCamera';
+import { MarkOverlay } from '../camera/MarkOverlay';
 import { TimestampStamp } from '../camera/TimestampStamp';
 import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
@@ -30,7 +34,11 @@ import {
   DefectStatus,
   InspectionImage,
 } from '../types';
-import { formatDateTime, normalizeOperationalPayloadText } from '../utils';
+import {
+  formatDateTime,
+  normalizeOperationalPayloadText,
+  severityToMarkCategory,
+} from '../utils';
 import { BottomCTA, Screen } from '../ui';
 import { Feather } from '@expo/vector-icons';
 import { Theme, useTheme } from '../theme';
@@ -60,6 +68,7 @@ type PendingMaintenanceProofOverlayPhoto = Omit<CapturedMaintenanceProofPhoto, '
   layoutWidth: number;
   layoutHeight: number;
   tiltLineAngle?: number | null;
+  mark?: DefectMark | null;
 };
 
 export function DefectDetailScreen() {
@@ -391,7 +400,11 @@ export function DefectDetailScreen() {
       setSavingMaintenanceAction('capture');
       setError(null);
 
-      const capturedAsset = await captureWithCamera({ mode: 'photo' });
+      const capturedAsset = await captureWithCamera({
+        mode: 'photo',
+        allowMark: true,
+        initialMarkCategory: severityToMarkCategory(defect?.severity),
+      });
 
       if (!capturedAsset) {
         return;
@@ -409,6 +422,7 @@ export function DefectDetailScreen() {
         latitude,
         longitude,
         tiltLineAngle: capturedAsset.tiltLineAngle ?? null,
+        mark: capturedAsset.mark ?? null,
         ...(await getOverlayCaptureSize(
           capturedAsset.uri,
           capturedAsset.width,
@@ -1067,6 +1081,9 @@ export function DefectDetailScreen() {
                   />
                   {pendingOverlayPhoto.tiltLineAngle != null ? (
                     <TiltOverlay angleDeg={pendingOverlayPhoto.tiltLineAngle} />
+                  ) : null}
+                  {pendingOverlayPhoto.mark ? (
+                    <MarkOverlay mark={pendingOverlayPhoto.mark} />
                   ) : null}
                   <View style={styles.overlayStampWrap}>
                     <TimestampStamp

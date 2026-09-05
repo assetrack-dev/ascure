@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { captureWithCamera, type CaptureGuide } from '../camera/captureWithCamera';
+import {
+  captureWithCamera,
+  type CaptureGuide,
+  type DefectMark,
+  type MarkCategory,
+} from '../camera/captureWithCamera';
+import { MarkOverlay, MARK_CATEGORY_COLORS } from '../camera/MarkOverlay';
 import { TimestampStamp } from '../camera/TimestampStamp';
 import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
@@ -41,6 +47,8 @@ import {
   getBooleanDefectValue,
   getInspectionItemResultValue,
   getVisibleInspectionSections,
+  isDefectAnswer,
+  severityToMarkCategory,
   hasAnyInspectionDraftValue,
   isOperationalTemplateTextItem,
   normalizeInspectionInputType,
@@ -110,6 +118,7 @@ type PendingOverlayPhoto = Omit<InspectionImageUploadInput, 'uri'> & {
   layoutWidth: number;
   layoutHeight: number;
   tiltLineAngle?: number | null;
+  mark?: DefectMark | null;
 };
 
 const PRIORITY_SECTION_TITLES = ['TIANG', 'PENGALIR', 'AKSESORI', 'PERALATAN'];
@@ -641,7 +650,10 @@ export function InspectionFormScreen() {
     }
   }
 
-  async function captureInspectionPhoto(options?: { guide?: CaptureGuide }) {
+  async function captureInspectionPhoto(options?: {
+    guide?: CaptureGuide;
+    defectMarkCategory?: MarkCategory;
+  }) {
     if (isReadOnly) {
       return null;
     }
@@ -660,7 +672,24 @@ export function InspectionFormScreen() {
       throw new Error('Location permission is required to attach GPS to the photo.');
     }
 
-    const capturedAsset = await captureWithCamera({ mode: 'photo', guide: options?.guide });
+    // The marking tool is for defect evidence — not the Smart Sensor reading
+    // scan, whose photo is cropped + OCR'd (a burned circle would corrupt it).
+    // A defect-photo capture (defectMarkCategory set) opens with the circle
+    // armed and its color LOCKED to the item's severity — the color is data the
+    // report prints, so the crew can toggle the circle off (whole-pole defects
+    // like CONDONG) but never repaint it.
+    const capturedAsset = await captureWithCamera({
+      mode: 'photo',
+      guide: options?.guide,
+      allowMark: options?.guide !== 'reading',
+      ...(options?.defectMarkCategory
+        ? {
+            initialMarkCategory: options.defectMarkCategory,
+            defaultMarkEnabled: true,
+            lockMarkCategory: true,
+          }
+        : {}),
+    });
 
     if (!capturedAsset) {
       return null;
@@ -708,6 +737,7 @@ export function InspectionFormScreen() {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
       tiltLineAngle: capturedAsset.tiltLineAngle ?? null,
+      mark: capturedAsset.mark ?? null,
       ...(await getOverlayCaptureSize(
         capturedAsset.uri,
         capturedAsset.width,
@@ -777,7 +807,18 @@ export function InspectionFormScreen() {
       setCapturingItemId(itemId);
       setError(null);
 
-      const captured = await captureInspectionPhoto();
+      // A capture for an item whose current answer flags a defect opens the
+      // camera in defect-marking mode: circle armed, color locked to the
+      // item's severity (KATEGORI A/B/C) so the report can trust it.
+      const item = form?.template.sections
+        .flatMap((section) => section.items)
+        .find((candidate) => candidate.id === itemId);
+      const defectMarkCategory =
+        item && isDefectAnswer(item, draftValues[item.id])
+          ? (severityToMarkCategory(item.severity) ?? 'A')
+          : undefined;
+
+      const captured = await captureInspectionPhoto({ defectMarkCategory });
 
       if (!captured) {
         return;
@@ -1387,6 +1428,9 @@ export function InspectionFormScreen() {
                 {pendingOverlayPhoto.tiltLineAngle != null ? (
                   <TiltOverlay angleDeg={pendingOverlayPhoto.tiltLineAngle} />
                 ) : null}
+                {pendingOverlayPhoto.mark ? (
+                  <MarkOverlay mark={pendingOverlayPhoto.mark} />
+                ) : null}
                 <View style={styles.overlayStampWrap}>
                   <TimestampStamp
                     date={new Date(pendingOverlayPhoto.timestamp)}
@@ -1719,6 +1763,8 @@ function ChecklistItemCard({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const inputType = normalizeInspectionInputType(item.inputType);
   const shouldUppercaseText = inputType === 'TEXT' && isOperationalTemplateTextItem(item);
+  // KATEGORI for the defect-photo requirement, from the item's admin-set severity.
+  const defectCategory = severityToMarkCategory(item.severity) ?? 'A';
   // A Smart Sensor reading may hold the device sentinel "LO" (the meter shows it
   // instead of a number when the cable is below its ~3 m minimum range) rather
   // than a value. The numeric keypad can't type letters, so it's set by tapping.
@@ -1982,6 +2028,47 @@ function ChecklistItemCard({
           onRemove={onRemovePhoto}
           onPreview={onPreviewPhoto}
         />
+      ) : null}
+      {/* Defect answer → its own photo is required, tagged to this item so the
+          visual report can caption the image with the defect definition +
+          KATEGORI automatically. The camera opens with the marking circle
+          armed and color-locked to the item's severity. */}
+      {inputType && inputType !== 'IMAGE' && isDefectAnswer(item, value) ? (
+        <View
+          style={[
+            styles.defectPhotoBlock,
+            { borderColor: MARK_CATEGORY_COLORS[defectCategory] },
+          ]}
+        >
+          <View style={styles.defectPhotoHeader}>
+            <View
+              style={[
+                styles.defectPhotoBadge,
+                { backgroundColor: MARK_CATEGORY_COLORS[defectCategory] },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.defectPhotoBadgeText,
+                  defectCategory === 'B' && { color: '#000000' },
+                ]}
+              >
+                {defectCategory}
+              </Text>
+            </View>
+            <Text style={styles.defectPhotoLabel}>
+              Defect photo — required{itemPhotos.length > 0 ? ' ✓' : ''}
+            </Text>
+          </View>
+          <ImageCaptureField
+            photos={itemPhotos}
+            capturing={capturing}
+            disabled={disabled}
+            onCapture={onCapturePhoto}
+            onRemove={onRemovePhoto}
+            onPreview={onPreviewPhoto}
+          />
+        </View>
       ) : null}
       {!inputType ? (
         <View style={styles.unsupportedFieldPanel}>
@@ -3427,6 +3514,39 @@ const createStyles = (t: Theme) =>
   },
   imageCaptureField: {
     gap: 8,
+  },
+  // "Defect photo required" block shown under any answer that flags a defect;
+  // border tinted with the KATEGORI color (A red / B yellow / C green).
+  defectPhotoBlock: {
+    marginTop: 10,
+    padding: 10,
+    gap: 8,
+    borderWidth: 1.5,
+    borderRadius: 10,
+  },
+  defectPhotoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  defectPhotoBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  defectPhotoBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  defectPhotoLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: t.colors.textPrimary,
   },
   imageDashedTile: {
     minHeight: 120,

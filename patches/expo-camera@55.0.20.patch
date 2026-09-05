@@ -1,8 +1,8 @@
 diff --git a/android/src/main/java/expo/modules/camera/CameraViewModule.kt b/android/src/main/java/expo/modules/camera/CameraViewModule.kt
-index 7e50b98..22a463b 100644
+index 7e50b98..43dea14 100644
 --- a/android/src/main/java/expo/modules/camera/CameraViewModule.kt
 +++ b/android/src/main/java/expo/modules/camera/CameraViewModule.kt
-@@ -450,6 +450,18 @@ class CameraViewModule : Module() {
+@@ -450,6 +450,22 @@ class CameraViewModule : Module() {
          return@AsyncFunction view.getAvailablePictureSizes()
        }
  
@@ -18,11 +18,15 @@ index 7e50b98..22a463b 100644
 +        return@AsyncFunction view.getExposureRange()
 +      }.runOnQueue(Queues.MAIN)
 +
++      AsyncFunction("getZoomRange") { view: ExpoCameraView ->
++        return@AsyncFunction view.getZoomRange()
++      }.runOnQueue(Queues.MAIN)
++
        AsyncFunction("record") { view: ExpoCameraView, options: RecordingOptions, promise: Promise ->
          if (!view.mute && !permissionsManager.hasGrantedPermissions(Manifest.permission.RECORD_AUDIO)) {
            throw Exceptions.MissingPermissions(Manifest.permission.RECORD_AUDIO)
 diff --git a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
-index 1ff8116..33367eb 100644
+index 1ff8116..24bb463 100644
 --- a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
 +++ b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
 @@ -138,6 +138,10 @@ class ExpoCameraView(
@@ -36,7 +40,7 @@ index 1ff8116..33367eb 100644
    var lensFacing = CameraType.BACK
      set(value) {
        field = value
-@@ -639,12 +643,81 @@ class ExpoCameraView(
+@@ -639,12 +643,96 @@ class ExpoCameraView(
      camera?.cameraControl?.setZoomRatio(targetZoomRatio)
    }
  
@@ -107,6 +111,21 @@ index 1ff8116..33367eb 100644
 +    )
 +  }
 +
++  /**
++   * The camera's zoom capability as RATIOS (1.0 = no zoom): `min`/`max` from
++   * CameraX's zoomState. The JS `zoom` prop (0..1) maps linearly onto
++   * [1, max] (see setCameraZoom), so a true N× needs zoom = N / max.
++   */
++  fun getZoomRange(): Map<String, Any> {
++    val zoomState = camera?.cameraInfo?.zoomState?.value
++      ?: return mapOf("supported" to false, "min" to 1.0, "max" to 1.0)
++    return mapOf(
++      "supported" to true,
++      "min" to zoomState.minZoomRatio.toDouble(),
++      "max" to zoomState.maxZoomRatio.toDouble()
++    )
++  }
++
    private fun observeCameraState(cameraInfo: CameraInfo) {
      cameraInfo.cameraState.observe(currentActivity) {
        when (it.type) {
@@ -119,10 +138,10 @@ index 1ff8116..33367eb 100644
  
          else -> {}
 diff --git a/build/CameraView.d.ts b/build/CameraView.d.ts
-index 8b68d2e..97dc0fa 100644
+index 8b68d2e..f17492f 100644
 --- a/build/CameraView.d.ts
 +++ b/build/CameraView.d.ts
-@@ -26,6 +26,27 @@ export default class CameraView extends Component<CameraViewProps> {
+@@ -26,6 +26,37 @@ export default class CameraView extends Component<CameraViewProps> {
       * The list varies across Android devices but is the same for every iOS.
       */
      getAvailablePictureSizesAsync(): Promise<string[]>;
@@ -147,14 +166,24 @@ index 8b68d2e..97dc0fa 100644
 +        step: number;
 +        supported: boolean;
 +    }>;
++    /**
++     * Returns the camera's zoom-ratio range `{ min, max, supported }` (1.0 = no zoom).
++     * The `zoom` prop (0..1) maps linearly onto [1, max].
++     * @platform android
++     */
++    getZoomRangeAsync(): Promise<{
++        min: number;
++        max: number;
++        supported: boolean;
++    }>;
      /**
       * Returns the available lenses for the currently selected camera.
       *
 diff --git a/build/CameraView.js b/build/CameraView.js
-index 0da8747..6d28a30 100644
+index 0da8747..082d915 100644
 --- a/build/CameraView.js
 +++ b/build/CameraView.js
-@@ -79,6 +79,29 @@ export default class CameraView extends Component {
+@@ -79,6 +79,37 @@ export default class CameraView extends Component {
      async getAvailablePictureSizesAsync() {
          return (await this._cameraRef.current?.getAvailablePictureSizes()) ?? [];
      }
@@ -180,6 +209,14 @@ index 0da8747..6d28a30 100644
 +     */
 +    async getExposureRangeAsync() {
 +        return ((await this._cameraRef.current?.getExposureRange()) ?? { min: 0, max: 0, step: 0, supported: false });
++    }
++    /**
++     * Returns the camera's zoom-ratio range `{ min, max, supported }` (1.0 = no zoom).
++     * The `zoom` prop (0..1) maps linearly onto [1, max].
++     * @platform android
++     */
++    async getZoomRangeAsync() {
++        return ((await this._cameraRef.current?.getZoomRange()) ?? { min: 1, max: 1, supported: false });
 +    }
      /**
       * Returns the available lenses for the currently selected camera.

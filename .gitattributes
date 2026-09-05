@@ -1,0 +1,4 @@
+# pnpm patch files must keep LF endings — CRLF (from autocrlf conversion) makes
+# pnpm's patcher silently skip them, shipping UNPATCHED deps (bit us 2026-08-28:
+# expo-camera lost tap-focus/EV/zoom native code after an install).
+patches/*.patch text eol=lf

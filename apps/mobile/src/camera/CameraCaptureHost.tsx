@@ -26,7 +26,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 
-import { registerCameraCaptureHost, type CaptureRequest } from './captureWithCamera';
+import {
+  registerCameraCaptureHost,
+  type CaptureRequest,
+  type DefectMark,
+  type MarkCategory,
+  type MarkSize,
+} from './captureWithCamera';
+import { MarkOverlay, MARK_CATEGORY_COLORS } from './MarkOverlay';
 import { TimestampStamp } from './TimestampStamp';
 import { TiltOverlay } from './TiltOverlay';
 import { READING_AIM_BOX } from '../ocr';
@@ -36,14 +43,30 @@ type ReviewPhoto = {
   width: number;
   height: number;
   tiltLineAngle: number | null;
+  mark: DefectMark | null;
 };
 type Fix = { latitude: number; longitude: number; accuracy: number | null };
 
-const ZOOM_PRESETS = [
+// Fallback presets when the real device max zoom isn't known (unpatched
+// expo-camera): `zoom` (0..1) scales the device max, so these labels are only
+// approximate there. With getZoomRangeAsync available, true-ratio presets are
+// computed instead.
+const ZOOM_PRESETS_FALLBACK = [
   { label: '1×', value: 0 },
   { label: '2×', value: 0.33 },
   { label: '4×', value: 0.66 },
 ];
+
+const MARK_SIZES: MarkSize[] = ['s', 'm', 'l'];
+const MARK_CATEGORIES: MarkCategory[] = ['A', 'B', 'C'];
+
+// Marking settings survive across captures in the app session, so a crew
+// circling the same defect type all day isn't re-enabling the tool every shot.
+let lastMarkSettings: { enabled: boolean; size: MarkSize; category: MarkCategory } = {
+  enabled: false,
+  size: 'm',
+  category: 'A',
+};
 const LEVEL_TOLERANCE_DEG = 1.5;
 const RETICLE_SIZE = 72;
 const EV_TRACK = 168;
@@ -81,7 +104,14 @@ export function CameraCaptureHost() {
 
   const [showGrid, setShowGrid] = useState(true);
   const [zoom, setZoom] = useState(0);
+  const [maxZoomRatio, setMaxZoomRatio] = useState<number | null>(null);
   const [reviewPhoto, setReviewPhoto] = useState<ReviewPhoto | null>(null);
+  const [reviewSize, setReviewSize] = useState({ w: 0, h: 0 });
+
+  // Defect marking (aim circle burned into the photo)
+  const [markEnabled, setMarkEnabled] = useState(false);
+  const [markSize, setMarkSize] = useState<MarkSize>('m');
+  const [markCategory, setMarkCategory] = useState<MarkCategory>('A');
 
   const [now, setNow] = useState(() => new Date());
   const [fix, setFix] = useState<Fix | null>(null);
@@ -116,6 +146,52 @@ export function CameraCaptureHost() {
   const visible = request != null;
   const mode = request?.mode ?? 'photo';
   const guide = request?.guide;
+  const markToolAvailable = request?.allowMark === true && mode === 'photo';
+  const markCategoryLocked = request?.lockMarkCategory === true;
+
+  // The displayed rect of the review photo (resizeMode="contain" within the
+  // full-screen review overlay) — the mark overlay + drag live inside it.
+  const reviewAspect =
+    reviewPhoto && reviewPhoto.width > 0 && reviewPhoto.height > 0
+      ? reviewPhoto.width / reviewPhoto.height
+      : 3 / 4;
+  let reviewRectW = reviewSize.w;
+  let reviewRectH = reviewAspect > 0 ? reviewRectW / reviewAspect : 0;
+  if (reviewRectH > reviewSize.h) {
+    reviewRectH = reviewSize.h;
+    reviewRectW = reviewRectH * reviewAspect;
+  }
+  const reviewRectLeft = (reviewSize.w - reviewRectW) / 2;
+  const reviewRectTop = (reviewSize.h - reviewRectH) / 2;
+  const reviewRectRef = useRef({ w: 0, h: 0 });
+  reviewRectRef.current = { w: reviewRectW, h: reviewRectH };
+
+  function updateMarkSettings(update: Partial<typeof lastMarkSettings>) {
+    lastMarkSettings = { ...lastMarkSettings, ...update };
+    if (update.enabled != null) setMarkEnabled(update.enabled);
+    if (update.size) setMarkSize(update.size);
+    if (update.category) setMarkCategory(update.category);
+  }
+
+  // Size/category changes while reviewing also restyle the already-placed mark.
+  function setMarkSizeEverywhere(size: MarkSize) {
+    updateMarkSettings({ size });
+    setReviewPhoto((p) => (p && p.mark ? { ...p, mark: { ...p.mark, size } } : p));
+  }
+  function setMarkCategoryEverywhere(category: MarkCategory) {
+    updateMarkSettings({ category });
+    setReviewPhoto((p) =>
+      p && p.mark ? { ...p, mark: { ...p.mark, category } } : p,
+    );
+  }
+
+  function moveReviewMark(x: number, y: number) {
+    const { w, h } = reviewRectRef.current;
+    if (!w || !h) return;
+    const nx = Math.min(0.94, Math.max(0.06, x / w));
+    const ny = Math.min(0.94, Math.max(0.06, y / h));
+    setReviewPhoto((p) => (p && p.mark ? { ...p, mark: { ...p.mark, x: nx, y: ny } } : p));
+  }
 
   // Swing the measurement line about the frame centre to follow the drag.
   function swingLine(x: number, y: number) {
@@ -176,7 +252,31 @@ export function CameraCaptureHost() {
     } catch {
       setExposureRange(null);
     }
+    try {
+      const zoomRange = await cameraRef.current?.getZoomRangeAsync();
+      setMaxZoomRatio(
+        zoomRange && zoomRange.supported && zoomRange.max > 1 ? zoomRange.max : null,
+      );
+    } catch {
+      setMaxZoomRatio(null);
+    }
   }
+
+  // True-ratio zoom presets. The `zoom` prop (0..1) scales the device's max
+  // zoom ratio (targetRatio = max(1, zoom × maxRatio)), so a real N× needs
+  // zoom = N / maxRatio — the fixed fallback labels were only correct on
+  // devices whose max happened to be ~6×.
+  const zoomPresets = maxZoomRatio
+    ? [
+        { label: '1×', value: 0 },
+        ...(maxZoomRatio >= 2 ? [{ label: '2×', value: 2 / maxZoomRatio }] : []),
+        ...(maxZoomRatio >= 4 ? [{ label: '4×', value: 4 / maxZoomRatio }] : []),
+        ...(maxZoomRatio >= 6
+          ? [{ label: `${Math.floor(maxZoomRatio)}×`, value: 1 }]
+          : []),
+      ]
+    : ZOOM_PRESETS_FALLBACK;
+  const currentZoomRatio = maxZoomRatio ? Math.max(1, zoom * maxZoomRatio) : null;
 
   const pinchGesture = Gesture.Pinch()
     .runOnJS(true)
@@ -212,6 +312,12 @@ export function CameraCaptureHost() {
 
   const activeGesture = tiltMode ? linePanGesture : frameGesture;
 
+  // Review-screen mark nudge: drag anywhere on the photo to re-centre the circle.
+  const markDragGesture = Gesture.Pan()
+    .runOnJS(true)
+    .onBegin((event) => moveReviewMark(event.x, event.y))
+    .onUpdate((event) => moveReviewMark(event.x, event.y));
+
   useEffect(() => {
     if (!visible) return;
     setIsCameraReady(false);
@@ -220,6 +326,7 @@ export function CameraCaptureHost() {
     setFacing('back');
     setFlash('off');
     setZoom(0);
+    setMaxZoomRatio(null);
     setReviewPhoto(null);
     setTiltMode(false);
     setLineAngleDeg(0);
@@ -227,6 +334,15 @@ export function CameraCaptureHost() {
     setReticle(null);
     setExposureRange(null);
     setExposureIndex(0);
+    // Marking tool: restore the session's last settings; a caller-provided
+    // category (e.g. from a known defect severity) overrides the remembered one.
+    const active = requestRef.current;
+    const canMark = active?.allowMark === true && (active?.mode ?? 'photo') === 'photo';
+    setMarkEnabled(
+      canMark ? (active?.defaultMarkEnabled ?? lastMarkSettings.enabled) : false,
+    );
+    setMarkSize(lastMarkSettings.size);
+    setMarkCategory(active?.initialMarkCategory ?? lastMarkSettings.category);
   }, [visible]);
 
   useEffect(
@@ -359,6 +475,11 @@ export function CameraCaptureHost() {
         width: picture.width,
         height: picture.height,
         tiltLineAngle: tiltMode ? lineAngleRef.current : null,
+        // Aim-marked at frame centre; adjustable (drag/resize) on the review screen.
+        mark:
+          markEnabled && !tiltMode
+            ? { x: 0.5, y: 0.5, size: markSize, category: markCategory }
+            : null,
       });
     } catch (error) {
       requestRef.current?.reject(
@@ -372,12 +493,28 @@ export function CameraCaptureHost() {
   function usePhoto() {
     const active = requestRef.current;
     if (!active || !reviewPhoto) return;
+    if (markToolAvailable) {
+      // What the user actually shipped is the setting to remember — but a
+      // forced-on defect capture must not flip the general session default,
+      // and a locked category (severity-derived) is not a user preference.
+      lastMarkSettings = {
+        enabled:
+          requestRef.current?.defaultMarkEnabled == null
+            ? reviewPhoto.mark != null
+            : lastMarkSettings.enabled,
+        size: reviewPhoto.mark?.size ?? lastMarkSettings.size,
+        category: markCategoryLocked
+          ? lastMarkSettings.category
+          : (reviewPhoto.mark?.category ?? lastMarkSettings.category),
+      };
+    }
     active.resolve({
       uri: reviewPhoto.uri,
       width: reviewPhoto.width,
       height: reviewPhoto.height,
       kind: 'photo',
       tiltLineAngle: reviewPhoto.tiltLineAngle,
+      mark: reviewPhoto.mark,
     });
   }
 
@@ -480,6 +617,11 @@ export function CameraCaptureHost() {
                   />
                 </View>
               ) : null}
+              {markEnabled && !tiltMode ? (
+                <MarkOverlay
+                  mark={{ x: 0.5, y: 0.5, size: markSize, category: markCategory }}
+                />
+              ) : null}
               {tiltMode ? <TiltOverlay angleDeg={lineAngleDeg} showHint /> : null}
               {reticle && !tiltMode ? (
                 <Animated.View
@@ -533,7 +675,15 @@ export function CameraCaptureHost() {
 
         {/* Post-capture review — opaque so the live preview never shows through */}
         {inReview && reviewPhoto ? (
-          <View style={styles.reviewOverlay}>
+          <View
+            style={styles.reviewOverlay}
+            onLayout={(e) =>
+              setReviewSize({
+                w: e.nativeEvent.layout.width,
+                h: e.nativeEvent.layout.height,
+              })
+            }
+          >
             <Image
               source={{ uri: reviewPhoto.uri }}
               style={StyleSheet.absoluteFill}
@@ -542,8 +692,28 @@ export function CameraCaptureHost() {
             {reviewPhoto.tiltLineAngle != null ? (
               <TiltOverlay angleDeg={reviewPhoto.tiltLineAngle} />
             ) : null}
+            {reviewPhoto.mark && reviewRectW > 0 ? (
+              <GestureDetector gesture={markDragGesture}>
+                <View
+                  style={{
+                    position: 'absolute',
+                    left: reviewRectLeft,
+                    top: reviewRectTop,
+                    width: reviewRectW,
+                    height: reviewRectH,
+                  }}
+                >
+                  <MarkOverlay mark={reviewPhoto.mark} />
+                </View>
+              </GestureDetector>
+            ) : null}
             <View style={[styles.reviewLabelWrap, { top: insets.top + 10 }]}>
               <Text style={styles.reviewLabel}>PREVIEW</Text>
+              {reviewPhoto.mark ? (
+                <Text style={styles.reviewMarkHint}>
+                  Drag to place the circle on the defect
+                </Text>
+              ) : null}
             </View>
             <Pressable
               onPress={handleCancel}
@@ -552,6 +722,43 @@ export function CameraCaptureHost() {
             >
               <Feather name="x" size={22} color="#ffffff" />
             </Pressable>
+            {markToolAvailable ? (
+              <View style={[styles.zoomRow, { bottom: insets.bottom + 104 }]}>
+                {reviewPhoto.mark ? (
+                  <MarkChips
+                    size={reviewPhoto.mark.size}
+                    category={reviewPhoto.mark.category}
+                    onSize={setMarkSizeEverywhere}
+                    onCategory={setMarkCategoryEverywhere}
+                    hideCategories={markCategoryLocked}
+                    onRemove={() =>
+                      setReviewPhoto((p) => (p ? { ...p, mark: null } : p))
+                    }
+                  />
+                ) : (
+                  <Pressable
+                    onPress={() =>
+                      setReviewPhoto((p) =>
+                        p
+                          ? {
+                              ...p,
+                              mark: {
+                                x: 0.5,
+                                y: 0.5,
+                                size: markSize,
+                                category: markCategory,
+                              },
+                            }
+                          : p,
+                      )
+                    }
+                    style={styles.zoomChip}
+                  >
+                    <Text style={styles.zoomChipText}>＋ Add mark</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : null}
             <View style={[styles.reviewBar, { paddingBottom: insets.bottom + 24 }]}>
               <Pressable onPress={retakePhoto} style={styles.reviewButton}>
                 <Text style={styles.reviewButtonText}>↺  Retake</Text>
@@ -576,8 +783,37 @@ export function CameraCaptureHost() {
                 <Feather name="x" size={22} color="#ffffff" />
               </Pressable>
               <View style={styles.topRight}>
+                {markToolAvailable ? (
+                  <Pressable
+                    onPress={() => {
+                      const next = !markEnabled;
+                      // A forced-on defect capture's toggle is per-shot only —
+                      // it must not flip the remembered session default.
+                      if (requestRef.current?.defaultMarkEnabled == null) {
+                        updateMarkSettings({ enabled: next });
+                      } else {
+                        setMarkEnabled(next);
+                      }
+                      if (next) setTiltMode(false);
+                    }}
+                    hitSlop={12}
+                    style={[styles.iconButton, markEnabled && styles.iconButtonActive]}
+                  >
+                    <Feather
+                      name="target"
+                      size={16}
+                      color="#ffffff"
+                      style={styles.iconGlyphLead}
+                    />
+                    <Text style={styles.iconText}>Mark</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
-                  onPress={() => setTiltMode((t) => !t)}
+                  onPress={() => {
+                    const next = !tiltMode;
+                    setTiltMode(next);
+                    if (next) setMarkEnabled(false);
+                  }}
                   hitSlop={12}
                   style={[styles.iconButton, tiltMode && styles.iconButtonActive]}
                 >
@@ -634,6 +870,20 @@ export function CameraCaptureHost() {
               </View>
             ) : null}
 
+            {/* Defect-marking aim hint */}
+            {markEnabled && !tiltMode && !reticle?.locked && guide !== 'reading' ? (
+              <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
+                <Text
+                  style={[
+                    styles.levelPill,
+                    { backgroundColor: 'rgba(0,0,0,0.55)' },
+                  ]}
+                >
+                  ◎ Point the circle at the defect · adjust after snapping
+                </Text>
+              </View>
+            ) : null}
+
             {/* Smart Sensor aim guide (reading scan) */}
             {guide === 'reading' && !tiltMode && !reticle?.locked ? (
               <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
@@ -650,9 +900,21 @@ export function CameraCaptureHost() {
               </View>
             ) : null}
 
+            {markEnabled && !tiltMode && !isRecording ? (
+              <View style={[styles.zoomRow, { bottom: insets.bottom + 156 }]}>
+                <MarkChips
+                  size={markSize}
+                  category={markCategory}
+                  onSize={setMarkSizeEverywhere}
+                  onCategory={setMarkCategoryEverywhere}
+                  hideCategories={markCategoryLocked}
+                />
+              </View>
+            ) : null}
+
             {!isRecording && !tiltMode ? (
               <View style={[styles.zoomRow, { bottom: insets.bottom + 112 }]}>
-                {ZOOM_PRESETS.map((preset) => {
+                {zoomPresets.map((preset) => {
                   const active = Math.abs(zoom - preset.value) < 0.03;
                   return (
                     <Pressable
@@ -668,6 +930,13 @@ export function CameraCaptureHost() {
                     </Pressable>
                   );
                 })}
+                {currentZoomRatio != null ? (
+                  <View style={[styles.zoomChip, styles.zoomReadout]}>
+                    <Text style={styles.zoomChipText}>
+                      {currentZoomRatio.toFixed(1)}×
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 
@@ -830,6 +1099,35 @@ const styles = StyleSheet.create({
   zoomChipActive: { backgroundColor: '#ffffff' },
   zoomChipText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   zoomChipTextActive: { color: '#000000' },
+  // Non-interactive live zoom-ratio readout at the end of the preset row.
+  zoomReadout: { backgroundColor: 'rgba(0,0,0,0.75)', minWidth: 52 },
+  markDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  catChip: {
+    minWidth: 36,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  catChipText: { fontSize: 13, fontWeight: '800', color: '#ffffff' },
+  reviewMarkHint: {
+    marginTop: 6,
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   bottomBar: {
     position: 'absolute',
     left: 0,
@@ -982,6 +1280,98 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
 });
+
+/**
+ * Marking-tool chip row: circle size presets (S/M/L), category colors (A/B/C —
+ * red/yellow/green per the client's report convention), and optionally a remove
+ * chip (review screen only). Shared by the live camera and the review screen.
+ */
+function MarkChips({
+  size,
+  category,
+  onSize,
+  onCategory,
+  hideCategories,
+  onRemove,
+}: {
+  size: MarkSize;
+  category: MarkCategory;
+  onSize: (size: MarkSize) => void;
+  onCategory: (category: MarkCategory) => void;
+  // Category locked (severity-derived): show a single fixed badge, no A/B/C picker.
+  hideCategories?: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <>
+      {MARK_SIZES.map((s) => {
+        const active = size === s;
+        return (
+          <Pressable
+            key={s}
+            onPress={() => onSize(s)}
+            style={[styles.zoomChip, active && styles.zoomChipActive]}
+          >
+            <Text style={[styles.zoomChipText, active && styles.zoomChipTextActive]}>
+              {s.toUpperCase()}
+            </Text>
+          </Pressable>
+        );
+      })}
+      <View style={styles.markDivider} />
+      {hideCategories ? (
+        <View
+          style={[
+            styles.catChip,
+            {
+              borderColor: MARK_CATEGORY_COLORS[category],
+              backgroundColor: MARK_CATEGORY_COLORS[category],
+            },
+          ]}
+        >
+          <Text
+            style={[styles.catChipText, category === 'B' && { color: '#000000' }]}
+          >
+            {category}
+          </Text>
+        </View>
+      ) : null}
+      {!hideCategories && MARK_CATEGORIES.map((c) => {
+        const active = category === c;
+        const color = MARK_CATEGORY_COLORS[c];
+        return (
+          <Pressable
+            key={c}
+            onPress={() => onCategory(c)}
+            style={[
+              styles.catChip,
+              { borderColor: color },
+              active && { backgroundColor: color },
+            ]}
+          >
+            <Text
+              style={[
+                styles.catChipText,
+                // Yellow needs dark text when filled; red/green stay white.
+                active && c === 'B' && { color: '#000000' },
+              ]}
+            >
+              {c}
+            </Text>
+          </Pressable>
+        );
+      })}
+      {onRemove ? (
+        <>
+          <View style={styles.markDivider} />
+          <Pressable onPress={onRemove} style={styles.zoomChip} hitSlop={8}>
+            <Feather name="x" size={14} color="#ffffff" />
+          </Pressable>
+        </>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * Vertical exposure-compensation slider (right edge). Maps the device's real

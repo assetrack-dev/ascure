@@ -28,6 +28,23 @@ export type CaptureMode = 'photo' | 'video';
  */
 export type CaptureGuide = 'reading';
 
+/** TNB report defect categories; each has a fixed marking color (A red, B yellow, C green). */
+export type MarkCategory = 'A' | 'B' | 'C';
+export type MarkSize = 's' | 'm' | 'l';
+
+/**
+ * A defect marking circle burned into the photo. `x`/`y` are the circle centre
+ * as fractions (0..1) of the photo frame; `size` is a preset diameter relative
+ * to the frame width — so the mark renders identically on the live preview, the
+ * review screen, and the burn canvas regardless of their pixel sizes.
+ */
+export type DefectMark = {
+  x: number;
+  y: number;
+  size: MarkSize;
+  category: MarkCategory;
+};
+
 export type CaptureResult = {
   uri: string;
   width: number;
@@ -35,12 +52,30 @@ export type CaptureResult = {
   kind: CaptureMode;
   /** Measurement-line tilt from vertical (signed deg) when Tilt mode was used; else absent/null. */
   tiltLineAngle?: number | null;
+  /** Defect marking circle aimed/placed by the user; null/absent = unmarked photo. */
+  mark?: DefectMark | null;
 };
 
 export type CaptureRequest = {
   mode: CaptureMode;
   /** Optional framing guide to overlay on the live preview. */
   guide?: CaptureGuide;
+  /** Show the defect-marking tool (aim circle burned into the photo). Photo mode only. */
+  allowMark?: boolean;
+  /** Pre-selected mark category (e.g. mapped from a known defect severity). */
+  initialMarkCategory?: MarkCategory;
+  /**
+   * Force the marking tool's initial on/off state (instead of the remembered
+   * session setting). Defect-photo captures pass true so the circle is always
+   * armed; the crew can still toggle it off for whole-pole defects (CONDONG).
+   */
+  defaultMarkEnabled?: boolean;
+  /**
+   * Lock the mark color to initialMarkCategory (no A/B/C chips). Used when the
+   * category comes from the checklist item's severity — the color is data the
+   * report relies on, so the crew must not repaint it.
+   */
+  lockMarkCategory?: boolean;
   resolve: (result: CaptureResult | null) => void;
   reject: (error: Error) => void;
 };
@@ -74,6 +109,10 @@ export function registerCameraCaptureHost(listener: HostListener): () => void {
 export function captureWithCamera(options: {
   mode: CaptureMode;
   guide?: CaptureGuide;
+  allowMark?: boolean;
+  initialMarkCategory?: MarkCategory;
+  defaultMarkEnabled?: boolean;
+  lockMarkCategory?: boolean;
 }): Promise<CaptureResult | null> {
   if (pending) {
     return Promise.reject(
@@ -91,6 +130,10 @@ export function captureWithCamera(options: {
     const request: CaptureRequest = {
       mode: options.mode,
       guide: options.guide,
+      allowMark: options.allowMark,
+      initialMarkCategory: options.initialMarkCategory,
+      defaultMarkEnabled: options.defaultMarkEnabled,
+      lockMarkCategory: options.lockMarkCategory,
       resolve: (result) => {
         settle();
         resolve(result);

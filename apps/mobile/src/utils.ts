@@ -16,6 +16,7 @@ import {
   getInspectionQueueStatusGroup,
 } from './operationalWorkspace';
 import { normalizeReadingSentinel } from '@ascure/shared-utils';
+import type { MarkCategory } from './camera/captureWithCamera';
 
 export function formatDateTime(value?: string | null) {
   if (!value) {
@@ -601,10 +602,22 @@ function collectSectionIssues(
 ) {
   const missingRequired: string[] = [];
   const invalidNumbers: string[] = [];
+  const missingDefectPhotos: string[] = [];
 
   for (const item of items) {
     const inputType = normalizeInspectionInputType(item.inputType);
     const rawValue = getDraftValue(item.id, draftValues);
+
+    // Every defect answer needs its own photo (tagged to this item) — that
+    // linkage is what lets the visual report caption each image with the
+    // defect definition + KATEGORI automatically.
+    if (
+      inputType !== 'IMAGE' &&
+      isDefectAnswer(item, rawValue) &&
+      !photoItemIds.has(item.id)
+    ) {
+      missingDefectPhotos.push(item.label);
+    }
 
     if (item.isRequired) {
       if (inputType === 'BOOLEAN') {
@@ -677,16 +690,24 @@ function collectSectionIssues(
     }
   }
 
-  return { missingRequired, invalidNumbers };
+  return { missingRequired, invalidNumbers, missingDefectPhotos };
 }
 
-function issuesToMessage(missingRequired: string[], invalidNumbers: string[]) {
+function issuesToMessage(
+  missingRequired: string[],
+  invalidNumbers: string[],
+  missingDefectPhotos: string[] = [],
+) {
   if (missingRequired.length > 0) {
     return `Please complete required items: ${missingRequired.join(', ')}`;
   }
 
   if (invalidNumbers.length > 0) {
     return `Please enter a valid number for: ${invalidNumbers.join(', ')}`;
+  }
+
+  if (missingDefectPhotos.length > 0) {
+    return `Please snap a defect photo for: ${missingDefectPhotos.join(', ')}`;
   }
 
   return null;
@@ -699,14 +720,16 @@ export function validateInspectionDraft(
 ) {
   const missingRequiredItems: string[] = [];
   const invalidNumbers: string[] = [];
+  const missingDefectPhotos: string[] = [];
 
   for (const section of getVisibleInspectionSections(form, draftValues)) {
     const issues = collectSectionIssues(section.items, draftValues, photoItemIds);
     missingRequiredItems.push(...issues.missingRequired);
     invalidNumbers.push(...issues.invalidNumbers);
+    missingDefectPhotos.push(...issues.missingDefectPhotos);
   }
 
-  return issuesToMessage(missingRequiredItems, invalidNumbers);
+  return issuesToMessage(missingRequiredItems, invalidNumbers, missingDefectPhotos);
 }
 
 /**
@@ -719,13 +742,13 @@ export function validateInspectionSectionItems(
   draftValues: DraftValues,
   photoItemIds: Set<string> = new Set(),
 ) {
-  const { missingRequired, invalidNumbers } = collectSectionIssues(
+  const { missingRequired, invalidNumbers, missingDefectPhotos } = collectSectionIssues(
     items,
     draftValues,
     photoItemIds,
   );
 
-  return issuesToMessage(missingRequired, invalidNumbers);
+  return issuesToMessage(missingRequired, invalidNumbers, missingDefectPhotos);
 }
 
 /** Whether an item carries any answer — drives a group card's progress chip. */
@@ -1249,6 +1272,35 @@ export function getBooleanDefectValue(item: InspectionTemplateItem): boolean {
   }
 
   return true;
+}
+
+/**
+ * Whether the item's CURRENT answer flags a defect (mirrors the server's
+ * isDefect derivation: FAIL result on a defect-trigger item). Drives the
+ * per-defect photo requirement + the auto-colored marking circle.
+ */
+export function isDefectAnswer(
+  item: InspectionTemplateItem,
+  rawValue: DraftValues[string] | undefined,
+): boolean {
+  if (item.isDefectTrigger === false) {
+    return false;
+  }
+  return getInspectionItemResultValue(item, rawValue as DraftValues[string]) === 'FAIL';
+}
+
+/**
+ * The client's report KATEGORI (A red / B yellow / C green) from a defect
+ * severity. Canonical mapping (owner-approved 2026-08-31):
+ * CRITICAL/HIGH → A, MEDIUM → B, LOW → C.
+ */
+export function severityToMarkCategory(
+  severity: string | null | undefined,
+): MarkCategory | undefined {
+  if (severity === 'CRITICAL' || severity === 'HIGH') return 'A';
+  if (severity === 'MEDIUM') return 'B';
+  if (severity === 'LOW') return 'C';
+  return undefined;
 }
 
 export function getInspectionItemResultValue(
