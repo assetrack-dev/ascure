@@ -207,6 +207,9 @@ type ChecklistItemV2Config = {
   /** MULTI_SELECT only — when true, the inspector may add a free-text "Other"
    *  answer beyond the configured options (v1: recorded as text, never a defect). */
   allowOther?: boolean;
+  /** Defect-trigger items — false = a defect answer may be submitted without a
+   *  photo on mobile. Absent = required (only the opt-out is persisted). */
+  defectPhotoRequired?: boolean;
   showIf?: ChecklistShowIfConfig;
   image?: ChecklistImageConfig;
   measurement?: ChecklistMeasurementConfig;
@@ -1383,6 +1386,19 @@ export class ChecklistTemplatesService {
       }
     }
 
+    // Per-item defect-photo opt-out. Absent/true = a defect answer requires its
+    // own photo on mobile (the v2.0.13 default); only the explicit opt-out is
+    // persisted. Preserve an existing flag when the payload omits it (e.g. a
+    // non-item edit / new version).
+    const defectPhotoRequired =
+      item.defectPhotoRequired === undefined
+        ? this.readChecklistConfig(rawOptionsJson)?.defectPhotoRequired
+        : item.defectPhotoRequired;
+
+    if (defectPhotoRequired === false) {
+      config.defectPhotoRequired = false;
+    }
+
     if (inputType === InspectionItemInputType.IMAGE) {
       config.image = image;
     }
@@ -1396,7 +1412,13 @@ export class ChecklistTemplatesService {
       config.showIf = showIf;
     }
 
-    if (!config.options && !config.image && !config.measurement && !config.showIf) {
+    if (
+      !config.options &&
+      !config.image &&
+      !config.measurement &&
+      !config.showIf &&
+      config.defectPhotoRequired === undefined
+    ) {
       return null;
     }
 

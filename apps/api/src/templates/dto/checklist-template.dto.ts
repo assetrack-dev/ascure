@@ -210,6 +210,13 @@ export class ChecklistTemplateItemInputDto {
   @IsBoolean()
   allowOther?: boolean;
 
+  /** Defect-trigger items — when false, a defect answer no longer blocks Submit
+   *  on mobile without a photo (the photo stays available, just optional).
+   *  Absent / true = photo required (the v2.0.13 default). */
+  @IsOptional()
+  @IsBoolean()
+  defectPhotoRequired?: boolean;
+
   @IsOptional()
   @IsIn(CHECKLIST_TEMPLATE_DEFECT_SEVERITIES)
   severity?: DefectSeverity;

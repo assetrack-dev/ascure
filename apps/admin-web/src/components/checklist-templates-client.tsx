@@ -87,6 +87,9 @@ interface TemplateFormItem {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  /** When false, a defect answer on this item no longer blocks mobile Submit
+   *  without a photo (the photo stays available, just optional). Default true. */
+  defectPhotoRequired: boolean;
   severity: DefectSeverity;
   /** Maintenance work-type for defects from this item. null = SELENGGARAAN. */
   maintenanceCategory: MaintenanceCategory | null;
@@ -234,6 +237,7 @@ function createBlankItem(): TemplateFormItem {
     isRequired: true,
     isActive: true,
     isDefectTrigger: true,
+    defectPhotoRequired: true,
     severity: "MEDIUM",
     maintenanceCategory: null,
     optionsText: "",
@@ -359,6 +363,7 @@ function formItemFromTemplateItem(item: ChecklistTemplateItem): TemplateFormItem
     isRequired: item.isRequired,
     isActive: item.isActive !== false,
     isDefectTrigger: item.isDefectTrigger,
+    defectPhotoRequired: config?.defectPhotoRequired ?? true,
     severity: item.severity ?? "MEDIUM",
     maintenanceCategory: item.maintenanceCategory ?? null,
     optionsText: optionLines(item.options),
@@ -725,6 +730,9 @@ function buildPayloadItems(items: TemplateFormItem[], groups: string[]) {
       isRequired: item.isRequired,
       isActive: itemIsActive,
       isDefectTrigger: item.isDefectTrigger,
+      // Always sent (even for non-trigger items, where true clears any stale
+      // opt-out) — the API persists only the explicit false.
+      defectPhotoRequired: item.defectPhotoRequired,
       severity: item.severity,
       maintenanceCategory: item.maintenanceCategory,
       options,
@@ -754,6 +762,7 @@ function buildItemOptionsJson(
     version: 2;
     fieldType: ChecklistFieldType;
     options?: ChecklistTemplateOption[];
+    defectPhotoRequired?: boolean;
     showIf?: ChecklistShowIfConfig;
     image?: ChecklistImageConfig;
     measurement?: ChecklistMeasurementConfig;
@@ -785,7 +794,18 @@ function buildItemOptionsJson(
     config.measurement = item.measurementConfig;
   }
 
-  if (!config.options && !config.showIf && !config.image && !config.measurement) {
+  // Only the opt-out rides in the config; absent = photo required (default).
+  if (item.isDefectTrigger && item.defectPhotoRequired === false) {
+    config.defectPhotoRequired = false;
+  }
+
+  if (
+    !config.options &&
+    !config.showIf &&
+    !config.image &&
+    !config.measurement &&
+    config.defectPhotoRequired === undefined
+  ) {
     return null;
   }
 
@@ -1059,6 +1079,24 @@ const SortableTemplateItemCard = memo(function SortableTemplateItemCard({
                 <option value="CAT_TIANG">Cat tiang</option>
               </select>
             </label>
+            {item.fieldType !== "IMAGE" ? (
+              <label
+                className="inline-flex h-10 min-w-0 items-center gap-2 self-start rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 sm:self-end"
+                title="When ticked, the mobile app blocks Submit until this item's defect answer has its own photo. Untick to make the defect photo optional for this item."
+              >
+                <input
+                  type="checkbox"
+                  checked={item.defectPhotoRequired}
+                  onChange={(event) =>
+                    onUpdateItem(item.localId, {
+                      defectPhotoRequired: event.target.checked,
+                    })
+                  }
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 text-[var(--brand)] focus:ring-[var(--brand)]"
+                />
+                <span className="whitespace-nowrap">Defect photo required</span>
+              </label>
+            ) : null}
           </div>
           <div className="flex min-h-10 items-center">
             <SeverityBadge severity={item.severity} />

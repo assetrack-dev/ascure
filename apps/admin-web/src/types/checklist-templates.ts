@@ -123,6 +123,9 @@ export interface ChecklistItemConfig {
   fieldType: ChecklistFieldType;
   options?: ChecklistTemplateOption[];
   allowOther?: boolean;
+  /** Defect-trigger items — false = a defect answer may be submitted without a
+   *  photo on mobile. Absent / true = photo required (the default). */
+  defectPhotoRequired?: boolean;
   showIf?: ChecklistShowIfConfig;
   image?: ChecklistImageConfig;
   measurement?: ChecklistMeasurementConfig;
@@ -211,6 +214,8 @@ export interface ChecklistTemplateItemPayload {
   isRequired: boolean;
   isActive: boolean;
   isDefectTrigger: boolean;
+  /** false = a defect answer no longer needs its own photo on mobile. */
+  defectPhotoRequired?: boolean;
   severity?: DefectSeverity;
   maintenanceCategory?: MaintenanceCategory | null;
   options?: ChecklistTemplateOption[];
