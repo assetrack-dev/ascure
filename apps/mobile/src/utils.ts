@@ -608,12 +608,14 @@ function collectSectionIssues(
     const inputType = normalizeInspectionInputType(item.inputType);
     const rawValue = getDraftValue(item.id, draftValues);
 
-    // Every defect answer needs its own photo (tagged to this item) — that
+    // A defect answer needs its own photo (tagged to this item) — that
     // linkage is what lets the visual report caption each image with the
-    // defect definition + KATEGORI automatically.
+    // defect definition + KATEGORI automatically. ADMIN can opt individual
+    // items out via the template's "Defect photo required" checkbox.
     if (
       inputType !== 'IMAGE' &&
       isDefectAnswer(item, rawValue) &&
+      isDefectPhotoRequired(item) &&
       !photoItemIds.has(item.id)
     ) {
       missingDefectPhotos.push(item.label);
@@ -1287,6 +1289,25 @@ export function isDefectAnswer(
     return false;
   }
   return getInspectionItemResultValue(item, rawValue as DraftValues[string]) === 'FAIL';
+}
+
+/**
+ * Whether a defect answer on this item must carry its own photo before Submit.
+ * Default TRUE (the v2.0.13 rule); ADMIN opts an item out via the template
+ * editor's "Defect photo required" checkbox (`optionsJson.defectPhotoRequired
+ * = false` — only the opt-out is persisted). An opted-out item still shows the
+ * defect-photo block so the crew CAN snap a marked photo; it just no longer
+ * blocks Submit / group-done.
+ */
+export function isDefectPhotoRequired(item: InspectionTemplateItem): boolean {
+  const optionsJson = item.optionsJson;
+
+  return !(
+    optionsJson &&
+    typeof optionsJson === 'object' &&
+    !Array.isArray(optionsJson) &&
+    (optionsJson as { defectPhotoRequired?: unknown }).defectPhotoRequired === false
+  );
 }
 
 /**

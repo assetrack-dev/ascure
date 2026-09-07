@@ -48,6 +48,7 @@ import {
   getInspectionItemResultValue,
   getVisibleInspectionSections,
   isDefectAnswer,
+  isDefectPhotoRequired,
   severityToMarkCategory,
   hasAnyInspectionDraftValue,
   isOperationalTemplateTextItem,
@@ -2029,10 +2030,12 @@ function ChecklistItemCard({
           onPreview={onPreviewPhoto}
         />
       ) : null}
-      {/* Defect answer → its own photo is required, tagged to this item so the
-          visual report can caption the image with the defect definition +
-          KATEGORI automatically. The camera opens with the marking circle
-          armed and color-locked to the item's severity. */}
+      {/* Defect answer → its own photo, tagged to this item so the visual
+          report can caption the image with the defect definition + KATEGORI
+          automatically. The camera opens with the marking circle armed and
+          color-locked to the item's severity. Required by default; ADMIN can
+          mark an item's defect photo optional (it then no longer blocks
+          Submit, but the block stays so the crew can still snap one). */}
       {inputType && inputType !== 'IMAGE' && isDefectAnswer(item, value) ? (
         <View
           style={[
@@ -2057,7 +2060,8 @@ function ChecklistItemCard({
               </Text>
             </View>
             <Text style={styles.defectPhotoLabel}>
-              Defect photo — required{itemPhotos.length > 0 ? ' ✓' : ''}
+              Defect photo — {isDefectPhotoRequired(item) ? 'required' : 'optional'}
+              {itemPhotos.length > 0 ? ' ✓' : ''}
             </Text>
           </View>
           <ImageCaptureField
