@@ -659,11 +659,13 @@ export class ReportsService {
         substation.longitude ?? '',
         // Poles registered under this Pencawang (all cycles).
         substation.assetCount,
-        // First / last SAVR pole inspection at this Pencawang (all cycles).
+        // Earliest / latest FIRST inspection of a pole at this Pencawang —
+        // amendments and re-inspections never move these (owner rule 2026-09-08).
         formatDate(activity?.startAt ?? null),
         formatDate(activity?.completeAt ?? null),
-        // Distinct calendar days (MYT) with at least one inspection — actual
-        // days the crew worked the site, not the start→complete span.
+        // Distinct calendar days (MYT) holding at least one pole's first
+        // inspection — actual days the crew surveyed the site, not the
+        // start→complete span, and not amendment days.
         activity?.siteDays ?? '',
         activity?.teams.join(', ') ?? '',
         // Deactivated Pencawang still count on the Progress page while they
@@ -685,10 +687,19 @@ export class ReportsService {
 
   /**
    * Per-Pencawang SAVR field-activity aggregates for the Pencawang list export.
-   * Start/Complete = the first/last SAVR pole inspection at the Pencawang (all
-   * cycles); Days on site = distinct MYT calendar days with at least one
-   * inspection (crews skip days, so a start→complete span would overcount);
-   * Teams = every team that inspected there, in order of first appearance.
+   * Every pole counts ONCE, at its FIRST inspection (owner rule 2026-09-08: the
+   * client wants actual days on site — amendments and DC-rejection re-inspections
+   * must not stretch the span or add days). Start/Complete = the earliest/latest
+   * pole's FIRST inspection at the Pencawang; Days on site = distinct MYT
+   * calendar days holding at least one pole's first inspection; Teams = every
+   * team that first-inspected a pole there, in order of first appearance.
+   *
+   * "First inspection" is the inspection row's createdAt, minimised per pole
+   * across cycles. createdAt is the only surviving trace of the original field
+   * date: a resubmit after a send-back reuses the SAME row and overwrites
+   * submittedAt with the amendment time, so submittedAt-based dates drift
+   * forward (the pre-2026-09-08 behaviour this replaces).
+   *
    * SAVR only by design — SAVT routes span Pencawang pairs and are covered by
    * the Route list export instead.
    */
@@ -710,17 +721,14 @@ export class ReportsService {
     }
 
     // The no-selection export covers every Pencawang in the tenant — chunk the
-    // id filter so the IN clause stays bounded. Aggregates are per Pencawang
-    // and each chunk holds whole Pencawang, so chunking never splits a group.
+    // id filter so the IN clause stays bounded. A pole's inspections all live in
+    // its own Pencawang's chunk, so chunking never splits a pole's history.
     const CHUNK_SIZE = 200;
-    type ActivityAccumulator = {
-      startAt: Date;
-      completeAt: Date;
-      days: Set<string>;
-      // team name -> earliest inspection time, for first-appearance ordering.
-      teams: Map<string, number>;
-    };
-    const accumulators = new Map<string, ActivityAccumulator>();
+    // substationId -> assetId -> that pole's first inspection (+ its team).
+    const poleFirst = new Map<
+      string,
+      Map<string, { at: Date; team: string | null }>
+    >();
 
     for (let i = 0; i < substationIds.length; i += CHUNK_SIZE) {
       const inspections = await this.prisma.inspection.findMany({
@@ -730,6 +738,7 @@ export class ReportsService {
           ...EXPORTABLE_INSPECTION_WHERE,
         },
         select: {
+          assetId: true,
           operationalScope: true,
           submittedAt: true,
           createdAt: true,
@@ -759,44 +768,56 @@ export class ReportsService {
           continue;
         }
 
-        // Legacy rows predate submittedAt — their createdAt is the field time.
-        const at = inspection.submittedAt ?? inspection.createdAt;
-        let acc = accumulators.get(substationId);
-        if (!acc) {
-          acc = {
-            startAt: at,
-            completeAt: at,
-            days: new Set<string>(),
-            teams: new Map<string, number>(),
-          };
-          accumulators.set(substationId, acc);
-        }
-        if (at < acc.startAt) {
-          acc.startAt = at;
-        }
-        if (at > acc.completeAt) {
-          acc.completeAt = at;
-        }
-        acc.days.add(formatDate(at));
+        // The row's original field time: createdAt, never the (amendable)
+        // submittedAt — defensively take submittedAt if it somehow precedes.
+        const at =
+          inspection.submittedAt && inspection.submittedAt < inspection.createdAt
+            ? inspection.submittedAt
+            : inspection.createdAt;
+        const teamName = inspection.siteVisit?.team?.name?.trim() ?? null;
 
-        const teamName = inspection.siteVisit?.team?.name?.trim();
-        if (teamName) {
-          const earliest = acc.teams.get(teamName);
-          if (earliest === undefined || at.getTime() < earliest) {
-            acc.teams.set(teamName, at.getTime());
-          }
+        let poles = poleFirst.get(substationId);
+        if (!poles) {
+          poles = new Map();
+          poleFirst.set(substationId, poles);
+        }
+        // A re-surveyed pole has one row per cycle — keep the earliest.
+        const existing = poles.get(inspection.assetId);
+        if (!existing || at < existing.at) {
+          poles.set(inspection.assetId, { at, team: teamName });
         }
       }
     }
 
-    for (const [substationId, acc] of accumulators) {
+    for (const [substationId, poles] of poleFirst) {
+      let startAt: Date | null = null;
+      let completeAt: Date | null = null;
+      const days = new Set<string>();
+      // team name -> earliest first-inspection time, for first-appearance order.
+      const teams = new Map<string, number>();
+      for (const { at, team } of poles.values()) {
+        if (!startAt || at < startAt) {
+          startAt = at;
+        }
+        if (!completeAt || at > completeAt) {
+          completeAt = at;
+        }
+        days.add(formatDate(at));
+        if (team) {
+          const earliest = teams.get(team);
+          if (earliest === undefined || at.getTime() < earliest) {
+            teams.set(team, at.getTime());
+          }
+        }
+      }
+      if (!startAt || !completeAt) {
+        continue;
+      }
       activity.set(substationId, {
-        startAt: acc.startAt,
-        completeAt: acc.completeAt,
-        siteDays: acc.days.size,
-        teams: [...acc.teams.entries()]
-          .sort((a, b) => a[1] - b[1])
-          .map(([name]) => name),
+        startAt,
+        completeAt,
+        siteDays: days.size,
+        teams: [...teams.entries()].sort((a, b) => a[1] - b[1]).map(([name]) => name),
       });
     }
     return activity;
