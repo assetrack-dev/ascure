@@ -21,6 +21,7 @@ import { ImportsModule } from './imports/imports.module';
 import { SyncModule } from './sync/sync.module';
 import { PublicModule } from './public/public.module';
 import { ShareModule } from './share/share.module';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 
 @Module({
   imports: [
@@ -52,6 +53,9 @@ import { ShareModule } from './share/share.module';
     SyncModule,
     PublicModule,
     ShareModule,
+    // RSS-leak instrumentation: 60s memory sampler + per-route attribution
+    // (global interceptor) + ADMIN /diagnostics endpoints + SIGUSR2 dump.
+    DiagnosticsModule,
   ],
 })
 export class AppModule {}
