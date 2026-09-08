@@ -57,6 +57,22 @@ const EXPORTABLE_INSPECTION_WHERE = {
   ],
 } satisfies Prisma.InspectionWhereInput;
 
+/**
+ * The inspection's ORIGINAL field date (owner rule 2026-09-08, everywhere a
+ * pole row carries a date): createdAt, never the amendable submittedAt — a
+ * resubmit after a DC send-back reuses the SAME row and overwrites submittedAt
+ * with the amendment time, so submittedAt-based dates drift forward. Defensive
+ * min in case a legacy row's submittedAt somehow precedes its createdAt.
+ */
+function firstInspectionDate(inspection: {
+  createdAt: Date;
+  submittedAt: Date | null;
+}): Date {
+  return inspection.submittedAt && inspection.submittedAt < inspection.createdAt
+    ? inspection.submittedAt
+    : inspection.createdAt;
+}
+
 // The stable Pencawang ref code is `<Mainhead.code><4-digit running number>`.
 const MAX_PENCAWANG_REFCODE_SEQ = 9999;
 
@@ -768,12 +784,7 @@ export class ReportsService {
           continue;
         }
 
-        // The row's original field time: createdAt, never the (amendable)
-        // submittedAt — defensively take submittedAt if it somehow precedes.
-        const at =
-          inspection.submittedAt && inspection.submittedAt < inspection.createdAt
-            ? inspection.submittedAt
-            : inspection.createdAt;
+        const at = firstInspectionDate(inspection);
         const teamName = inspection.siteVisit?.team?.name?.trim() ?? null;
 
         let poles = poleFirst.get(substationId);
@@ -1097,8 +1108,8 @@ export class ReportsService {
           pencawangCode: substation.code || insp.siteVisit?.pencawangCode || '',
           assetCode: insp.asset.assetCode,
           noTiangLama: insp.asset.noTiangLama ?? '',
-          date: insp.submittedAt ?? insp.createdAt ?? null,
-          dateTime: insp.submittedAt ?? insp.createdAt ?? null,
+          date: firstInspectionDate(insp),
+          dateTime: firstInspectionDate(insp),
           defectKeys,
           valuesByKey,
         };
@@ -1309,7 +1320,7 @@ export class ReportsService {
           sanitizeText(
             insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           ),
-          formatDate(insp.submittedAt ?? insp.createdAt),
+          formatDate(firstInspectionDate(insp)),
           insp.asset.latitude != null && insp.asset.longitude != null
             ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
             : '',
@@ -1404,7 +1415,7 @@ export class ReportsService {
           insp.template ? `${insp.template.name} v${insp.template.version}` : '',
         ),
         sanitizeText(insp.createdBy?.email ?? ''),
-        formatDateTime(insp.submittedAt ?? insp.createdAt),
+        formatDateTime(firstInspectionDate(insp)),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
@@ -1612,7 +1623,7 @@ export class ReportsService {
         sanitizeText(
           insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
         ),
-        formatDate(insp.submittedAt ?? insp.createdAt),
+        formatDate(firstInspectionDate(insp)),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
@@ -2026,7 +2037,7 @@ export class ReportsService {
       const meta: (string | number)[] = [
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
-        formatDate(insp.submittedAt ?? insp.createdAt),
+        formatDate(firstInspectionDate(insp)),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in (sample: "can be N/A")
@@ -2203,7 +2214,7 @@ export class ReportsService {
       const meta: (string | number)[] = [
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
-        formatDate(insp.submittedAt ?? insp.createdAt),
+        formatDate(firstInspectionDate(insp)),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in
