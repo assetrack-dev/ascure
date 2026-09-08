@@ -930,6 +930,14 @@ export class InspectionsService {
       : (severity ?? DefectSeverity.MEDIUM);
 
     await this.prisma.$transaction(async (tx) => {
+      // Amendment tracking: an office edit changes recorded answers after the
+      // field submission — stamp who/when (surfaced as Amended (MYT)/Amended
+      // By on the checklist downloads).
+      await tx.inspection.update({
+        where: { id: inspection.id },
+        data: { lastAmendedAt: new Date(), lastAmendedById: user.id },
+      });
+
       await tx.inspectionResult.upsert({
         where: {
           inspectionId_templateItemId: {
@@ -1376,11 +1384,22 @@ export class InspectionsService {
     }
 
     const defectCreateData = this.buildDefectCreateData(inspection.itemResults);
+    // Amendment tracking: both reopen paths (send-back and amend) NULL
+    // submittedAt, so "was submitted before" lives in the one-time
+    // firstSubmittedAt stamp — any submit after it is an amendment and records
+    // who made it (surfaced as Amended (MYT)/Amended By on the checklist
+    // downloads).
+    const submitStamp = new Date();
+    const isAmendment = inspection.firstSubmittedAt != null;
     const submitInspection = this.prisma.inspection.update({
       where: { id: inspection.id },
       data: {
         completionStatus: InspectionCompletionStatus.SUBMITTED,
-        submittedAt: new Date(),
+        submittedAt: submitStamp,
+        firstSubmittedAt: inspection.firstSubmittedAt ?? submitStamp,
+        ...(isAmendment
+          ? { lastAmendedAt: submitStamp, lastAmendedById: user.id }
+          : {}),
         // A re-inspection request is answered by this submit — clear it so the
         // pole stops reading "sent back" once the crew has redone it.
         reinspectionReason: null,
