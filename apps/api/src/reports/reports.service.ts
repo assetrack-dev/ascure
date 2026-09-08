@@ -73,6 +73,47 @@ function firstInspectionDate(inspection: {
     : inspection.createdAt;
 }
 
+/**
+ * The pole row's amendment stamp — filled ONLY when the recorded answers
+ * changed after the first submission (a resubmit after a send-back/amend, or
+ * an office checklist edit), so a blank cell means "never amended" and a
+ * filled one is the flag (owner call 2026-09-08). Tracked rows carry
+ * who+when in lastAmendedAt/lastAmendedBy; rows predating the tracking
+ * columns fall back to day-level inference (submittedAt on a later MYT day
+ * than the original field date can only come from a resubmit — historical
+ * OFFICE edits are invisible to the fallback, and the editor is unknown).
+ */
+function amendmentInfo(inspection: {
+  createdAt: Date;
+  submittedAt: Date | null;
+  lastAmendedAt: Date | null;
+  lastAmendedBy: { name: string | null } | null;
+}): { at: Date | null; by: string } {
+  if (inspection.lastAmendedAt) {
+    return {
+      at: inspection.lastAmendedAt,
+      by: inspection.lastAmendedBy?.name ?? '',
+    };
+  }
+  const firstDay = formatDate(firstInspectionDate(inspection));
+  if (inspection.submittedAt && formatDate(inspection.submittedAt) !== firstDay) {
+    return { at: inspection.submittedAt, by: '' };
+  }
+  return { at: null, by: '' };
+}
+
+/** Trailing header pair every checklist layout appends AFTER its item columns
+ *  (never between — the SAVR fixed layout is a verbatim client format). */
+const AMENDMENT_HEADERS = ['Amended (MYT)', 'Amended By'];
+
+/** The row cells matching AMENDMENT_HEADERS — both blank = never amended. */
+function amendmentCells(
+  inspection: Parameters<typeof amendmentInfo>[0],
+): string[] {
+  const { at, by } = amendmentInfo(inspection);
+  return [at ? formatDateTime(at) : '', by];
+}
+
 // The stable Pencawang ref code is `<Mainhead.code><4-digit running number>`.
 const MAX_PENCAWANG_REFCODE_SEQ = 9999;
 
@@ -1162,6 +1203,8 @@ export class ReportsService {
         templateId: true,
         operationalScope: true,
         submittedAt: true,
+        lastAmendedAt: true,
+        lastAmendedBy: { select: { name: true } },
         createdAt: true,
         createdBy: { select: { email: true } },
         template: { select: { name: true, version: true } },
@@ -1298,7 +1341,11 @@ export class ReportsService {
       fixedWorkbook.creator = 'ASCURE';
       fixedWorkbook.created = new Date();
       const fixedSheet = fixedWorkbook.addWorksheet('CHECKLIST');
-      fixedSheet.addRow([...SAVR_FIXED_META_HEADERS, ...fixedItemLabels]);
+      fixedSheet.addRow([
+      ...SAVR_FIXED_META_HEADERS,
+      ...fixedItemLabels,
+      ...AMENDMENT_HEADERS,
+    ]);
       fixedSheet.getRow(1).font = { bold: true };
 
       for (const insp of chosen) {
@@ -1346,7 +1393,7 @@ export class ReportsService {
           return resolveTemplateCell(col.inputType, result, verdict);
         });
 
-        fixedSheet.addRow([...meta, ...itemCells]);
+        fixedSheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
       }
 
       fixedSheet.columns.forEach((column, index) => {
@@ -1384,7 +1431,7 @@ export class ReportsService {
     const sheet = workbook.addWorksheet('CHECKLIST');
     // TNB matrix layout: dropdown items span one sub-column per answer with a
     // "1" under the crew's pick (see writeTemplateMatrixHeader).
-    writeTemplateMatrixHeader(sheet, META_HEADERS, columns);
+    writeTemplateMatrixHeader(sheet, META_HEADERS, columns, AMENDMENT_HEADERS);
 
     for (const insp of chosen) {
       // Index this inspection's recorded values, defect verdicts and photos by
@@ -1427,7 +1474,7 @@ export class ReportsService {
         verdictByItemId,
       );
 
-      sheet.addRow([...meta, ...itemCells]);
+      sheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
     }
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
@@ -1483,6 +1530,8 @@ export class ReportsService {
         templateId: true,
         operationalScope: true,
         submittedAt: true,
+        lastAmendedAt: true,
+        lastAmendedBy: { select: { name: true } },
         createdAt: true,
         siteVisit: {
           select: {
@@ -1601,7 +1650,11 @@ export class ReportsService {
     workbook.creator = 'ASCURE';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('CHECKLIST');
-    sheet.addRow([...SAVR_FIXED_META_HEADERS, ...fixedItemLabels]);
+    sheet.addRow([
+      ...SAVR_FIXED_META_HEADERS,
+      ...fixedItemLabels,
+      ...AMENDMENT_HEADERS,
+    ]);
     sheet.getRow(1).font = { bold: true };
 
     for (const insp of chosen) {
@@ -1653,7 +1706,7 @@ export class ReportsService {
         return resolveTemplateCell(col.inputType, result, verdict);
       });
 
-      sheet.addRow([...meta, ...itemCells]);
+      sheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
     }
 
     sheet.columns.forEach((column, index) => {
@@ -1939,6 +1992,8 @@ export class ReportsService {
         assetId: true,
         templateId: true,
         submittedAt: true,
+        lastAmendedAt: true,
+        lastAmendedBy: { select: { name: true } },
         createdAt: true,
         siteVisit: {
           select: {
@@ -2019,7 +2074,7 @@ export class ReportsService {
     const sheet = workbook.addWorksheet('CHECKLIST');
     // FLAT layout (DC-requested, 2026-08-24): one column per item, the answer
     // text in the cell — the pre-matrix format (see writeTemplateFlatHeader).
-    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns);
+    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns, AMENDMENT_HEADERS);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -2063,7 +2118,7 @@ export class ReportsService {
         verdictByItemId,
       );
 
-      sheet.addRow([...meta, ...itemCells]);
+      sheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
     }
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
@@ -2118,6 +2173,8 @@ export class ReportsService {
         assetId: true,
         templateId: true,
         submittedAt: true,
+        lastAmendedAt: true,
+        lastAmendedBy: { select: { name: true } },
         createdAt: true,
         siteVisit: {
           select: {
@@ -2195,7 +2252,7 @@ export class ReportsService {
     const sheet = workbook.addWorksheet('CHECKLIST');
     // FLAT layout (DC-requested, 2026-08-24): one column per item, the answer
     // text in the cell — the pre-matrix format (see writeTemplateFlatHeader).
-    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns);
+    writeTemplateFlatHeader(sheet, SAVT_META_HEADERS, columns, AMENDMENT_HEADERS);
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
@@ -2233,7 +2290,7 @@ export class ReportsService {
         verdictByItemId,
       );
 
-      sheet.addRow([...meta, ...itemCells]);
+      sheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
     }
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
@@ -2875,11 +2932,19 @@ function writeTemplateFlatHeader(
   sheet: Worksheet,
   metaHeaders: string[],
   columns: TemplateExportColumn[],
+  // Appended AFTER the item columns so the item layout stays untouched.
+  trailingHeaders: string[] = [],
 ): void {
-  sheet.addRow([...metaHeaders, ...columns.map((column) => column.label)]);
+  sheet.addRow([
+    ...metaHeaders,
+    ...columns.map((column) => column.label),
+    ...trailingHeaders,
+  ]);
   sheet.getRow(1).font = { bold: true };
+  const trailingStart = sheet.columnCount - trailingHeaders.length;
   sheet.columns.forEach((column, index) => {
-    column.width = index < metaHeaders.length ? 18 : 16;
+    column.width =
+      index < metaHeaders.length || index >= trailingStart ? 18 : 16;
   });
   sheet.views = [{ state: 'frozen', ySplit: 1 }];
 }
@@ -2912,6 +2977,8 @@ function writeTemplateMatrixHeader(
   sheet: Worksheet,
   metaHeaders: string[],
   columns: TemplateExportColumn[],
+  // Appended AFTER the item columns so the item layout stays untouched.
+  trailingHeaders: string[] = [],
 ): void {
   const row1: string[] = [...metaHeaders];
   const row2: string[] = metaHeaders.map(() => '');
@@ -2925,6 +2992,10 @@ function writeTemplateMatrixHeader(
       row1.push(column.label);
       row2.push('');
     }
+  }
+  for (const trailing of trailingHeaders) {
+    row1.push(trailing);
+    row2.push('');
   }
   sheet.addRow(row1);
   sheet.addRow(row2);
@@ -2972,6 +3043,15 @@ function writeTemplateMatrixHeader(
       sheet.getColumn(columnIndex).width = 16;
       columnIndex += 1;
     }
+  }
+  for (let trailing = 0; trailing < trailingHeaders.length; trailing++) {
+    sheet.mergeCells(1, columnIndex, 2, columnIndex);
+    sheet.getCell(1, columnIndex).alignment = {
+      vertical: 'middle',
+      wrapText: true,
+    };
+    sheet.getColumn(columnIndex).width = 18;
+    columnIndex += 1;
   }
   sheet.views = [{ state: 'frozen', ySplit: 2 }];
 }

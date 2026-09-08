@@ -48,6 +48,11 @@ describe('Authz · generalized checklist-value edit', () => {
     await prisma?.inspectionResult.deleteMany({
       where: { inspectionId: { in: [IDS.inspection.a, IDS.sub.inspection] } },
     });
+    // The edits above stamped amendment tracking — clear it for other suites.
+    await prisma?.inspection.updateMany({
+      where: { id: { in: [IDS.inspection.a, IDS.sub.inspection] } },
+      data: { lastAmendedAt: null, lastAmendedById: null },
+    });
     await prisma?.defect.deleteMany({
       where: {
         inspectionItemResultId: { in: [IDS.itemResult.a, IDS.sub.itemResult] },
@@ -96,6 +101,17 @@ describe('Authz · generalized checklist-value edit', () => {
       where: { inspectionItemResultId: IDS.itemResult.a },
     });
     expect(defect).not.toBeNull();
+  });
+
+  it('an office edit stamps amendment tracking (lastAmendedAt + who) on the inspection', async () => {
+    // The previous test's edit by mgrA is the amendment — the stamp rides in
+    // the same transaction and feeds the exports' Amended (MYT)/Amended By.
+    const inspection = await prisma.inspection.findUnique({
+      where: { id: IDS.inspection.a },
+      select: { lastAmendedAt: true, lastAmendedById: true },
+    });
+    expect(inspection?.lastAmendedAt).not.toBeNull();
+    expect(inspection?.lastAmendedById).toBe(IDS.user.mgrA);
   });
 
   it('main-contractor MANAGER edits a SUBCONTRACTOR inspection item (200 — the new cross-company write) and NO withdraws its defect', async () => {

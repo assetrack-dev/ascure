@@ -431,6 +431,7 @@ model User {
   createdAssets             Asset[]                       @relation("AssetCreatedBy")
   siteVisitAssetsAdded      SiteVisitAsset[]              @relation("SiteVisitAssetAddedBy")
   createdInspects           Inspection[]                  @relation("InspectionCreatedBy")
+  amendedInspections        Inspection[]                  @relation("InspectionLastAmendedBy")
   createdImages             Image[]                       @relation("ImageCreatedBy")
   defectTimelineEntries     DefectTimelineEntry[]         @relation("DefectTimelineCreatedBy")
   assignedDefects           Defect[]                      @relation("DefectAssignedUser")
@@ -1401,6 +1402,16 @@ model Inspection {
   reportingGroup            String?
   externalRef               String?
   submittedAt               DateTime?
+  // Amendment tracking (2026-09-08). Both amendment paths (DC send-back and the
+  // crew/manager amend-reopen) NULL submittedAt before the resubmit, so a
+  // resubmit is indistinguishable from a first submit without extra state:
+  // firstSubmittedAt is stamped ONCE on the first submit and never overwritten,
+  // and any submit after it — or an office checklist edit — records
+  // lastAmendedAt/lastAmendedById. Rows predating the migration have all three
+  // null (exports fall back to submittedAt-vs-createdAt day inference).
+  firstSubmittedAt          DateTime?
+  lastAmendedAt             DateTime?
+  lastAmendedById           String?                    @db.Uuid
   // Manager/DC "send this pole back" — the survey answers are kept, but the
   // inspection returns to DRAFT so the crew can re-capture it (which also turns
   // the pole red again on the mobile map and drops it from coverage). The reason
@@ -1416,6 +1427,7 @@ model Inspection {
   template                  InspectionTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
   operationalSession        OperationalSession?        @relation(fields: [operationalSessionId], references: [id], onDelete: SetNull)
   createdBy                 User                       @relation("InspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  lastAmendedBy             User?                      @relation("InspectionLastAmendedBy", fields: [lastAmendedById], references: [id], onDelete: SetNull)
   results                   InspectionResult[]
   itemResults               InspectionItemResult[]
   images                    Image[]

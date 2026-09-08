@@ -334,12 +334,12 @@ export class ImportsService {
             if (externalRef) {
               inspection = await tx.inspection.upsert({
                 where: { tenantId_externalRef: { tenantId, externalRef } },
-                create: { tenantId, siteVisitId: siteVisit.id, assetId: asset.id, templateId, createdByUserId: inspectorId, completionStatus: InspectionCompletionStatus.SUBMITTED, operationMode: OperationMode.INSPECTION, operationalScope: OperationalScope.SAVR, reportingGroup, externalRef, submittedAt },
+                create: { tenantId, siteVisitId: siteVisit.id, assetId: asset.id, templateId, createdByUserId: inspectorId, completionStatus: InspectionCompletionStatus.SUBMITTED, operationMode: OperationMode.INSPECTION, operationalScope: OperationalScope.SAVR, reportingGroup, externalRef, submittedAt, firstSubmittedAt: submittedAt },
                 update: { siteVisitId: siteVisit.id, assetId: asset.id, templateId, submittedAt, reportingGroup },
               });
             } else {
               inspection = await tx.inspection.findFirst({ where: { tenantId, siteVisitId: siteVisit.id, assetId: asset.id, templateId } })
-                ?? await tx.inspection.create({ data: { tenantId, siteVisitId: siteVisit.id, assetId: asset.id, templateId, createdByUserId: inspectorId, completionStatus: InspectionCompletionStatus.SUBMITTED, operationMode: OperationMode.INSPECTION, operationalScope: OperationalScope.SAVR, reportingGroup, submittedAt } });
+                ?? await tx.inspection.create({ data: { tenantId, siteVisitId: siteVisit.id, assetId: asset.id, templateId, createdByUserId: inspectorId, completionStatus: InspectionCompletionStatus.SUBMITTED, operationMode: OperationMode.INSPECTION, operationalScope: OperationalScope.SAVR, reportingGroup, submittedAt, firstSubmittedAt: submittedAt } });
             }
             iCount++;
 
