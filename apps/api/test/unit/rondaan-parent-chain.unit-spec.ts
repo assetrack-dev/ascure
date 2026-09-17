@@ -117,8 +117,11 @@ describe('rondaan formatRondaan with origins', () => {
     expect(formatFeederLineCode('C', { kind: 'TX', number: 2 })).toBe('TX2 C');
   });
 
-  it('a uniform origin hoists to ONE leading prefix (canonical)', () => {
-    expect(roundTrip('FP1 E 4 & FP1 F 2')).toBe('FP1 E 4 & F 2');
+  it('every origin segment keeps its own prefix (no hoisting)', () => {
+    // Hoisting ("FP1 E 4 & F 2") was retired 2026-09: that form is
+    // indistinguishable from an origin line converging with a DIRECT line,
+    // and real field data (SG ULAR JAYA "FP1 C 1 & D 13") means the latter.
+    expect(roundTrip('FP1 E 4 & FP1 F 2')).toBe('FP1 E 4 & FP1 F 2');
     expect(roundTrip('TX2 B 3')).toBe('TX2 B 3');
   });
 
@@ -128,9 +131,9 @@ describe('rondaan formatRondaan with origins', () => {
     expect(roundTrip('FP1 A 2 & FP2 B 1')).toBe('FP1 A 2 & FP2 B 1');
   });
 
-  it('a mixed render leads with the BARE segments so re-parsing cannot poison them', () => {
-    // A leading origin token is the parser's default for bare segments — the
-    // direct-line segment must render first.
+  it('a mixed render leads with the BARE segments (stable canonical order)', () => {
+    // Direct lines first, then origin lines by token — kept from the old
+    // grammar so existing canonical labels don't churn.
     const rendered = formatRondaan(membershipsFromRondaan('A 9 & FP1 C 1'));
     expect(rendered).toBe('A 9 & FP1 C 1');
     expect(roundTrip(rendered)).toBe(rendered);

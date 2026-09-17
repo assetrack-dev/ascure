@@ -95,8 +95,36 @@ describe('rondaan power origin — FP, TX and LV', () => {
       expect(formatRondaan(membershipsFromRondaan(code))).toBe(code);
     });
 
-    it('the origin is prefixed ONCE across converging feeders', () => {
-      expect(formatRondaan(membershipsFromRondaan('TX1 E 4 & F 2'))).toBe('TX1 E 4 & F 2');
+    it('the origin is prefixed on EVERY origin segment (no hoisting)', () => {
+      expect(formatRondaan(membershipsFromRondaan('TX1 E 4 & TX1 F 2'))).toBe(
+        'TX1 E 4 & TX1 F 2',
+      );
+    });
+
+    it('a bare segment is the DIRECT line — it renders first, unprefixed', () => {
+      expect(formatRondaan(membershipsFromRondaan('TX1 E 4 & F 2'))).toBe('F 2 & TX1 E 4');
+    });
+  });
+
+  describe('a bare segment NEVER inherits the front origin', () => {
+    // PE TAMAN SG ULAR JAYA 2026-09: crews write the origin prefix on every FP
+    // leg and mean the bare leg as the DIRECT line. The old "front origin is
+    // the default for bare segments" rule read "FP1 C 1 & D 13" as FP1 D 13 —
+    // the direct D line then jumped 11 → 23 and the pre-check reported 14
+    // phantom missing poles.
+    it('FP1 C 1 & D 13 puts D 13 on the direct D line', () => {
+      const keys = parsePoleCode('FP1 C 1 & D 13').map((entry) => entry.normalizedKey);
+      expect(keys).toEqual(['FP1 C 1', 'D 13']);
+    });
+
+    it('the SG ULAR junction shape validates without phantom gaps', () => {
+      const result = validateFeederSequences([
+        { id: '1', noTiangRondaan: 'D 11' },
+        { id: '2', noTiangRondaan: 'FP1 C 1 & D 12' },
+        { id: '3', noTiangRondaan: 'FP1 C 2 & D 13' },
+        { id: '4', noTiangRondaan: 'D 14' },
+      ]);
+      expect(result.issues).toEqual([]);
     });
   });
 
@@ -110,10 +138,12 @@ describe('rondaan power origin — FP, TX and LV', () => {
       expect(suggestNextPoleCode(from)).toBe(to);
     });
 
-    // Regression: origins became objects, so an `===` identity check here would
-    // reject every multi-segment code. Must compare by value.
-    it('still suggests across converging feeders that share one origin', () => {
+    // Each segment advances along its OWN line: B here is the DIRECT line, so
+    // it stays unprefixed; an origin leg keeps its explicit prefix.
+    it('suggests across converging lines, each keeping its own origin', () => {
       expect(suggestNextPoleCode('TX1 A 4 & B 1')).toBe('TX1 A 5 & B 2');
+      expect(suggestNextPoleCode('TX1 A 4 & TX1 B 1')).toBe('TX1 A 5 & TX1 B 2');
+      expect(suggestNextPoleCode('FP1 C 3 & D 15')).toBe('FP1 C 4 & D 16');
     });
   });
 
