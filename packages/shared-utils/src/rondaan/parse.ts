@@ -17,9 +17,12 @@ export interface PoleBranchPart {
  * `TX1 A 1`, `FP1 A 1` and `A 1` are three different poles on three different
  * lines, each with its own sequence.
  *
- * ⚠ ONE origin per pole code. `TX1 FP1 A 1` (a pillar fed by a transformer) is
- * NOT grammar today — if TNB needs to record both levels, this becomes two
- * slots rather than a kind, and `buildNormalizedKey` has to render both.
+ * ⚠ ONE origin per SEGMENT, carried explicitly: a bare `&`-joined segment is
+ * always the DIRECT line, never an inherited copy of the first segment's
+ * origin ("FP1 C 1 & D 13" = FP1 C 1 converging with direct D 13). Nesting
+ * (`TX1 FP1 A 1`, a pillar fed by a transformer) is NOT grammar today — if
+ * TNB needs both levels, this becomes two slots rather than a kind, and
+ * `buildNormalizedKey` has to render both.
  */
 export type PoleOriginKind = 'FP' | 'TX' | 'LV';
 
@@ -368,21 +371,21 @@ export function parsePoleCode(input: string): ParsedPoleCode[] {
     return [createInvalidParsed(original, '', ['Pole code is required.'])];
   }
 
-  // Each `&`-joined segment may carry its own `FP<n>` origin: a pole shared
-  // across feeder lines is written per-segment (`FP1 C 1 & FP1 G 1`), and the
-  // lines can even run from different Feeder Pillars (`FP1 A 1 & FP2 B 1`). A
-  // single `FP<n>` at the FRONT is the default origin for any bare segment, so
-  // `FP1 C 1 & G 1` still reads both lines as FP1 (backward-compatible). Still no
-  // nesting — at most one `FP<n>` per segment.
-  const { origin: frontOrigin, rest } = extractOrigin(normalizedInput);
-  const segments = rest.split('&').map((segment) => segment.trim());
+  // Each `&`-joined segment stands ALONE: it carries its own `FP<n>`/`TX<n>`/
+  // `LV<n>` origin, and a BARE segment is always the DIRECT line. There is NO
+  // inheritance from the first segment. Field practice writes the prefix on
+  // every origin leg (`FP1 B 1 & FP1 A 1 & D 12`, where D 12 is the direct D
+  // line — PE TAMAN SG ULAR JAYA 2026-09); the old "front origin is the
+  // default for bare segments" rule silently rewrote such direct legs onto the
+  // origin line (D 12 → FP1 D 12), which reported phantom D-line gaps. Lines
+  // can run from different pillars (`FP1 A 1 & FP2 B 1`). Still no nesting —
+  // at most one origin per segment.
+  const segments = normalizedInput.split('&').map((segment) => segment.trim());
   const parsedCodes: ParsedPoleCode[] = [];
 
   for (const segment of segments) {
     const { origin: segmentOrigin, rest: segmentRest } = extractOrigin(segment);
-    parsedCodes.push(
-      ...parsePoleSegment(original, segmentRest, segmentOrigin ?? frontOrigin),
-    );
+    parsedCodes.push(...parsePoleSegment(original, segmentRest, segmentOrigin));
   }
 
   return parsedCodes;

@@ -36,8 +36,9 @@ export interface PoleMembership {
    *  branchParts when set, so DB rows render without re-parsing. */
   branchSuffix?: string;
   /** Optional power origin (`FP<n>` Feeder Pillar, or `TX<n>` a specific
-   *  outgoing transformer). Rendered as a single leading prefix. A pole has at
-   *  most one origin, so all of its memberships share this value. */
+   *  outgoing transformer) of THIS membership's feeder line. Rendered as a
+   *  per-segment prefix; memberships on a direct line carry none, so one pole
+   *  can mix origin and direct lines ("D 13 & FP1 C 1"). */
   origin?: PoleOrigin;
 }
 
@@ -155,9 +156,9 @@ export function formatRondaan(memberships: PoleMembership[]): string {
     .map((group) => ({ ...group, feeders: [...group.feeders].sort() }))
     .sort(
       (left, right) =>
-        // Bare-line groups FIRST: the parser treats a LEADING origin token as
-        // the default for every bare segment, so a mixed render starting with
-        // "FP1 …" would poison the direct-line segments on re-parse.
+        // Bare-line (direct) groups FIRST, then origin lines by token — a
+        // stable canonical order, kept from the pre-2026-09 grammar so
+        // existing canonical labels don't churn.
         Number(left.origin !== undefined) - Number(right.origin !== undefined) ||
         (left.origin ? formatPoleOrigin(left.origin) : '').localeCompare(
           right.origin ? formatPoleOrigin(right.origin) : '',
@@ -169,25 +170,20 @@ export function formatRondaan(memberships: PoleMembership[]): string {
     return '';
   }
 
-  // ONE origin across the whole pole (the common case) hoists to a single
-  // leading prefix — "FP1 E 4 & F 2". MIXED origins (lines from different
-  // pillars/transformers, or an origin line sharing the pole with a direct
-  // line) prefix per segment — "A 2 & FP1 C 1 & FP2 B 1" — hoisting only the
-  // first would silently move the other segments onto the wrong line.
-  const uniform = sorted.every((group) => sameOrigin(group.origin, sorted[0].origin));
-
-  const body = sorted
+  // EVERY origin segment carries its own prefix — "D 13 & FP1 C 1",
+  // "FP1 E 4 & FP1 F 2", "FP1 A 2 & FP2 B 1". The old grammar hoisted a
+  // uniform origin to one leading prefix ("FP1 E 4 & F 2"), but that form is
+  // indistinguishable from an origin line converging with a DIRECT line — the
+  // parser had to guess, and guessed wrong on real field data (SG ULAR JAYA's
+  // "FP1 C 1 & D 13"). A bare segment now ALWAYS means the direct line, so
+  // the render must spell the origin out on every origin segment.
+  return sorted
     .map((group) => {
-      const prefix =
-        !uniform && group.origin !== undefined ? `${formatPoleOrigin(group.origin)} ` : '';
+      const prefix = group.origin !== undefined ? `${formatPoleOrigin(group.origin)} ` : '';
 
       return `${prefix}${combineFeeders(group.feeders)} ${group.index}${group.branchSuffix}`;
     })
     .join(' & ');
-
-  return uniform && sorted[0].origin !== undefined
-    ? `${formatPoleOrigin(sorted[0].origin)} ${body}`
-    : body;
 }
 
 /**
@@ -213,15 +209,10 @@ export function suggestNextPoleCode(lastCode: string): string | null {
   const parsed = parsePoleCode(lastCode);
 
   // Suggest only when EVERY segment is well-formed (a partially-mistyped code
-  // like "A 4 & garbage" must not silently drop the bad feeder) and the whole
-  // pole shares one FP origin.
+  // like "A 4 & garbage" must not silently drop the bad feeder). Segments may
+  // sit on different lines (an origin leg converging with a direct leg, or two
+  // pillars) — each advances along its OWN line and keeps its own prefix.
   if (parsed.length === 0 || parsed.some((entry) => !entry.isValid)) {
-    return null;
-  }
-
-  const [first] = parsed;
-
-  if (!parsed.every((entry) => sameOrigin(entry.origin, first.origin))) {
     return null;
   }
 
@@ -252,13 +243,13 @@ function advanceToNextPole(entry: ParsedPoleCode): PoleMembership {
  * Render memberships back to a RONDAAN string PRESERVING the order the crew
  * typed them — unlike `formatRondaan`, which canonicalises (sorts) for a stable
  * stored label. Used only by the field suggestion so the offered code mirrors
- * the crew's own sequence. Consecutive feeders that share an (index, branch)
- * still collapse into one letter-run (CD), differing groups join with " & " in
- * encounter order, and the FP origin is prefixed once.
+ * the crew's own sequence. Consecutive feeders that share an (index, branch,
+ * origin) still collapse into one letter-run (CD), differing groups join with
+ * " & " in encounter order, and each origin segment carries its own prefix (a
+ * bare segment is the direct line).
  */
 function renderPreservingOrder(memberships: PoleMembership[]): string {
   const groups: MembershipGroup[] = [];
-  let origin: PoleOrigin | undefined;
 
   for (const membership of memberships) {
     const feeder = membership.feeder.trim().toUpperCase();
@@ -267,36 +258,41 @@ function renderPreservingOrder(memberships: PoleMembership[]): string {
       continue;
     }
 
-    if (
-      origin === undefined &&
+    const origin =
       membership.origin !== undefined &&
       Number.isInteger(membership.origin.number) &&
       membership.origin.number > 0
-    ) {
-      origin = membership.origin;
-    }
-
+        ? membership.origin
+        : undefined;
     const branchSuffix = resolveBranchSuffix(membership);
     const last = groups[groups.length - 1];
 
-    if (last && last.index === membership.index && last.branchSuffix === branchSuffix) {
+    if (
+      last &&
+      last.index === membership.index &&
+      last.branchSuffix === branchSuffix &&
+      sameOrigin(last.origin, origin)
+    ) {
       if (!last.feeders.includes(feeder)) {
         last.feeders.push(feeder);
       }
     } else {
-      groups.push({ index: membership.index, branchSuffix, feeders: [feeder] });
+      groups.push({
+        index: membership.index,
+        branchSuffix,
+        feeders: [feeder],
+        ...(origin !== undefined ? { origin } : {}),
+      });
     }
   }
 
-  const body = groups
-    .map((group) => `${combineFeeders(group.feeders)} ${group.index}${group.branchSuffix}`)
+  return groups
+    .map((group) => {
+      const prefix = group.origin !== undefined ? `${formatPoleOrigin(group.origin)} ` : '';
+
+      return `${prefix}${combineFeeders(group.feeders)} ${group.index}${group.branchSuffix}`;
+    })
     .join(' & ');
-
-  if (!body) {
-    return '';
-  }
-
-  return origin !== undefined ? `${formatPoleOrigin(origin)} ${body}` : body;
 }
 
 /** Map a parsed pole code (one feeder segment) to a membership. The backfill
