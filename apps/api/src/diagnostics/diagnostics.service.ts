@@ -86,6 +86,12 @@ export class DiagnosticsService implements OnModuleInit, OnModuleDestroy {
         `${LOG_EVERY_N_SAMPLES} samples, WARN at rss>${WARN_RSS_MB.join('/')}MB, ` +
         `SIGUSR2 dumps the full report`,
     );
+    // Confirms mitigation 2 took effect at boot (main.ts sets both) — read the
+    // LIVE values from sharp so the pm2 log proves it, not the code.
+    this.logger.log(
+      `sharp mitigation: concurrency=${sharp.concurrency()}, ` +
+        `cacheMemoryMaxMb=${sharp.cache().memory.max}`,
+    );
   }
 
   onModuleDestroy() {
