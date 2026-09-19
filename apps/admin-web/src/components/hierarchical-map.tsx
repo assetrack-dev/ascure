@@ -37,6 +37,10 @@ export interface HierarchicalMapProps {
   onDrill: (bubble: MapBubble) => void;
   /** Click an individual pole (leaf level). */
   onSelectPoint: (asset: MapAsset) => void;
+  /** Click the drilled Pencawang's own marker (the blue check-in square) —
+   *  opens its check-in photos so the office can verify the PE is the right
+   *  building. */
+  onPencawangClick?: (pencawang: PencawangMarker) => void;
   controlsRef?: MutableRefObject<MapControls | null>;
   /** Fires when the Street View panorama opens (true) or closes (false). */
   onStreetViewVisibleChange?: (visible: boolean) => void;
@@ -305,6 +309,7 @@ function Layers({
   pencawang,
   onDrill,
   onSelectPoint,
+  onPencawangClick,
   controlsRef,
   onStreetViewVisibleChange,
   colorByPencawang,
@@ -322,10 +327,12 @@ function Layers({
   const fitKeyRef = useRef<string>("");
   const onDrillRef = useRef(onDrill);
   const onSelectRef = useRef(onSelectPoint);
+  const onPencawangClickRef = useRef(onPencawangClick);
   const onSvVisibleRef = useRef(onStreetViewVisibleChange);
   const onBoundsRef = useRef(onBoundsChange);
   onDrillRef.current = onDrill;
   onSelectRef.current = onSelectPoint;
+  onPencawangClickRef.current = onPencawangClick;
   onSvVisibleRef.current = onStreetViewVisibleChange;
   onBoundsRef.current = onBoundsChange;
 
@@ -447,10 +454,12 @@ function Layers({
         const marker = new google.maps.Marker({
           position,
           icon: pencawangMarkerIcon(pencawang.name),
-          title: `Pencawang: ${pencawang.name}`,
+          title: `Pencawang: ${pencawang.name} — click for check-in photos`,
           optimized: true,
           zIndex: 100000,
         });
+        const clicked = pencawang;
+        marker.addListener("click", () => onPencawangClickRef.current?.(clicked));
         marker.setMap(map);
         markersRef.current.push(marker);
         positions.push(position);
