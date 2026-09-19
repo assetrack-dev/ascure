@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Layers, Users2, ClipboardCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { CrewDailyModal } from "@/components/crew-daily-modal";
 import { Card, CardHead, PageHeader, Tbtn, filterSelectClass } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import {
@@ -118,6 +119,8 @@ function CrewPerformanceContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
+  // The leaderboard row opened in the daily drill-down modal.
+  const [dailyUser, setDailyUser] = useState<CrewPerformanceRow | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -295,7 +298,14 @@ function CrewPerformanceContent() {
                               </span>
                             </td>
                             <td className="px-3.5 py-3 text-[13px] font-semibold text-[var(--foreground)]">
-                              {row.name}
+                              <button
+                                type="button"
+                                onClick={() => setDailyUser(row)}
+                                title="Daily numbers + attendance"
+                                className="rounded-sm text-left underline decoration-[var(--line)] decoration-dotted underline-offset-4 outline-none transition hover:text-[var(--brand)] hover:decoration-[var(--brand)] focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                              >
+                                {row.name}
+                              </button>
                             </td>
                             <td className="px-3.5 py-3 text-[13px] text-[var(--muted)]">
                               {row.role ?? "—"}
@@ -347,6 +357,19 @@ function CrewPerformanceContent() {
             </div>
           </div>
         </div>
+
+        {/* Daily drill-down — click a name for the per-day bar chart +
+            attendance gaps; month steps independently of the page month. */}
+        {dailyUser && session?.token ? (
+          <CrewDailyModal
+            token={session.token}
+            userId={dailyUser.userId}
+            userName={dailyUser.name}
+            initialMonth={month}
+            onClose={() => setDailyUser(null)}
+            onUnauthorized={handleLogout}
+          />
+        ) : null}
       </main>
     </AppShell>
   );

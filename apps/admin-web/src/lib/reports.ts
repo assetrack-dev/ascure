@@ -47,6 +47,46 @@ export function fetchCrewPerformance(token: string, from?: string, to?: string) 
   );
 }
 
+/** One MYT day of a crew member's output (absent = the day is missing). */
+export interface CrewPerformanceDay {
+  date: string;
+  assets: number;
+  inspections: number;
+  visits: number;
+}
+
+export interface CrewPerformanceDaily {
+  userId: string;
+  name: string;
+  email: string | null;
+  role: string | null;
+  teamName: string | null;
+  period: string;
+  from: string;
+  to: string;
+  totalAssets: number;
+  totalInspections: number;
+  activeDays: number;
+  days: CrewPerformanceDay[];
+  generatedAt: string;
+}
+
+/** One crew member's day-by-day numbers — the leaderboard row drill-down. */
+export function fetchCrewPerformanceDaily(
+  token: string,
+  userId: string,
+  from?: string,
+  to?: string,
+) {
+  const params = new URLSearchParams({ userId });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  return apiRequest<CrewPerformanceDaily>(
+    `/reports/crew-performance/daily?${params.toString()}`,
+    { token },
+  );
+}
+
 /** Downloads the crew-performance XLSX (pay sheet) for the period. */
 export async function downloadCrewPerformance(
   token: string,

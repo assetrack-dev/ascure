@@ -422,6 +422,103 @@ export class ReportsService {
     };
   }
 
+  /**
+   * One crew member's day-by-day output over a period (default: this month,
+   * UTC+8) — the drill-down behind a leaderboard row. Same scoping and the
+   * same submittedAt day-bucketing as {@link aggregateCrewPerformance}, so the
+   * days always sum back to that row's month figures. Days with no output are
+   * omitted (the client renders them as gaps — that IS the attendance view).
+   */
+  async aggregateCrewPerformanceDaily(
+    user: RequestUser,
+    userId: string,
+    fromInput?: string,
+    toInput?: string,
+  ) {
+    this.assertCanViewCrewPerformance(user);
+    if (!userId) {
+      throw new BadRequestException('userId is required.');
+    }
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+
+    const [subject, inspections] = await Promise.all([
+      this.prisma.user.findFirst({
+        where: { id: userId, tenantId: user.tenantId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          team: { select: { name: true, code: true } },
+        },
+      }),
+      this.prisma.inspection.findMany({
+        where: {
+          tenantId: user.tenantId,
+          createdByUserId: userId,
+          completionStatus: InspectionCompletionStatus.SUBMITTED,
+          submittedAt: { gte: start, lt: end },
+          siteVisit: siteVisitAccessWhere(user),
+        },
+        select: {
+          assetId: true,
+          siteVisitId: true,
+          submittedAt: true,
+        },
+      }),
+    ]);
+
+    type DayAggregate = {
+      assets: Set<string>;
+      visits: Set<string>;
+      inspections: number;
+    };
+    const byDay = new Map<string, DayAggregate>();
+    for (const row of inspections) {
+      if (!row.submittedAt) {
+        continue;
+      }
+      const key = this.crewPerfDateKey(row.submittedAt);
+      let aggregate = byDay.get(key);
+      if (!aggregate) {
+        aggregate = { assets: new Set(), visits: new Set(), inspections: 0 };
+        byDay.set(key, aggregate);
+      }
+      aggregate.assets.add(row.assetId);
+      aggregate.visits.add(row.siteVisitId);
+      aggregate.inspections += 1;
+    }
+
+    const days = [...byDay.entries()]
+      .map(([date, aggregate]) => ({
+        date,
+        assets: aggregate.assets.size,
+        inspections: aggregate.inspections,
+        visits: aggregate.visits.size,
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date));
+
+    // The period's distinct-asset total (a pole re-inspected on two days counts
+    // once here, like the leaderboard row — the sum of the day bars can exceed it).
+    const totalAssets = new Set(inspections.map((row) => row.assetId)).size;
+
+    return {
+      userId,
+      name: subject?.name?.trim() || subject?.email || 'Unknown user',
+      email: subject?.email ?? null,
+      role: subject?.role ?? null,
+      teamName: subject?.team?.name?.trim() || subject?.team?.code?.trim() || null,
+      period: label,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      totalAssets,
+      totalInspections: inspections.length,
+      activeDays: days.length,
+      days,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   /** XLSX export of {@link aggregateCrewPerformance} (the manager's pay sheet). */
   async buildCrewPerformance(
     user: RequestUser,
