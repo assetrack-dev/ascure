@@ -18,7 +18,8 @@ import {
 } from '@prisma/client';
 import { Workbook, Worksheet } from 'exceljs';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { buildScopeContext } from '../common/authorization/scope-context';
+import { siteVisitOversightWhere } from '../common/authorization/site-visit-scope';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
@@ -317,10 +318,14 @@ export class ReportsService {
   }
 
   /**
-   * Per-user output over a period (default: this month, UTC+8), scoped to the
-   * caller's own company (a MANAGER never sees another company's crew). The
-   * headline pay metric is distinct assets inspected; supporting columns are
-   * submitted inspections, distinct visits, and active days.
+   * Per-user output over a period (default: this month, UTC+8). Scope is the
+   * READ-ONLY oversight variant: a plain MANAGER still sees exactly their own
+   * company's crew, but a MAIN_CONTRACTOR manager also sees the crews of its
+   * active subcontractor subtree (monitoring the work it delegated — same
+   * widening as the dashboard/map, ADR 0002). Each row carries the surveyor's
+   * company so a main contractor can tell contractors apart. The headline pay
+   * metric is distinct assets inspected; supporting columns are submitted
+   * inspections, distinct visits, and active days.
    */
   async aggregateCrewPerformance(
     user: RequestUser,
@@ -329,13 +334,14 @@ export class ReportsService {
   ) {
     this.assertCanViewCrewPerformance(user);
     const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const ctx = await buildScopeContext(this.prisma, user);
 
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
         completionStatus: InspectionCompletionStatus.SUBMITTED,
         submittedAt: { gte: start, lt: end },
-        siteVisit: siteVisitAccessWhere(user),
+        siteVisit: siteVisitOversightWhere(user, ctx),
       },
       select: {
         assetId: true,
@@ -381,6 +387,7 @@ export class ReportsService {
             email: true,
             role: true,
             team: { select: { name: true, code: true } },
+            organization: { select: { name: true } },
           },
         })
       : [];
@@ -397,6 +404,7 @@ export class ReportsService {
           role: record?.role ?? null,
           teamName:
             record?.team?.name?.trim() || record?.team?.code?.trim() || null,
+          companyName: record?.organization?.name?.trim() || null,
           assetsInspected: aggregate.assets.size,
           submittedInspections: aggregate.inspections,
           visits: aggregate.visits.size,
@@ -440,6 +448,9 @@ export class ReportsService {
       throw new BadRequestException('userId is required.');
     }
     const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    // Oversight scope, same as the leaderboard — a main contractor drilling
+    // into a subcontractor's surveyor must see the same days the row counted.
+    const ctx = await buildScopeContext(this.prisma, user);
 
     const [subject, inspections] = await Promise.all([
       this.prisma.user.findFirst({
@@ -450,6 +461,7 @@ export class ReportsService {
           email: true,
           role: true,
           team: { select: { name: true, code: true } },
+          organization: { select: { name: true } },
         },
       }),
       this.prisma.inspection.findMany({
@@ -458,7 +470,7 @@ export class ReportsService {
           createdByUserId: userId,
           completionStatus: InspectionCompletionStatus.SUBMITTED,
           submittedAt: { gte: start, lt: end },
-          siteVisit: siteVisitAccessWhere(user),
+          siteVisit: siteVisitOversightWhere(user, ctx),
         },
         select: {
           assetId: true,
@@ -508,6 +520,7 @@ export class ReportsService {
       email: subject?.email ?? null,
       role: subject?.role ?? null,
       teamName: subject?.team?.name?.trim() || subject?.team?.code?.trim() || null,
+      companyName: subject?.organization?.name?.trim() || null,
       period: label,
       from: start.toISOString(),
       to: end.toISOString(),
@@ -536,6 +549,7 @@ export class ReportsService {
       'Name',
       'Email',
       'Role',
+      'Company',
       'Team',
       'Assets Inspected',
       'Submitted Inspections',
@@ -550,6 +564,7 @@ export class ReportsService {
         row.name,
         row.email ?? '',
         row.role ?? '',
+        row.companyName ?? '',
         row.teamName ?? '',
         row.assetsInspected,
         row.submittedInspections,
@@ -565,12 +580,14 @@ export class ReportsService {
       '',
       '',
       '',
+      '',
       data.totalAssetsInspected,
     ]);
     totalRow.font = { bold: true };
 
-    for (let column = 1; column <= 9; column += 1) {
-      sheet.getColumn(column).width = column === 2 || column === 3 ? 26 : 16;
+    for (let column = 1; column <= 10; column += 1) {
+      sheet.getColumn(column).width =
+        column === 2 || column === 3 || column === 5 ? 26 : 16;
     }
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
