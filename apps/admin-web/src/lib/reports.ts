@@ -16,6 +16,7 @@ export interface CrewPerformanceRow {
   email: string | null;
   role: string | null;
   teamName: string | null;
+  companyName: string | null;
   assetsInspected: number;
   submittedInspections: number;
   visits: number;
@@ -61,6 +62,7 @@ export interface CrewPerformanceDaily {
   email: string | null;
   role: string | null;
   teamName: string | null;
+  companyName: string | null;
   period: string;
   from: string;
   to: string;

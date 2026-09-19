@@ -37,6 +37,7 @@ function requestErrorMessage(error: unknown, fallback: string) {
 }
 
 const UNTEAMED = "No team";
+const UNTEAMED_COMPANY = "No company";
 
 /** Roll per-person rows up to per-team inspection totals, biggest first. */
 function inspectionsByTeam(rows: CrewPerformanceRow[]): Array<{ team: string; value: number }> {
@@ -121,6 +122,9 @@ function CrewPerformanceContent() {
   const [error, setError] = useState("");
   // The leaderboard row opened in the daily drill-down modal.
   const [dailyUser, setDailyUser] = useState<CrewPerformanceRow | null>(null);
+  // Contractor filter — only meaningful for a MAIN_CONTRACTOR manager (or an
+  // ADMIN), whose oversight scope returns more than one company's crews.
+  const [companyFilter, setCompanyFilter] = useState<string>("ALL");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -192,12 +196,48 @@ function CrewPerformanceContent() {
     }
   };
 
-  const rows = data?.users ?? [];
+  const allRows = useMemo(() => data?.users ?? [], [data]);
+  // Distinct companies in the payload; >1 means the caller has oversight over
+  // subcontractors (main contractor / admin) and the filter + column appear.
+  const companies = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of allRows) {
+      names.add(row.companyName ?? UNTEAMED_COMPANY);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [allRows]);
+  const multiCompany = companies.length > 1;
+  // A month change can drop the filtered company from the payload — fall back
+  // to ALL instead of showing a silently empty table.
+  useEffect(() => {
+    if (companyFilter !== "ALL" && !companies.includes(companyFilter)) {
+      setCompanyFilter("ALL");
+    }
+  }, [companies, companyFilter]);
+  const rows = useMemo(
+    () =>
+      companyFilter === "ALL"
+        ? allRows
+        : allRows.filter(
+            (row) => (row.companyName ?? UNTEAMED_COMPANY) === companyFilter,
+          ),
+    [allRows, companyFilter],
+  );
   const teamData = useMemo(() => inspectionsByTeam(rows), [rows]);
   // Fleet totals from real payload fields only — no defect or SLA figure exists.
   const totalInspections = useMemo(
     () => rows.reduce((sum, row) => sum + row.submittedInspections, 0),
     [rows],
+  );
+  // Distinct-assets total follows the contractor filter (the payload total is
+  // scope-wide); two contractors sharing a pole double-count here, same as the
+  // per-row column they sum from.
+  const totalAssets = useMemo(
+    () =>
+      companyFilter === "ALL"
+        ? (data?.totalAssetsInspected ?? 0)
+        : rows.reduce((sum, row) => sum + row.assetsInspected, 0),
+    [companyFilter, data, rows],
   );
 
   return (
@@ -207,9 +247,29 @@ function CrewPerformanceContent() {
           <PageHeader
             eyebrow="Crew Analytics"
             title="Crew Performance"
-            subtitle="Distinct assets inspected per crew member, for monitoring and payment. Scoped to your own company — pick a month and download the pay sheet."
+            subtitle="Distinct assets inspected per crew member, for monitoring and payment. Scoped to your company — a main contractor also sees each subcontractor's crews. Pick a month and download the pay sheet."
             actions={
               <>
+                {multiCompany ? (
+                  <>
+                    <label className="sr-only" htmlFor="crew-company">
+                      Contractor
+                    </label>
+                    <select
+                      id="crew-company"
+                      value={companyFilter}
+                      onChange={(event) => setCompanyFilter(event.target.value)}
+                      className={filterSelectClass}
+                    >
+                      <option value="ALL">All contractors</option>
+                      {companies.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                ) : null}
                 <label className="sr-only" htmlFor="crew-month">
                   Month
                 </label>
@@ -258,6 +318,9 @@ function CrewPerformanceContent() {
                       <th className="px-3.5 py-2.5 text-left font-semibold">#</th>
                       <th className="px-3.5 py-2.5 text-left font-semibold">Name</th>
                       <th className="px-3.5 py-2.5 text-left font-semibold">Role</th>
+                      {multiCompany ? (
+                        <th className="px-3.5 py-2.5 text-left font-semibold">Company</th>
+                      ) : null}
                       <th className="px-3.5 py-2.5 text-left font-semibold">Team</th>
                       <th className="px-3.5 py-2.5 text-right font-semibold">Assets</th>
                       <th className="px-3.5 py-2.5 text-right font-semibold">Insp.</th>
@@ -268,13 +331,13 @@ function CrewPerformanceContent() {
                   <tbody>
                     {isLoading ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
+                        <td colSpan={multiCompany ? 9 : 8} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
                           Loading…
                         </td>
                       </tr>
                     ) : rows.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
+                        <td colSpan={multiCompany ? 9 : 8} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
                           No inspections submitted in this period.
                         </td>
                       </tr>
@@ -310,6 +373,11 @@ function CrewPerformanceContent() {
                             <td className="px-3.5 py-3 text-[13px] text-[var(--muted)]">
                               {row.role ?? "—"}
                             </td>
+                            {multiCompany ? (
+                              <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
+                                {row.companyName ?? "—"}
+                              </td>
+                            ) : null}
                             <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
                               {row.teamName ?? "—"}
                             </td>
@@ -349,7 +417,7 @@ function CrewPerformanceContent() {
                   <FleetStat
                     icon={Layers}
                     label="Assets inspected"
-                    value={data?.totalAssetsInspected ?? 0}
+                    value={totalAssets}
                   />
                   <FleetStat icon={Users2} label="People" value={rows.length} />
                 </div>

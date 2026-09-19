@@ -200,7 +200,9 @@ export function CrewDailyModal({
               {data?.name ?? userName}
             </h2>
             <p className="mt-0.5 text-[12px] text-[var(--muted)]">
-              {[data?.role, data?.teamName].filter(Boolean).join(" · ") || "—"}
+              {[data?.role, data?.companyName, data?.teamName]
+                .filter(Boolean)
+                .join(" · ") || "—"}
             </p>
           </div>
           <button
