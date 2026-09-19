@@ -119,6 +119,23 @@ export class ReportsController {
     return this.reportsService.aggregateCrewPerformance(user, from, to);
   }
 
+  // One crew member's day-by-day numbers (the leaderboard row drill-down:
+  // daily bar chart + attendance gaps).
+  @Get('crew-performance/daily')
+  getCrewPerformanceDaily(
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateCrewPerformanceDaily(
+      user,
+      userId ?? '',
+      from,
+      to,
+    );
+  }
+
   @Get('crew-performance.xlsx')
   async exportCrewPerformance(
     @CurrentUser() user: RequestUser,
