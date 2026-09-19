@@ -21,6 +21,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AssetMapPanel } from "@/components/asset-map-panel";
 import { AuthGuard } from "@/components/auth-guard";
+import { PencawangCheckInPanel } from "@/components/pencawang-checkin-panel";
 import { Eyebrow, Seg, Tbtn, type SegOption } from "@/components/ui";
 import type { MapControls } from "@/components/asset-map-shared";
 import { ApiError } from "@/lib/api";
@@ -345,6 +346,9 @@ function MapContent() {
   const [points, setPoints] = useState<MapAsset[]>([]);
   const [selected, setSelected] = useState<MapAsset | null>(null);
   const [pencawangMarker, setPencawangMarker] = useState<PencawangMarker | null>(null);
+  // The PE check-in photo panel (click the blue Pencawang square). Mutually
+  // exclusive with the pole panel — they share the right edge.
+  const [checkInPanelOpen, setCheckInPanelOpen] = useState(false);
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
   const [mapBaseType, setMapBaseType] = useState<MapBaseType>("hybrid");
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
@@ -621,6 +625,7 @@ function MapContent() {
   const drillInto = useCallback((bubble: MapBubble) => {
     if (bubble.id === UNASSIGNED_BUBBLE_ID) return; // ungrouped poles aren't drillable
     setSelected(null);
+    setCheckInPanelOpen(false);
     setShowAllPoles(false);
     setDrill((prev) => {
       const step: IdName = { id: bubble.id, name: bubble.name };
@@ -633,6 +638,7 @@ function MapContent() {
 
   const goToDepth = useCallback((depth: 0 | 1 | 2) => {
     setSelected(null);
+    setCheckInPanelOpen(false);
     setShowAllPoles(false);
     setDrill((prev) => {
       if (depth === 0) return {};
@@ -883,7 +889,14 @@ function MapContent() {
               baseType={mapBaseType}
               pencawang={pencawangMarker}
               onDrill={drillInto}
-              onSelectPoint={setSelected}
+              onSelectPoint={(asset) => {
+                setCheckInPanelOpen(false);
+                setSelected(asset);
+              }}
+              onPencawangClick={() => {
+                setSelected(null);
+                setCheckInPanelOpen(true);
+              }}
               apiKey={GOOGLE_MAPS_API_KEY}
               onLoadError={() => setGoogleFailed(true)}
               controlsRef={controlsRef}
@@ -1048,6 +1061,15 @@ function MapContent() {
                 );
               }}
               onUnauthorized={handleLogout}
+            />
+          ) : null}
+
+          {/* PE check-in photos — click the blue Pencawang square to compare
+              the crew's arrival photos against the satellite view. */}
+          {!selected && checkInPanelOpen && pencawangMarker ? (
+            <PencawangCheckInPanel
+              pencawang={pencawangMarker}
+              onClose={() => setCheckInPanelOpen(false)}
             />
           ) : null}
 

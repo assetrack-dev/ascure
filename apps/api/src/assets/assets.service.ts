@@ -539,37 +539,72 @@ export class AssetsService {
    * The Pencawang's own map location — its manually-set coordinate when the
    * office has pinned one (the fix for a mis-pointed check-in), otherwise its
    * most recent site-visit check-in GPS. Shown alongside the poles (as a
-   * distinct marker) at the points level.
+   * distinct marker) at the points level. Carries the crews' check-in "Site
+   * Photos" (visit-level images, newest first) so the office can eyeball the
+   * real Pencawang against the satellite view and confirm the PE is the right
+   * one.
    */
   private async pencawangCheckIn(user: RequestUser, pencawangId: string) {
-    const substation = await this.prisma.substation.findFirst({
-      where: { id: pencawangId, tenantId: user.tenantId },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        latitude: true,
-        longitude: true,
-        siteVisits: {
-          where: {
-            checkInLatitude: { not: null },
-            checkInLongitude: { not: null },
+    const [substation, checkInPhotos] = await Promise.all([
+      this.prisma.substation.findFirst({
+        where: { id: pencawangId, tenantId: user.tenantId },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          latitude: true,
+          longitude: true,
+          siteVisits: {
+            where: {
+              checkInLatitude: { not: null },
+              checkInLongitude: { not: null },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { checkInLatitude: true, checkInLongitude: true },
           },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { checkInLatitude: true, checkInLongitude: true },
         },
-      },
-    });
+      }),
+      // Visit-level images only (assetId/inspectionId null) — those are the
+      // arrival photos captured on check-in, not pole/inspection evidence.
+      this.prisma.image.findMany({
+        where: {
+          tenantId: user.tenantId,
+          assetId: null,
+          inspectionId: null,
+          inspectionResultId: null,
+          siteVisit: { substationId: pencawangId },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          url: true,
+          fileName: true,
+          createdAt: true,
+          siteVisit: { select: { checkInCapturedAt: true, startedAt: true } },
+        },
+      }),
+    ]);
     if (!substation) {
       return null;
     }
+    const photos = checkInPhotos.map((image) => ({
+      id: image.id,
+      url: image.url,
+      fileName: image.fileName,
+      capturedAt: (
+        image.siteVisit?.checkInCapturedAt ??
+        image.createdAt
+      ).toISOString(),
+    }));
     if (substation.latitude != null && substation.longitude != null) {
       return {
         id: substation.id,
         name: substation.name || substation.code,
         latitude: substation.latitude,
         longitude: substation.longitude,
+        checkInPhotos: photos,
       };
     }
     const visit = substation.siteVisits[0];
@@ -581,6 +616,7 @@ export class AssetsService {
       name: substation.name || substation.code,
       latitude: visit.checkInLatitude,
       longitude: visit.checkInLongitude,
+      checkInPhotos: photos,
     };
   }
 

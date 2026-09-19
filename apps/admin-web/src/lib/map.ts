@@ -472,18 +472,43 @@ export async function fetchMapBubbles(
 }
 
 /** Fetch the individual poles for one Pencawang (the drill-down leaf). */
+
+/** One check-in "Site Photo" of the Pencawang, captured by the crew on arrival. */
+export interface PencawangCheckInPhoto {
+  id: string;
+  url: string;
+  fileName: string | null;
+  capturedAt: string | null;
+}
+
 /** The drilled Pencawang's own location (its site-visit check-in GPS). */
 export interface PencawangMarker {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
+  /** Crew arrival photos (newest first) so the office can verify the PE. */
+  checkInPhotos: PencawangCheckInPhoto[];
 }
 
 /** The points-level response: the Pencawang's poles + its own check-in marker. */
 export interface MapPointsResult {
   poles: MapAsset[];
   pencawang: PencawangMarker | null;
+}
+
+function normalizeCheckInPhoto(raw: unknown): PencawangCheckInPhoto | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : null;
+  const url = typeof record.url === "string" && record.url ? record.url : null;
+  if (!id || !url) return null;
+  return {
+    id,
+    url,
+    fileName: typeof record.fileName === "string" ? record.fileName : null,
+    capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : null,
+  };
 }
 
 function normalizePencawangMarker(raw: unknown): PencawangMarker | null {
@@ -498,6 +523,11 @@ function normalizePencawangMarker(raw: unknown): PencawangMarker | null {
     name: typeof record.name === "string" && record.name ? record.name : "Pencawang",
     latitude,
     longitude,
+    checkInPhotos: Array.isArray(record.checkInPhotos)
+      ? record.checkInPhotos
+          .map(normalizeCheckInPhoto)
+          .filter((photo): photo is PencawangCheckInPhoto => photo !== null)
+      : [],
   };
 }
 
