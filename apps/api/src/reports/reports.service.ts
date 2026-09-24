@@ -77,8 +77,9 @@ function firstInspectionDate(inspection: {
 /**
  * Per asset, the inspection with the EARLIEST field-collection date. The
  * checklist exports print one row per asset from its LATEST inspection, but
- * the INSPECTOR column credits the person who first collected the pole —
- * a re-inspection must not reassign the original surveyor's productivity.
+ * the DATE and INSPECTOR columns credit the first collection of the pole —
+ * a re-inspection must not reassign the original surveyor's productivity or
+ * shift the pole to a later day (later changes show in the PINDAAN columns).
  * (Explicit date comparison rather than "last of the newest-first list":
  * a NULL submittedAt sorts first under DESC, so list order alone can lie.)
  */
@@ -1404,7 +1405,7 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
-    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    // DATE + INSPECTOR credit the FIRST collection (see the helper).
     const firstByAsset = pickFirstInspectionByAsset(scoped);
     const chosen = [...latestByAsset.values()].sort((a, b) =>
       a.asset.assetCode.localeCompare(b.asset.assetCode),
@@ -1505,7 +1506,7 @@ export class ReportsService {
           sanitizeText(
             insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           ),
-          formatDate(firstInspectionDate(insp)),
+          formatDate(firstInspectionDate(firstInsp)),
           sanitizeText(
             firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
           ),
@@ -1606,7 +1607,7 @@ export class ReportsService {
         sanitizeText(
           firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
         ),
-        formatDateTime(firstInspectionDate(insp)),
+        formatDateTime(firstInspectionDate(firstInsp)),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
@@ -1746,7 +1747,7 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
-    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    // DATE + INSPECTOR credit the FIRST collection (see the helper).
     const firstByAsset = pickFirstInspectionByAsset(scoped);
     const chosen = [...latestByAsset.values()].sort((a, b) => {
       const pa =
@@ -1824,7 +1825,7 @@ export class ReportsService {
         sanitizeText(
           insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
         ),
-        formatDate(firstInspectionDate(insp)),
+        formatDate(firstInspectionDate(firstInsp)),
         sanitizeText(
           firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
         ),
@@ -2190,7 +2191,7 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
-    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    // DATE + INSPECTOR credit the FIRST collection (see the helper).
     const firstByAsset = pickFirstInspectionByAsset(inspections);
     // Membership-first numbering: a shared pole's assetCode carries only its
     // PRIMARY route's number — this route's number lives in the membership.
@@ -2247,7 +2248,7 @@ export class ReportsService {
       const meta: (string | number)[] = [
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
-        formatDate(firstInspectionDate(insp)),
+        formatDate(firstInspectionDate(firstInsp)),
         sanitizeText(
           firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
         ),
@@ -2379,7 +2380,7 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
-    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    // DATE + INSPECTOR credit the FIRST collection (see the helper).
     const firstByAsset = pickFirstInspectionByAsset(inspections);
     // Membership-first numbering per row (see buildSavtRouteChecklist).
     const membershipIndex = await this.getSavtMembershipIndex(user.tenantId, [
@@ -2433,7 +2434,7 @@ export class ReportsService {
       const meta: (string | number)[] = [
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
-        formatDate(firstInspectionDate(insp)),
+        formatDate(firstInspectionDate(firstInsp)),
         sanitizeText(
           firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
         ),
