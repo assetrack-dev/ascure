@@ -143,7 +143,7 @@ export class DashboardService {
       siteVisitsForHealth,
       latestSiteVisitActivity,
       activeMappedVisitCount,
-      assetsForMainhead,
+      assetMainheadRows,
       orgForPersona,
       defectCategoryCounts,
       trendInspections,
@@ -396,29 +396,9 @@ export class DashboardService {
       }),
       // Assets carry no mainhead column, so attribute each to the mainhead of its
       // latest SUBMITTED inspection's site visit, falling back to its creation
-      // visit (mirrors AssetsService.loadMapAssets). Light select — id + the two
-      // candidate mainhead refs — tallied in JS below.
-      this.prisma.asset.findMany({
-        where: this.accessibleAssetWhere(user, ctx),
-        select: {
-          id: true,
-          createdDuringVisit: {
-            select: { mainheadRecord: { select: { id: true, name: true } } },
-          },
-          inspections: {
-            where: {
-              completionStatus: InspectionCompletionStatus.SUBMITTED,
-            },
-            take: 1,
-            orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
-            select: {
-              siteVisit: {
-                select: { mainheadRecord: { select: { id: true, name: true } } },
-              },
-            },
-          },
-        },
-      }),
+      // visit (mirrors AssetsService.loadMapAssets). Aggregated in SQL — see
+      // tallyAssetsByMainhead for why a per-asset findMany cannot be used here.
+      this.tallyAssetsByMainhead(user, ctx),
       // Persona classification — the caller's org type + active capabilities tell
       // us whether they do field work (SURVEY/INSPECTION) or maintenance
       // (MAINTENANCE/REPAIR), so the dashboard can lead with the right sections.
@@ -698,18 +678,15 @@ export class DashboardService {
       string,
       { label: string; value: number }
     >();
-    for (const asset of assetsForMainhead) {
-      const visit =
-        asset.inspections[0]?.siteVisit ?? asset.createdDuringVisit ?? null;
-      const mainhead = visit?.mainheadRecord ?? null;
-      const key = mainhead?.id ?? 'unassigned';
-      const label = mainhead?.name?.trim() || 'Unassigned';
+    for (const row of assetMainheadRows) {
+      const key = row.mainheadId ?? 'unassigned';
+      const label = row.mainheadName?.trim() || 'Unassigned';
       const bucket = assetMainheadBuckets.get(key);
 
       if (bucket) {
-        bucket.value += 1;
+        bucket.value += row.count;
       } else {
-        assetMainheadBuckets.set(key, { label, value: 1 });
+        assetMainheadBuckets.set(key, { label, value: row.count });
       }
     }
     const assetsByMainhead = Array.from(assetMainheadBuckets.values()).sort(
@@ -1375,6 +1352,59 @@ export class DashboardService {
     ].filter((label): label is string => Boolean(label));
 
     return labels.length > 0 ? labels.join(' / ') : 'Unassigned';
+  }
+
+  /**
+   * Total assets per MAINHEAD, aggregated in SQL. The previous per-asset
+   * findMany loaded every accessible asset WITH its latest-submitted
+   * inspection; Prisma implements that nested take-1 as a follow-up query
+   * carrying one bind variable per asset id, which blew Postgres's 32,767
+   * prepared-statement parameter limit once the tenant crossed ~32k poles
+   * (P2035, seen on prod 2026-09-24) — and shipped the whole asset list to
+   * Node just to count it. Scoping stays in Prisma (an id-only findMany with
+   * the same accessibleAssetWhere); the ids then travel as a SINGLE array
+   * parameter (`= ANY($1)`), so the statement always has one bind variable
+   * no matter how many poles exist, and Postgres returns one row per
+   * mainhead. Attribution mirrors the old JS exactly: the latest SUBMITTED
+   * inspection's visit, else the creation visit, else Unassigned.
+   */
+  private async tallyAssetsByMainhead(
+    user: RequestUser,
+    ctx: ScopeContext,
+  ): Promise<
+    { mainheadId: string | null; mainheadName: string | null; count: number }[]
+  > {
+    const accessible = await this.prisma.asset.findMany({
+      where: this.accessibleAssetWhere(user, ctx),
+      select: { id: true },
+    });
+    if (accessible.length === 0) {
+      return [];
+    }
+    const assetIds = accessible.map((asset) => asset.id);
+
+    return this.prisma.$queryRaw<
+      { mainheadId: string | null; mainheadName: string | null; count: number }[]
+    >`
+      SELECT
+        mh."id"       AS "mainheadId",
+        mh."name"     AS "mainheadName",
+        COUNT(*)::int AS "count"
+      FROM "Asset" a
+      LEFT JOIN LATERAL (
+        SELECT i."siteVisitId"
+        FROM "Inspection" i
+        WHERE i."assetId" = a."id"
+          AND i."completionStatus" = 'SUBMITTED'
+        ORDER BY i."submittedAt" DESC, i."createdAt" DESC
+        LIMIT 1
+      ) latest ON TRUE
+      LEFT JOIN "SiteVisit" sv
+        ON sv."id" = COALESCE(latest."siteVisitId", a."createdDuringVisitId")
+      LEFT JOIN "Mainhead" mh ON mh."id" = sv."mainheadId"
+      WHERE a."id" = ANY(${assetIds}::uuid[])
+      GROUP BY mh."id", mh."name"
+    `;
   }
 
   private accessibleAssetWhere(
