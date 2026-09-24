@@ -75,6 +75,27 @@ function firstInspectionDate(inspection: {
 }
 
 /**
+ * Per asset, the inspection with the EARLIEST field-collection date. The
+ * checklist exports print one row per asset from its LATEST inspection, but
+ * the INSPECTOR column credits the person who first collected the pole —
+ * a re-inspection must not reassign the original surveyor's productivity.
+ * (Explicit date comparison rather than "last of the newest-first list":
+ * a NULL submittedAt sorts first under DESC, so list order alone can lie.)
+ */
+function pickFirstInspectionByAsset<
+  T extends { assetId: string; createdAt: Date; submittedAt: Date | null },
+>(inspections: T[]): Map<string, T> {
+  const firstByAsset = new Map<string, T>();
+  for (const insp of inspections) {
+    const prev = firstByAsset.get(insp.assetId);
+    if (!prev || firstInspectionDate(insp) < firstInspectionDate(prev)) {
+      firstByAsset.set(insp.assetId, insp);
+    }
+  }
+  return firstByAsset;
+}
+
+/**
  * The pole row's amendment stamp — filled ONLY when the recorded answers
  * changed after the first submission (a resubmit after a send-back/amend, or
  * an office checklist edit), so a blank cell means "never amended" and a
@@ -1385,6 +1406,8 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    const firstByAsset = pickFirstInspectionByAsset(scoped);
     const chosen = [...latestByAsset.values()].sort((a, b) =>
       a.asset.assetCode.localeCompare(b.asset.assetCode),
     );
@@ -1465,6 +1488,7 @@ export class ReportsService {
       fixedSheet.getRow(1).font = { bold: true };
 
       for (const insp of chosen) {
+        const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
         const resultByItemId = new Map<string, (typeof insp.results)[number]>();
         for (const r of insp.results) {
           resultByItemId.set(r.templateItemId, r);
@@ -1484,7 +1508,9 @@ export class ReportsService {
             insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           ),
           formatDate(firstInspectionDate(insp)),
-          sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
+          sanitizeText(
+            firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+          ),
           insp.asset.latitude != null && insp.asset.longitude != null
             ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
             : '',
@@ -1553,6 +1579,7 @@ export class ReportsService {
     for (const insp of chosen) {
       // Index this inspection's recorded values, defect verdicts and photos by
       // template item id, so each column resolves its cell by field type.
+      const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
       const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
         resultByItemId.set(r.templateItemId, r);
@@ -1578,7 +1605,9 @@ export class ReportsService {
         sanitizeText(
           insp.template ? `${insp.template.name} v${insp.template.version}` : '',
         ),
-        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
+        sanitizeText(
+          firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+        ),
         formatDateTime(firstInspectionDate(insp)),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
@@ -1719,6 +1748,8 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    const firstByAsset = pickFirstInspectionByAsset(scoped);
     const chosen = [...latestByAsset.values()].sort((a, b) => {
       const pa =
         a.asset.substation?.name ?? a.siteVisit?.pencawangName ?? '';
@@ -1776,6 +1807,7 @@ export class ReportsService {
     sheet.getRow(1).font = { bold: true };
 
     for (const insp of chosen) {
+      const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
       const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
         resultByItemId.set(r.templateItemId, r);
@@ -1795,7 +1827,9 @@ export class ReportsService {
           insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
         ),
         formatDate(firstInspectionDate(insp)),
-        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
+        sanitizeText(
+          firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+        ),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
@@ -2158,6 +2192,8 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    const firstByAsset = pickFirstInspectionByAsset(inspections);
     // Membership-first numbering: a shared pole's assetCode carries only its
     // PRIMARY route's number — this route's number lives in the membership.
     const canonicalRoute = canonicalizeSavtRouteCode(code);
@@ -2198,6 +2234,7 @@ export class ReportsService {
 
     for (const insp of chosen) {
       const sv = insp.siteVisit;
+      const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
       const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
         resultByItemId.set(r.templateItemId, r);
@@ -2213,7 +2250,9 @@ export class ReportsService {
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
         formatDate(firstInspectionDate(insp)),
-        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
+        sanitizeText(
+          firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+        ),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in (sample: "can be N/A")
@@ -2342,6 +2381,8 @@ export class ReportsService {
         latestByAsset.set(insp.assetId, insp);
       }
     }
+    // INSPECTOR credit stays with the FIRST collection (see the helper).
+    const firstByAsset = pickFirstInspectionByAsset(inspections);
     // Membership-first numbering per row (see buildSavtRouteChecklist).
     const membershipIndex = await this.getSavtMembershipIndex(user.tenantId, [
       ...latestByAsset.keys(),
@@ -2379,6 +2420,7 @@ export class ReportsService {
     for (const insp of chosen) {
       const sv = insp.siteVisit;
       const code = (sv?.routeCode ?? '').trim();
+      const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
       const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
         resultByItemId.set(r.templateItemId, r);
@@ -2394,7 +2436,9 @@ export class ReportsService {
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
         formatDate(firstInspectionDate(insp)),
-        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
+        sanitizeText(
+          firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+        ),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in
