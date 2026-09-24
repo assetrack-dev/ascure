@@ -1320,7 +1320,7 @@ export class ReportsService {
         lastAmendedAt: true,
         lastAmendedBy: { select: { name: true } },
         createdAt: true,
-        createdBy: { select: { email: true } },
+        createdBy: { select: { name: true, email: true } },
         template: { select: { name: true, version: true } },
         siteVisit: {
           select: {
@@ -1482,6 +1482,7 @@ export class ReportsService {
             insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
           ),
           formatDate(firstInspectionDate(insp)),
+          sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
           insp.asset.latitude != null && insp.asset.longitude != null
             ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
             : '',
@@ -1575,7 +1576,7 @@ export class ReportsService {
         sanitizeText(
           insp.template ? `${insp.template.name} v${insp.template.version}` : '',
         ),
-        sanitizeText(insp.createdBy?.email ?? ''),
+        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
         formatDateTime(firstInspectionDate(insp)),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
@@ -1647,6 +1648,7 @@ export class ReportsService {
         lastAmendedAt: true,
         lastAmendedBy: { select: { name: true } },
         createdAt: true,
+        createdBy: { select: { name: true, email: true } },
         siteVisit: {
           select: {
             pencawangName: true,
@@ -1791,6 +1793,7 @@ export class ReportsService {
           insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
         ),
         formatDate(firstInspectionDate(insp)),
+        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
         insp.asset.latitude != null && insp.asset.longitude != null
           ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
           : '',
@@ -2109,6 +2112,7 @@ export class ReportsService {
         lastAmendedAt: true,
         lastAmendedBy: { select: { name: true } },
         createdAt: true,
+        createdBy: { select: { name: true, email: true } },
         siteVisit: {
           select: {
             mainhead: true,
@@ -2207,6 +2211,7 @@ export class ReportsService {
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
         formatDate(firstInspectionDate(insp)),
+        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in (sample: "can be N/A")
@@ -2290,6 +2295,7 @@ export class ReportsService {
         lastAmendedAt: true,
         lastAmendedBy: { select: { name: true } },
         createdAt: true,
+        createdBy: { select: { name: true, email: true } },
         siteVisit: {
           select: {
             mainhead: true,
@@ -2386,6 +2392,7 @@ export class ReportsService {
         sanitizeText(sv?.mainheadRecord?.name ?? sv?.mainhead ?? ''),
         sanitizeText(sv?.team?.name ?? sv?.team?.code ?? ''),
         formatDate(firstInspectionDate(insp)),
+        sanitizeText(insp.createdBy?.name || insp.createdBy?.email || ''),
         sanitizeText(sv?.functionalLocation ?? ''),
         sanitizeText(sv?.fromPencawang?.name ?? sv?.pencawangName ?? ''),
         '', // Functional Location (TO) — not captured at check-in
@@ -3295,6 +3302,10 @@ const SAVR_FIXED_META_HEADERS = [
   'MAINHEAD',
   'TEAM',
   'DATE',
+  // Who collected the pole (the inspection's creator) — client needs
+  // per-person / per-day / per-team tallies straight off the checklist.
+  // QR pipelines map columns by header name, so the insert is safe there.
+  'INSPECTOR',
   'LOCATION',
   'Pencawang Code',
   'Pencawang Name',
@@ -3446,6 +3457,8 @@ const SAVT_META_HEADERS = [
   'MAINHEAD',
   'TEAM',
   'DATE',
+  // Same per-person accountability column as the SAVR fixed layout.
+  'INSPECTOR',
   'FUNCTIONAL LOCATION (FROM)',
   'FROM (NAMA PENCAWANG)',
   'FUNCTIONAL LOCATION (TO)',
