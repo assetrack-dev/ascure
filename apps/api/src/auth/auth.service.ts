@@ -5,6 +5,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { resolveCanImport } from '../common/authorization/import-actor';
+import { hasClientMaintenanceActorShape } from '../common/authorization/client-maintenance-actor';
 import {
   buildScopeContext,
   resolveMaintenanceOrgIds,
@@ -45,7 +46,8 @@ export class AuthService {
         isActive: true,
         mustChangePassword: true,
         passwordHash: true,
-        organization: { select: { name: true } },
+        clientRank: true,
+        organization: { select: { name: true, type: true, isActive: true } },
       },
     });
 
@@ -110,6 +112,7 @@ export class AuthService {
     const canOverseeSubcontractors =
       await this.resolveCanOverseeSubcontractors(requestUser);
     const isClientViewer = await this.resolveIsClientViewer(requestUser);
+    const canActOnMaintenanceAsClient = hasClientMaintenanceActorShape(user);
 
     return {
       access_token: accessToken,
@@ -122,6 +125,7 @@ export class AuthService {
         organizationId: user.organizationId,
         organizationName: user.organization?.name ?? null,
         mustChangePassword: user.mustChangePassword,
+        clientRank: user.clientRank,
         canGovernQa,
         canReport,
         canImport,
@@ -133,6 +137,7 @@ export class AuthService {
         canDeleteSurvey,
         canOverseeSubcontractors,
         isClientViewer,
+        canActOnMaintenanceAsClient,
       },
     };
   }
@@ -268,9 +273,10 @@ export class AuthService {
         organizationId: true,
         departmentId: true,
         mustChangePassword: true,
+        clientRank: true,
         createdAt: true,
         updatedAt: true,
-        organization: { select: { name: true } },
+        organization: { select: { name: true, type: true, isActive: true } },
       },
     });
 
@@ -292,6 +298,7 @@ export class AuthService {
     const canOverseeSubcontractors =
       await this.resolveCanOverseeSubcontractors(user);
     const isClientViewer = await this.resolveIsClientViewer(user);
+    const canActOnMaintenanceAsClient = hasClientMaintenanceActorShape(currentUser);
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -308,6 +315,7 @@ export class AuthService {
       canDeleteSurvey,
       canOverseeSubcontractors,
       isClientViewer,
+      canActOnMaintenanceAsClient,
     };
   }
 

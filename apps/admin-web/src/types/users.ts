@@ -10,6 +10,14 @@ export const USER_ROLES = [
 export type UserRole = (typeof USER_ROLES)[number];
 export type MainheadAccessRole = "ENGINEER" | "SENIOR_TECHNICIAN" | "FOREMAN" | "VIEWER";
 
+/**
+ * TNB maintenance rank (docs/PLAN-maintenance-flow.md §4.2). Only valid on a
+ * CLIENT user in a TNB organization. FOREMAN + TECHNICIAN act on maintenance
+ * (assign PE, verify / re-open, cannot-repair); ENGINEER is view-only.
+ */
+export const CLIENT_RANKS = ["FOREMAN", "TECHNICIAN", "ENGINEER"] as const;
+export type ClientRank = (typeof CLIENT_RANKS)[number];
+
 export interface UserDepartment {
   id: string;
   code: string;
@@ -79,6 +87,7 @@ export interface ManagedUser {
   email: string;
   name: string;
   role: UserRole;
+  clientRank?: ClientRank | null;
   isActive: boolean;
   mustChangePassword?: boolean;
   createdAt: string;
@@ -107,6 +116,7 @@ export interface CreateUserPayload {
   /** Optional — leave blank to have the server generate a temporary password. */
   password?: string;
   role: UserRole;
+  clientRank?: ClientRank | null;
   isActive?: boolean;
   departmentId?: string | null;
   organizationId?: string | null;
@@ -122,6 +132,7 @@ export interface UpdateUserPayload {
   name?: string;
   email?: string;
   role?: UserRole;
+  clientRank?: ClientRank | null;
   departmentId?: string | null;
   organizationId?: string | null;
   branchId?: string | null;

@@ -60,8 +60,8 @@ import {
 } from "@/lib/users";
 import type { AuthSession } from "@/types/auth";
 import type { EnterpriseOptions } from "@/types/enterprise";
-import type { ManagedTeam, ManagedUser, UserRole } from "@/types/users";
-import { USER_ROLES } from "@/types/users";
+import type { ClientRank, ManagedTeam, ManagedUser, UserRole } from "@/types/users";
+import { CLIENT_RANKS, USER_ROLES } from "@/types/users";
 
 type RoleFilter = "ALL" | UserRole;
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -79,6 +79,7 @@ interface UserFormState {
   email: string;
   password: string;
   role: UserRole;
+  clientRank: ClientRank | "";
   isActive: boolean;
   organizationId: string;
   branchId: string;
@@ -94,6 +95,7 @@ const DEFAULT_USER_FORM: UserFormState = {
   email: "",
   password: "",
   role: "TECHNICIAN",
+  clientRank: "",
   isActive: true,
   organizationId: "",
   branchId: "",
@@ -155,6 +157,29 @@ function normalizeSearchText(value: string | null | undefined) {
 
 function roleLabel(role: UserRole) {
   return role.charAt(0) + role.slice(1).toLowerCase();
+}
+
+// TNB ranks read as TNB titles; a TNB "Technician" outranks a Foreman and is a
+// different job from a contractor TECHNICIAN, hence the "TNB" prefix.
+function clientRankLabel(rank: ClientRank) {
+  return `TNB ${rank.charAt(0)}${rank.slice(1).toLowerCase()}`;
+}
+
+/**
+ * A TNB rank only applies to a CLIENT user in a TNB organization (the API
+ * rejects it anywhere else and clears it when the user stops qualifying).
+ */
+function isClientRankEligible(
+  values: Pick<UserFormState, "role" | "organizationId">,
+  enterpriseOptions: EnterpriseOptions | null,
+) {
+  if (values.role !== "CLIENT" || !values.organizationId) {
+    return false;
+  }
+  const organization = enterpriseOptions?.organizations.find(
+    (option) => option.id === values.organizationId,
+  );
+  return organization?.type === "TNB";
 }
 
 function roleTone(role: UserRole): Tone {
@@ -527,6 +552,7 @@ function UserFormModal({
   const visibleTeams = isManagerOnly
     ? teams.filter((team) => !managerOrgId || team.organizationId === managerOrgId)
     : teams;
+  const showClientRank = !isManagerOnly && isClientRankEligible(values, enterpriseOptions);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
@@ -675,6 +701,30 @@ function UserFormModal({
               </label>
             </div>
           )}
+
+          {showClientRank ? (
+            <label className="block">
+              <span className={modalLabelClass}>TNB Rank</span>
+              <select
+                value={values.clientRank}
+                onChange={(event) =>
+                  onChange("clientRank", event.target.value as ClientRank | "")
+                }
+                className={modalSelectClass}
+              >
+                <option value="">No rank (view only)</option>
+                {CLIENT_RANKS.map((rank) => (
+                  <option key={rank} value={rank}>
+                    {clientRankLabel(rank)}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
+                Foreman and Technician can assign Pencawang to maintenance companies, verify or
+                re-open repairs, and decide cannot-repair items. Engineer is view only.
+              </span>
+            </label>
+          ) : null}
 
           <UserAccessPicker
             title="MAINHEAD Access"
@@ -1101,6 +1151,7 @@ function UsersContent() {
       email: user.email,
       password: "",
       role: user.role,
+      clientRank: user.clientRank ?? "",
       isActive: user.isActive,
       organizationId: user.organizationId ?? "",
       branchId: user.branchId ?? "",
@@ -1165,6 +1216,13 @@ function UsersContent() {
     try {
       const trimmedName = userForm.name.trim();
       const trimmedEmail = userForm.email.trim();
+      // Rank is ADMIN-only: managers never send it (the API strips it anyway).
+      // An admin form that no longer qualifies sends null so a stale pick clears.
+      const clientRank = isManagerOnly
+        ? undefined
+        : isClientRankEligible(userForm, enterpriseOptions)
+          ? userForm.clientRank || null
+          : null;
 
       if (modalMode === "create") {
         const { temporaryPassword, ...managed } = await createUser(session.token, {
@@ -1172,6 +1230,7 @@ function UsersContent() {
           email: trimmedEmail,
           password: userForm.password,
           role: userForm.role,
+          clientRank,
           isActive: userForm.isActive,
           organizationId: userForm.organizationId,
           branchId: userForm.branchId,
@@ -1197,6 +1256,7 @@ function UsersContent() {
           name: trimmedName,
           email: trimmedEmail,
           role: userForm.role,
+          clientRank,
           organizationId: userForm.organizationId,
           branchId: userForm.branchId,
           mainheadId: userForm.mainheadAccessIds[0] ?? userForm.mainheadId,
@@ -1473,6 +1533,11 @@ function UsersContent() {
                             </td>
                             <td className={`${tableCellClass} whitespace-nowrap`}>
                               <RoleBadge role={user.role} />
+                              {user.clientRank ? (
+                                <div className="mt-1">
+                                  <Chip tone="neutral">{clientRankLabel(user.clientRank)}</Chip>
+                                </div>
+                              ) : null}
                             </td>
                             <td className={tableCellClass}>
                               <div className="max-w-52 truncate font-medium text-[var(--foreground)]">

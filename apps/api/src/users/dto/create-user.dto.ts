@@ -1,4 +1,4 @@
-import { MainheadAccessRole, UserRole } from '@prisma/client';
+import { ClientRank, MainheadAccessRole, UserRole } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsArray,
@@ -93,6 +93,13 @@ export class CreateUserDto {
   @IsOptional()
   @IsEnum(MainheadAccessRole)
   accessRole?: MainheadAccessRole;
+
+  // TNB maintenance rank. ADMIN-only; valid only on a CLIENT user in a TNB
+  // organization (enforced in UsersService). Send null / "" to clear.
+  @Transform(normalizeNullableString)
+  @IsOptional()
+  @IsEnum(ClientRank)
+  clientRank?: ClientRank | null;
 
   @IsOptional()
   @IsBoolean()
