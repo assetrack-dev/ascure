@@ -62,6 +62,8 @@ type NavItem = {
   requiresClientViewer?: boolean;
   /** Gated to QA governors (canGovernQa) + ADMIN — e.g. the defect Operations Board. */
   requiresGovernQa?: boolean;
+  /** Server flag canViewRepairVerification: ADMIN, TNB, main-contractor managers. */
+  requiresRepairVerification?: boolean;
   /** Admin config surface — collapsed under the "Setup" group in the sidebar. */
   group?: "setup";
   /** Kept in code but removed from the nav (pending deletion). */
@@ -106,7 +108,14 @@ const MANAGER_NAV_HREFS = new Set<string>([
 // only ADMIN/MANAGER/SUPERVISOR), so the client branch must run before it.
 // "/maintenance-packages" is TNB's hand-off of surveyed Pencawang to maintenance
 // companies; every TNB rank sees it, only Foreman/Technician can act (API-enforced).
-const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/visits", "/map", "/maintenance-packages"]);
+// "/maintenance-verification" is where TNB signs off (or re-opens) repairs.
+const CLIENT_NAV_HREFS = new Set<string>([
+  "/progress",
+  "/visits",
+  "/map",
+  "/maintenance-packages",
+  "/maintenance-verification",
+]);
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
@@ -141,6 +150,15 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       icon: PackageCheck,
       section: "operations",
       requiresClientViewer: true,
+    },
+    // Repair sign-off (verify / reject / re-open / cannot-repair). Server flag
+    // decides: ADMIN, TNB, and main-contractor managers only.
+    {
+      href: "/maintenance-verification",
+      label: "Repair Verification",
+      icon: ClipboardCheck,
+      section: "operations",
+      requiresRepairVerification: true,
     },
     {
       href: "/maintenance-workspace",
@@ -242,6 +260,10 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       if (item.href === "/reports") {
         return user?.canReport === true;
       }
+      // Main-contractor managers only (a subcontractor never signs off its own work).
+      if (item.requiresRepairVerification) {
+        return user?.canViewRepairVerification === true;
+      }
       return MANAGER_NAV_HREFS.has(item.href);
     }
 
@@ -258,6 +280,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     if (
       item.requiresGovernQa &&
       user?.canGovernQa !== true &&
+      user?.role !== "ADMIN"
+    ) {
+      return false;
+    }
+
+    if (
+      item.requiresRepairVerification &&
+      user?.canViewRepairVerification !== true &&
       user?.role !== "ADMIN"
     ) {
       return false;

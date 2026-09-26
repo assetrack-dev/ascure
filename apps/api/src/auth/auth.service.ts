@@ -6,6 +6,7 @@ import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { resolveCanImport } from '../common/authorization/import-actor';
 import { hasClientMaintenanceActorShape } from '../common/authorization/client-maintenance-actor';
+import { resolveMainContractorOrgIds } from '../common/authorization/maintenance-closure';
 import {
   buildScopeContext,
   resolveMaintenanceOrgIds,
@@ -113,6 +114,10 @@ export class AuthService {
       await this.resolveCanOverseeSubcontractors(requestUser);
     const isClientViewer = await this.resolveIsClientViewer(requestUser);
     const canActOnMaintenanceAsClient = hasClientMaintenanceActorShape(user);
+    const canViewRepairVerification = await this.resolveCanViewRepairVerification(
+      requestUser,
+      isClientViewer,
+    );
 
     return {
       access_token: accessToken,
@@ -138,6 +143,7 @@ export class AuthService {
         canOverseeSubcontractors,
         isClientViewer,
         canActOnMaintenanceAsClient,
+        canViewRepairVerification,
       },
     };
   }
@@ -200,6 +206,21 @@ export class AuthService {
    * Exposed as a flag because the admin web can't tell a client org from a
    * contractor one by role alone; every /client endpoint re-checks server-side.
    */
+  /**
+   * Who gets the repair-verification page (docs/PLAN-maintenance-flow.md §5.3):
+   * ADMIN, any TNB user (Engineers view only), and the manager of an active
+   * MAIN_CONTRACTOR. Mirrors MaintenanceClosureService.resolveActor.
+   */
+  private async resolveCanViewRepairVerification(
+    user: RequestUser,
+    isClientViewer: boolean,
+  ): Promise<boolean> {
+    if (user.role === UserRole.ADMIN || isClientViewer) {
+      return true;
+    }
+    return (await resolveMainContractorOrgIds(this.prisma, user)) !== null;
+  }
+
   private async resolveIsClientViewer(user: RequestUser): Promise<boolean> {
     const ctx = await buildScopeContext(this.prisma, user);
     return ctx.isClientViewer;
@@ -299,6 +320,10 @@ export class AuthService {
       await this.resolveCanOverseeSubcontractors(user);
     const isClientViewer = await this.resolveIsClientViewer(user);
     const canActOnMaintenanceAsClient = hasClientMaintenanceActorShape(currentUser);
+    const canViewRepairVerification = await this.resolveCanViewRepairVerification(
+      user,
+      isClientViewer,
+    );
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -316,6 +341,7 @@ export class AuthService {
       canOverseeSubcontractors,
       isClientViewer,
       canActOnMaintenanceAsClient,
+      canViewRepairVerification,
     };
   }
 

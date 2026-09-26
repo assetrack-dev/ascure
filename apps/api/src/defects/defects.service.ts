@@ -27,6 +27,10 @@ import {
 } from '@ascure/shared-utils';
 import { isQaActor } from '../common/authorization/qa-actor';
 import {
+  isCannotRepairOutcome,
+  resolveMainContractorOrgIds,
+} from '../common/authorization/maintenance-closure';
+import {
   inspectorOwnsDefects,
   releaseDefectsOnReport,
   resolveDefectGovernanceMode,
@@ -4496,8 +4500,33 @@ export class DefectsService {
       assignedUserId: string | null;
       assignedToTeamId: string | null;
       assignedTeamId: string | null;
+      maintenanceOrganizationId: string | null;
+      resolutionOutcome: DefectResolutionOutcome | null;
     },
   ) {
+    // Routed to a maintenance company (TNB package / emergency routing): the
+    // crew never signs off its own repair (docs/PLAN-maintenance-flow.md §5.3).
+    // Here only ADMIN or the main contractor manager over the routed company may
+    // close — TNB signs off via /maintenance-verification, and a cannot-repair
+    // outcome is TNB's decision alone.
+    if (defect.maintenanceOrganizationId) {
+      if (user.role === UserRole.ADMIN) {
+        return;
+      }
+      if (isCannotRepairOutcome(defect.resolutionOutcome)) {
+        throw new ForbiddenException(
+          'A cannot-repair item is decided by TNB (or an admin).',
+        );
+      }
+      const mainContractorOrgIds = await resolveMainContractorOrgIds(this.prisma, user);
+      if (mainContractorOrgIds?.includes(defect.maintenanceOrganizationId)) {
+        return;
+      }
+      throw new ForbiddenException(
+        'A repair on a routed Kejanggalan is verified by TNB, the main contractor manager, or an admin.',
+      );
+    }
+
     if (!inspectorOwnsDefects()) {
       await this.assertCanGovernQa(user, 'Closure verification');
       return;

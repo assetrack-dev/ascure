@@ -50,6 +50,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
       "canActOnMaintenanceAsClient" in user
         ? user.canActOnMaintenanceAsClient
         : undefined,
+    canViewRepairVerification:
+      "canViewRepairVerification" in user ? user.canViewRepairVerification : undefined,
   };
 }
 
