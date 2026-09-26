@@ -823,7 +823,8 @@ function NetworkContent() {
                             x={pos.x + 13}
                             y={pos.y + 4}
                             fontSize={12}
-                            fill={dead ? "#DC2626" : "#0F172A"}
+                            // Theme text colour — near-black was invisible on the dark stage.
+                            fill={dead ? "#DC2626" : "var(--foreground)"}
                             fontWeight={dead ? 700 : 500}
                           >
                             {pole.noTiangRondaan}
