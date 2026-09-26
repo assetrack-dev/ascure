@@ -45,6 +45,11 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
         ? user.canOverseeSubcontractors
         : undefined,
     isClientViewer: "isClientViewer" in user ? user.isClientViewer : undefined,
+    clientRank: "clientRank" in user ? user.clientRank : undefined,
+    canActOnMaintenanceAsClient:
+      "canActOnMaintenanceAsClient" in user
+        ? user.canActOnMaintenanceAsClient
+        : undefined,
   };
 }
 

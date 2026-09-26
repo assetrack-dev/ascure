@@ -25,6 +25,13 @@ export interface ApiUser {
    * /client endpoint re-checks this server-side.
    */
   isClientViewer?: boolean;
+  /** TNB maintenance rank (FOREMAN / TECHNICIAN / ENGINEER), null otherwise. */
+  clientRank?: "FOREMAN" | "TECHNICIAN" | "ENGINEER" | null;
+  /**
+   * TNB Foreman / Technician in an active TNB org: may assign PEs to maintenance
+   * companies and verify / re-open repairs. The API re-checks on every action.
+   */
+  canActOnMaintenanceAsClient?: boolean;
 }
 
 export interface AuthUser {
@@ -110,6 +117,8 @@ export interface AuthUser {
   canOverseeSubcontractors?: boolean;
   /** Network-OWNER org (TNB / CLIENT) → the read-only client Progress view. */
   isClientViewer?: boolean;
+  clientRank?: "FOREMAN" | "TECHNICIAN" | "ENGINEER" | null;
+  canActOnMaintenanceAsClient?: boolean;
 }
 
 export interface AuthSession {

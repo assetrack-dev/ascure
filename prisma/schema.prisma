@@ -16,6 +16,19 @@ enum UserRole {
   CLIENT
 }
 
+// A TNB (network-owner) user's rank for the maintenance flow
+// (docs/PLAN-maintenance-flow.md §4.2). Deliberately separate from UserRole:
+// a TNB "Technician" outranks a Foreman and means something different from a
+// contractor TECHNICIAN. TNB users stay role CLIENT (read-only everywhere); the
+// rank only unlocks the maintenance actions — FOREMAN/TECHNICIAN assign PEs to
+// companies, verify/reject/re-open repairs and decide "cannot repair";
+// ENGINEER is view-only. Only meaningful on a CLIENT user in a TNB organization.
+enum ClientRank {
+  ENGINEER
+  TECHNICIAN
+  FOREMAN
+}
+
 enum MainheadAccessRole {
   ENGINEER
   SENIOR_TECHNICIAN
@@ -405,6 +418,8 @@ model User {
   // cleared when the user changes it via PATCH /auth/change-password.
   mustChangePassword        Boolean                       @default(false)
   role                      UserRole
+  // TNB maintenance rank (see ClientRank). Null for everyone else.
+  clientRank                ClientRank?
   isActive                  Boolean                       @default(true)
   createdAt                 DateTime                      @default(now())
   updatedAt                 DateTime                      @updatedAt

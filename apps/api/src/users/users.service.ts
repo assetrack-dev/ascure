@@ -6,7 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'crypto';
-import { MainheadAccessRole, OrganizationType, Prisma, UserRole } from '@prisma/client';
+import {
+  ClientRank,
+  MainheadAccessRole,
+  OrganizationType,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
@@ -143,6 +149,12 @@ export class UsersService {
           mainheadId: legacyMainheadId,
           teamId: dto.teamId,
         });
+        const clientRank = await this.resolveClientRankForWrite(tx, {
+          organizationId: operationalLinks.organizationId,
+          role: dto.role,
+          requested: dto.clientRank,
+          existing: null,
+        });
 
         const createdUser = await tx.user.create({
           data: {
@@ -157,6 +169,7 @@ export class UsersService {
             passwordHash,
             mustChangePassword: true,
             role: dto.role,
+            clientRank,
             isActive: dto.isActive ?? true,
           },
           select: this.userSelect(),
@@ -282,6 +295,8 @@ export class UsersService {
       mainheadId: null,
       operationalRegionAccessIds: undefined,
       accessRole: undefined,
+      // TNB maintenance rank is ADMIN-only (TNB users are admin-provisioned).
+      clientRank: undefined,
     };
   }
 
@@ -350,6 +365,8 @@ export class UsersService {
       mainheadId: undefined,
       operationalRegionAccessIds: undefined,
       accessRole: undefined,
+      // TNB maintenance rank is ADMIN-only (TNB users are admin-provisioned).
+      clientRank: undefined,
     };
   }
 
@@ -364,6 +381,7 @@ export class UsersService {
           select: {
             id: true,
             role: true,
+            clientRank: true,
             isActive: true,
             organizationId: true,
             branchId: true,
@@ -481,6 +499,20 @@ export class UsersService {
           data.branchId = operationalLinks.branchId;
           data.mainheadId = operationalLinks.mainheadId;
           data.teamId = operationalLinks.teamId;
+        }
+
+        // Re-evaluated on every edit so a rank never outlives the TNB/CLIENT
+        // status that makes it meaningful (org or role change clears it).
+        const clientRank = await this.resolveClientRankForWrite(tx, {
+          organizationId: operationalLinks
+            ? operationalLinks.organizationId
+            : existingUser.organizationId,
+          role: dto.role ?? existingUser.role,
+          requested: dto.clientRank,
+          existing: existingUser.clientRank,
+        });
+        if (clientRank !== existingUser.clientRank) {
+          data.clientRank = clientRank;
         }
 
         if (
@@ -1239,6 +1271,48 @@ export class UsersService {
     return mainheads.map((mainhead) => this.serializeMainheadOption(mainhead));
   }
 
+  /**
+   * The TNB maintenance rank to persist (docs/PLAN-maintenance-flow.md §4.2).
+   * A rank only means something on a CLIENT user inside a TNB organization:
+   * explicitly setting one anywhere else is a 400, and an existing rank is
+   * silently cleared once the user stops qualifying (moved org / role change).
+   */
+  private async resolveClientRankForWrite(
+    tx: Prisma.TransactionClient,
+    input: {
+      organizationId: string | null;
+      role: UserRole;
+      requested: ClientRank | null | undefined;
+      existing: ClientRank | null;
+    },
+  ): Promise<ClientRank | null> {
+    const effective =
+      input.requested === undefined ? input.existing : input.requested;
+    if (effective === null) {
+      return null;
+    }
+
+    const organization =
+      input.role === UserRole.CLIENT && input.organizationId
+        ? await tx.organization.findUnique({
+            where: { id: input.organizationId },
+            select: { type: true },
+          })
+        : null;
+
+    if (organization?.type === OrganizationType.TNB) {
+      return effective;
+    }
+
+    if (input.requested !== undefined && input.requested !== null) {
+      throw new BadRequestException(
+        'A TNB rank can only be set on a Client user in a TNB organization.',
+      );
+    }
+
+    return null;
+  }
+
   private userSelect() {
     return {
       id: true,
@@ -1251,6 +1325,7 @@ export class UsersService {
       email: true,
       name: true,
       role: true,
+      clientRank: true,
       isActive: true,
       mustChangePassword: true,
       createdAt: true,

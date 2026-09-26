@@ -39,6 +39,7 @@ export function createUser(token: string, payload: CreateUserPayload) {
       // Omitted when blank ⇒ the server generates + returns a temporary password.
       password: payload.password ? payload.password : undefined,
       role: payload.role,
+      clientRank: payload.clientRank,
       isActive: payload.isActive ?? true,
       departmentId: normalizeDepartmentId(payload.departmentId),
       organizationId: normalizeDepartmentId(payload.organizationId),
