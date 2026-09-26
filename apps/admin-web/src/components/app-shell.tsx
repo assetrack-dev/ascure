@@ -104,7 +104,9 @@ const MANAGER_NAV_HREFS = new Set<string>([
 // gets /visits, a purpose-built read-only feed over the same surveys.
 // ⚠ This allow-list also OVERRIDES the /map item's own `roles` gate (which lists
 // only ADMIN/MANAGER/SUPERVISOR), so the client branch must run before it.
-const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/visits", "/map"]);
+// "/maintenance-packages" is TNB's hand-off of surveyed Pencawang to maintenance
+// companies; every TNB rank sees it, only Foreman/Technician can act (API-enforced).
+const CLIENT_NAV_HREFS = new Set<string>(["/progress", "/visits", "/map", "/maintenance-packages"]);
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const pathname = usePathname();
@@ -130,6 +132,15 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       // Hidden from the nav for now (owner: not needed right now). Route + code
       // kept; breadcrumbs still resolve if reached directly.
       hidden: true,
+    },
+    // TNB → maintenance company hand-off (docs/PLAN-maintenance-flow.md). TNB +
+    // ADMIN only (requiresClientViewer); contractors use the workspace below.
+    {
+      href: "/maintenance-packages",
+      label: "Maintenance Packages",
+      icon: PackageCheck,
+      section: "operations",
+      requiresClientViewer: true,
     },
     {
       href: "/maintenance-workspace",
