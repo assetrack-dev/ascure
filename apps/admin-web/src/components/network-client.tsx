@@ -1,12 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   Download,
   GitBranch,
   Map as MapIcon,
+  Maximize,
+  Minimize,
+  PanelRightClose,
+  PanelRightOpen,
   PencilRuler,
   Plus,
   RefreshCw,
@@ -62,6 +66,9 @@ const inputClassName =
   "h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100";
 const secondaryButtonClassName =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400";
+
+/** localStorage key: the Network page's side panel collapsed state. */
+const PANEL_HIDDEN_KEY = "ascure.network.panelHidden";
 
 function feederColor(code: string, feeders: { code: string }[]) {
   const index = feeders.findIndex((feeder) => feeder.code === code);
@@ -211,6 +218,59 @@ function NetworkContent() {
   const [isLoadingNetwork, setIsLoadingNetwork] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<"schematic" | "map" | "route">("schematic");
+  // More room for the stage: hide the side panel (remembered per browser) and/or
+  // go browser full screen (header dropped, Esc to leave).
+  const [panelHidden, setPanelHidden] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      setPanelHidden(window.localStorage.getItem(PANEL_HIDDEN_KEY) === "1");
+    } catch {
+      // Storage unavailable (private mode) — keep the default.
+    }
+    // Leaving browser full screen (Esc / F11) also leaves the expanded view.
+    const onChange = () => {
+      if (!document.fullscreenElement) setIsFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Esc leaves the expanded view even where the browser refused real full
+  // screen (embedded browsers, some kiosk setups).
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
+
+  const togglePanel = useCallback(() => {
+    setPanelHidden((hidden) => {
+      try {
+        window.localStorage.setItem(PANEL_HIDDEN_KEY, hidden ? "0" : "1");
+      } catch {
+        // Not persisted — still toggles for this visit.
+      }
+      return !hidden;
+    });
+  }, []);
+
+  // "Full screen" = the workspace covers the whole page (always works), plus
+  // real browser full screen where the browser allows it.
+  const toggleFullscreen = useCallback(() => {
+    if (isFullscreen) {
+      setIsFullscreen(false);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    setIsFullscreen(true);
+    void workspaceRef.current?.requestFullscreen?.().catch(() => undefined);
+  }, [isFullscreen]);
   const [routeDrawing, setRouteDrawing] = useState<RouteDrawing | null>(null);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [newFrom, setNewFrom] = useState("");
@@ -493,8 +553,17 @@ function NetworkContent() {
           the stage takes every remaining pixel, so the graph is as big as the
           screen allows. Below lg the page keeps its natural scrolling flow. */}
       <main className="px-4 py-3 sm:px-6 lg:h-[calc(100dvh-64px)] lg:overflow-hidden">
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="flex flex-col gap-3 border-b border-[var(--line)] pb-3 md:flex-row md:items-end md:justify-between">
+        <div
+          ref={workspaceRef}
+          className={`flex h-full min-h-0 flex-col ${
+            isFullscreen ? "fixed inset-0 z-[1300] h-screen bg-[var(--background)] p-3" : ""
+          }`}
+        >
+          <div
+            className={`${
+              isFullscreen ? "hidden" : "flex"
+            } flex-col gap-3 border-b border-[var(--line)] pb-3 md:flex-row md:items-end md:justify-between`}
+          >
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-[var(--brand)]">
                 Network
@@ -608,21 +677,49 @@ function NetworkContent() {
                   onClick={() => setView("route")}
                   className={viewTabClass(view === "route")}
                 >
-                  <PencilRuler size={15} /> Lukisan
+                  <PencilRuler size={15} /> Drawing
+                </button>
+              </div>
+            ) : null}
+            {network ? (
+              <div className="ml-auto flex h-11 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={togglePanel}
+                  className={secondaryButtonClassName}
+                  title={panelHidden ? "Show the feeders / NOP panel" : "Hide the side panel for a wider view"}
+                >
+                  {panelHidden ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+                  {panelHidden ? "Show panel" : "Hide panel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  className={secondaryButtonClassName}
+                  title={isFullscreen ? "Leave full screen (Esc)" : "Use the whole screen for the view"}
+                >
+                  {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+                  {isFullscreen ? "Exit full screen" : "Full screen"}
                 </button>
               </div>
             ) : null}
           </div>
 
           {network ? (
-            <div className="mt-3 grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div
+              className={`mt-3 grid gap-4 lg:min-h-0 lg:flex-1 ${
+                panelHidden ? "" : "lg:grid-cols-[minmax(0,1fr)_300px]"
+              } ${isFullscreen ? "min-h-0 flex-1" : ""}`}
+            >
               {/* The stage: a fixed generous height on small screens, every
                   remaining pixel on lg+. The map fills it; the schematic pans
                   by scrolling inside it. */}
               <section
                 className={`${
                   view === "map" ? "overflow-hidden" : "overflow-auto"
-                } h-[62vh] min-h-[420px] rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] lg:h-auto lg:min-h-0`}
+                } ${
+                  isFullscreen ? "h-full min-h-0" : "h-[62vh] min-h-[420px]"
+                } rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)] lg:h-auto lg:min-h-0`}
               >
                 {view === "map" ? (
                   <NetworkMap
@@ -743,7 +840,9 @@ function NetworkContent() {
                 )}
               </section>
 
-              <aside className="space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
+              <aside
+                className={`${panelHidden ? "hidden" : ""} space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5`}
+              >
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4 shadow-[var(--shadow-card)]">
                   <p className="text-xs font-semibold uppercase text-slate-500">
                     Feeders — click to isolate

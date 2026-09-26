@@ -8,7 +8,7 @@
  * blackbox markers, stay (umbang) counts, and open defects as orange notes.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus, Maximize2 } from "lucide-react";
 import type { RouteDrawing as RouteDrawingData } from "@/lib/network";
 
@@ -59,6 +59,24 @@ function dominantCable(items: Record<string, unknown> | undefined) {
 
 export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
   const [zoom, setZoom] = useState(1);
+  // Zoom 1 = fit the view's width (not a fixed canvas), so hiding the side
+  // panel or going full screen genuinely enlarges the drawing.
+  const [frameWidth, setFrameWidth] = useState<number | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  // Callback ref: the frame only mounts once the drawing has data, so attach
+  // the observer whenever it (re)appears rather than once on first render.
+  const frameRef = useCallback((frame: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (!frame) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.floor(entry.contentRect.width);
+      if (next > 0) setFrameWidth(next);
+    });
+    observer.observe(frame);
+    observerRef.current = observer;
+  }, []);
+  useEffect(() => () => observerRef.current?.disconnect(), []);
 
   // Continuous cable runs (DC-sheet convention): a pole with no recorded
   // cable inherits the type of the run feeding it — colours only break where
@@ -163,10 +181,11 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
   }
   const legendCables = CABLE_CLASSES.filter((cls) => presentCables.has(cls.label));
 
-  const width = CANVAS_W * zoom;
+  const fitScale = frameWidth ? frameWidth / CANVAS_W : 1;
+  const width = CANVAS_W * fitScale * zoom;
 
   return (
-    <div className="relative h-full">
+    <div ref={frameRef} className="relative h-full">
       <div className="absolute right-3 top-3 z-10 flex gap-1 rounded-md border border-[var(--line)] bg-[var(--panel)] p-0.5 shadow-[var(--shadow-soft)]">
         <button
           type="button"
@@ -196,10 +215,10 @@ export function RouteDrawingView({ data }: { data: RouteDrawingData }) {
 
       <svg
         width={width}
-        height={height * zoom}
+        height={height * fitScale * zoom}
         viewBox={`0 0 ${CANVAS_W} ${height}`}
         role="img"
-        aria-label={`Lukisan laluan for ${data.substation.code}`}
+        aria-label={`Route drawing for ${data.substation.code}`}
         style={{ background: "#ffffff" }}
       >
         {/* Header — Pencawang name + centre coordinate, DC-sheet style. */}
