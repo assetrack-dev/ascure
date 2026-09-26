@@ -353,6 +353,7 @@ model Tenant {
   organizations       Organization[]
   deletionLogs        DeletionLog[]
   assetShareLinks     AssetShareLink[]
+  maintenancePackages MaintenancePackage[]
 }
 
 model Department {
@@ -468,6 +469,8 @@ model User {
   supervisedTeams           TeamSupervisor[]
   createdAssetShareLinks    AssetShareLink[]              @relation("AssetShareLinkCreatedBy")
 
+  assignedMaintenancePackages MaintenancePackage[] @relation("MaintenancePackageAssignedBy")
+
   @@index([tenantId])
   @@index([organizationId])
   @@index([branchId])
@@ -527,6 +530,7 @@ model Organization {
   assignedUsers          User[]                             @relation("UserOperationalOrganization")
   maintainedMainheads    Mainhead[]                         @relation("MainheadMaintenanceOrg")
   routedDefects          Defect[]                           @relation("DefectMaintenanceOrg")
+  maintenancePackages    MaintenancePackage[]
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
@@ -1191,6 +1195,7 @@ model SiteVisit {
   teamContributions     SiteVisitTeamContribution[]
   reports               SiteVisitReport[]
   reportRuns            SiteVisitReportRun[]
+  maintenancePackages   MaintenancePackage[]
 
   @@index([tenantId])
   @@index([teamId, status])
@@ -1837,4 +1842,35 @@ model SiteVisitReportRun {
 
   @@index([siteVisitId])
   @@index([tenantId])
+}
+
+// TNB's hand-off of a surveyed Pencawang (one SiteVisit = one PE survey cycle) to
+// a maintenance COMPANY (docs/PLAN-maintenance-flow.md §5.1). Either ONE row for
+// the whole PE (category null) or one row per work type (RENTIS / CAT_TIANG /
+// SELENGGARAAN) — never both; the partial unique index in the migration enforces
+// one whole-PE row per visit, the service keeps the two shapes exclusive.
+// Assigning stamps Defect.maintenanceOrganizationId on the PE's released
+// Kejanggalan, which is what every contractor-side scope already keys on.
+// Progress is DERIVED from the defects, never stored here.
+model MaintenancePackage {
+  id                        String               @id @default(uuid()) @db.Uuid
+  tenantId                  String               @db.Uuid
+  siteVisitId               String               @db.Uuid
+  category                  MaintenanceCategory?
+  maintenanceOrganizationId String               @db.Uuid
+  // Target completion date set by TNB for the whole package.
+  dueDate                   DateTime?
+  notes                     String?
+  assignedByUserId          String?              @db.Uuid
+  assignedAt                DateTime             @default(now())
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  tenant                    Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit                 SiteVisit            @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  maintenanceOrganization   Organization         @relation(fields: [maintenanceOrganizationId], references: [id], onDelete: Restrict)
+  assignedBy                User?                @relation("MaintenancePackageAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([siteVisitId, category])
+  @@index([tenantId])
+  @@index([maintenanceOrganizationId])
 }
