@@ -32,6 +32,8 @@ export interface ApiUser {
    * companies and verify / re-open repairs. The API re-checks on every action.
    */
   canActOnMaintenanceAsClient?: boolean;
+  /** ADMIN, TNB, or a main-contractor manager → the repair-verification page. */
+  canViewRepairVerification?: boolean;
 }
 
 export interface AuthUser {
@@ -119,6 +121,8 @@ export interface AuthUser {
   isClientViewer?: boolean;
   clientRank?: "FOREMAN" | "TECHNICIAN" | "ENGINEER" | null;
   canActOnMaintenanceAsClient?: boolean;
+  /** ADMIN, TNB, or a main-contractor manager → the repair-verification page. */
+  canViewRepairVerification?: boolean;
 }
 
 export interface AuthSession {
