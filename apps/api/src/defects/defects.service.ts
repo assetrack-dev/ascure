@@ -31,6 +31,10 @@ import {
   resolveMainContractorOrgIds,
 } from '../common/authorization/maintenance-closure';
 import {
+  evidenceTypeLabel,
+  isRepairStageEvidenceType,
+} from './evidence-types';
+import {
   inspectorOwnsDefects,
   releaseDefectsOnReport,
   resolveDefectGovernanceMode,
@@ -1395,6 +1399,27 @@ export class DefectsService {
     }
 
     const defect = await this.findOrCreateAccessibleDefect(user, defectId);
+    const evidenceType =
+      this.normalizeOptionalString(dto.evidenceType)?.toUpperCase() ??
+      'MAINTENANCE_PROOF';
+    const isRepairStage = isRepairStageEvidenceType(evidenceType);
+    const lifecycleBeforeUpload = this.getEffectiveLifecycleStatus(
+      defect.lifecycleStatus,
+    );
+
+    if (isRepairStage && lifecycleBeforeUpload === DefectLifecycleStatus.CLOSED) {
+      throw new BadRequestException(
+        'This Kejanggalan is closed — repair photos can no longer be added.',
+      );
+    }
+
+    // docs/PLAN-maintenance-flow.md §5.3: on a routed Kejanggalan the crew's
+    // first repair photo is what starts the work (ASSIGNED → IN_PROGRESS).
+    const startsWork =
+      isRepairStage &&
+      defect.maintenanceOrganizationId !== null &&
+      lifecycleBeforeUpload === DefectLifecycleStatus.ASSIGNED;
+
     const uploadDirectory = buildDefectEvidenceImagesDirectory(defect.id);
 
     await mkdir(uploadDirectory, { recursive: true });
@@ -1403,9 +1428,6 @@ export class DefectsService {
     const fileName = `${Date.now()}-${randomUUID()}${fileExtension}`;
     const storageKey = buildDefectEvidenceImagePath(defect.id, fileName);
     const filePath = resolve(uploadDirectory, fileName);
-    const evidenceType =
-      this.normalizeOptionalString(dto.evidenceType)?.toUpperCase() ??
-      'MAINTENANCE_PROOF';
     const timestamp = dto.timestamp
       ? this.parseEvidenceTimestamp(dto.timestamp)
       : null;
@@ -1437,11 +1459,35 @@ export class DefectsService {
           defectId: defect.id,
           type: DefectTimelineEventType.COMMENT,
           comment: note
-            ? `Maintenance proof image uploaded. ${note}`
-            : 'Maintenance proof image uploaded.',
+            ? `${evidenceTypeLabel(evidenceType)} uploaded. ${note}`
+            : `${evidenceTypeLabel(evidenceType)} uploaded.`,
           createdByUserId: user.id,
         },
       });
+
+      if (startsWork) {
+        // Guarded: only moves a Kejanggalan that is still ASSIGNED.
+        const started = await tx.defect.updateMany({
+          where: { id: defect.id, lifecycleStatus: DefectLifecycleStatus.ASSIGNED },
+          data: {
+            lifecycleStatus: DefectLifecycleStatus.IN_PROGRESS,
+            status: DefectStatus.IN_PROGRESS,
+          },
+        });
+        if (started.count > 0) {
+          await tx.defectTimelineEntry.create({
+            data: {
+              id: randomUUID(),
+              defectId: defect.id,
+              type: DefectTimelineEventType.MAINTENANCE_STARTED,
+              fromLifecycleStatus: DefectLifecycleStatus.ASSIGNED,
+              toLifecycleStatus: DefectLifecycleStatus.IN_PROGRESS,
+              comment: 'Maintenance started (first repair photo).',
+              createdByUserId: user.id,
+            },
+          });
+        }
+      }
 
       return createdImage;
     });
@@ -2313,6 +2359,11 @@ export class DefectsService {
     const currentLifecycleStatus = this.getEffectiveLifecycleStatus(
       defect.lifecycleStatus,
     );
+
+    if (defect.maintenanceOrganizationId) {
+      await this.assertRepairEvidenceComplete(defect.id, resolutionOutcome);
+    }
+
     const completionLifecyclePath =
       this.getMaintenanceCompletionLifecyclePath(currentLifecycleStatus);
     const startsMaintenance = completionLifecyclePath.includes(
@@ -3920,8 +3971,14 @@ export class DefectsService {
       evidenceImages: defect.evidenceImages.map((image) =>
         this.serializeDefectEvidenceImage(image),
       ),
+      // Repair proof = the crew's before / during / after photos plus legacy
+      // MAINTENANCE_PROOF (everything except the inspector's emergency media).
       maintenanceProofImages: defect.evidenceImages
-        .filter((image) => image.evidenceType === 'MAINTENANCE_PROOF')
+        .filter(
+          (image) =>
+            image.evidenceType === 'MAINTENANCE_PROOF' ||
+            isRepairStageEvidenceType(image.evidenceType),
+        )
         .map((image) => this.serializeDefectEvidenceImage(image)),
       timeline: this.serializeDefectTimeline(defect),
     };
@@ -4493,6 +4550,34 @@ export class DefectsService {
    * authoritative call, so no separate QA actor is required (north-star §5/§6).
    * Legacy QA_GATED mode keeps the QA-authority requirement.
    */
+  /**
+   * Completion gate for a routed Kejanggalan (docs/PLAN-maintenance-flow.md §6,
+   * owner decision C6/C7): per Kejanggalan, at least one BEFORE and one AFTER
+   * photo. A cannot-repair outcome needs only the BEFORE photo (there is no
+   * "after" when nothing was repaired) — TNB then decides it.
+   */
+  private async assertRepairEvidenceComplete(
+    defectId: string,
+    resolutionOutcome: DefectResolutionOutcome,
+  ) {
+    const rows = await this.prisma.defectEvidenceImage.groupBy({
+      by: ['evidenceType'],
+      where: { defectId, evidenceType: { in: ['BEFORE', 'AFTER'] } },
+      _count: { _all: true },
+    });
+    const has = (type: string) => rows.some((row) => row.evidenceType === type);
+    const missing = [
+      has('BEFORE') ? null : 'a BEFORE photo',
+      isCannotRepairOutcome(resolutionOutcome) || has('AFTER') ? null : 'an AFTER photo',
+    ].filter((item): item is string => item !== null);
+
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Add ${missing.join(' and ')} of this Kejanggalan before marking it done.`,
+      );
+    }
+  }
+
   private async assertCanCloseDefect(
     user: RequestUser,
     defect: {
