@@ -733,6 +733,27 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       ),
     [defect],
   );
+  // Repair photos grouped by stage (docs/PLAN-maintenance-flow.md §6); photos
+  // from older app builds carry no stage and land under "Other".
+  const maintenanceEvidenceGroups = useMemo(() => {
+    const stageOf = (entry: (typeof maintenanceEvidenceImages)[number]) => {
+      const type = String(
+        (entry.image as { evidenceType?: string | null }).evidenceType ?? "",
+      ).toUpperCase();
+      return type === "BEFORE" || type === "DURING" || type === "AFTER" ? type : "OTHER";
+    };
+    return [
+      { key: "BEFORE", label: "Before" },
+      { key: "DURING", label: "During" },
+      { key: "AFTER", label: "After" },
+      { key: "OTHER", label: "Other" },
+    ]
+      .map((group) => ({
+        ...group,
+        entries: maintenanceEvidenceImages.filter((entry) => stageOf(entry) === group.key),
+      }))
+      .filter((group) => group.entries.length > 0);
+  }, [maintenanceEvidenceImages]);
   const inspectionEvidenceImages = useMemo(
     () => buildEvidenceEntries(defect?.images ?? []),
     [defect],
@@ -1262,12 +1283,29 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                           {maintenanceEvidenceImages.length} photos
                         </span>
                       </div>
-                      <div className="mt-3">
-                        <EvidenceImageGrid
-                          entries={maintenanceEvidenceImages}
-                          emptyText="No maintenance proof photos linked."
-                          titlePrefix="Maintenance Proof"
-                        />
+                      <div className="mt-3 space-y-4">
+                        {maintenanceEvidenceGroups.length === 0 ? (
+                          <EvidenceImageGrid
+                            entries={[]}
+                            emptyText="No maintenance proof photos linked."
+                            titlePrefix="Maintenance Proof"
+                          />
+                        ) : (
+                          maintenanceEvidenceGroups.map((group) => (
+                            <div key={group.key}>
+                              {maintenanceEvidenceGroups.length > 1 || group.key !== "OTHER" ? (
+                                <p className="mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--muted)]">
+                                  {group.label}
+                                </p>
+                              ) : null}
+                              <EvidenceImageGrid
+                                entries={group.entries}
+                                emptyText="No photos."
+                                titlePrefix={`Maintenance Proof · ${group.label}`}
+                              />
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   </div>
