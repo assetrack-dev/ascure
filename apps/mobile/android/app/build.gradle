@@ -195,3 +195,15 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// The side-by-side Preview (-PdevVariant) may talk plain http to a dev API on
+// the LAN. React Native's Gradle plugin injects usesCleartextTraffic=false into
+// every RELEASE variant, so the override must be a variant-level placeholder
+// registered after it. The real build keeps https-only.
+if (project.hasProperty('devVariant')) {
+    androidComponents {
+        onVariants(selector().withBuildType('release')) { variant ->
+            variant.manifestPlaceholders.put('usesCleartextTraffic', 'true')
+        }
+    }
+}
