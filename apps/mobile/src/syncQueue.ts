@@ -2,6 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { api, ApiError } from './api';
 import { removeCache, removeFromCachedArray } from './offlineCache';
+import {
+  markLocalCompletionRejected,
+  markLocalPhotoRejected,
+  markLocalPhotoUploaded,
+} from './maintenance/maintenanceLocal';
 import { getInspectionQueueStatusGroup } from './operationalWorkspace';
 import {
   Asset,
@@ -21,6 +26,11 @@ const OFFLINE_PHOTO_DIRECTORY = FileSystem.documentDirectory
 // up independently.
 const OFFLINE_SITEVISIT_PHOTO_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}ascure-offline-sitevisit-images/`
+  : null;
+// Repair (BEFORE / DURING / AFTER) photos taken in maintenance mode, kept until
+// their queued upload succeeds and a fresh work pack confirms them.
+const OFFLINE_REPAIR_PHOTO_DIRECTORY = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}ascure-offline-repair-images/`
   : null;
 const COMPLETED_HISTORY_LIMIT = 20;
 
@@ -43,7 +53,12 @@ export type OfflineMutationType =
   | 'CREATE_ASSET'
   | 'CREATE_INSPECTION'
   | 'CREATE_VISIT'
-  | 'LINK_VISIT_ASSET';
+  | 'LINK_VISIT_ASSET'
+  // Maintenance mode (docs/PLAN-maintenance-flow.md §7.1): a stamped repair
+  // photo, and the crew's "done / cannot repair" — which dependsOn that
+  // Kejanggalan's queued photos so the server's before/after gate sees them.
+  | 'UPLOAD_DEFECT_EVIDENCE'
+  | 'COMPLETE_DEFECT_MAINTENANCE';
 
 /**
  * An arrival site photo captured during an OFFLINE check-in. The file is copied
@@ -98,7 +113,9 @@ function nextLocalSuffix() {
 /** Mint a temp id for an entity created offline. Recognizable via isTempId().
  *  'link' = a queued shared-pole link (no new entity; the id is just the
  *  queue item's identity and maps to the linked asset on completion). */
-export function mintTempId(entity: 'asset' | 'inspection' | 'visit' | 'link') {
+export function mintTempId(
+  entity: 'asset' | 'inspection' | 'visit' | 'link' | 'evidence' | 'completion',
+) {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
 
@@ -463,6 +480,53 @@ export async function enqueueMutation(input: {
   return mutation;
 }
 
+/**
+ * Queue a maintenance "done / cannot repair". It must run AFTER every repair
+ * photo of that Kejanggalan still waiting in the queue (the server's before /
+ * after gate counts them), so its dependsOn is computed INSIDE the serialized
+ * queue write — an upload finishing concurrently can't leave it waiting on a
+ * temp id that was already reconciled and pruned.
+ */
+export async function enqueueRepairCompletion(input: {
+  defectId: string;
+  resolutionOutcome: string;
+  maintenanceNotes: string | null;
+  label: string;
+  sublabel?: string;
+  ownerUserId?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  await updateStoredQueue((queue) => {
+    const dependsOn = queue.mutations
+      .filter(
+        (mutation) =>
+          mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
+          mutation.payload.defectId === input.defectId &&
+          !queue.tempIdMap[mutation.tempId],
+      )
+      .map((mutation) => mutation.tempId);
+    const mutation: OfflineMutation = {
+      id: `op_${nextLocalSuffix()}`,
+      type: 'COMPLETE_DEFECT_MAINTENANCE',
+      status: 'PENDING_SYNC',
+      payload: {
+        defectId: input.defectId,
+        resolutionOutcome: input.resolutionOutcome,
+        maintenanceNotes: input.maintenanceNotes,
+      },
+      dependsOn,
+      tempId: mintTempId('completion'),
+      label: input.label,
+      sublabel: input.sublabel,
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      ownerUserId: input.ownerUserId,
+    };
+    return { ...queue, mutations: [...queue.mutations, mutation] };
+  });
+}
+
 async function getMutationItem(mutationId: string) {
   const queue = await loadSyncQueueSnapshot();
 
@@ -624,6 +688,44 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
         realId = link.assetId;
         break;
       }
+      case 'UPLOAD_DEFECT_EVIDENCE': {
+        const photo = payload as unknown as {
+          localPhotoId: string;
+          defectId: string;
+          evidenceType: string;
+          uri: string;
+          latitude?: number | null;
+          longitude?: number | null;
+          timestamp: string;
+        };
+        const uploaded = await api.uploadDefectEvidenceMedia(token, photo.defectId, {
+          uri: photo.uri,
+          contentType: 'image/jpeg',
+          evidenceType: photo.evidenceType,
+          latitude: photo.latitude ?? undefined,
+          longitude: photo.longitude ?? undefined,
+          timestamp: photo.timestamp,
+        });
+        realId = (uploaded as { id?: string } | null)?.id ?? photo.localPhotoId;
+        await markLocalPhotoUploaded(photo.localPhotoId, realId);
+        break;
+      }
+      case 'COMPLETE_DEFECT_MAINTENANCE': {
+        const completion = payload as unknown as {
+          defectId: string;
+          resolutionOutcome: string;
+          maintenanceNotes: string | null;
+        };
+        await api.completeDefectMaintenance(token, completion.defectId, {
+          resolutionOutcome:
+            completion.resolutionOutcome as Parameters<
+              typeof api.completeDefectMaintenance
+            >[2]['resolutionOutcome'],
+          maintenanceNotes: completion.maintenanceNotes,
+        });
+        realId = completion.defectId;
+        break;
+      }
       default: {
         // Exhaustiveness: a new OfflineMutationType MUST add a branch above, or
         // this fails the build (rather than silently mis-routing the create).
@@ -656,6 +758,9 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
     // it for support. (Contrast: status 0/408/429/5xx are retryable, 409 is
     // adopted, 401 aborts the flush for re-auth — none reach here.)
     if (error instanceof ApiError && isTerminalCreateError(error)) {
+      // Maintenance ops: tell the crew on the pole screen instead of silently
+      // dropping their work (e.g. "Add an AFTER photo…", or TNB closed it).
+      await recordMaintenanceRejection(mutation, getErrorMessage(error));
       console.warn(
         `[offline-sync] dropping terminally-rejected ${mutation.type} "${mutation.label}": ${getErrorMessage(error)}`,
       );
@@ -665,6 +770,24 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
 
     await markMutationFailed(mutation.id, getErrorMessage(error));
     throw error;
+  }
+}
+
+async function recordMaintenanceRejection(mutation: OfflineMutation, reason: string) {
+  try {
+    if (mutation.type === 'UPLOAD_DEFECT_EVIDENCE') {
+      await markLocalPhotoRejected(String(mutation.payload.localPhotoId), reason);
+      // A queued "done" for the same Kejanggalan depends on this photo and is
+      // dropped with it by the cascade — say so rather than leave it "waiting".
+      await markLocalCompletionRejected(
+        String(mutation.payload.defectId),
+        `A repair photo was not accepted: ${reason}`,
+      );
+    } else if (mutation.type === 'COMPLETE_DEFECT_MAINTENANCE') {
+      await markLocalCompletionRejected(String(mutation.payload.defectId), reason);
+    }
+  } catch {
+    // Best-effort UI note; the queue must keep draining regardless.
   }
 }
 
@@ -1372,6 +1495,49 @@ async function persistUriToDir(uri: string, id: string, directory: string | null
  * durable site-visit image dir. Exported for CheckInScreen so the URIs stored on
  * the queued CREATE_VISIT mutation can't be evicted before the visit reconciles.
  */
+/**
+ * Withdraw a repair photo the crew deleted before it synced. Returns false when
+ * its upload is already in flight (then it can no longer be withdrawn).
+ */
+export async function withdrawQueuedRepairPhoto(localPhotoId: string): Promise<boolean> {
+  let withdrawn = false;
+  await updateStoredQueue((queue) => {
+    const target = queue.mutations.find(
+      (mutation) =>
+        mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
+        mutation.payload.localPhotoId === localPhotoId,
+    );
+    if (!target || target.status === 'SYNCING') {
+      return queue;
+    }
+    withdrawn = true;
+    return {
+      ...queue,
+      mutations: queue.mutations
+        .filter((mutation) => mutation.id !== target.id)
+        // A queued completion no longer waits on the withdrawn photo.
+        .map((mutation) =>
+          mutation.dependsOn.includes(target.tempId)
+            ? { ...mutation, dependsOn: mutation.dependsOn.filter((dep) => dep !== target.tempId) }
+            : mutation,
+        ),
+    };
+  });
+  return withdrawn;
+}
+
+export async function persistRepairPhoto(uri: string, photoId: string) {
+  return persistUriToDir(uri, photoId, OFFLINE_REPAIR_PHOTO_DIRECTORY);
+}
+
+/** Delete a durable repair photo once the server has confirmed it. */
+export async function deleteRepairPhotoFile(uri: string) {
+  if (!OFFLINE_REPAIR_PHOTO_DIRECTORY || !uri.startsWith(OFFLINE_REPAIR_PHOTO_DIRECTORY)) {
+    return;
+  }
+  await FileSystem.deleteAsync(uri, { idempotent: true });
+}
+
 export async function persistOfflineSiteVisitPhoto(uri: string, photoId: string) {
   return persistUriToDir(uri, photoId, OFFLINE_SITEVISIT_PHOTO_DIRECTORY);
 }
@@ -1694,6 +1860,8 @@ function isOfflineMutationType(value: unknown): value is OfflineMutationType {
     case 'CREATE_INSPECTION':
     case 'CREATE_VISIT':
     case 'LINK_VISIT_ASSET':
+    case 'UPLOAD_DEFECT_EVIDENCE':
+    case 'COMPLETE_DEFECT_MAINTENANCE':
       return true;
     default:
       return false;

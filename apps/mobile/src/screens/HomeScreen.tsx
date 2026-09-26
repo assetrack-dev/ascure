@@ -478,6 +478,18 @@ export function HomeScreen() {
       ) : null}
 
       {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
+        // TNB-assigned Pencawang packages (docs/PLAN-maintenance-flow.md §7.1):
+        // the offline-capable repair flow. The task list below keeps serving
+        // Kejanggalan that were never packaged.
+        <StatusSpineTile
+          code="My Pencawang packages"
+          spine="blue"
+          secondary="Poles to repair, map, before / after photos — works offline"
+          onPress={() => navigation.navigate('MaintenancePackages')}
+        />
+      ) : null}
+
+      {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
         <MaintenanceWorkspaceView
           userId={user.id}
           onOpenDefect={(defectId) =>

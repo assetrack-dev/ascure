@@ -10,6 +10,9 @@ import { ImagePreviewScreen } from '../screens/ImagePreviewScreen';
 import { InspectionDetailScreen } from '../screens/InspectionDetailScreen';
 import { InspectionFormScreen } from '../screens/InspectionFormScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { MaintenancePackageScreen } from '../screens/MaintenancePackageScreen';
+import { MaintenancePackagesScreen } from '../screens/MaintenancePackagesScreen';
+import { MaintenancePoleScreen } from '../screens/MaintenancePoleScreen';
 import { MapScreen } from '../screens/MapScreen';
 import { OperationalSessionDetailScreen } from '../screens/OperationalSessionDetailScreen';
 import { OperationalSessionsScreen } from '../screens/OperationalSessionsScreen';
@@ -51,6 +54,9 @@ export function RootNavigator() {
             component={AssetInspectionHistoryScreen}
           />
           <Stack.Screen name="DefectDetail" component={DefectDetailScreen} />
+          <Stack.Screen name="MaintenancePackages" component={MaintenancePackagesScreen} />
+          <Stack.Screen name="MaintenancePackage" component={MaintenancePackageScreen} />
+          <Stack.Screen name="MaintenancePole" component={MaintenancePoleScreen} />
           <Stack.Screen
             name="ImagePreview"
             component={ImagePreviewScreen}

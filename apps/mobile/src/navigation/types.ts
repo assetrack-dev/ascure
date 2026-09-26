@@ -81,6 +81,10 @@ export type RootStackParamList = {
   InspectionDetail: { inspectionId: string; assetCode?: string };
   AssetInspectionHistory: { assetId: string; assetCode?: string };
   DefectDetail: { defectId: string };
+  // Contractor maintenance mode (docs/PLAN-maintenance-flow.md §7.1).
+  MaintenancePackages: undefined;
+  MaintenancePackage: { siteVisitId: string; title: string };
+  MaintenancePole: { siteVisitId: string; assetId: string };
   ImagePreview: ImagePreviewParams;
 };
 

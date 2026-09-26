@@ -1,3 +1,4 @@
+import type { WorkPackageDetail, WorkPackageList } from './maintenance/types';
 import * as FileSystem from 'expo-file-system/legacy';
 import { isForceOffline, isNetworkOffline } from './networkStatus';
 import {
@@ -757,6 +758,15 @@ export const api = {
       token,
       body,
     });
+  },
+
+  // Contractor maintenance mode (docs/PLAN-maintenance-flow.md §7.1).
+  getMaintenanceWork(token: string) {
+    return request<WorkPackageList>('/maintenance-work', { token });
+  },
+
+  getMaintenanceWorkPackage(token: string, siteVisitId: string) {
+    return request<WorkPackageDetail>(`/maintenance-work/${siteVisitId}`, { token });
   },
 
   completeDefectMaintenance(
