@@ -18,6 +18,7 @@ import { buildDefectEvidenceImagesDirectory } from '../../src/common/uploads.con
  *  - A closed Kejanggalan takes no more repair photos.
  */
 const E = {
+  sub: '30000000-0000-4000-8000-0000000000d1',
   visit: '60000000-0000-4000-8000-0000000000d1',
   asset: '70000000-0000-4000-8000-0000000000d1',
   inspection: '80000000-0000-4000-8000-0000000000d1',
@@ -56,9 +57,14 @@ describe('Authz · maintenance repair evidence (before / after gate)', () => {
     prisma = app.get(PrismaService);
     const t = IDS.tenant.t1;
 
+    // prod's schema requires a Pencawang on every survey (only dev relaxed it).
+    await prisma.substation.create({
+      data: { id: E.sub, tenantId: t, name: 'Evidence Pencawang', code: 'EV-1' },
+    });
     await prisma.siteVisit.create({
       data: {
         id: E.visit,
+        substationId: E.sub,
         tenantId: t,
         teamId: IDS.team.a,
         createdByUserId: IDS.user.mgrA,
@@ -68,7 +74,7 @@ describe('Authz · maintenance repair evidence (before / after gate)', () => {
       },
     });
     await prisma.asset.create({
-      data: { id: E.asset, tenantId: t, assetCode: 'EV-POLE-1', assetTypeId: IDS.assetType.savr },
+      data: { id: E.asset, tenantId: t, assetCode: 'EV-POLE-1', substationId: E.sub, assetTypeId: IDS.assetType.savr },
     });
     await prisma.inspection.create({
       data: {
@@ -116,6 +122,7 @@ describe('Authz · maintenance repair evidence (before / after gate)', () => {
     await prisma.inspection.deleteMany({ where: { id: E.inspection } });
     await prisma.siteVisit.deleteMany({ where: { id: E.visit } });
     await prisma.asset.deleteMany({ where: { id: E.asset } });
+    await prisma.substation.deleteMany({ where: { id: E.sub } });
     await Promise.all(
       ids.map((id) => rm(buildDefectEvidenceImagesDirectory(id), { recursive: true, force: true })),
     );
