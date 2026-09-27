@@ -265,7 +265,6 @@ export class MaintenanceWorkService {
                   select: {
                     id: true,
                     assetCode: true,
-                    refCode: true,
                     noTiangLama: true,
                     latitude: true,
                     longitude: true,
@@ -321,7 +320,7 @@ export class MaintenanceWorkService {
       const asset = item.inspection.asset;
       let pole = poles.get(asset.id);
       if (!pole) {
-        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: asset.refCode, noTiangLama: asset.noTiangLama, latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), kejanggalan: [] };
+        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: null, noTiangLama: asset.noTiangLama, latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), kejanggalan: [] };
         poles.set(asset.id, pole);
       }
       const state = workState(defect);
