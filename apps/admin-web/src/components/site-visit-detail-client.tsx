@@ -87,6 +87,7 @@ import {
   type RondaanCheckResult,
 } from "@ascure/shared-utils";
 import { fetchTeams, type TeamOption } from "@/lib/teams";
+import { fetchAssetTypes } from "@/lib/checklist-templates";
 import type { AuthSession } from "@/types/auth";
 import type {
   ChecklistColumn,
@@ -2914,18 +2915,42 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
   );
 
   // "Show on Map" — open the Asset Map drilled into this visit's Pencawang
-  // (same sessionStorage hand-off as the asset page, minus the pole panel).
-  const handleShowOnMap = useCallback(() => {
+  // (same sessionStorage hand-off as the asset page, minus the pole panel),
+  // with the Asset Type filter pre-set to this visit's survey: a Pencawang also
+  // holds the poles of SAVT routes starting there, so a SAVR visit would
+  // otherwise show both. If the types can't be loaded, all types show.
+  const handleShowOnMap = useCallback(async () => {
     const substation = visit?.substation;
     if (!substation?.id) {
       return;
     }
+    const scope = visit?.surveyScope;
+    let assetTypeIds: string[] = [];
+    if (scope && session?.token) {
+      try {
+        const types = await fetchAssetTypes(session.token);
+        // A null operationalScope falls back to the code keyword ("SAVT_POLE"),
+        // mirroring the API's inferOperationalScopeFromAssetTypeCode.
+        const codeScope = (code?: string | null) => {
+          const normalized = code?.toUpperCase() ?? "";
+          if (normalized.includes("SAVT")) return "SAVT";
+          if (normalized.includes("SAVR")) return "SAVR";
+          return null;
+        };
+        assetTypeIds = types
+          .filter((type) => (type.operationalScope ?? codeScope(type.code)) === scope)
+          .map((type) => type.id);
+      } catch {
+        assetTypeIds = [];
+      }
+    }
     focusPencawangOnMap({
       pencawangId: substation.id,
       pencawangName: substation.name || visit?.pencawangName || "Pencawang",
+      assetTypeIds,
     });
     router.push("/map");
-  }, [visit?.substation, visit?.pencawangName, router]);
+  }, [visit?.substation, visit?.pencawangName, visit?.surveyScope, session?.token, router]);
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>

@@ -29,6 +29,8 @@ export interface AssetType {
   name: string;
   capabilityId?: string | null;
   capability?: TemplateCapability | null;
+  /** Survey scope the type belongs to (SAVR / SAVT / …); null on legacy types. */
+  operationalScope?: string | null;
   description?: string | null;
   isActive?: boolean;
   sortOrder?: number | null;

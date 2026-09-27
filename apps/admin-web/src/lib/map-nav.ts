@@ -16,10 +16,15 @@ export const MAP_VIEW_STORAGE_KEY = "ascure.map.view";
  * Same hand-off at the Pencawang level ("Show on Map" on the Site Visit page):
  * drill straight to the visit's Pencawang with filters cleared, but no pole
  * panel — the map lands on the Pencawang's points view.
+ *
+ * `assetTypeIds` pre-selects the Asset Type filter: a Pencawang also holds the
+ * poles of every SAVT route that starts there, so a SAVR visit's map would
+ * otherwise show both surveys' poles. Empty/omitted = all types.
  */
 export function focusPencawangOnMap(target: {
   pencawangId: string;
   pencawangName: string;
+  assetTypeIds?: string[];
 }): void {
   if (typeof window === "undefined") {
     return;
@@ -31,9 +36,11 @@ export function focusPencawangOnMap(target: {
         drill: {
           pencawang: { id: target.pencawangId, name: target.pencawangName },
         },
-        // Empty object on purpose: the map merges over its filter defaults, so
-        // this resets any remembered filters that could hide the poles.
-        filters: {},
+        // The map merges over its filter defaults, so this resets any
+        // remembered filters that could hide the poles (bar the asset type).
+        filters: target.assetTypeIds?.length
+          ? { assetTypeIds: target.assetTypeIds }
+          : {},
         showAllPoles: false,
         selectedId: null,
       }),
