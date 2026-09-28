@@ -16,7 +16,8 @@ import {
   SurveyLifecycleStatus,
   UserRole,
 } from '@prisma/client';
-import { Workbook, Worksheet } from 'exceljs';
+import { stream, Workbook, Worksheet } from 'exceljs';
+import { PassThrough } from 'stream';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { buildScopeContext } from '../common/authorization/scope-context';
 import { siteVisitOversightWhere } from '../common/authorization/site-visit-scope';
@@ -51,6 +52,10 @@ const UPLOADS_URL_PREFIX = '/uploads';
  * desc`, so the "one row per asset, first wins" pick exports a draft's
  * empty/partial row instead of the pole's submitted inspection.
  */
+/** Inspections whose answers are loaded per round-trip by the bulk checklist
+ *  export (phase 2) — bounds memory regardless of how many Pencawang are picked. */
+const BULK_CHECKLIST_CHUNK = 500;
+
 const EXPORTABLE_INSPECTION_WHERE = {
   OR: [
     { completionStatus: InspectionCompletionStatus.SUBMITTED },
@@ -1660,7 +1665,11 @@ export class ReportsService {
       ...(idFilter.length ? { substationId: { in: idFilter } } : {}),
     };
     // Tenant-wide pull, narrowed by status/selection at the DB and by scope/mainhead
-    // below. A DC bulk export runs occasionally and the filters bound the volume.
+    // below. PHASE 1 is deliberately light — no checklist answers — just enough
+    // to pick each pole's latest + first inspection and sort the rows. Loading
+    // every inspection version WITH its answers at once pushed the API past its
+    // memory limit (89-Pencawang KUANTAN export, 2026-09-28: the API restarted
+    // mid-request on every attempt, dropping crews' requests with it).
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
@@ -1671,47 +1680,25 @@ export class ReportsService {
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
       select: {
+        id: true,
         assetId: true,
         templateId: true,
         operationalScope: true,
         submittedAt: true,
-        lastAmendedAt: true,
-        lastAmendedBy: { select: { name: true } },
         createdAt: true,
         createdBy: { select: { name: true, email: true } },
         siteVisit: {
           select: {
             pencawangName: true,
-            pencawangCode: true,
             mainhead: true,
             mainheadRecord: { select: { name: true } },
-            team: { select: { name: true, code: true } },
           },
         },
         asset: {
           select: {
             assetCode: true,
-            name: true,
-            noTiangLama: true,
-            latitude: true,
-            longitude: true,
             assetType: { select: { code: true, operationalScope: true } },
-            // The pole's CURRENT Pencawang — the bulk export's rows must carry
-            // the live entity name/code the screens show, not only the visit's
-            // frozen snapshot (which had no fallback at all here).
-            substation: { select: { name: true, code: true } },
-          },
-        },
-        itemResults: { select: { checklistItemId: true, result: true } },
-        results: {
-          select: {
-            templateItemId: true,
-            valueText: true,
-            valueNumber: true,
-            valueBoolean: true,
-            valueJson: true,
-            valueDate: true,
-            valueDateTime: true,
+            substation: { select: { name: true } },
           },
         },
       },
@@ -1794,79 +1781,153 @@ export class ReportsService {
         ? KUANTAN_FIXED_ITEM_LABELS
         : SAVR_FIXED_ITEM_LABELS;
 
-    const workbook = new Workbook();
-    workbook.creator = 'ASCURE';
-    workbook.created = new Date();
-    const sheet = workbook.addWorksheet('CHECKLIST');
-    sheet.addRow([
+    // PHASE 2: stream the rows. The answers are fetched per chunk of chosen
+    // inspections and each row is committed to a streaming workbook as it is
+    // built, so memory stays flat however many Pencawang are selected.
+    const headers = [
       ...SAVR_FIXED_META_HEADERS,
       ...fixedItemLabels,
       ...AMENDMENT_HEADERS,
-    ]);
-    sheet.getRow(1).font = { bold: true };
+    ];
+    const output = new PassThrough();
+    const outputChunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => outputChunks.push(chunk));
+    const outputDone = new Promise<void>((resolve, reject) => {
+      output.on('end', resolve);
+      output.on('error', reject);
+    });
+    const workbook = new stream.xlsx.WorkbookWriter({
+      stream: output,
+      useStyles: true,
+      // Shared strings (as the in-memory writer used) keep blank cells as empty
+      // text, not missing — byte-for-byte parity for the QR pipeline readers.
+      useSharedStrings: true,
+    });
+    workbook.creator = 'ASCURE';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('CHECKLIST');
+    sheet.columns = headers.map((_, index) => ({
+      width: index < SAVR_FIXED_META_HEADERS.length ? 18 : 16,
+    }));
+    const headerRow = sheet.addRow(headers);
+    headerRow.font = { bold: true };
+    headerRow.commit();
 
-    for (const insp of chosen) {
-      const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
-      const resultByItemId = new Map<string, (typeof insp.results)[number]>();
-      for (const r of insp.results) {
-        resultByItemId.set(r.templateItemId, r);
-      }
-      const verdictByItemId = new Map<string, InspectionItemResultValue>();
-      for (const ir of insp.itemResults) {
-        if (ir.checklistItemId) {
-          verdictByItemId.set(ir.checklistItemId, ir.result);
-        }
-      }
-
-      const meta: (string | number)[] = [
-        sanitizeText(
-          insp.siteVisit?.mainheadRecord?.name ?? insp.siteVisit?.mainhead ?? '',
-        ),
-        sanitizeText(
-          insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
-        ),
-        formatDate(firstInspectionDate(firstInsp)),
-        sanitizeText(
-          firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
-        ),
-        insp.asset.latitude != null && insp.asset.longitude != null
-          ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
-          : '',
-        // The pole's CURRENT Pencawang first (matches the screens); the visit
-        // snapshot only fills in if the relation is somehow missing.
-        sanitizeText(
-          insp.asset.substation?.code ?? insp.siteVisit?.pencawangCode ?? '',
-        ),
-        sanitizeText(
-          insp.asset.substation?.name ?? insp.siteVisit?.pencawangName ?? '',
-        ),
-        sanitizeText(insp.asset.assetCode),
-        sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
-      ];
-
-      const itemCells = fixedItemLabels.map((label) => {
-        const col = itemsByLabel.get(normalizeChecklistLabel(label));
-        if (!col) {
-          return '';
-        }
-        let result: (typeof insp.results)[number] | undefined;
-        let verdict: InspectionItemResultValue | undefined;
-        for (const id of col.itemIds) {
-          if (!result) result = resultByItemId.get(id);
-          if (!verdict) verdict = verdictByItemId.get(id);
-        }
-        return resolveTemplateCell(col.inputType, result, verdict);
+    for (let offset = 0; offset < chosen.length; offset += BULK_CHECKLIST_CHUNK) {
+      const slice = chosen.slice(offset, offset + BULK_CHECKLIST_CHUNK);
+      const details = await this.prisma.inspection.findMany({
+        where: { id: { in: slice.map((pick) => pick.id) } },
+        select: {
+          id: true,
+          createdAt: true,
+          submittedAt: true,
+          lastAmendedAt: true,
+          lastAmendedBy: { select: { name: true } },
+          siteVisit: {
+            select: {
+              pencawangName: true,
+              pencawangCode: true,
+              mainhead: true,
+              mainheadRecord: { select: { name: true } },
+              team: { select: { name: true, code: true } },
+            },
+          },
+          asset: {
+            select: {
+              assetCode: true,
+              name: true,
+              noTiangLama: true,
+              latitude: true,
+              longitude: true,
+              // The pole's CURRENT Pencawang — the bulk export's rows must carry
+              // the live entity name/code the screens show, not only the visit's
+              // frozen snapshot.
+              substation: { select: { name: true, code: true } },
+            },
+          },
+          itemResults: { select: { checklistItemId: true, result: true } },
+          results: {
+            select: {
+              templateItemId: true,
+              valueText: true,
+              valueNumber: true,
+              valueBoolean: true,
+              valueJson: true,
+              valueDate: true,
+              valueDateTime: true,
+            },
+          },
+        },
       });
+      const detailById = new Map(details.map((detail) => [detail.id, detail]));
 
-      sheet.addRow([...meta, ...itemCells, ...amendmentCells(insp)]);
+      for (const pick of slice) {
+        const insp = detailById.get(pick.id);
+        if (!insp) {
+          continue;
+        }
+        const firstInsp = firstByAsset.get(pick.assetId) ?? pick;
+        const resultByItemId = new Map<string, (typeof insp.results)[number]>();
+        for (const r of insp.results) {
+          resultByItemId.set(r.templateItemId, r);
+        }
+        const verdictByItemId = new Map<string, InspectionItemResultValue>();
+        for (const ir of insp.itemResults) {
+          if (ir.checklistItemId) {
+            verdictByItemId.set(ir.checklistItemId, ir.result);
+          }
+        }
+
+        const meta: (string | number)[] = [
+          sanitizeText(
+            insp.siteVisit?.mainheadRecord?.name ?? insp.siteVisit?.mainhead ?? '',
+          ),
+          sanitizeText(
+            insp.siteVisit?.team?.name ?? insp.siteVisit?.team?.code ?? '',
+          ),
+          formatDate(firstInspectionDate(firstInsp)),
+          sanitizeText(
+            firstInsp.createdBy?.name || firstInsp.createdBy?.email || '',
+          ),
+          insp.asset.latitude != null && insp.asset.longitude != null
+            ? `${Number(insp.asset.latitude)}, ${Number(insp.asset.longitude)}`
+            : '',
+          // The pole's CURRENT Pencawang first (matches the screens); the visit
+          // snapshot only fills in if the relation is somehow missing.
+          sanitizeText(
+            insp.asset.substation?.code ?? insp.siteVisit?.pencawangCode ?? '',
+          ),
+          sanitizeText(
+            insp.asset.substation?.name ?? insp.siteVisit?.pencawangName ?? '',
+          ),
+          sanitizeText(insp.asset.assetCode),
+          sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        ];
+
+        const itemCells = fixedItemLabels.map((label) => {
+          const col = itemsByLabel.get(normalizeChecklistLabel(label));
+          if (!col) {
+            return '';
+          }
+          let result: (typeof insp.results)[number] | undefined;
+          let verdict: InspectionItemResultValue | undefined;
+          for (const id of col.itemIds) {
+            if (!result) result = resultByItemId.get(id);
+            if (!verdict) verdict = verdictByItemId.get(id);
+          }
+          return resolveTemplateCell(col.inputType, result, verdict);
+        });
+
+        sheet
+          .addRow([...meta, ...itemCells, ...amendmentCells(insp)])
+          .commit();
+      }
     }
 
-    sheet.columns.forEach((column, index) => {
-      column.width = index < SAVR_FIXED_META_HEADERS.length ? 18 : 16;
-    });
-
-    const arrayBuffer = await workbook.xlsx.writeBuffer();
-    const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
+    sheet.commit();
+    await workbook.commit();
+    await outputDone;
+    const buffer = Buffer.concat(outputChunks);
     const base = allMainheads ? 'ALL_PENCAWANG' : mainheadFilter;
     const safe =
       base.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') ||
