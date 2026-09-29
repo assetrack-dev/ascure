@@ -122,6 +122,43 @@ describe('Authz · Pencawang details edit', () => {
     expect(res.body.location).toBe('JALAN BESAR GERIK');
   });
 
+  it('carries a rename onto the visits (their copy of code / name / location)', async () => {
+    await prisma.siteVisit.update({
+      where: { id: OWNED_VISIT },
+      data: {
+        pencawangCode: 'PMU-EDIT-A',
+        pencawangName: 'OLD NAME AT CHECK-IN',
+        functionalLocation: 'OLD LOCATION',
+      },
+    });
+
+    const renamed = await http(app, token.admin)
+      .patch(`/api/v1/substations/${OWNED_SUB}`)
+      .send({ name: 'Pencawang Edit Owned', location: 'jalan baru gerik' });
+    expect(renamed.status).toBe(200);
+    let visit = await prisma.siteVisit.findUniqueOrThrow({ where: { id: OWNED_VISIT } });
+    expect(visit.pencawangName).toBe('PENCAWANG EDIT OWNED');
+    expect(visit.functionalLocation).toBe('JALAN BARU GERIK');
+    expect(visit.pencawangCode).toBe('PMU-EDIT-A'); // code not in this edit
+
+    // A coordinate-only edit leaves the visit's copies alone.
+    await prisma.siteVisit.update({
+      where: { id: OWNED_VISIT },
+      data: { pencawangName: 'UNTOUCHED' },
+    });
+    const pinned = await http(app, token.admin)
+      .patch(`/api/v1/substations/${OWNED_SUB}`)
+      .send({ latitude: null, longitude: null });
+    expect(pinned.status).toBe(200);
+    visit = await prisma.siteVisit.findUniqueOrThrow({ where: { id: OWNED_VISIT } });
+    expect(visit.pencawangName).toBe('UNTOUCHED');
+
+    await prisma.siteVisit.update({
+      where: { id: OWNED_VISIT },
+      data: { pencawangCode: null, pencawangName: null, functionalLocation: null },
+    });
+  });
+
   it('rejects a rename that collides with another Pencawang (409)', async () => {
     const res = await http(app, token.admin)
       .patch(`/api/v1/substations/${OWNED_SUB}`)

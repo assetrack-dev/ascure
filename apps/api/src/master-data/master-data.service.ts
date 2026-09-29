@@ -240,11 +240,33 @@ export class MasterDataService {
       throw new BadRequestException('Nothing to update.');
     }
 
+    // Every visit keeps a COPY of the Pencawang's code / name / functional
+    // location from check-in, and the Site Visits screens show that copy — so a
+    // rename here must carry onto its visits, or the Pencawang shows under its
+    // old name there while the checklist/QR exports use the new one (26 prod
+    // Pencawang had drifted, 2026-09-29). Compiled report PDFs keep the old
+    // name until regenerated.
+    const visitData: Prisma.SiteVisitUpdateManyMutationInput = {};
+    if (data.code !== undefined) visitData.pencawangCode = data.code as string;
+    if (data.name !== undefined) visitData.pencawangName = data.name as string;
+    if (data.location !== undefined) {
+      visitData.functionalLocation = data.location as string | null;
+    }
+
     try {
-      const substation = await this.prisma.substation.update({
-        where: { id },
-        data,
-        include: substationCountInclude,
+      const substation = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.substation.update({
+          where: { id },
+          data,
+          include: substationCountInclude,
+        });
+        if (Object.keys(visitData).length > 0) {
+          await tx.siteVisit.updateMany({
+            where: { tenantId: user.tenantId, substationId: id },
+            data: visitData,
+          });
+        }
+        return updated;
       });
       return this.serializeSubstation(substation);
     } catch (error) {
