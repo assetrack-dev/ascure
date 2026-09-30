@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { login } from "@/lib/api";
 import { ThemeToggle } from "./theme-toggle";
 import {
@@ -69,97 +69,169 @@ export function LoginForm() {
     }
   }
 
-  return (
-    <main className="grid min-h-screen bg-[var(--background)] lg:grid-cols-[minmax(360px,0.85fr)_1.15fr]">
-      <section className="flex items-center justify-center border-b border-[var(--chrome-line)] bg-[var(--chrome)] px-6 py-10 text-[var(--on-chrome)] lg:border-b-0 lg:border-r">
-        <div className="w-full max-w-md">
-          <div className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/monogram.png"
-              alt="ASCURE"
-              width={48}
-              height={48}
-              className="h-12 w-12 rounded-xl shadow-sm"
-            />
-            <div>
-              <p className="text-2xl font-bold tracking-wide" style={{ fontFamily: "var(--font-display)" }}>ASCURE</p>
-              <p className="text-sm text-[var(--on-chrome-muted)]">Asset Inspection Platform</p>
-            </div>
-          </div>
-          <h1 className="mt-12 text-4xl font-bold">Admin operations console</h1>
-          <div className="mt-8 grid gap-3 text-sm text-[var(--on-chrome-muted)]">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--chrome-line)] bg-[var(--chrome-active)] p-3">
-              <ShieldCheck size={18} className="text-[var(--on-chrome)]" />
-              Role foundation: ADMIN, TECHNICIAN, VIEWER, CLIENT
-            </div>
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--chrome-line)] bg-[var(--chrome-active)] p-3">
-              <LockKeyhole size={18} className="text-[var(--on-chrome)]" />
-              Connected to the local NestJS API
-            </div>
-          </div>
-        </div>
-      </section>
+  // The sign-in page wears the brand "cover" look (the same one as the pitch
+  // deck): a fixed dark-to-azure field, map grid, glow and a feeder route with
+  // pole nodes. It is deliberately theme-independent — the colours below are
+  // literal, not theme tokens — so light and dark users see the same page.
+  const inputClass =
+    "mt-2 w-full rounded-lg border border-[#FFFFFF]/15 bg-[#FFFFFF]/[0.06] px-3.5 py-3 text-[#FFFFFF] placeholder:text-[#FFFFFF]/35 outline-none transition focus:border-[#60A5FA] focus:bg-[#FFFFFF]/[0.09] focus:ring-4 focus:ring-[#2563EB]/30 [&:-webkit-autofill]:shadow-[inset_0_0_0_1000px_#18223d] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]";
 
-      <section className="relative flex items-center justify-center px-6 py-10">
-        <div className="absolute right-4 top-4">
-          <ThemeToggle variant="icon" />
-        </div>
-        <form
-          onSubmit={handleSubmit}
-          className="w-full max-w-md rounded-xl border border-[var(--line)] bg-[var(--panel)] p-6 shadow-[var(--shadow-card)]"
-        >
-          <div>
-            <p className="text-sm font-semibold uppercase text-[var(--brand)]">
-              Secure sign in
-            </p>
-            <h2 className="mt-3 text-3xl font-bold text-[var(--foreground)]">
+  return (
+    <main
+      className="relative min-h-screen overflow-hidden text-[#FFFFFF]"
+      style={{ background: "linear-gradient(135deg, #0B0E12 0%, #0F1B3D 55%, #1D4ED8 100%)" }}
+    >
+      {/* Map grid */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px)",
+          backgroundSize: "64px 64px",
+        }}
+      />
+      {/* Glow behind the sign-in card */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-40 top-1/2 h-[900px] w-[900px] -translate-y-1/2 rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(96,165,250,0.40) 0%, rgba(37,99,235,0) 62%)" }}
+      />
+      {/* Faint brand mark */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/brand/mark-white.svg"
+        alt=""
+        aria-hidden
+        className="pointer-events-none absolute -right-24 top-1/2 hidden h-[760px] w-auto -translate-y-1/2 opacity-[0.05] lg:block"
+      />
+      {/* Feeder route with pole nodes */}
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-40 w-full"
+        viewBox="0 0 1440 160"
+        preserveAspectRatio="xMidYMax slice"
+      >
+        <path
+          d="M0 118 L180 96 L360 116 L540 90 L720 112 L900 86 L1080 108 L1260 80 L1440 100"
+          fill="none"
+          stroke="#60A5FA"
+          strokeOpacity="0.45"
+          strokeWidth="2.5"
+          strokeDasharray="10 9"
+        />
+        {[
+          [180, 96, "#0B0E12", "#60A5FA"],
+          [360, 116, "#0B0E12", "#60A5FA"],
+          [540, 90, "#0d1630", "#60A5FA"],
+          [720, 112, "#101a38", "#60A5FA"],
+          [900, 86, "#13235a", "#93C5FD"],
+          [1080, 108, "#1a2f7a", "#93C5FD"],
+          [1260, 80, "#1f3fa0", "#BFDBFE"],
+        ].map(([cx, cy, fill, stroke]) => (
+          <circle key={`${cx}`} cx={cx} cy={cy} r="7" fill={fill as string} stroke={stroke as string} strokeWidth="2.5" />
+        ))}
+      </svg>
+
+      <div className="absolute right-4 top-4 z-20">
+        <ThemeToggle variant="icon" />
+      </div>
+
+      <div className="relative z-10 mx-auto grid min-h-screen w-full max-w-7xl content-center items-center gap-8 px-6 pb-40 pt-16 sm:gap-12 lg:grid-cols-[1.15fr_0.85fr] lg:gap-16 lg:px-12 lg:pb-32">
+        <section>
+          <div className="flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/mark-white.svg" alt="ASCURE" className="h-10 w-auto sm:h-12" />
+            <span className="text-xl font-bold tracking-[0.3em] sm:text-2xl" style={{ fontFamily: "var(--font-display)" }}>
+              ASCURE
+            </span>
+          </div>
+
+          <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-[#60A5FA] sm:mt-12 sm:text-sm">
+            Operations console · TNB and contractors
+          </p>
+          <h1
+            className="mt-4 text-4xl font-bold leading-[1.04] sm:mt-5 sm:text-6xl xl:text-7xl"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Every pole. Every defect. Proven.
+          </h1>
+          {/* On a phone the tagline and pills give way so the form is above the fold. */}
+          <p className="mt-6 hidden max-w-xl text-lg leading-relaxed text-[#AEB8C4] sm:block sm:text-xl">
+            From the first pole surveyed to the last repair closed, on one live record.
+          </p>
+          <div className="mt-8 hidden flex-wrap gap-3 sm:flex">
+            {["Survey", "Verify", "Resolve"].map((word) => (
+              <span
+                key={word}
+                className="rounded-full border border-[#93C5FD]/50 bg-[#2563EB]/55 px-5 py-1.5 text-sm font-semibold text-[#FFFFFF]"
+              >
+                {word}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        <section className="flex justify-center lg:justify-end">
+          <form
+            onSubmit={handleSubmit}
+            className="w-full max-w-md rounded-2xl border border-[#FFFFFF]/15 bg-[#FFFFFF]/[0.07] p-7 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-8"
+          >
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#60A5FA]">Secure sign in</p>
+            <h2 className="mt-3 text-3xl font-bold text-[#FFFFFF]" style={{ fontFamily: "var(--font-display)" }}>
               Welcome back
             </h2>
-          </div>
+            <p className="mt-2 text-sm text-[#AEB8C4]">Sign in with your work email.</p>
 
-          <div className="mt-8 space-y-5">
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Email</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
-                required
-                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-3 text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
-              />
-            </label>
+            <div className="mt-8 space-y-5">
+              <label className="block">
+                <span className="text-sm font-medium text-[#DBEAFE]">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
+                  placeholder="name@company.com"
+                  required
+                  className={inputClass}
+                />
+              </label>
 
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Password</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete="current-password"
-                required
-                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-3 text-slate-900 shadow-[var(--shadow-soft)] outline-none transition focus:border-[var(--brand)] focus:ring-4 focus:ring-teal-100"
-              />
-            </label>
-          </div>
-
-          {error ? (
-            <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
+              <label className="block">
+                <span className="text-sm font-medium text-[#DBEAFE]">Password</span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                  required
+                  className={inputClass}
+                />
+              </label>
             </div>
-          ) : null}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-[var(--on-brand)] transition hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {isSubmitting ? "Signing in" : "Sign in"}
-            <ArrowRight size={18} />
-          </button>
-        </form>
-      </section>
+            {error ? (
+              <div className="mt-5 rounded-lg border border-[#F87171]/40 bg-[#EF4444]/15 px-4 py-3 text-sm text-[#FEE2E2]">
+                {error}
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#2563EB] px-4 py-3 text-sm font-semibold text-[#FFFFFF] shadow-[0_10px_30px_rgba(37,99,235,0.45)] transition hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:bg-[#FFFFFF]/20 disabled:shadow-none"
+            >
+              {isSubmitting ? "Signing in" : "Sign in"}
+              <ArrowRight size={18} />
+            </button>
+
+            <p className="mt-6 flex items-center gap-2 text-xs text-[#AEB8C4]">
+              <ShieldCheck size={15} className="text-[#60A5FA]" />
+              You see only the work your role and area allow.
+            </p>
+          </form>
+        </section>
+      </div>
     </main>
   );
 }
