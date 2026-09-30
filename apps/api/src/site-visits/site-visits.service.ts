@@ -2225,111 +2225,59 @@ export class SiteVisitsService {
       return rollups;
     }
 
-    const [
-      linkedAssets,
-      createdAssets,
-      inspections,
-      defectResults,
-    ] = await Promise.all([
-      this.prisma.siteVisitAsset.findMany({
-        where: {
-          siteVisitId: {
-            in: siteVisitIds,
-          },
-        },
-        select: {
-          siteVisitId: true,
-          assetId: true,
-        },
-      }),
-      this.prisma.asset.findMany({
-        where: {
-          createdDuringVisitId: {
-            in: siteVisitIds,
-          },
-        },
-        select: {
-          id: true,
-          createdDuringVisitId: true,
-        },
-      }),
-      this.prisma.inspection.findMany({
-        where: {
-          siteVisitId: {
-            in: siteVisitIds,
-          },
-        },
-        select: {
-          siteVisitId: true,
-          assetId: true,
-          completionStatus: true,
-        },
-      }),
-      this.prisma.inspectionItemResult.findMany({
-        where: {
-          isDefect: true,
-          inspection: {
-            siteVisitId: {
-              in: siteVisitIds,
-            },
-          },
-        },
-        select: {
-          inspection: {
-            select: {
-              siteVisitId: true,
-            },
-          },
-        },
-      }),
+    // Counted in the database, one row per visit. This used to load every
+    // link / created asset / inspection / defect row for every visit and count
+    // them in Node — on the full admin list (all visits, 36k poles, ~60k
+    // defects) that was 500–900 MB per request and the main cause of the
+    // api's max-memory restarts (MemWatch top-route SiteVisitsController.list).
+    // Same semantics: a visit's assets = the DISTINCT union of linked, created-
+    // during and inspected assets (UNION dedups the pairs); inspected = distinct
+    // assets with a SUBMITTED inspection; defects = isDefect answers.
+    // Ids go in as ONE `= ANY(::uuid[])` parameter (never IN (Prisma.join)).
+    const [assetCounts, inspectedCounts, defectCounts] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ siteVisitId: string; count: number }>>`
+        SELECT pairs."siteVisitId", COUNT(*)::int AS "count"
+        FROM (
+          SELECT sva."siteVisitId", sva."assetId"
+          FROM "SiteVisitAsset" sva
+          WHERE sva."siteVisitId" = ANY(${siteVisitIds}::uuid[])
+          UNION
+          SELECT a."createdDuringVisitId", a."id"
+          FROM "Asset" a
+          WHERE a."createdDuringVisitId" = ANY(${siteVisitIds}::uuid[])
+          UNION
+          SELECT i."siteVisitId", i."assetId"
+          FROM "Inspection" i
+          WHERE i."siteVisitId" = ANY(${siteVisitIds}::uuid[])
+        ) pairs
+        GROUP BY pairs."siteVisitId"
+      `,
+      this.prisma.$queryRaw<Array<{ siteVisitId: string; count: number }>>`
+        SELECT i."siteVisitId", COUNT(DISTINCT i."assetId")::int AS "count"
+        FROM "Inspection" i
+        WHERE i."siteVisitId" = ANY(${siteVisitIds}::uuid[])
+          AND i."completionStatus" = 'SUBMITTED'
+        GROUP BY i."siteVisitId"
+      `,
+      this.prisma.$queryRaw<Array<{ siteVisitId: string; count: number }>>`
+        SELECT i."siteVisitId", COUNT(*)::int AS "count"
+        FROM "InspectionItemResult" r
+        JOIN "Inspection" i ON i."id" = r."inspectionId"
+        WHERE r."isDefect" = TRUE
+          AND i."siteVisitId" = ANY(${siteVisitIds}::uuid[])
+        GROUP BY i."siteVisitId"
+      `,
     ]);
 
-    const assetIdsByVisitId = new Map<string, Set<string>>();
-    const inspectedAssetIdsByVisitId = new Map<string, Set<string>>();
-    const defectsByVisitId = new Map<string, number>();
-    const ensureAssetSet = (map: Map<string, Set<string>>, siteVisitId: string) => {
-      const existingSet = map.get(siteVisitId);
-
-      if (existingSet) {
-        return existingSet;
-      }
-
-      const nextSet = new Set<string>();
-      map.set(siteVisitId, nextSet);
-
-      return nextSet;
-    };
-
-    for (const link of linkedAssets) {
-      ensureAssetSet(assetIdsByVisitId, link.siteVisitId).add(link.assetId);
-    }
-
-    for (const asset of createdAssets) {
-      if (!asset.createdDuringVisitId) {
-        continue;
-      }
-
-      ensureAssetSet(assetIdsByVisitId, asset.createdDuringVisitId).add(asset.id);
-    }
-
-    for (const inspection of inspections) {
-      ensureAssetSet(assetIdsByVisitId, inspection.siteVisitId).add(inspection.assetId);
-
-      if (inspection.completionStatus === InspectionCompletionStatus.SUBMITTED) {
-        ensureAssetSet(inspectedAssetIdsByVisitId, inspection.siteVisitId).add(
-          inspection.assetId,
-        );
-      }
-    }
-
-    for (const result of defectResults) {
-      const siteVisitId = result.inspection.siteVisitId;
-      defectsByVisitId.set(siteVisitId, (defectsByVisitId.get(siteVisitId) ?? 0) + 1);
-    }
+    const toCountMap = (rows: Array<{ siteVisitId: string; count: number }>) =>
+      new Map(rows.map((row) => [row.siteVisitId, Number(row.count)]));
+    const assetCountByVisitId = toCountMap(assetCounts);
+    const inspectedCountByVisitId = toCountMap(inspectedCounts);
+    const defectsByVisitId = toCountMap(defectCounts);
 
     for (const siteVisitId of siteVisitIds) {
-      const totalAssets = assetIdsByVisitId.get(siteVisitId)?.size ?? 0;
-      const inspectedAssets = inspectedAssetIdsByVisitId.get(siteVisitId)?.size ?? 0;
+      const totalAssets = assetCountByVisitId.get(siteVisitId) ?? 0;
+      const inspectedAssets = inspectedCountByVisitId.get(siteVisitId) ?? 0;
       const pendingAssets = Math.max(totalAssets - inspectedAssets, 0);
       const defectsFound = defectsByVisitId.get(siteVisitId) ?? 0;
 
@@ -2462,23 +2410,17 @@ export class SiteVisitsService {
           updatedAt: true,
         },
       }),
-      this.prisma.inspectionImage.findMany({
-        where: {
-          inspection: {
-            siteVisitId: {
-              in: siteVisitIds,
-            },
-          },
-        },
-        select: {
-          createdAt: true,
-          inspection: {
-            select: {
-              siteVisitId: true,
-            },
-          },
-        },
-      }),
+      // Latest inspection photo per visit, aggregated in SQL. This was a
+      // findMany of EVERY inspection photo (with its inspection) for every
+      // visit — hundreds of thousands of rows on the full list — just to take
+      // the newest createdAt.
+      this.prisma.$queryRaw<Array<{ siteVisitId: string; lastAt: Date | null }>>`
+        SELECT i."siteVisitId", MAX(ii."createdAt") AS "lastAt"
+        FROM "InspectionImage" ii
+        JOIN "Inspection" i ON i."id" = ii."inspectionId"
+        WHERE i."siteVisitId" = ANY(${siteVisitIds}::uuid[])
+        GROUP BY i."siteVisitId"
+      `,
     ]);
 
     for (const activity of inspectionActivity) {
@@ -2532,8 +2474,8 @@ export class SiteVisitsService {
     for (const activity of inspectionImageActivity) {
       this.setMaxActivityDate(
         lastActivityByVisitId,
-        activity.inspection.siteVisitId,
-        activity.createdAt,
+        activity.siteVisitId,
+        activity.lastAt,
       );
     }
 
