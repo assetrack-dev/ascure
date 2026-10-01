@@ -227,3 +227,61 @@ Still open:
 | **M5 Track record** | timeline view, next-cycle CONFIRMED_FIXED/RECURRED link, TNB dashboard (open vs closed, time-to-close per contractor) | API + web |
 
 Activation (§10) after M1+M2 are live and a pilot TNB + contractor are set up.
+
+---
+
+## 12. Fine-tune 2026-10-01 — team assignment + Map assign
+
+Owner direction 2026-10-01 (decisions G15–G19). Builds on M1/M2 (live, Deploys 188/190).
+
+| # | Decision |
+|---|---|
+| G15 | **Who assigns: TNB and Main Contractor.** TNB has confirmed the Main Contractor may assign; MC assignments go **live immediately** (no TNB approval step). |
+| G16 | **TNB picks company OR team.** TNB may stop at the company (its Manager then picks the team, as today) or go straight to a team (company filled in from the team). |
+| G17 | **MC reach = own teams + every subcontractor team under it** (same subtree as MC oversight, `resolveMainContractorOrgIds`). |
+| G18 | Package unit unchanged: **whole Pencawang, or one scope** (Rentis / Cat Tiang / Selenggaraan). |
+| G19 | Two ways to assign: **the Maintenance Package list** (exists) and **the Map** (new) — select nearby Pencawang so crew travel is optimised. |
+
+### 12.1 Who can do what (replaces the assign rows of §4)
+| Actor | Sees on the board/map | Can assign to |
+|---|---|---|
+| ADMIN | tenant-wide | any company / any team |
+| TNB Foreman / Technician | own TNB mainheads | any contractor company, or any team of one |
+| TNB Engineer | own TNB mainheads | — (view only) |
+| MC Manager | **default:** PEs in the mainheads assigned to its company (`OrganizationMainhead`) that are unassigned or routed into its subtree | its own company or a subcontractor (company), or any team in that subtree |
+| Subcontractor Manager | unchanged — Maintenance Workspace, own teams only | own teams |
+
+MC may NOT touch a PE that TNB routed to a company outside its subtree. Re-teaming a
+PE TNB sent straight to an MC-subtree team is allowed (it's MC's crews) and logs a
+timeline event.
+
+### 12.2 Data
+- `MaintenancePackage.assignedTeamId String? -> Team` (**additive migration**). Rule: if set, the team's `organizationId` must equal `maintenanceOrganizationId`.
+- Routing (`package-routing.util`, still the ONLY writer): with a team, every in-scope not-yet-evidenced Kejanggalan gets `maintenanceOrganizationId` + `assignedToTeamId` + lifecycle ASSIGNED (same as the Workspace lane assign does today); without a team, behaviour unchanged (company pool, VERIFIED).
+- The Workspace lane assign (`PATCH /defects/maintenance-workspace/assign`) keeps the covering package's `assignedTeamId` in sync, so the board never shows a stale team.
+- Crews need no change: `/maintenance-work` already scopes by `assignedToTeamId`/`assignedTeamId` → APK v2.0.15 works as-is.
+
+### 12.3 API
+- `POST /maintenance-packages` gains optional `assignedTeamId`; `maintenanceOrganizationId` becomes optional when a team is given.
+- **Bulk:** `POST /maintenance-packages/bulk` `{ siteVisitIds[], category?, maintenanceOrganizationId?, assignedTeamId?, dueDate?, notes? }` → one transaction, per-PE result (assigned / skipped + reason). Used by the Map and by multi-select on the list.
+- Board returns per PE `latitude/longitude` (from `Substation`: manual pin wins over check-in), package team, and for MC callers a `canAssign` scoped as §12.1. Board also returns the assignable **teams** (grouped by company, in the actor's reach).
+- Authz: `resolveActor` accepts MC Managers (today it 403s every non-TNB non-admin).
+
+### 12.4 Web — Maintenance Packages page
+- **List** (exists): add a Team column + team picker in the assign dialog ("Company" OR "Team"); row checkboxes → bulk assign bar.
+- **Map tab (new):** Pencawang markers at their saved location, labelled with open-Kejanggalan count, coloured: unassigned · assigned to the *focus team* · assigned to others · finished.
+  - Select: click to toggle · drag a box · "within X km of this Pencawang".
+  - Selection tray: N Pencawang, poles, Kejanggalan by scope, spread (km between the two farthest) → choose company/team + scope + target date → Assign all.
+  - **Focus team** filter: shows that team's current Pencawang so nearby ones can be added to the same team.
+  - "No location" list beside the map (PEs without coordinates) so nothing is hidden.
+  - Scales to thousands of PEs (markers per PE, not per pole; cluster when zoomed out).
+- Nav: MC Managers get the Maintenance Packages entry.
+
+### 12.5 Build order
+1. Migration + routing with team + bulk endpoint + MC authz (e2e: TNB→team, TNB→company, MC→sub team, MC blocked outside subtree, Engineer blocked, workspace sync).
+2. List: team picker + multi-select bulk bar.
+3. Map tab.
+Ships API + web + 1 additive migration; **no APK**.
+
+Open: Q9 MC visibility of unassigned PEs — default = its company's assigned mainheads (§12.1); confirm with owner.
+Later (not now): suggested visiting order per team (nearest-neighbour route).

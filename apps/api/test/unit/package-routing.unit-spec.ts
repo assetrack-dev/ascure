@@ -1,5 +1,8 @@
 import { MaintenanceCategory } from '@prisma/client';
-import { resolvePackageOrganizationId } from '../../src/maintenance-packages/package-routing.util';
+import {
+  resolvePackageOrganizationId,
+  resolvePackageTarget,
+} from '../../src/maintenance-packages/package-routing.util';
 
 /**
  * Which company a Kejanggalan belongs to under a PE's packages
@@ -39,5 +42,23 @@ describe('resolvePackageOrganizationId', () => {
         CAT_TIANG,
       ),
     ).toBeNull();
+  });
+});
+
+/** Plan §12: the covering package's team travels with its company. */
+describe('resolvePackageTarget', () => {
+  const { RENTIS, SELENGGARAAN } = MaintenanceCategory;
+
+  it('returns the lane package team, else the whole-PE team', () => {
+    const packages = [
+      { category: null, maintenanceOrganizationId: 'whole', assignedTeamId: 'crew-1' },
+      { category: RENTIS, maintenanceOrganizationId: 'rentis-co', assignedTeamId: null },
+    ];
+    expect(resolvePackageTarget(packages, RENTIS)).toEqual({ organizationId: 'rentis-co', teamId: null });
+    expect(resolvePackageTarget(packages, SELENGGARAAN)).toEqual({ organizationId: 'whole', teamId: 'crew-1' });
+  });
+
+  it('no package → unrouted, no team', () => {
+    expect(resolvePackageTarget([], RENTIS)).toEqual({ organizationId: null, teamId: null });
   });
 });

@@ -14,13 +14,15 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   AssignEmergencyDto,
   AssignMaintenancePackageDto,
+  BulkAssignMaintenancePackagesDto,
 } from './dto/assign-maintenance-package.dto';
 import { MaintenancePackagesService } from './maintenance-packages.service';
 
 /**
  * TNB → maintenance company hand-off of surveyed Pencawang
- * (docs/PLAN-maintenance-flow.md §5). ADMIN + TNB only; the service enforces
- * rank (FOREMAN / TECHNICIAN assign, ENGINEER views) and Mainhead scope.
+ * (docs/PLAN-maintenance-flow.md §5, §12). ADMIN, TNB and Main Contractor
+ * managers; the service enforces rank (FOREMAN / TECHNICIAN assign, ENGINEER
+ * views), Mainhead scope and the MC's own group.
  */
 @UseGuards(JwtAuthGuard)
 @Controller('maintenance-packages')
@@ -35,6 +37,11 @@ export class MaintenancePackagesController {
   @Post()
   assign(@CurrentUser() user: RequestUser, @Body() dto: AssignMaintenancePackageDto) {
     return this.packages.assign(user, dto);
+  }
+
+  @Post('bulk')
+  assignBulk(@CurrentUser() user: RequestUser, @Body() dto: BulkAssignMaintenancePackagesDto) {
+    return this.packages.assignBulk(user, dto);
   }
 
   @Delete(':id')

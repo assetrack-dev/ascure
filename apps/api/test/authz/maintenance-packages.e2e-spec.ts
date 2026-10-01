@@ -180,6 +180,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
 
     token.admin = await login(app, EMAILS.adminT1);
     token.mgrA = await login(app, EMAILS.mgrA);
+    token.subMgr = await login(app, EMAILS.subMgr);
     token.maintUser = await login(app, EMAILS.maintUser);
     token.foreman = await login(app, P.email.foreman);
     token.engineer = await login(app, P.email.engineer);
@@ -232,8 +233,11 @@ describe('Authz · maintenance packages (TNB → company)', () => {
       expect(res.body.canAssign).toBe(true);
     });
 
-    it('a contractor cannot open the board (403)', () =>
-      http(app, token.mgrA).get('/api/v1/maintenance-packages/board').expect(403));
+    // Main Contractor managers may (plan §12 — see maintenance-package-teams spec).
+    it('a subcontractor manager / crew cannot open the board (403)', async () => {
+      await http(app, token.subMgr).get('/api/v1/maintenance-packages/board').expect(403);
+      await http(app, token.maintUser).get('/api/v1/maintenance-packages/board').expect(403);
+    });
 
     it('ADMIN sees every final-report PE in the tenant', async () => {
       const res = await http(app, token.admin).get('/api/v1/maintenance-packages/board').expect(200);
@@ -280,7 +284,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
           notes: 'Pakej 1',
         })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 3, moved: 0, kept: 0 });
+      expect(res.body.routing).toEqual({ routed: 3, moved: 0, kept: 0, teamAssigned: 0 });
       for (const id of [P.defect.rentis, P.defect.sel1, P.defect.sel2]) {
         expect(await orgOf(id)).toBe(IDS.org.maint);
       }
@@ -296,7 +300,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, maintenanceOrganizationId: IDS.org.maint, dueDate: '2026-12-31' })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0 });
     });
 
     it('splitting off Rentis moves only that lane', async () => {
@@ -304,7 +308,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, category: 'RENTIS', maintenanceOrganizationId: IDS.org.b })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 0, teamAssigned: 0 });
       expect(await orgOf(P.defect.rentis)).toBe(IDS.org.b);
       expect(await orgOf(P.defect.sel1)).toBe(IDS.org.maint);
 
@@ -335,7 +339,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, category: 'SELENGGARAAN', maintenanceOrganizationId: IDS.org.a })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 1 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 1, teamAssigned: 0 });
 
       const moved = await prisma.defect.findUniqueOrThrow({ where: { id: P.defect.sel1 } });
       expect(moved.maintenanceOrganizationId).toBe(IDS.org.a);
@@ -372,7 +376,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
       const res = await http(app, token.foreman)
         .del(`/api/v1/maintenance-packages/${pkg.id}`)
         .expect(200);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 1 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 1, teamAssigned: 0 });
       expect(await orgOf(P.defect.rentis)).toBeNull();
       expect(await orgOf(P.defect.sel1)).toBeNull();
       expect(await orgOf(P.defect.sel2)).toBe(IDS.org.maint);

@@ -1383,7 +1383,75 @@ export class DefectsService {
       }),
     ]);
 
+    await this.syncPackageTeams(user.tenantId, {
+      substationId: dto.substationId,
+      category: dto.category ?? null,
+      teamId,
+      organizationId: team?.organizationId ?? orgRestriction ?? null,
+    });
+
     return { assigned: ids.length };
+  }
+
+  /**
+   * docs/PLAN-maintenance-flow.md §12: the package board shows the team TNB / the
+   * Main Contractor picked. When the company's Manager re-teams from the
+   * workspace, the matching packages follow so the board isn't stale. A
+   * lane-level change under a whole-PE package with a different team leaves the
+   * PE on mixed crews → that package drops its team ("company decides").
+   */
+  private async syncPackageTeams(
+    tenantId: string,
+    change: {
+      substationId: string;
+      category: MaintenanceCategory | null;
+      teamId: string | null;
+      /** null = ADMIN unassign (any company). */
+      organizationId: string | null;
+    },
+  ) {
+    const packages = await this.prisma.maintenancePackage.findMany({
+      where: {
+        tenantId,
+        siteVisit: { substationId: change.substationId },
+        ...(change.organizationId
+          ? { maintenanceOrganizationId: change.organizationId }
+          : {}),
+      },
+      select: { id: true, siteVisitId: true, category: true, assignedTeamId: true },
+    });
+
+    const follow: string[] = [];
+    const mixed: string[] = [];
+    for (const pkg of packages) {
+      if (pkg.assignedTeamId === change.teamId) {
+        continue;
+      }
+      if (change.category === null || pkg.category === change.category) {
+        follow.push(pkg.id);
+      } else if (
+        pkg.category === null &&
+        !packages.some(
+          (other) =>
+            other.siteVisitId === pkg.siteVisitId && other.category === change.category,
+        )
+      ) {
+        mixed.push(pkg.id);
+      }
+    }
+
+    if (follow.length > 0) {
+      await this.prisma.maintenancePackage.updateMany({
+        where: { id: { in: follow } },
+        data: { assignedTeamId: change.teamId },
+      });
+    }
+    if (mixed.length > 0) {
+      await this.prisma.maintenancePackage.updateMany({
+        where: { id: { in: mixed } },
+        data: { assignedTeamId: null },
+      });
+    }
   }
 
   async uploadEvidenceImage(
@@ -4245,6 +4313,7 @@ export class DefectsService {
         id: true,
         code: true,
         name: true,
+        organizationId: true,
       },
     });
 
