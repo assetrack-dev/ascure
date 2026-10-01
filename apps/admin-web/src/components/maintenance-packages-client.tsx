@@ -170,6 +170,15 @@ function assignmentSummary(row: PackagePencawang): { text: string; tone: Tone } 
 
 
 
+/** Name, code or Mainhead contains the search text. */
+function matchesSearch(row: PackagePencawang, search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return [row.pencawangName, row.pencawangCode, row.mainhead?.name]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(query));
+}
+
 /** Can the actor act on this PE at all (whole, or at least one lane with work)? */
 function isSelectable(row: PackagePencawang) {
   return row.canAssign || row.lanes.some((lane) => lane.canAssign && lane.total > 0);
@@ -693,6 +702,7 @@ function SelectionBar({
 function MapView({
   board,
   rows,
+  search,
   selected,
   onToggle,
   onAdd,
@@ -702,6 +712,8 @@ function MapView({
 }: {
   board: MaintenancePackageBoard;
   rows: PackagePencawang[];
+  /** Highlights + flies to matches; never hides the other Pencawang. */
+  search: string;
   selected: Set<string>;
   onToggle: (id: string) => void;
   onAdd: (ids: string[]) => void;
@@ -734,6 +746,16 @@ function MapView({
     [focusTeamId],
   );
 
+  const matches = useMemo(
+    () => (search.trim() ? rows.filter((row) => matchesSearch(row, search)) : []),
+    [rows, search],
+  );
+  const matchIds = useMemo(() => new Set(matches.map((row) => row.siteVisitId)), [matches]);
+  const focusIds = useMemo(
+    () => matches.filter(hasLocation).map((row) => row.siteVisitId),
+    [matches],
+  );
+
   const points: PackageMapPoint[] = useMemo(
     () =>
       located.map((row) => ({
@@ -743,11 +765,12 @@ function MapView({
         openCount: row.totals.open,
         color: pointColor(row),
         selected: selected.has(row.siteVisitId),
+        highlighted: matchIds.has(row.siteVisitId),
         title:
           `${pencawangLabel(row)} — ${row.totals.open} open · ${assignmentSummary(row).text}` +
           (isSelectable(row) ? "" : " (assigned outside your group)"),
       })),
-    [located, pointColor, selected],
+    [located, matchIds, pointColor, selected],
   );
 
   const selectableIds = useMemo(
@@ -836,6 +859,15 @@ function MapView({
               {focusCount} Pencawang with this team
             </span>
           ) : null}
+          {search.trim() ? (
+            <span className="text-[12px] font-semibold text-[var(--brand)]">
+              {matches.length === 0
+                ? "No Pencawang match the search"
+                : focusIds.length === matches.length
+                  ? `${matches.length} found — highlighted`
+                  : `${matches.length} found, ${matches.length - focusIds.length} without a location`}
+            </span>
+          ) : null}
           <div className="ml-auto flex flex-wrap gap-3">
             <LegendDot color={MAP_COLORS.awaiting} label="Needs assigning" />
             {focusTeamId ? <LegendDot color={MAP_COLORS.focus} label="Focus team" /> : null}
@@ -853,6 +885,7 @@ function MapView({
                 if (selectableIds.has(id)) onToggle(id);
               }}
               onBoxSelect={(ids) => onAdd(ids.filter((id) => selectableIds.has(id)))}
+              focusIds={focusIds}
               onLoadError={() => setMapError(true)}
             />
           ) : (
@@ -1119,18 +1152,24 @@ function MaintenancePackagesContent() {
     return [...byId.entries()].sort((left, right) => left[1].localeCompare(right[1]));
   }, [board]);
 
-  const rows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return (board?.pencawangs ?? []).filter((row) => {
-      if (statusFilter === "AWAITING" && row.packages.length > 0) return false;
-      if (statusFilter === "ASSIGNED" && row.packages.length === 0) return false;
-      if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
-      if (!query) return true;
-      return [row.pencawangName, row.pencawangCode, row.mainhead?.name]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query));
-    });
-  }, [board, mainheadFilter, search, statusFilter]);
+  // Status + Mainhead filters. The Map view stops here: there the search box
+  // flies to a Pencawang instead of hiding its neighbours.
+  const filteredRows = useMemo(
+    () =>
+      (board?.pencawangs ?? []).filter((row) => {
+        if (statusFilter === "AWAITING" && row.packages.length > 0) return false;
+        if (statusFilter === "ASSIGNED" && row.packages.length === 0) return false;
+        if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
+        return true;
+      }),
+    [board, mainheadFilter, statusFilter],
+  );
+
+  // The List view also narrows by the search box.
+  const rows = useMemo(
+    () => filteredRows.filter((row) => matchesSearch(row, search)),
+    [filteredRows, search],
+  );
 
   const selectableRows = useMemo(() => rows.filter(isSelectable), [rows]);
   const allVisibleSelected =
@@ -1278,7 +1317,8 @@ function MaintenancePackagesContent() {
                 {view === "MAP" ? (
                   <MapView
                     board={board}
-                    rows={rows}
+                    rows={filteredRows}
+                    search={search}
                     selected={selected}
                     onToggle={toggleSelected}
                     onAdd={addSelected}
