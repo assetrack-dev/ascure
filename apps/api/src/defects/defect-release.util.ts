@@ -5,7 +5,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { resolvePackageTarget } from '../maintenance-packages/package-routing.util';
+import { resolveRoutingTarget } from '../maintenance-packages/package-routing.util';
 
 /**
  * Maintenance handoff Phase 3 — defect release + auto-route.
@@ -53,12 +53,24 @@ interface BuildReleaseOptions {
   inspectionId?: string;
 }
 
-/** The visit's packages (TNB's PE → company assignment). */
+/** The visit's packages (TNB's PE → company assignment) + pole splits (§12.6). */
 async function loadVisitPackages(prisma: PrismaService, siteVisitId: string) {
-  return prisma.maintenancePackage.findMany({
-    where: { siteVisitId },
-    select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
-  });
+  const [packages, poles] = await Promise.all([
+    prisma.maintenancePackage.findMany({
+      where: { siteVisitId },
+      select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
+    }),
+    prisma.maintenancePoleAssignment.findMany({
+      where: { siteVisitId },
+      select: {
+        assetId: true,
+        category: true,
+        maintenanceOrganizationId: true,
+        assignedTeamId: true,
+      },
+    }),
+  ]);
+  return { packages, poles };
 }
 
 function releaseTargetWhere(
@@ -105,17 +117,28 @@ export async function buildVisitReleasePlan(
   siteVisitId: string,
   options: BuildReleaseOptions,
 ): Promise<VisitReleasePlan> {
-  const packages = await loadVisitPackages(prisma, siteVisitId);
+  const { packages, poles } = await loadVisitPackages(prisma, siteVisitId);
 
   const candidates = await prisma.defect.findMany({
     where: releaseTargetWhere(siteVisitId, options.scope, options.inspectionId),
-    select: { id: true, lifecycleStatus: true, maintenanceCategory: true },
+    select: {
+      id: true,
+      lifecycleStatus: true,
+      maintenanceCategory: true,
+      inspectionItemResult: { select: { inspection: { select: { assetId: true } } } },
+    },
   });
 
   const withOrg = candidates.map((target) => {
-    const packageTarget = resolvePackageTarget(packages, target.maintenanceCategory);
+    const packageTarget = resolveRoutingTarget(
+      packages,
+      poles,
+      target.inspectionItemResult.inspection.assetId,
+      target.maintenanceCategory,
+    );
     return {
-      ...target,
+      id: target.id,
+      lifecycleStatus: target.lifecycleStatus,
       organizationId: packageTarget.organizationId,
       // A package handed straight to a crew (plan §12) takes the release with it.
       teamId: packageTarget.organizationId ? packageTarget.teamId : null,

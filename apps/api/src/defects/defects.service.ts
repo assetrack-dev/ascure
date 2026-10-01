@@ -1452,6 +1452,50 @@ export class DefectsService {
         data: { assignedTeamId: null },
       });
     }
+
+    // Pole splits (§12.6) of the same company follow the same way.
+    const poleRows = await this.prisma.maintenancePoleAssignment.findMany({
+      where: {
+        tenantId,
+        siteVisit: { substationId: change.substationId },
+        ...(change.organizationId
+          ? { maintenanceOrganizationId: change.organizationId }
+          : {}),
+      },
+      select: { id: true, siteVisitId: true, assetId: true, category: true, assignedTeamId: true },
+    });
+    const poleFollow: string[] = [];
+    const poleMixed: string[] = [];
+    for (const row of poleRows) {
+      if (row.assignedTeamId === change.teamId) {
+        continue;
+      }
+      if (change.category === null || row.category === change.category) {
+        poleFollow.push(row.id);
+      } else if (
+        row.category === null &&
+        !poleRows.some(
+          (other) =>
+            other.siteVisitId === row.siteVisitId &&
+            other.assetId === row.assetId &&
+            other.category === change.category,
+        )
+      ) {
+        poleMixed.push(row.id);
+      }
+    }
+    if (poleFollow.length > 0) {
+      await this.prisma.maintenancePoleAssignment.updateMany({
+        where: { id: { in: poleFollow } },
+        data: { assignedTeamId: change.teamId },
+      });
+    }
+    if (poleMixed.length > 0) {
+      await this.prisma.maintenancePoleAssignment.updateMany({
+        where: { id: { in: poleMixed } },
+        data: { assignedTeamId: null },
+      });
+    }
   }
 
   async uploadEvidenceImage(

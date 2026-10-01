@@ -25,11 +25,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   AssignEmergencyDto,
   AssignMaintenancePackageDto,
+  AssignPolesDto,
   BulkAssignMaintenancePackagesDto,
+  ClearPolesDto,
 } from './dto/assign-maintenance-package.dto';
 import {
   applyPackageRouting,
   RELEASED_DEFECT_WHERE,
+  resolvePackageTarget,
+  resolveRoutingTarget,
   RoutingResult,
 } from './package-routing.util';
 
@@ -106,6 +110,57 @@ type LaneRow = {
   finished: number;
   unrouted: number;
 };
+
+/** JS twin of FINISHED_SQL. */
+function isFinishedDefect(defect: {
+  lifecycleStatus: DefectLifecycleStatus | null;
+  status: DefectStatus;
+}) {
+  return (
+    defect.lifecycleStatus === DefectLifecycleStatus.COMPLETED ||
+    defect.lifecycleStatus === DefectLifecycleStatus.VERIFICATION_PENDING ||
+    defect.lifecycleStatus === DefectLifecycleStatus.CLOSED ||
+    defect.status === DefectStatus.RESOLVED ||
+    defect.status === DefectStatus.CLOSED
+  );
+}
+
+/** Pole splits of a PE grouped by owner + work type, for the board (§12.6). */
+function summarizePoleSplits(
+  rows: Array<{
+    assetId: string;
+    category: MaintenanceCategory | null;
+    maintenanceOrganization: { id: string; name: string };
+    assignedTeam: { id: string; name: string } | null;
+  }>,
+) {
+  const groups = new Map<
+    string,
+    {
+      category: MaintenanceCategory | null;
+      organization: { id: string; name: string };
+      team: { id: string; name: string } | null;
+      poles: Set<string>;
+    }
+  >();
+  for (const row of rows) {
+    const key = `${row.maintenanceOrganization.id}|${row.assignedTeam?.id ?? ''}|${row.category ?? ''}`;
+    const group = groups.get(key) ?? {
+      category: row.category,
+      organization: row.maintenanceOrganization,
+      team: row.assignedTeam,
+      poles: new Set<string>(),
+    };
+    group.poles.add(row.assetId);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    category: group.category,
+    organization: group.organization,
+    team: group.team,
+    poles: group.poles.size,
+  }));
+}
 
 /**
  * TNB's maintenance-package board (docs/PLAN-maintenance-flow.md §5, M1 step 2):
@@ -189,7 +244,7 @@ export class MaintenancePackagesService {
   private visitVisible(
     actor: ActorScope,
     mainheadId: string | null,
-    packages: PackageOwner[],
+    packages: Array<{ maintenanceOrganizationId: string }>,
   ): boolean {
     if (this.inScope(actor, mainheadId)) {
       return true;
@@ -256,6 +311,11 @@ export class MaintenancePackagesService {
                 SELECT 1 FROM "MaintenancePackage" mp
                 WHERE mp."siteVisitId" = sv."id"
                   AND mp."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])
+              )
+              OR EXISTS (
+                SELECT 1 FROM "MaintenancePoleAssignment" mpa
+                WHERE mpa."siteVisitId" = sv."id"
+                  AND mpa."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])
               )
             )`;
     const fromSql = Prisma.sql`
@@ -325,6 +385,15 @@ export class MaintenancePackagesService {
                   assignedBy: { select: { id: true, name: true } },
                 },
               },
+              maintenancePoleAssignments: {
+                select: {
+                  assetId: true,
+                  category: true,
+                  maintenanceOrganizationId: true,
+                  maintenanceOrganization: { select: { id: true, name: true } },
+                  assignedTeam: { select: { id: true, name: true } },
+                },
+              },
             },
           }),
       this.listUnroutedEmergencies(user, actor),
@@ -388,6 +457,7 @@ export class MaintenancePackagesService {
           poleCount: polesByVisit.get(visit.id) ?? 0,
           totals: { total, open: total - finished, finished, unrouted },
           lanes,
+          poleSplits: summarizePoleSplits(visit.maintenancePoleAssignments),
           packages: visit.maintenancePackages
             .map((pkg) => ({
               id: pkg.id,
@@ -576,9 +646,16 @@ export class MaintenancePackagesService {
         mainheadId: true,
         lifecycleStatus: true,
         maintenancePackages: { select: { category: true, maintenanceOrganizationId: true } },
+        maintenancePoleAssignments: { select: { maintenanceOrganizationId: true } },
       },
     });
-    if (!visit || !this.visitVisible(actor, visit.mainheadId, visit.maintenancePackages)) {
+    if (
+      !visit ||
+      !this.visitVisible(actor, visit.mainheadId, [
+        ...visit.maintenancePackages,
+        ...visit.maintenancePoleAssignments,
+      ])
+    ) {
       throw new NotFoundException('Pencawang survey not found.');
     }
     if (!visit.lifecycleStatus || !ASSIGNABLE_VISIT_STATUSES.includes(visit.lifecycleStatus)) {
@@ -740,13 +817,17 @@ export class MaintenancePackagesService {
           select: {
             mainheadId: true,
             maintenancePackages: { select: { category: true, maintenanceOrganizationId: true } },
+            maintenancePoleAssignments: { select: { maintenanceOrganizationId: true } },
           },
         },
       },
     });
     if (
       !pkg ||
-      !this.visitVisible(actor, pkg.siteVisit.mainheadId, pkg.siteVisit.maintenancePackages)
+      !this.visitVisible(actor, pkg.siteVisit.mainheadId, [
+        ...pkg.siteVisit.maintenancePackages,
+        ...pkg.siteVisit.maintenancePoleAssignments,
+      ])
     ) {
       throw new NotFoundException('Maintenance package not found.');
     }
@@ -860,6 +941,406 @@ export class MaintenancePackagesService {
       maintenanceOrganizationId: company.id,
       assignedTeamId: team?.id ?? null,
     };
+  }
+
+  // ── Pole splits (docs/PLAN-maintenance-flow.md §12.6) ─────────────────────
+
+  /** A PE with everything that decides who owns each of its poles. */
+  private async loadPoleContext(user: RequestUser, actor: ActorScope, siteVisitId: string) {
+    const visit = await this.prisma.siteVisit.findFirst({
+      where: { id: siteVisitId, tenantId: user.tenantId },
+      select: {
+        id: true,
+        mainheadId: true,
+        lifecycleStatus: true,
+        pencawangName: true,
+        pencawangCode: true,
+        substation: { select: { name: true, code: true } },
+        maintenancePackages: {
+          select: {
+            category: true,
+            maintenanceOrganizationId: true,
+            assignedTeamId: true,
+            maintenanceOrganization: { select: { id: true, name: true } },
+            assignedTeam: { select: { id: true, name: true } },
+          },
+        },
+        maintenancePoleAssignments: {
+          select: {
+            id: true,
+            assetId: true,
+            category: true,
+            maintenanceOrganizationId: true,
+            assignedTeamId: true,
+            dueDate: true,
+            notes: true,
+            assignedByUserId: true,
+            assignedAt: true,
+            maintenanceOrganization: { select: { id: true, name: true } },
+            assignedTeam: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    if (
+      !visit ||
+      !this.visitVisible(actor, visit.mainheadId, [
+        ...visit.maintenancePackages,
+        ...visit.maintenancePoleAssignments,
+      ])
+    ) {
+      throw new NotFoundException('Pencawang survey not found.');
+    }
+    return visit;
+  }
+
+  /** Released Kejanggalan of a PE as the board counts them, with their pole. */
+  private async loadPoleDefects(siteVisitId: string, assetIds?: string[]) {
+    return this.prisma.defect.findMany({
+      where: {
+        AND: [
+          RELEASED_DEFECT_WHERE,
+          {
+            OR: [
+              { isEmergency: true },
+              { inspectionItemResult: { inspection: { completionStatus: 'SUBMITTED' } } },
+            ],
+          },
+        ],
+        inspectionItemResult: {
+          isDefect: true,
+          inspection: {
+            siteVisitId,
+            ...(assetIds ? { assetId: { in: assetIds } } : {}),
+          },
+        },
+      },
+      select: {
+        maintenanceCategory: true,
+        lifecycleStatus: true,
+        status: true,
+        inspectionItemResult: {
+          select: {
+            inspection: {
+              select: {
+                asset: {
+                  select: {
+                    id: true,
+                    assetCode: true,
+                    noTiangLama: true,
+                    latitude: true,
+                    longitude: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * May the actor change who owns `category` on this pole? TNB / ADMIN: yes. An
+   * MC: only when the pole's current owner for that work type is in its group,
+   * or nobody owns it yet and the PE is on its Mainheads.
+   */
+  private mayChangePole(
+    actor: ActorScope,
+    visit: Awaited<ReturnType<MaintenancePackagesService['loadPoleContext']>>,
+    assetId: string,
+    category: MaintenanceCategory,
+  ): boolean {
+    if (!actor.canAssign) {
+      return false;
+    }
+    if (actor.orgIds === null) {
+      return true;
+    }
+    const owner = resolveRoutingTarget(
+      visit.maintenancePackages,
+      visit.maintenancePoleAssignments,
+      assetId,
+      category,
+    ).organizationId;
+    return owner ? this.ownsCompany(actor, owner) : this.inScope(actor, visit.mainheadId);
+  }
+
+  /** The PE's poles that carry Kejanggalan, each work type's owner, and what the actor may change. */
+  async getPoles(user: RequestUser, siteVisitId: string) {
+    const actor = await this.resolveActor(user);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    const defects = await this.loadPoleDefects(visit.id);
+
+    const orgNames = new Map<string, { id: string; name: string }>();
+    const teamNames = new Map<string, { id: string; name: string }>();
+    for (const owner of [...visit.maintenancePackages, ...visit.maintenancePoleAssignments]) {
+      orgNames.set(owner.maintenanceOrganization.id, owner.maintenanceOrganization);
+      if (owner.assignedTeam) teamNames.set(owner.assignedTeam.id, owner.assignedTeam);
+    }
+
+    type PoleRow = {
+      asset: { id: string; assetCode: string; noTiangLama: string | null; latitude: number | null; longitude: number | null };
+      lanes: Map<MaintenanceCategory, { total: number; finished: number }>;
+    };
+    const poles = new Map<string, PoleRow>();
+    for (const defect of defects) {
+      const asset = defect.inspectionItemResult.inspection.asset;
+      const pole = poles.get(asset.id) ?? { asset, lanes: new Map() };
+      const category = defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
+      const lane = pole.lanes.get(category) ?? { total: 0, finished: 0 };
+      lane.total += 1;
+      if (isFinishedDefect(defect)) lane.finished += 1;
+      pole.lanes.set(category, lane);
+      poles.set(asset.id, pole);
+    }
+
+    const rows = [...poles.values()].map(({ asset, lanes }) => {
+      const laneRows = CATEGORY_ORDER.filter((category) => lanes.has(category)).map((category) => {
+        const counts = lanes.get(category)!;
+        const target = resolveRoutingTarget(
+          visit.maintenancePackages,
+          visit.maintenancePoleAssignments,
+          asset.id,
+          category,
+        );
+        return {
+          category,
+          total: counts.total,
+          open: counts.total - counts.finished,
+          organization: target.organizationId ? orgNames.get(target.organizationId) ?? null : null,
+          team: target.teamId ? teamNames.get(target.teamId) ?? null : null,
+          source: target.source,
+          canAssign: this.mayChangePole(actor, visit, asset.id, category),
+        };
+      });
+      return {
+        assetId: asset.id,
+        assetCode: asset.assetCode,
+        noTiangLama: asset.noTiangLama,
+        latitude: asset.latitude,
+        longitude: asset.longitude,
+        total: laneRows.reduce((sum, lane) => sum + lane.total, 0),
+        open: laneRows.reduce((sum, lane) => sum + lane.open, 0),
+        canAssign: laneRows.every((lane) => lane.canAssign),
+        split: visit.maintenancePoleAssignments.some((row) => row.assetId === asset.id),
+        lanes: laneRows,
+      };
+    });
+
+    return {
+      siteVisitId: visit.id,
+      pencawangName: visit.pencawangName ?? visit.substation?.name ?? null,
+      pencawangCode: visit.pencawangCode ?? visit.substation?.code ?? null,
+      canAssign: actor.canAssign,
+      poles: rows.sort((left, right) =>
+        left.assetCode.localeCompare(right.assetCode, undefined, { numeric: true }),
+      ),
+    };
+  }
+
+  /** Present work types per pole, and a 400 for any pole without Kejanggalan here. */
+  private async presentCategoriesByPole(siteVisitId: string, assetIds: string[]) {
+    const defects = await this.loadPoleDefects(siteVisitId, assetIds);
+    const byPole = new Map<string, Set<MaintenanceCategory>>();
+    for (const defect of defects) {
+      const assetId = defect.inspectionItemResult.inspection.asset.id;
+      const set = byPole.get(assetId) ?? new Set<MaintenanceCategory>();
+      set.add(defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN);
+      byPole.set(assetId, set);
+    }
+    const missing = assetIds.filter((id) => !byPole.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `${missing.length} selected pole(s) have no Kejanggalan on this Pencawang survey.`,
+      );
+    }
+    return byPole;
+  }
+
+  /** Hand selected poles (whole, or one work type of them) to a company / team. */
+  async assignPoles(user: RequestUser, siteVisitId: string, dto: AssignPolesDto) {
+    const actor = await this.resolveAssigner(user);
+    const destination = await this.resolveDestination(user, actor, dto);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    if (!visit.lifecycleStatus || !ASSIGNABLE_VISIT_STATUSES.includes(visit.lifecycleStatus)) {
+      throw new BadRequestException(
+        'A Pencawang can be assigned only after its survey report is complete (LAPORAN SELESAI).',
+      );
+    }
+    const assetIds = [...new Set(dto.assetIds)];
+    const category = dto.category ?? null;
+    const present = await this.presentCategoriesByPole(visit.id, assetIds);
+
+    for (const assetId of assetIds) {
+      const affected = category ? [category] : [...present.get(assetId)!];
+      if (!affected.every((cat) => this.mayChangePole(actor, visit, assetId, cat))) {
+        throw new ForbiddenException(
+          'Some of these poles are assigned to a company outside your group — only TNB can change them.',
+        );
+      }
+    }
+
+    const now = new Date();
+    const fields = {
+      maintenanceOrganizationId: destination.company.id,
+      assignedTeamId: destination.team?.id ?? null,
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+      notes: dto.notes ?? null,
+      assignedByUserId: user.id,
+      assignedAt: now,
+    };
+
+    const routing = await this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.maintenancePoleAssignment.findMany({
+          where: { siteVisitId: visit.id, assetId: { in: assetIds } },
+        });
+        for (const assetId of assetIds) {
+          const rows = existing.filter((row) => row.assetId === assetId);
+          const whole = rows.find((row) => row.category === null) ?? null;
+          const base = { tenantId: user.tenantId, siteVisitId: visit.id, assetId };
+
+          if (category === null) {
+            // Whole pole: replaces any per-work-type split of it.
+            await tx.maintenancePoleAssignment.deleteMany({
+              where: { siteVisitId: visit.id, assetId, category: { not: null } },
+            });
+            if (whole) {
+              await tx.maintenancePoleAssignment.update({ where: { id: whole.id }, data: fields });
+            } else {
+              await tx.maintenancePoleAssignment.create({ data: { ...base, category: null, ...fields } });
+            }
+            continue;
+          }
+
+          if (whole) {
+            // Splitting a whole-pole row: the pole's other work types keep its owner.
+            const others = [...present.get(assetId)!].filter((cat) => cat !== category);
+            await tx.maintenancePoleAssignment.delete({ where: { id: whole.id } });
+            if (others.length > 0) {
+              await tx.maintenancePoleAssignment.createMany({
+                data: others.map((other) => ({
+                  ...base,
+                  category: other,
+                  maintenanceOrganizationId: whole.maintenanceOrganizationId,
+                  assignedTeamId: whole.assignedTeamId,
+                  dueDate: whole.dueDate,
+                  notes: whole.notes,
+                  assignedByUserId: whole.assignedByUserId,
+                  assignedAt: whole.assignedAt,
+                })),
+              });
+            }
+          }
+          await tx.maintenancePoleAssignment.upsert({
+            where: {
+              siteVisitId_assetId_category: { siteVisitId: visit.id, assetId, category },
+            },
+            update: fields,
+            create: { ...base, category, ...fields },
+          });
+        }
+
+        return applyPackageRouting(tx, visit.id, {
+          actorUserId: user.id,
+          now,
+          reason: 'Poles split off the Pencawang',
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    return { siteVisitId: visit.id, poles: assetIds.length, routing };
+  }
+
+  /** Return selected poles (whole, or one work type) to the Pencawang's own owner. */
+  async clearPoles(user: RequestUser, siteVisitId: string, dto: ClearPolesDto) {
+    const actor = await this.resolveAssigner(user);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    const assetIds = [...new Set(dto.assetIds)];
+    const category = dto.category ?? null;
+    // The rows this call removes or splits (one work type also splits a whole-pole row).
+    const rows = visit.maintenancePoleAssignments.filter(
+      (row) =>
+        assetIds.includes(row.assetId) &&
+        (category === null || row.category === category || row.category === null),
+    );
+    if (rows.length === 0) {
+      return { siteVisitId: visit.id, poles: 0, routing: { routed: 0, moved: 0, kept: 0, teamAssigned: 0 } };
+    }
+    const present = await this.presentCategoriesByPole(
+      visit.id,
+      [...new Set(rows.map((row) => row.assetId))],
+    );
+
+    // An MC may hand back only its own group's poles, and only to a PE owner it
+    // could have assigned itself (its group, or unassigned on its Mainheads).
+    if (actor.orgIds !== null) {
+      for (const row of rows) {
+        const cats = category
+          ? [category]
+          : row.category
+            ? [row.category]
+            : [...(present.get(row.assetId) ?? [])];
+        const fallback = cats.map(
+          (cat) => resolvePackageTarget(visit.maintenancePackages, cat).organizationId,
+        );
+        const fallbackOk = fallback.every((owner) =>
+          owner ? this.ownsCompany(actor, owner) : this.inScope(actor, visit.mainheadId),
+        );
+        if (!this.ownsCompany(actor, row.maintenanceOrganizationId) || !fallbackOk) {
+          throw new ForbiddenException('Only TNB can return these poles.');
+        }
+      }
+    }
+
+    const now = new Date();
+    const routing = await this.prisma.$transaction(
+      async (tx) => {
+        for (const assetId of assetIds) {
+          const poleRows = rows.filter((row) => row.assetId === assetId);
+          if (poleRows.length === 0) continue;
+          if (category === null) {
+            await tx.maintenancePoleAssignment.deleteMany({ where: { siteVisitId: visit.id, assetId } });
+            continue;
+          }
+          const whole = poleRows.find((row) => row.category === null);
+          if (whole) {
+            const others = [...(present.get(assetId) ?? [])].filter((cat) => cat !== category);
+            await tx.maintenancePoleAssignment.delete({ where: { id: whole.id } });
+            if (others.length > 0) {
+              await tx.maintenancePoleAssignment.createMany({
+                data: others.map((other) => ({
+                  tenantId: user.tenantId,
+                  siteVisitId: visit.id,
+                  assetId,
+                  category: other,
+                  maintenanceOrganizationId: whole.maintenanceOrganizationId,
+                  assignedTeamId: whole.assignedTeamId,
+                  dueDate: whole.dueDate,
+                  notes: whole.notes,
+                  assignedByUserId: whole.assignedByUserId,
+                  assignedAt: whole.assignedAt,
+                })),
+              });
+            }
+          } else {
+            await tx.maintenancePoleAssignment.deleteMany({
+              where: { siteVisitId: visit.id, assetId, category },
+            });
+          }
+        }
+        return applyPackageRouting(tx, visit.id, {
+          actorUserId: user.id,
+          now,
+          reason: 'Poles returned to the Pencawang owner',
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    return { siteVisitId: visit.id, poles: assetIds.length, routing };
   }
 
   private async presentCategories(

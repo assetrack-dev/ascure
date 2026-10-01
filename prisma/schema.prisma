@@ -354,6 +354,7 @@ model Tenant {
   deletionLogs        DeletionLog[]
   assetShareLinks     AssetShareLink[]
   maintenancePackages MaintenancePackage[]
+  maintenancePoleAssignments MaintenancePoleAssignment[]
 }
 
 model Department {
@@ -395,6 +396,7 @@ model Team {
   assignedUsers         User[]           @relation("UserOperationalTeam")
   capabilityAssignments TeamCapability[]
   maintenancePackages   MaintenancePackage[] @relation("MaintenancePackageAssignedTeam")
+  maintenancePoleAssignments MaintenancePoleAssignment[] @relation("MaintenancePoleAssignmentTeam")
   supervisors           TeamSupervisor[]
 
   @@unique([tenantId, code])
@@ -471,6 +473,7 @@ model User {
   createdAssetShareLinks    AssetShareLink[]              @relation("AssetShareLinkCreatedBy")
 
   assignedMaintenancePackages MaintenancePackage[] @relation("MaintenancePackageAssignedBy")
+  assignedMaintenancePoleAssignments MaintenancePoleAssignment[] @relation("MaintenancePoleAssignmentAssignedBy")
 
   @@index([tenantId])
   @@index([organizationId])
@@ -532,6 +535,7 @@ model Organization {
   maintainedMainheads    Mainhead[]                         @relation("MainheadMaintenanceOrg")
   routedDefects          Defect[]                           @relation("DefectMaintenanceOrg")
   maintenancePackages    MaintenancePackage[]
+  maintenancePoleAssignments MaintenancePoleAssignment[] @relation("MaintenancePoleAssignmentOrganization")
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
@@ -1063,6 +1067,7 @@ model Asset {
   images                   Image[]
   shareLinks               AssetShareLink[]
 
+  maintenancePoleAssignments MaintenancePoleAssignment[]
   @@unique([tenantId, substationId, assetCode], map: "Asset_tenantId_substationId_code_key")
   @@index([tenantId])
   @@index([substationId])
@@ -1197,6 +1202,7 @@ model SiteVisit {
   reports               SiteVisitReport[]
   reportRuns            SiteVisitReportRun[]
   maintenancePackages   MaintenancePackage[]
+  maintenancePoleAssignments MaintenancePoleAssignment[]
 
   @@index([tenantId])
   @@index([teamId, status])
@@ -1877,6 +1883,37 @@ model MaintenancePackage {
 
   @@unique([siteVisitId, category])
   @@index([tenantId])
+  @@index([maintenanceOrganizationId])
+  @@index([assignedTeamId])
+}
+
+// Plan §12.6 (2026-10-01): part of a surveyed PE handed to another crew, pole by
+// pole — whole pole (category null) or one work type of it. Wins over the PE's
+// MaintenancePackage rows for that pole; one owner per (pole, work type).
+model MaintenancePoleAssignment {
+  id                        String               @id @default(uuid()) @db.Uuid
+  tenantId                  String               @db.Uuid
+  siteVisitId               String               @db.Uuid
+  assetId                   String               @db.Uuid
+  category                  MaintenanceCategory?
+  maintenanceOrganizationId String               @db.Uuid
+  assignedTeamId            String?              @db.Uuid
+  dueDate                   DateTime?
+  notes                     String?
+  assignedByUserId          String?              @db.Uuid
+  assignedAt                DateTime             @default(now())
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  tenant                    Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteVisit                 SiteVisit            @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
+  asset                     Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  maintenanceOrganization   Organization         @relation("MaintenancePoleAssignmentOrganization", fields: [maintenanceOrganizationId], references: [id], onDelete: Restrict)
+  assignedTeam              Team?                @relation("MaintenancePoleAssignmentTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  assignedBy                User?                @relation("MaintenancePoleAssignmentAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([siteVisitId, assetId, category])
+  @@index([tenantId])
+  @@index([assetId])
   @@index([maintenanceOrganizationId])
   @@index([assignedTeamId])
 }

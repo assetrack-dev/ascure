@@ -87,5 +87,45 @@ export class BulkAssignMaintenancePackagesDto extends PackageDestinationDto {
   notes?: string | null;
 }
 
+/** Plan §12.6: hand selected poles of a PE to another company / team. */
+export class AssignPolesDto extends PackageDestinationDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  assetIds!: string[];
+
+  /** Omitted / null = every work type on those poles. */
+  @Transform(emptyToNull)
+  @IsOptional()
+  @IsEnum(MaintenanceCategory)
+  category?: MaintenanceCategory | null;
+
+  @Transform(emptyToNull)
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string | null;
+
+  @Transform(emptyToNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string | null;
+}
+
+/** Return selected poles (or one work type of them) to the PE's own owner. */
+export class ClearPolesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  assetIds!: string[];
+
+  @Transform(emptyToNull)
+  @IsOptional()
+  @IsEnum(MaintenanceCategory)
+  category?: MaintenanceCategory | null;
+}
+
 /** Manual routing of an emergency whose PE has no package yet. */
 export class AssignEmergencyDto extends PackageDestinationDto {}
