@@ -126,11 +126,57 @@ export function PoleSplitDialog({
     void load();
   }, [load]);
 
-  const poles = useMemo(() => data?.poles ?? [], [data]);
+  const allPoles = useMemo(() => data?.poles ?? [], [data]);
+  // "One work type": show only the poles that carry it, each reduced to that
+  // work type (its open count, its owner), so the map answers "which poles
+  // have Rentis, and who has them?".
+  const laneFilter = scope === "LANE" ? category : null;
+  const polesByCategory = useMemo(
+    () =>
+      Object.fromEntries(
+        CATEGORY_ORDER.map((cat) => [
+          cat,
+          allPoles.filter((pole) => pole.lanes.some((lane) => lane.category === cat)).length,
+        ]),
+      ) as Record<MaintenanceCategory, number>,
+    [allPoles],
+  );
+  const poles = useMemo(() => {
+    if (!laneFilter) return allPoles;
+    return allPoles.flatMap((pole) => {
+      const lane = pole.lanes.find((candidate) => candidate.category === laneFilter);
+      return lane
+        ? [{
+            ...pole,
+            lanes: [lane],
+            total: lane.total,
+            open: lane.open,
+            canAssign: lane.canAssign,
+            split: lane.source === "POLE",
+          }]
+        : [];
+    });
+  }, [allPoles, laneFilter]);
+
+  // Switching to a work type no pole carries → jump to one that has poles.
+  useEffect(() => {
+    if (scope !== "LANE" || polesByCategory[category] > 0) return;
+    const first = CATEGORY_ORDER.find((cat) => polesByCategory[cat] > 0);
+    if (first) setCategory(first);
+  }, [category, polesByCategory, scope]);
+
   const selectable = useMemo(
     () => new Set(poles.filter((pole) => pole.lanes.some((lane) => lane.canAssign)).map((pole) => pole.assetId)),
     [poles],
   );
+
+  // A selected pole that doesn't carry the chosen work type drops out.
+  useEffect(() => {
+    setSelected((current) => {
+      const next = new Set([...current].filter((id) => selectable.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [selectable]);
 
   // Stable colour per owner, in order of first appearance.
   const owners = useMemo(() => {
@@ -270,6 +316,11 @@ export function PoleSplitDialog({
                   {boxMode ? "Box select on — drag on map" : "Box select"}
                 </Tbtn>
               ) : null}
+              {laneFilter ? (
+                <span className="text-[12px] font-semibold text-[var(--brand)]">
+                  {poles.length} of {allPoles.length} poles have {CATEGORY_LABEL[laneFilter]}
+                </span>
+              ) : null}
               <div className="flex flex-wrap gap-3">
                 {[...owners.values()].map((owner) => (
                   <LegendDot key={owner.label} color={owner.color} label={`${owner.label} (${owner.poles})`} />
@@ -399,8 +450,9 @@ export function PoleSplitDialog({
                       aria-label="Work type"
                     >
                       {CATEGORY_ORDER.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {CATEGORY_LABEL[cat]}
+                        <option key={cat} value={cat} disabled={polesByCategory[cat] === 0}>
+                          {CATEGORY_LABEL[cat]} — {polesByCategory[cat]} pole
+                          {polesByCategory[cat] === 1 ? "" : "s"}
                         </option>
                       ))}
                     </select>
