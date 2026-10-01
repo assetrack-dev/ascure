@@ -1,7 +1,10 @@
 import { apiRequest } from "@/lib/api";
 import type {
   AssignPackagePayload,
+  BulkAssignPackagesPayload,
+  BulkAssignResult,
   MaintenancePackageBoard,
+  PackageDestination,
   RoutingResult,
 } from "@/types/maintenance-packages";
 
@@ -17,6 +20,14 @@ export function assignMaintenancePackage(token: string, payload: AssignPackagePa
   });
 }
 
+export function assignMaintenancePackagesBulk(token: string, payload: BulkAssignPackagesPayload) {
+  return apiRequest<BulkAssignResult>("/maintenance-packages/bulk", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
 export function withdrawMaintenancePackage(token: string, packageId: string) {
   return apiRequest<{ siteVisitId: string; routing: RoutingResult }>(
     `/maintenance-packages/${encodeURIComponent(packageId)}`,
@@ -24,9 +35,9 @@ export function withdrawMaintenancePackage(token: string, packageId: string) {
   );
 }
 
-export function assignEmergency(token: string, defectId: string, maintenanceOrganizationId: string) {
+export function assignEmergency(token: string, defectId: string, destination: PackageDestination) {
   return apiRequest<{ defectId: string }>(
     `/maintenance-packages/emergencies/${encodeURIComponent(defectId)}`,
-    { method: "POST", token, body: JSON.stringify({ maintenanceOrganizationId }) },
+    { method: "POST", token, body: JSON.stringify(destination) },
   );
 }

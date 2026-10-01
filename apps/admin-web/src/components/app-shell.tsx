@@ -142,14 +142,15 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       // kept; breadcrumbs still resolve if reached directly.
       hidden: true,
     },
-    // TNB → maintenance company hand-off (docs/PLAN-maintenance-flow.md). TNB +
-    // ADMIN only (requiresClientViewer); contractors use the workspace below.
+    // TNB → maintenance company/team hand-off (docs/PLAN-maintenance-flow.md §12).
+    // Same audience as repair sign-off: ADMIN, TNB, and main-contractor managers
+    // (who assign within their own group); subcontractors use the workspace below.
     {
       href: "/maintenance-packages",
       label: "Maintenance Packages",
       icon: PackageCheck,
       section: "operations",
-      requiresClientViewer: true,
+      requiresRepairVerification: true,
     },
     // Repair sign-off (verify / reject / re-open / cannot-repair). Server flag
     // decides: ADMIN, TNB, and main-contractor managers only.
