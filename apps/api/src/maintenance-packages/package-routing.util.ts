@@ -23,13 +23,23 @@ import {
  *    company.
  *  - A company's delegation to its own subcontractor is respected: a defect
  *    already routed anywhere inside the target company's contractor subtree is
- *    left where it is.
+ *    left where it is — unless the package names a TEAM (plan §12), which pins
+ *    the work to that team's company.
+ *  - A package with a team assigns that team to every not-yet-evidenced, open
+ *    Kejanggalan in scope (VERIFIED → ASSIGNED); evidenced work keeps its crew.
+ *    A package without a team leaves team choice to the company's Manager.
  */
 
 type PackageShape = {
   category: MaintenanceCategory | null;
   maintenanceOrganizationId: string;
+  assignedTeamId?: string | null;
 };
+
+export interface PackageTarget {
+  organizationId: string | null;
+  teamId: string | null;
+}
 
 /** Released = past the dormant pre-report state and not thrown out as invalid. */
 export const RELEASED_DEFECT_WHERE: Prisma.DefectWhereInput = {
@@ -59,20 +69,27 @@ const FINISHED_STATUSES: ReadonlySet<DefectStatus> = new Set([
   DefectStatus.CLOSED,
 ]);
 
+/** The company (and optional team) a defect of `category` belongs to. */
+export function resolvePackageTarget(
+  packages: PackageShape[],
+  category: MaintenanceCategory | null,
+): PackageTarget {
+  const effective = category ?? MaintenanceCategory.SELENGGARAAN;
+  const pkg =
+    packages.find((candidate) => candidate.category === effective) ??
+    packages.find((candidate) => candidate.category === null);
+  return {
+    organizationId: pkg?.maintenanceOrganizationId ?? null,
+    teamId: pkg?.assignedTeamId ?? null,
+  };
+}
+
 /** The company a defect of `category` belongs to under the visit's packages. */
 export function resolvePackageOrganizationId(
   packages: PackageShape[],
   category: MaintenanceCategory | null,
 ): string | null {
-  const effective = category ?? MaintenanceCategory.SELENGGARAAN;
-  const lane = packages.find((pkg) => pkg.category === effective);
-  if (lane) {
-    return lane.maintenanceOrganizationId;
-  }
-  return (
-    packages.find((pkg) => pkg.category === null)?.maintenanceOrganizationId ??
-    null
-  );
+  return resolvePackageTarget(packages, category).organizationId;
 }
 
 /** `rootId` plus every active contractor org below it (loop-safe). */
@@ -106,6 +123,8 @@ export interface RoutingResult {
   moved: number;
   /** Left with their current company because work already started / finished. */
   kept: number;
+  /** Handed to the package's team (VERIFIED → ASSIGNED). */
+  teamAssigned: number;
 }
 
 /**
@@ -125,7 +144,7 @@ export async function applyPackageRouting(
 ): Promise<RoutingResult> {
   const packages = await tx.maintenancePackage.findMany({
     where: { siteVisitId },
-    select: { category: true, maintenanceOrganizationId: true },
+    select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
   });
 
   const defects = await tx.defect.findMany({
@@ -139,6 +158,7 @@ export async function applyPackageRouting(
       maintenanceOrganizationId: true,
       lifecycleStatus: true,
       status: true,
+      assignedToTeamId: true,
       _count: { select: { evidenceImages: { where: REPAIR_EVIDENCE_WHERE } } },
     },
   });
@@ -163,21 +183,60 @@ export async function applyPackageRouting(
       })
     ).map((org) => [org.id, org.name]),
   );
+  const teamIds = [
+    ...new Set(packages.map((pkg) => pkg.assignedTeamId).filter((id): id is string => !!id)),
+  ];
+  const teamNames = new Map(
+    teamIds.length === 0
+      ? []
+      : (
+          await tx.team.findMany({
+            where: { id: { in: teamIds } },
+            select: { id: true, name: true },
+          })
+        ).map((team) => [team.id, team.name]),
+  );
 
-  const result: RoutingResult = { routed: 0, moved: 0, kept: 0 };
+  const result: RoutingResult = { routed: 0, moved: 0, kept: 0, teamAssigned: 0 };
   const timeline: Prisma.DefectTimelineEntryCreateManyInput[] = [];
   // Batched writes, keyed by target org ('' = withdrawn → null).
   const stampIds = new Map<string, string[]>();
   const moveIds = new Map<string, { verified: string[]; legacy: string[] }>();
+  // Team hand-offs, keyed by team id.
+  const teamAssignIds = new Map<string, string[]>();
+  const queueTeam = (
+    defectId: string,
+    teamId: string,
+    fromLifecycle: DefectLifecycleStatus | null,
+  ) => {
+    const ids = teamAssignIds.get(teamId) ?? [];
+    ids.push(defectId);
+    teamAssignIds.set(teamId, ids);
+    result.teamAssigned += 1;
+    timeline.push({
+      id: randomUUID(),
+      defectId,
+      type: DefectTimelineEventType.DEFECT_ASSIGNED,
+      fromLifecycleStatus: fromLifecycle,
+      toLifecycleStatus:
+        fromLifecycle === DefectLifecycleStatus.VERIFIED
+          ? DefectLifecycleStatus.ASSIGNED
+          : fromLifecycle,
+      comment: `${options.reason}: assigned to ${teamNames.get(teamId) ?? 'a team'}.`,
+      createdByUserId: options.actorUserId,
+      createdAt: options.now,
+    });
+  };
 
   for (const defect of defects) {
-    const target = resolvePackageOrganizationId(packages, defect.maintenanceCategory);
+    const { organizationId: target, teamId: targetTeam } = resolvePackageTarget(
+      packages,
+      defect.maintenanceCategory,
+    );
     const current = defect.maintenanceOrganizationId;
+    const evidenced = defect._count.evidenceImages > 0;
 
     if (target === null && current === null) {
-      continue;
-    }
-    if (target && current && (await subtreeOf(target)).has(current)) {
       continue;
     }
 
@@ -185,6 +244,23 @@ export async function applyPackageRouting(
       (defect.lifecycleStatus !== null &&
         FINISHED_LIFECYCLES.has(defect.lifecycleStatus)) ||
       FINISHED_STATUSES.has(defect.status);
+
+    if (target && current && (await subtreeOf(target)).has(current)) {
+      // A named team pins the work to the team's own company; otherwise the
+      // company's delegation inside its subtree stands.
+      if (!targetTeam || current === target) {
+        if (
+          targetTeam &&
+          !finished &&
+          !evidenced &&
+          defect.assignedToTeamId !== targetTeam
+        ) {
+          queueTeam(defect.id, targetTeam, defect.lifecycleStatus);
+        }
+        continue;
+      }
+    }
+
     if (finished) {
       result.kept += 1;
       continue;
@@ -207,10 +283,13 @@ export async function applyPackageRouting(
         createdByUserId: options.actorUserId,
         createdAt: options.now,
       });
+      if (targetTeam && !evidenced) {
+        queueTeam(defect.id, targetTeam, defect.lifecycleStatus);
+      }
       continue;
     }
 
-    if (defect._count.evidenceImages > 0) {
+    if (evidenced) {
       result.kept += 1;
       continue;
     }
@@ -235,6 +314,9 @@ export async function applyPackageRouting(
       createdByUserId: options.actorUserId,
       createdAt: options.now,
     });
+    if (target && targetTeam) {
+      queueTeam(defect.id, targetTeam, toLifecycle);
+    }
   }
 
   for (const [orgId, ids] of stampIds) {
@@ -275,6 +357,18 @@ export async function applyPackageRouting(
         data: reset,
       });
     }
+  }
+
+  // After the org writes: the moves above reset any previous crew first.
+  for (const [teamId, ids] of teamAssignIds) {
+    await tx.defect.updateMany({
+      where: { id: { in: ids } },
+      data: { assignedToTeamId: teamId, assignedTeamId: teamId, assignedAt: options.now },
+    });
+    await tx.defect.updateMany({
+      where: { id: { in: ids }, lifecycleStatus: DefectLifecycleStatus.VERIFIED },
+      data: { lifecycleStatus: DefectLifecycleStatus.ASSIGNED },
+    });
   }
 
   if (timeline.length > 0) {

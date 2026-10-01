@@ -5,7 +5,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { resolvePackageOrganizationId } from '../maintenance-packages/package-routing.util';
+import { resolvePackageTarget } from '../maintenance-packages/package-routing.util';
 
 /**
  * Maintenance handoff Phase 3 — defect release + auto-route.
@@ -57,7 +57,7 @@ interface BuildReleaseOptions {
 async function loadVisitPackages(prisma: PrismaService, siteVisitId: string) {
   return prisma.maintenancePackage.findMany({
     where: { siteVisitId },
-    select: { category: true, maintenanceOrganizationId: true },
+    select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
   });
 }
 
@@ -112,13 +112,15 @@ export async function buildVisitReleasePlan(
     select: { id: true, lifecycleStatus: true, maintenanceCategory: true },
   });
 
-  const withOrg = candidates.map((target) => ({
-    ...target,
-    organizationId: resolvePackageOrganizationId(
-      packages,
-      target.maintenanceCategory,
-    ),
-  }));
+  const withOrg = candidates.map((target) => {
+    const packageTarget = resolvePackageTarget(packages, target.maintenanceCategory);
+    return {
+      ...target,
+      organizationId: packageTarget.organizationId,
+      // A package handed straight to a crew (plan §12) takes the release with it.
+      teamId: packageTarget.organizationId ? packageTarget.teamId : null,
+    };
+  });
 
   // Emergency release exists ONLY to stamp a routed org. An emergency with no
   // package to route it to stays as it is (already VERIFIED, waiting in TNB's
@@ -143,23 +145,34 @@ export async function buildVisitReleasePlan(
 
   // One write per destination (null = released unrouted). Unchecked form so the
   // FK scalar can be set directly (updateMany cannot use relation `connect`).
-  const byOrg = new Map<string | null, string[]>();
+  const byDestination = new Map<
+    string,
+    { organizationId: string | null; teamId: string | null; ids: string[] }
+  >();
   for (const target of targets) {
-    const ids = byOrg.get(target.organizationId) ?? [];
-    ids.push(target.id);
-    byOrg.set(target.organizationId, ids);
+    const key = `${target.organizationId ?? ''}|${target.teamId ?? ''}`;
+    const bucket = byDestination.get(key) ?? {
+      organizationId: target.organizationId,
+      teamId: target.teamId,
+      ids: [],
+    };
+    bucket.ids.push(target.id);
+    byDestination.set(key, bucket);
   }
 
   const ops: Prisma.PrismaPromise<unknown>[] = [];
-  for (const [organizationId, ids] of byOrg) {
-    ops.push(
-      prisma.defect.updateMany({
-        where: { id: { in: ids } },
-        data: organizationId
-          ? { ...baseData, maintenanceOrganizationId: organizationId }
-          : baseData,
-      }),
-    );
+  for (const { organizationId, teamId, ids } of byDestination.values()) {
+    const data: Prisma.DefectUncheckedUpdateManyInput = { ...baseData };
+    if (organizationId) {
+      data.maintenanceOrganizationId = organizationId;
+    }
+    if (teamId) {
+      data.lifecycleStatus = DefectLifecycleStatus.ASSIGNED;
+      data.assignedToTeamId = teamId;
+      data.assignedTeamId = teamId;
+      data.assignedAt = options.now;
+    }
+    ops.push(prisma.defect.updateMany({ where: { id: { in: ids } }, data }));
   }
 
   const routed = targets.filter((target) => target.organizationId !== null).length;
@@ -175,10 +188,14 @@ export async function buildVisitReleasePlan(
         defectId: target.id,
         type: DefectTimelineEventType.DEFECT_VERIFIED,
         fromLifecycleStatus: target.lifecycleStatus,
-        toLifecycleStatus: DefectLifecycleStatus.VERIFIED,
-        comment: target.organizationId
-          ? `${base} and routed to the Pencawang's maintenance package company.`
-          : `${base}; awaiting TNB package assignment.`,
+        toLifecycleStatus: target.teamId
+          ? DefectLifecycleStatus.ASSIGNED
+          : DefectLifecycleStatus.VERIFIED,
+        comment: target.teamId
+          ? `${base} and assigned to the Pencawang's maintenance package team.`
+          : target.organizationId
+            ? `${base} and routed to the Pencawang's maintenance package company.`
+            : `${base}; awaiting TNB package assignment.`,
         createdByUserId: options.actorUserId ?? null,
         createdAt: options.now,
       })),

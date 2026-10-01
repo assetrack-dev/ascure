@@ -394,6 +394,7 @@ model Team {
   assignedToDefects     Defect[]         @relation("DefectAssignedToTeam")
   assignedUsers         User[]           @relation("UserOperationalTeam")
   capabilityAssignments TeamCapability[]
+  maintenancePackages   MaintenancePackage[] @relation("MaintenancePackageAssignedTeam")
   supervisors           TeamSupervisor[]
 
   @@unique([tenantId, code])
@@ -1873,6 +1874,9 @@ model MaintenancePackage {
   siteVisitId               String               @db.Uuid
   category                  MaintenanceCategory?
   maintenanceOrganizationId String               @db.Uuid
+  // Optional crew picked by TNB / the Main Contractor (plan §12). Must belong to
+  // maintenanceOrganizationId. Null = the company's Manager picks the team.
+  assignedTeamId            String?              @db.Uuid
   // Target completion date set by TNB for the whole package.
   dueDate                   DateTime?
   notes                     String?
@@ -1883,9 +1887,11 @@ model MaintenancePackage {
   tenant                    Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   siteVisit                 SiteVisit            @relation(fields: [siteVisitId], references: [id], onDelete: Cascade)
   maintenanceOrganization   Organization         @relation(fields: [maintenanceOrganizationId], references: [id], onDelete: Restrict)
+  assignedTeam              Team?                @relation("MaintenancePackageAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   assignedBy                User?                @relation("MaintenancePackageAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([siteVisitId, category])
   @@index([tenantId])
   @@index([maintenanceOrganizationId])
+  @@index([assignedTeamId])
 }
