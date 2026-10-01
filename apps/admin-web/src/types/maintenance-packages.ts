@@ -67,7 +67,56 @@ export interface PackagePencawang {
   poleCount: number;
   totals: { total: number; open: number; finished: number; unrouted: number };
   lanes: PackageLane[];
+  /** Plan §12.6: poles handed to other crews, grouped by owner + work type. */
+  poleSplits: PackagePoleSplit[];
   packages: MaintenancePackageRecord[];
+}
+
+export interface PackagePoleSplit {
+  /** null = every work type on those poles. */
+  category: MaintenanceCategory | null;
+  organization: PackageOrgRef;
+  team: PackageOrgRef | null;
+  poles: number;
+}
+
+export interface PackagePoleLane {
+  category: MaintenanceCategory;
+  total: number;
+  open: number;
+  organization: PackageOrgRef | null;
+  team: PackageOrgRef | null;
+  /** POLE = split off; PACKAGE = follows the Pencawang; null = nobody yet. */
+  source: "POLE" | "PACKAGE" | null;
+  canAssign: boolean;
+}
+
+export interface PackagePole {
+  assetId: string;
+  assetCode: string;
+  noTiangLama: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  total: number;
+  open: number;
+  canAssign: boolean;
+  split: boolean;
+  lanes: PackagePoleLane[];
+}
+
+export interface PackagePolesResponse {
+  siteVisitId: string;
+  pencawangName: string | null;
+  pencawangCode: string | null;
+  canAssign: boolean;
+  poles: PackagePole[];
+}
+
+export interface AssignPolesPayload extends PackageDestination {
+  assetIds: string[];
+  category: MaintenanceCategory | null;
+  dueDate: string | null;
+  notes: string | null;
 }
 
 export interface UnroutedEmergency {
