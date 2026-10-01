@@ -28,6 +28,9 @@ import {
  *  - A package with a team assigns that team to every not-yet-evidenced, open
  *    Kejanggalan in scope (VERIFIED → ASSIGNED); evidenced work keeps its crew.
  *    A package without a team leaves team choice to the company's Manager.
+ *  - Plan §12.6: a pole split (MaintenancePoleAssignment) wins over the PE's
+ *    packages for that pole — pole + work type, then whole pole, then the PE
+ *    work-type package, then the whole-PE package.
  */
 
 type PackageShape = {
@@ -35,6 +38,8 @@ type PackageShape = {
   maintenanceOrganizationId: string;
   assignedTeamId?: string | null;
 };
+
+type PoleShape = PackageShape & { assetId: string };
 
 export interface PackageTarget {
   organizationId: string | null;
@@ -82,6 +87,31 @@ export function resolvePackageTarget(
     organizationId: pkg?.maintenanceOrganizationId ?? null,
     teamId: pkg?.assignedTeamId ?? null,
   };
+}
+
+/**
+ * The owner of a Kejanggalan on `assetId`: its pole split if any (work type
+ * first, then whole pole), else the PE's packages.
+ */
+export function resolveRoutingTarget(
+  packages: PackageShape[],
+  poles: PoleShape[],
+  assetId: string,
+  category: MaintenanceCategory | null,
+): PackageTarget & { source: 'POLE' | 'PACKAGE' | null } {
+  const effective = category ?? MaintenanceCategory.SELENGGARAAN;
+  const pole =
+    poles.find((row) => row.assetId === assetId && row.category === effective) ??
+    poles.find((row) => row.assetId === assetId && row.category === null);
+  if (pole) {
+    return {
+      organizationId: pole.maintenanceOrganizationId,
+      teamId: pole.assignedTeamId ?? null,
+      source: 'POLE',
+    };
+  }
+  const target = resolvePackageTarget(packages, category);
+  return { ...target, source: target.organizationId ? 'PACKAGE' : null };
 }
 
 /** The company a defect of `category` belongs to under the visit's packages. */
@@ -142,10 +172,22 @@ export async function applyPackageRouting(
     reason: string;
   },
 ): Promise<RoutingResult> {
-  const packages = await tx.maintenancePackage.findMany({
-    where: { siteVisitId },
-    select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
-  });
+  const [packages, poles] = await Promise.all([
+    tx.maintenancePackage.findMany({
+      where: { siteVisitId },
+      select: { category: true, maintenanceOrganizationId: true, assignedTeamId: true },
+    }),
+    tx.maintenancePoleAssignment.findMany({
+      where: { siteVisitId },
+      select: {
+        assetId: true,
+        category: true,
+        maintenanceOrganizationId: true,
+        assignedTeamId: true,
+      },
+    }),
+  ]);
+  const owners = [...packages, ...poles];
 
   const defects = await tx.defect.findMany({
     where: {
@@ -159,6 +201,7 @@ export async function applyPackageRouting(
       lifecycleStatus: true,
       status: true,
       assignedToTeamId: true,
+      inspectionItemResult: { select: { inspection: { select: { assetId: true } } } },
       _count: { select: { evidenceImages: { where: REPAIR_EVIDENCE_WHERE } } },
     },
   });
@@ -177,14 +220,14 @@ export async function applyPackageRouting(
     (
       await tx.organization.findMany({
         where: {
-          id: { in: [...new Set(packages.map((pkg) => pkg.maintenanceOrganizationId))] },
+          id: { in: [...new Set(owners.map((owner) => owner.maintenanceOrganizationId))] },
         },
         select: { id: true, name: true },
       })
     ).map((org) => [org.id, org.name]),
   );
   const teamIds = [
-    ...new Set(packages.map((pkg) => pkg.assignedTeamId).filter((id): id is string => !!id)),
+    ...new Set(owners.map((owner) => owner.assignedTeamId).filter((id): id is string => !!id)),
   ];
   const teamNames = new Map(
     teamIds.length === 0
@@ -229,8 +272,10 @@ export async function applyPackageRouting(
   };
 
   for (const defect of defects) {
-    const { organizationId: target, teamId: targetTeam } = resolvePackageTarget(
+    const { organizationId: target, teamId: targetTeam } = resolveRoutingTarget(
       packages,
+      poles,
+      defect.inspectionItemResult.inspection.assetId,
       defect.maintenanceCategory,
     );
     const current = defect.maintenanceOrganizationId;

@@ -14,7 +14,9 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   AssignEmergencyDto,
   AssignMaintenancePackageDto,
+  AssignPolesDto,
   BulkAssignMaintenancePackagesDto,
+  ClearPolesDto,
 } from './dto/assign-maintenance-package.dto';
 import { MaintenancePackagesService } from './maintenance-packages.service';
 
@@ -42,6 +44,33 @@ export class MaintenancePackagesController {
   @Post('bulk')
   assignBulk(@CurrentUser() user: RequestUser, @Body() dto: BulkAssignMaintenancePackagesDto) {
     return this.packages.assignBulk(user, dto);
+  }
+
+  // Plan §12.6 — split a Pencawang between crews pole by pole.
+  @Get(':siteVisitId/poles')
+  getPoles(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', ParseUUIDPipe) siteVisitId: string,
+  ) {
+    return this.packages.getPoles(user, siteVisitId);
+  }
+
+  @Post(':siteVisitId/poles')
+  assignPoles(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', ParseUUIDPipe) siteVisitId: string,
+    @Body() dto: AssignPolesDto,
+  ) {
+    return this.packages.assignPoles(user, siteVisitId, dto);
+  }
+
+  @Post(':siteVisitId/poles/clear')
+  clearPoles(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', ParseUUIDPipe) siteVisitId: string,
+    @Body() dto: ClearPolesDto,
+  ) {
+    return this.packages.clearPoles(user, siteVisitId, dto);
   }
 
   @Delete(':id')

@@ -2,6 +2,7 @@ import { MaintenanceCategory } from '@prisma/client';
 import {
   resolvePackageOrganizationId,
   resolvePackageTarget,
+  resolveRoutingTarget,
 } from '../../src/maintenance-packages/package-routing.util';
 
 /**
@@ -60,5 +61,29 @@ describe('resolvePackageTarget', () => {
 
   it('no package → unrouted, no team', () => {
     expect(resolvePackageTarget([], RENTIS)).toEqual({ organizationId: null, teamId: null });
+  });
+});
+
+/** Plan §12.6: pole + work type → whole pole → PE work type → whole PE. */
+describe('resolveRoutingTarget', () => {
+  const { RENTIS, SELENGGARAAN } = MaintenanceCategory;
+  const packages = [
+    { category: null, maintenanceOrganizationId: 'pe-co', assignedTeamId: 'pe-crew' },
+    { category: RENTIS, maintenanceOrganizationId: 'pe-rentis-co', assignedTeamId: null },
+  ];
+  const poles = [
+    { assetId: 'pole-1', category: null, maintenanceOrganizationId: 'pole-co', assignedTeamId: 'pole-crew' },
+    { assetId: 'pole-1', category: RENTIS, maintenanceOrganizationId: 'pole-rentis-co', assignedTeamId: null },
+  ];
+
+  it('a pole + work type split wins, then the whole-pole split', () => {
+    expect(resolveRoutingTarget(packages, poles, 'pole-1', RENTIS)).toEqual({ organizationId: 'pole-rentis-co', teamId: null, source: 'POLE' });
+    expect(resolveRoutingTarget(packages, poles, 'pole-1', SELENGGARAAN)).toEqual({ organizationId: 'pole-co', teamId: 'pole-crew', source: 'POLE' });
+  });
+
+  it('other poles follow the PE packages', () => {
+    expect(resolveRoutingTarget(packages, poles, 'pole-2', RENTIS)).toEqual({ organizationId: 'pe-rentis-co', teamId: null, source: 'PACKAGE' });
+    expect(resolveRoutingTarget(packages, poles, 'pole-2', null)).toEqual({ organizationId: 'pe-co', teamId: 'pe-crew', source: 'PACKAGE' });
+    expect(resolveRoutingTarget([], [], 'pole-2', null)).toEqual({ organizationId: null, teamId: null, source: null });
   });
 });

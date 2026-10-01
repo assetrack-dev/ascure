@@ -285,3 +285,16 @@ Ships API + web + 1 additive migration; **no APK**.
 
 Open: Q9 MC visibility of unassigned PEs — default = its company's assigned mainheads (§12.1); confirm with owner.
 Later (not now): suggested visiting order per team (nearest-neighbour route).
+
+### 12.6 Several teams on one Pencawang — split by poles (owner, 2026-10-01)
+| # | Decision |
+|---|---|
+| G20 | A Pencawang can be **split by poles**: TNB / MC select poles on the map and give them (whole, or one work type) to another team — **from any company** (TNB; an MC still only within its group). Each pole + work type has exactly ONE owner, so no duplicate trips and every repair is credited to one team. Supersedes A2's "no split below work type" at pole level (still no per-Kejanggalan split). |
+
+- Data: `MaintenancePoleAssignment` (siteVisitId, assetId, category?, maintenanceOrganizationId, assignedTeamId?, dueDate?, notes?) — unique per (visit, pole, category) + partial unique for the whole-pole row.
+- Routing precedence for a Kejanggalan: pole+work type → pole (whole) → PE work-type package → PE whole package. Still one writer (`package-routing.util`); same reassign rules (evidenced work stays).
+- Pole splits survive a PE-level reassign/withdraw (the rest of the PE moves); "Return to Pencawang owner" clears them.
+- API: `GET /maintenance-packages/:siteVisitId/poles`, `POST …/poles` (assign), `POST …/poles/clear`. Board rows carry a pole-split summary.
+- Web: "Split by poles" view — pole map coloured by owner team, click / box select, give to a company/team, or return to the PE owner.
+- Crews: no APK — `/maintenance-work` already scopes by team; Team B sees the PE with only its poles.
+- The per-PE repair PDF (M4) will be per company (each company's own Kejanggalan).

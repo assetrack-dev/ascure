@@ -16,9 +16,14 @@ function fakePrisma(
   const updates: Array<{ where: { id: { in: string[] } }; data: Record<string, unknown> }> = [];
   const prisma = {
     maintenancePackage: { findMany: async () => packages },
+    maintenancePoleAssignment: { findMany: async () => [] },
     defect: {
       findMany: async () =>
-        defects.map((defect) => ({ ...defect, lifecycleStatus: 'DETECTED' })),
+        defects.map((defect) => ({
+          ...defect,
+          lifecycleStatus: 'DETECTED',
+          inspectionItemResult: { inspection: { assetId: `pole-${defect.id}` } },
+        })),
       updateMany: (args: (typeof updates)[number]) => {
         updates.push(args);
         return Promise.resolve(args);
