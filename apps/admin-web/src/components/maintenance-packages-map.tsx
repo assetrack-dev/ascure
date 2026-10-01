@@ -19,6 +19,8 @@ export interface PackageMapPoint {
   openCount: number;
   color: string;
   selected: boolean;
+  /** Matches the search box — drawn with a blue halo. */
+  highlighted?: boolean;
 }
 
 interface PackagesMapProps {
@@ -27,6 +29,12 @@ interface PackagesMapProps {
   boxMode: boolean;
   onToggle: (id: string) => void;
   onBoxSelect: (ids: string[]) => void;
+  /**
+   * Search matches to fly to. The map zooms to them when the set changes and
+   * STAYS there when it empties (clearing the search keeps the view), so the
+   * neighbouring Pencawang remain in sight.
+   */
+  focusIds?: string[];
 }
 
 const DEFAULT_CENTER = { lat: 4.2105, lng: 101.9758 };
@@ -38,18 +46,29 @@ const CLUSTER_ABOVE = 600;
 // Raster SVG icons (not google.maps.Symbol) keep marker optimisation on — see
 // google-asset-map.tsx. Cached by (colour, selected, digits).
 const iconCache = new Map<string, google.maps.Icon>();
-function markerIcon(color: string, selected: boolean, digits: number): google.maps.Icon {
-  const key = `${color}|${selected ? 1 : 0}|${digits}`;
+function markerIcon(
+  color: string,
+  selected: boolean,
+  digits: number,
+  highlighted = false,
+): google.maps.Icon {
+  const key = `${color}|${selected ? 1 : 0}|${digits}|${highlighted ? 1 : 0}`;
   const cached = iconCache.get(key);
   if (cached) return cached;
-  const size = (digits > 2 ? 34 : 28) + (selected ? 6 : 0);
+  const halo = highlighted ? 8 : 0;
+  const size = (digits > 2 ? 34 : 28) + (selected ? 6 : 0) + halo * 2;
   const c = size / 2;
+  const body = c - halo - (selected ? 5 : 1.5);
+  const haloRing = highlighted
+    ? `<circle cx='${c}' cy='${c}' r='${c - 2}' fill='#2563eb' fill-opacity='0.25' stroke='#2563eb' stroke-width='3'/>`
+    : "";
   const ring = selected
-    ? `<circle cx='${c}' cy='${c}' r='${c - 1.5}' fill='none' stroke='#0f172a' stroke-width='3'/>`
+    ? `<circle cx='${c}' cy='${c}' r='${c - halo - 1.5}' fill='none' stroke='#0f172a' stroke-width='3'/>`
     : "";
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
-    `<circle cx='${c}' cy='${c}' r='${c - (selected ? 5 : 1.5)}' fill='${color}' stroke='#ffffff' stroke-width='2'/>` +
+    haloRing +
+    `<circle cx='${c}' cy='${c}' r='${body}' fill='${color}' stroke='#ffffff' stroke-width='2'/>` +
     ring +
     `</svg>`;
   const icon: google.maps.Icon = {
@@ -62,7 +81,14 @@ function markerIcon(color: string, selected: boolean, digits: number): google.ma
   return icon;
 }
 
-function Layers({ points, boxMode, onToggle, onBoxSelect }: PackagesMapProps) {
+function Layers({
+  points,
+  boxMode,
+  onToggle,
+  onBoxSelect,
+  focusIds,
+  fitAllSignal,
+}: PackagesMapProps & { fitAllSignal: number }) {
   const map = useMap();
   const markersRef = useRef<Map<string, google.maps.Marker>>(new Map());
   const clustererRef = useRef<MarkerClusterer | null>(null);
@@ -87,13 +113,18 @@ function Layers({ points, boxMode, onToggle, onBoxSelect }: PackagesMapProps) {
         fontSize: "11px",
         fontWeight: "700",
       };
-      const icon = markerIcon(point.color, point.selected, String(point.openCount).length);
+      const icon = markerIcon(
+        point.color,
+        point.selected,
+        String(point.openCount).length,
+        point.highlighted,
+      );
       const existing = markers.get(point.id);
       if (existing) {
         existing.setIcon(icon);
         existing.setLabel(label);
         existing.setTitle(point.title);
-        existing.setZIndex(point.selected ? 2 : 1);
+        existing.setZIndex(point.highlighted ? 3 : point.selected ? 2 : 1);
         continue;
       }
       const marker = new google.maps.Marker({
@@ -101,7 +132,7 @@ function Layers({ points, boxMode, onToggle, onBoxSelect }: PackagesMapProps) {
         icon,
         label,
         title: point.title,
-        zIndex: point.selected ? 2 : 1,
+        zIndex: point.highlighted ? 3 : point.selected ? 2 : 1,
       });
       marker.addListener("click", () => onToggleRef.current(point.id));
       markers.set(point.id, marker);
@@ -154,6 +185,35 @@ function Layers({ points, boxMode, onToggle, onBoxSelect }: PackagesMapProps) {
     });
     return () => google.maps.event.removeListener(listener);
   }, [map, points]);
+
+  // Fly to the search matches (debounced so typing doesn't jitter the map).
+  // An empty set does nothing — the view stays where the last search left it.
+  const focusKey = (focusIds ?? []).slice().sort().join("|");
+  useEffect(() => {
+    if (!map || !focusKey) return;
+    const timer = window.setTimeout(() => {
+      const ids = new Set(focusKey.split("|"));
+      const targets = pointsRef.current.filter((point) => ids.has(point.id));
+      if (targets.length === 0) return;
+      if (targets.length === 1) {
+        map.panTo({ lat: targets[0].latitude, lng: targets[0].longitude });
+        if ((map.getZoom() ?? 0) < 15) map.setZoom(15);
+        return;
+      }
+      const bounds = new google.maps.LatLngBounds();
+      targets.forEach((point) => bounds.extend({ lat: point.latitude, lng: point.longitude }));
+      map.fitBounds(bounds, 80);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [map, focusKey]);
+
+  // "Show all" — zoom back out to every Pencawang on the map.
+  useEffect(() => {
+    if (!map || fitAllSignal === 0 || pointsRef.current.length === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    pointsRef.current.forEach((point) => bounds.extend({ lat: point.latitude, lng: point.longitude }));
+    map.fitBounds(bounds, 60);
+  }, [map, fitAllSignal]);
 
   // Box select: with panning off, a drag draws a rectangle; release selects
   // every PE inside it (added to the current selection).
@@ -228,6 +288,7 @@ export default function MaintenancePackagesMap({
   ...rest
 }: PackagesMapProps & { apiKey: string; onLoadError?: () => void }) {
   const [mapType, setMapType] = useState<"hybrid" | "roadmap">("hybrid");
+  const [fitAllSignal, setFitAllSignal] = useState(0);
 
   useEffect(() => {
     const prev = window.gm_authFailure;
@@ -250,7 +311,7 @@ export default function MaintenancePackagesMap({
           zoomControl
           style={{ width: "100%", height: "100%" }}
         >
-          <Layers {...rest} />
+          <Layers {...rest} fitAllSignal={fitAllSignal} />
         </GoogleMap>
       </APIProvider>
       <button
@@ -259,6 +320,13 @@ export default function MaintenancePackagesMap({
         className="absolute left-3 top-3 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
       >
         {mapType === "hybrid" ? "Map" : "Satellite"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setFitAllSignal((count) => count + 1)}
+        className="absolute left-3 top-12 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+      >
+        Show all
       </button>
     </div>
   );
