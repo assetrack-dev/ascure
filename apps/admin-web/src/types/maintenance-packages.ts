@@ -15,12 +15,25 @@ export interface PackageOrgRef {
   name: string;
 }
 
+/** A crew the actor may hand work to (TNB: any contractor's; MC: own group's). */
+export interface PackageTeam {
+  id: string;
+  name: string;
+  code?: string | null;
+  organizationId: string;
+}
+
+export type PackageActorKind = "ADMIN" | "TNB" | "MAIN_CONTRACTOR";
+
 export interface PackageLane {
   category: MaintenanceCategory;
   total: number;
   open: number;
   finished: number;
   organization: PackageOrgRef | null;
+  team: PackageOrgRef | null;
+  /** False when the lane sits with a company outside a Main Contractor's group. */
+  canAssign: boolean;
 }
 
 export interface MaintenancePackageRecord {
@@ -28,6 +41,8 @@ export interface MaintenancePackageRecord {
   /** null = the whole Pencawang. */
   category: MaintenanceCategory | null;
   organization: PackageOrgRef;
+  /** null = the company's Manager picks the team. */
+  team: PackageOrgRef | null;
   dueDate: string | null;
   notes: string | null;
   assignedAt: string;
@@ -39,6 +54,10 @@ export interface PackagePencawang {
   pencawangName: string | null;
   pencawangCode: string | null;
   substationId: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** May the actor (re)assign the WHOLE Pencawang. */
+  canAssign: boolean;
   mainhead: PackageOrgRef | null;
   cycleNumber: number | null;
   operationalScope: string | null;
@@ -65,16 +84,30 @@ export interface UnroutedEmergency {
 }
 
 export interface MaintenancePackageBoard {
+  actorKind: PackageActorKind;
   canAssign: boolean;
   companies: PackageCompany[];
+  teams: PackageTeam[];
   emergencies: UnroutedEmergency[];
   pencawangs: PackagePencawang[];
 }
 
-export interface AssignPackagePayload {
+/** Where work goes: a company (its Manager picks the team) or a team. */
+export interface PackageDestination {
+  maintenanceOrganizationId: string;
+  assignedTeamId: string | null;
+}
+
+export interface AssignPackagePayload extends PackageDestination {
   siteVisitId: string;
   category: MaintenanceCategory | null;
-  maintenanceOrganizationId: string;
+  dueDate: string | null;
+  notes: string | null;
+}
+
+export interface BulkAssignPackagesPayload extends PackageDestination {
+  siteVisitIds: string[];
+  category: MaintenanceCategory | null;
   dueDate: string | null;
   notes: string | null;
 }
@@ -83,4 +116,15 @@ export interface RoutingResult {
   routed: number;
   moved: number;
   kept: number;
+  teamAssigned: number;
+}
+
+export type BulkAssignRow =
+  | { siteVisitId: string; status: "ASSIGNED"; routing: RoutingResult }
+  | { siteVisitId: string; status: "SKIPPED"; reason: string };
+
+export interface BulkAssignResult {
+  assigned: number;
+  skipped: number;
+  results: BulkAssignRow[];
 }
