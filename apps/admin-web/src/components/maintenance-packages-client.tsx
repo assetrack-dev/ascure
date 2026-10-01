@@ -21,6 +21,23 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PackageMapPoint } from "@/components/maintenance-packages-map";
+import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
+import {
+  CATEGORY_LABEL,
+  CATEGORY_ORDER,
+  DestinationSelect,
+  DialogFrame,
+  ErrorBanner,
+  LegendDot,
+  checkboxClass,
+  decodeDestination,
+  encodeDestination,
+  modalInputClass,
+  modalLabelClass,
+  modalSelectClass,
+  routingMessage,
+  routingParts,
+} from "@/components/maintenance-packages-shared";
 import {
   Card,
   Chip,
@@ -74,13 +91,7 @@ const MaintenancePackagesMap = dynamic(() => import("@/components/maintenance-pa
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
-const CATEGORY_ORDER: MaintenanceCategory[] = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"];
 
-const CATEGORY_LABEL: Record<MaintenanceCategory, string> = {
-  RENTIS: "Rentis",
-  CAT_TIANG: "Cat tiang",
-  SELENGGARAAN: "Selenggaraan",
-};
 
 type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED";
 type ViewMode = "LIST" | "MAP";
@@ -104,11 +115,6 @@ const MAP_COLORS = {
   done: "#16a34a",
 } as const;
 
-const modalInputClass = `${filterControlClass} mt-1.5 w-full`;
-const modalSelectClass = `${filterSelectClass} mt-1.5 w-full`;
-const modalLabelClass = "text-[12.5px] font-semibold text-[var(--foreground-soft)]";
-const checkboxClass =
-  "h-4 w-4 cursor-pointer rounded border-[var(--line-strong)] accent-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-40";
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -143,37 +149,26 @@ function ownerLabel(pkg: Pick<MaintenancePackageRecord, "organization" | "team">
 
 /** One line describing who owns the PE: whole company/team, split, or nobody yet. */
 function assignmentSummary(row: PackagePencawang): { text: string; tone: Tone } {
+  const splitPoles = row.poleSplits.reduce((sum, split) => sum + split.poles, 0);
+  const poleNote = splitPoles > 0 ? ` + ${splitPoles} pole${splitPoles === 1 ? "" : "s"} split` : "";
   if (row.packages.length === 0) {
-    return { text: "Awaiting company", tone: "warning" };
+    return splitPoles > 0
+      ? { text: `${splitPoles} pole${splitPoles === 1 ? "" : "s"} split · rest awaiting company`, tone: "warning" }
+      : { text: "Awaiting company", tone: "warning" };
   }
   const whole = row.packages.find((pkg) => pkg.category === null);
   if (whole) {
-    return { text: ownerLabel(whole), tone: "brand" };
+    return { text: ownerLabel(whole) + poleNote, tone: "brand" };
   }
   const owners = new Set(row.packages.map((pkg) => ownerLabel(pkg)));
   return {
-    text: owners.size === 1 ? ownerLabel(row.packages[0]) : `Split · ${owners.size} owners`,
+    text: (owners.size === 1 ? ownerLabel(row.packages[0]) : `Split · ${owners.size} owners`) + poleNote,
     tone: "brand",
   };
 }
 
-function routingParts(result: RoutingResult) {
-  const parts = [];
-  if (result.routed) parts.push(`${result.routed} routed`);
-  if (result.moved) parts.push(`${result.moved} moved`);
-  if (result.teamAssigned) parts.push(`${result.teamAssigned} handed to the team`);
-  if (result.kept) parts.push(`${result.kept} kept with the previous crew (work already started)`);
-  return parts;
-}
 
-function routingMessage(result: RoutingResult) {
-  const parts = routingParts(result);
-  return parts.length > 0 ? `Saved — ${parts.join(", ")}.` : "Saved — no Kejanggalan changed hands.";
-}
 
-function companyLabel(company: PackageCompany) {
-  return company.code ? `${company.name} (${company.code})` : company.name;
-}
 
 /** Can the actor act on this PE at all (whole, or at least one lane with work)? */
 function isSelectable(row: PackagePencawang) {
@@ -198,115 +193,11 @@ function distanceKm(
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
-// ── Destination: "company (its Manager picks the team)" or "a team" ─────────
-// Encoded in one <select> value as org:<id> / team:<id>.
 
-function encodeDestination(organizationId: string | null | undefined, teamId: string | null | undefined) {
-  if (teamId) return `team:${teamId}`;
-  if (organizationId) return `org:${organizationId}`;
-  return "";
-}
 
-function decodeDestination(value: string, teams: PackageTeam[]): PackageDestination | null {
-  if (value.startsWith("org:")) {
-    return { maintenanceOrganizationId: value.slice(4), assignedTeamId: null };
-  }
-  if (value.startsWith("team:")) {
-    const team = teams.find((candidate) => candidate.id === value.slice(5));
-    return team ? { maintenanceOrganizationId: team.organizationId, assignedTeamId: team.id } : null;
-  }
-  return null;
-}
 
-function DestinationSelect({
-  companies,
-  teams,
-  value,
-  onChange,
-  suggestedOrganizationId,
-  className,
-  ariaLabel,
-}: {
-  companies: PackageCompany[];
-  teams: PackageTeam[];
-  value: string;
-  onChange: (value: string) => void;
-  suggestedOrganizationId?: string | null;
-  className: string;
-  ariaLabel?: string;
-}) {
-  return (
-    <select
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      className={className}
-      required
-    >
-      <option value="">Choose a company or team…</option>
-      {companies.map((company) => (
-        <optgroup key={company.id} label={companyLabel(company)}>
-          <option value={`org:${company.id}`}>
-            {company.name} — company picks the team
-            {company.id === suggestedOrganizationId ? " (Mainhead default)" : ""}
-          </option>
-          {teams
-            .filter((team) => team.organizationId === company.id)
-            .map((team) => (
-              <option key={team.id} value={`team:${team.id}`}>
-                Team: {team.name}
-              </option>
-            ))}
-        </optgroup>
-      ))}
-    </select>
-  );
-}
 
-function DialogFrame({
-  eyebrow,
-  title,
-  subtitle,
-  onClose,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  subtitle: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] px-4 py-6">
-      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-4 border-b border-[var(--line2)] px-[18px] py-4">
-          <div className="min-w-0">
-            <Eyebrow>{eyebrow}</Eyebrow>
-            <h2
-              className="mt-1 truncate text-[18px] font-bold leading-tight text-[var(--foreground)]"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              {title}
-            </h2>
-            <p className="mt-1 text-[12.5px] text-[var(--muted)]">{subtitle}</p>
-          </div>
-          <IconBtn onClick={onClose} aria-label="Close dialog">
-            <X size={16} />
-          </IconBtn>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 
-function ErrorBanner({ error }: { error: string }) {
-  return error ? (
-    <div className="rounded-[var(--radius-control)] border border-[var(--critical-border)] bg-[var(--critical-bg)] px-3 py-2 text-[13px] text-[var(--critical-text)]">
-      {error}
-    </div>
-  ) : null;
-}
 
 interface AssignDialogProps {
   row: PackagePencawang;
@@ -321,9 +212,20 @@ interface AssignDialogProps {
     notes: string | null;
   }) => void;
   onWithdraw: (pkg: MaintenancePackageRecord) => void;
+  onSplitPoles: () => void;
 }
 
-function AssignDialog({ row, companies, teams, busy, error, onClose, onSubmit, onWithdraw }: AssignDialogProps) {
+function AssignDialog({
+  row,
+  companies,
+  teams,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+  onWithdraw,
+  onSplitPoles,
+}: AssignDialogProps) {
   const lanesWithWork = row.lanes.filter((lane) => lane.total > 0);
   const assignableLanes = lanesWithWork.filter((lane) => lane.canAssign);
   const whole = row.packages.find((pkg) => pkg.category === null) ?? null;
@@ -472,6 +374,15 @@ function AssignDialog({ row, companies, teams, busy, error, onClose, onSubmit, o
             maxLength={1000}
           />
         </label>
+
+        <div className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-dashed border-[var(--line)] px-3 py-2.5">
+          <span className="text-[12.5px] text-[var(--muted)]">
+            Need several crews here? Give some poles to another team.
+          </span>
+          <Tbtn type="button" onClick={onSplitPoles} disabled={busy}>
+            Split by poles…
+          </Tbtn>
+        </div>
 
         {row.packages.length > 0 ? (
           <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-3">
@@ -777,14 +688,6 @@ function SelectionBar({
   );
 }
 
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--foreground-soft)]">
-      <span className="h-3 w-3 rounded-full border border-white" style={{ background: color }} />
-      {label}
-    </span>
-  );
-}
 
 /** Map view: pick nearby Pencawang so one crew's route stays short (plan §12.4). */
 function MapView({
@@ -795,6 +698,7 @@ function MapView({
   onAdd,
   onAssign,
   onClear,
+  onOpenPoles,
 }: {
   board: MaintenancePackageBoard;
   rows: PackagePencawang[];
@@ -803,6 +707,7 @@ function MapView({
   onAdd: (ids: string[]) => void;
   onAssign: () => void;
   onClear: () => void;
+  onOpenPoles: (row: PackagePencawang) => void;
 }) {
   const [boxMode, setBoxMode] = useState(false);
   const [mapError, setMapError] = useState(false);
@@ -1066,9 +971,18 @@ function MapView({
                     {row.totals.open} open · {assignmentSummary(row).text}
                   </span>
                 </span>
-                <IconBtn onClick={() => onToggle(row.siteVisitId)} aria-label="Remove from selection">
-                  <X size={14} />
-                </IconBtn>
+                <span className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpenPoles(row)}
+                    className="rounded px-1.5 py-0.5 text-[11.5px] font-semibold text-[var(--brand)] hover:underline"
+                  >
+                    Poles
+                  </button>
+                  <IconBtn onClick={() => onToggle(row.siteVisitId)} aria-label="Remove from selection">
+                    <X size={14} />
+                  </IconBtn>
+                </span>
               </li>
             ))}
           </ul>
@@ -1106,6 +1020,7 @@ function MaintenancePackagesContent() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const [withdrawTarget, setWithdrawTarget] = useState<MaintenancePackageRecord | null>(null);
+  const [poleRow, setPoleRow] = useState<PackagePencawang | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -1369,6 +1284,7 @@ function MaintenancePackagesContent() {
                     onAdd={addSelected}
                     onAssign={openBulk}
                     onClear={() => setSelected(new Set())}
+                    onOpenPoles={setPoleRow}
                   />
                 ) : (
                   <>
@@ -1488,7 +1404,10 @@ function MaintenancePackagesContent() {
                                         ? formatDate(dueDates[0])
                                         : "Varies"}
                                   </td>
-                                  <td className={`${tableCellClass} text-right`}>
+                                  <td className={`${tableCellClass} whitespace-nowrap text-right`}>
+                                    <Tbtn variant="ghost" onClick={() => setPoleRow(row)} className="mr-1">
+                                      Poles
+                                    </Tbtn>
                                     {board.canAssign && selectable ? (
                                       <Tbtn
                                         variant={row.packages.length === 0 ? "primary" : "secondary"}
@@ -1544,6 +1463,10 @@ function MaintenancePackagesContent() {
           error={dialogError}
           onClose={() => (isSaving ? undefined : setDialogRow(null))}
           onWithdraw={setWithdrawTarget}
+          onSplitPoles={() => {
+            setPoleRow(dialogRow);
+            setDialogRow(null);
+          }}
           onSubmit={(input) =>
             void runWrite(async (token) => {
               const result = await assignMaintenancePackage(token, {
@@ -1586,6 +1509,21 @@ function MaintenancePackagesContent() {
               setBulkOpen(false);
             });
           }}
+        />
+      ) : null}
+
+      {poleRow && board && session?.token ? (
+        <PoleSplitDialog
+          token={session.token}
+          siteVisitId={poleRow.siteVisitId}
+          title={pencawangLabel(poleRow)}
+          board={board}
+          onClose={() => setPoleRow(null)}
+          onChanged={(message) => {
+            setNotice(message);
+            void loadBoard(session.token);
+          }}
+          onUnauthorized={handleLogout}
         />
       ) : null}
 
