@@ -33,6 +33,8 @@ const EVICT_TO_RATIO = 0.8; // when over a limit, evict oldest down to 80% of it
 // too costly (and low-value) to keep offline — skipping it protects every other
 // cached view. A normal per-Pencawang register is well under this.
 const MAX_ENTRY_BYTES = 3 * 1024 * 1024; // 3MB
+// Budget freeReadCacheSpace() shrinks to when a durable write is failing.
+const EMERGENCY_CACHE_BYTES = 8 * 1024 * 1024; // 8MB → evicts down to ~6.4MB
 const PRUNE_EVERY_N_WRITES = 25;
 // Also prune after this many bytes written since the last prune, so a burst of a
 // few large writes triggers eviction well before it can reach the DB cap (the
@@ -62,9 +64,86 @@ function cacheKey(namespace: string, id?: string) {
   return id ? `${CACHE_PREFIX}${namespace}/${id}/v1` : `${CACHE_PREFIX}${namespace}/v1`;
 }
 
+// Android's CursorWindow can't hold a single row over 2MB: the setItem succeeds,
+// but every later read of that row throws "Row too big to fit into CursorWindow".
+// Before this, such a row (a big Pencawang's register) was cached-but-unreadable
+// AND made the eviction's multiGet throw — so eviction silently stopped for good,
+// the cache grew to the DB cap, and the next DURABLE write (the offline queue,
+// i.e. every offline Save) failed with SQLITE_FULL. Values longer than this are
+// split across rows; the main key then holds a small manifest.
+const CHUNK_CHARS = 512 * 1024; // ≤1.5MB even if every char were 3-byte UTF-8
+const PART_MARKER = '#part/';
+// Prune reads entries a batch at a time so one unreadable row can't fail it all.
+const PRUNE_READ_BATCH = 20;
+
+type ChunkManifest = {
+  __chunks: number;
+  bytes: number;
+  cachedAt: string;
+};
+
+function partKey(key: string, index: number) {
+  return `${key}${PART_MARKER}${index}`;
+}
+
+function partsOf(key: string, keys: readonly string[]) {
+  return keys.filter((candidate) => candidate.startsWith(`${key}${PART_MARKER}`));
+}
+
+function parseManifest(raw: string): ChunkManifest | null {
+  if (!raw.startsWith('{"__chunks"')) {
+    return null;
+  }
+  try {
+    const manifest = JSON.parse(raw) as ChunkManifest;
+    return typeof manifest.__chunks === 'number' ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove an entry and every part row it may have. */
+async function removeEntry(key: string) {
+  await AsyncStorage.multiRemove([key, ...partsOf(key, await AsyncStorage.getAllKeys())]);
+}
+
+/** The full stored string for a cache key, reassembled from parts if chunked. */
+async function readEntryRaw(key: string): Promise<string | null> {
+  let raw: string | null;
+  try {
+    raw = await AsyncStorage.getItem(key);
+  } catch {
+    // Unreadable (an oversized row an older build wrote). It can never be
+    // served — drop it so it stops poisoning eviction.
+    await removeEntry(key).catch(() => undefined);
+    return null;
+  }
+
+  if (!raw) {
+    return null;
+  }
+
+  const manifest = parseManifest(raw);
+  if (!manifest) {
+    return raw;
+  }
+
+  const partKeys = Array.from({ length: manifest.__chunks }, (_, index) => partKey(key, index));
+  const parts = new Map(await AsyncStorage.multiGet(partKeys));
+  const pieces: string[] = [];
+  for (const part of partKeys) {
+    const piece = parts.get(part);
+    if (piece == null) {
+      return null; // incomplete — treat as a miss
+    }
+    pieces.push(piece);
+  }
+  return pieces.join('');
+}
+
 export async function readCache<T>(namespace: string, id?: string): Promise<CacheEnvelope<T> | null> {
   try {
-    const raw = await AsyncStorage.getItem(cacheKey(namespace, id));
+    const raw = await readEntryRaw(cacheKey(namespace, id));
 
     if (!raw) {
       return null;
@@ -82,14 +161,46 @@ export async function readCache<T>(namespace: string, id?: string): Promise<Cach
   }
 }
 
+/** Rows to multiSet for one entry: the value itself, or a manifest + its parts. */
+function entryRows(key: string, serialized: string, cachedAt: string): [string, string][] {
+  if (serialized.length <= CHUNK_CHARS) {
+    return [[key, serialized]];
+  }
+
+  const parts: [string, string][] = [];
+  for (let offset = 0; offset < serialized.length; offset += CHUNK_CHARS) {
+    parts.push([partKey(key, parts.length), serialized.slice(offset, offset + CHUNK_CHARS)]);
+  }
+  const manifest: ChunkManifest = {
+    __chunks: parts.length,
+    bytes: approxBytes(serialized),
+    cachedAt,
+  };
+  return [[key, JSON.stringify(manifest)], ...parts];
+}
+
+/** multiSet is one SQLite transaction — the manifest and its parts land together. */
+async function writeEntry(key: string, rows: [string, string][]) {
+  await AsyncStorage.multiSet(rows);
+  // Drop parts left over from a previous, longer value of this key.
+  const written = new Set(rows.map(([rowKey]) => rowKey));
+  const stale = partsOf(key, await AsyncStorage.getAllKeys()).filter(
+    (part) => !written.has(part),
+  );
+  if (stale.length > 0) {
+    await AsyncStorage.multiRemove(stale);
+  }
+}
+
 export async function writeCache<T>(namespace: string, id: string | undefined, value: T): Promise<void> {
   const key = cacheKey(namespace, id);
+  const cachedAt = new Date().toISOString();
 
   let serialized: string;
   try {
     serialized = JSON.stringify({
       value,
-      cachedAt: new Date().toISOString(),
+      cachedAt,
     } satisfies CacheEnvelope<T>);
   } catch {
     return; // unserializable value — nothing to cache
@@ -103,12 +214,14 @@ export async function writeCache<T>(namespace: string, id: string | undefined, v
         approxBytes(serialized) / 1024,
       )}KB > ${Math.round(MAX_ENTRY_BYTES / 1024)}KB per-entry cap)`,
     );
-    await AsyncStorage.removeItem(key).catch(() => undefined);
+    await removeEntry(key).catch(() => undefined);
     return;
   }
 
+  const rows = entryRows(key, serialized, cachedAt);
+
   try {
-    await AsyncStorage.setItem(key, serialized);
+    await writeEntry(key, rows);
 
     writesSincePrune += 1;
     bytesSincePrune += approxBytes(serialized);
@@ -122,61 +235,97 @@ export async function writeCache<T>(namespace: string, id: string | undefined, v
     // the durable sync-queue (same DB) — has room, then retry this one once.
     // Best-effort: an online screen re-fetches + re-caches anyway.
     await pruneCacheIfNeeded();
-    await AsyncStorage.setItem(key, serialized).catch(() => undefined);
+    await writeEntry(key, rows).catch(() => undefined);
   }
+}
+
+/** cachedAt (ms) of a stored entry — envelope or manifest — without a full parse. */
+function entryCachedAt(raw: string): number {
+  const manifest = parseManifest(raw);
+  if (manifest) {
+    return Date.parse(manifest.cachedAt) || 0;
+  }
+  // JSON.stringify({ value, cachedAt }) always ends with the cachedAt field.
+  const match = /"cachedAt":"([^"]+)"\}$/.exec(raw.slice(-80));
+  return match ? Date.parse(match[1]) || 0 : 0;
+}
+
+/** Read entries in small batches; a batch that throws is retried key by key. */
+async function readForPrune(keys: string[]) {
+  const readable: [string, string | null][] = [];
+  const unreadable: string[] = [];
+
+  for (let start = 0; start < keys.length; start += PRUNE_READ_BATCH) {
+    const batch = keys.slice(start, start + PRUNE_READ_BATCH);
+    try {
+      readable.push(...(await AsyncStorage.multiGet(batch)));
+    } catch {
+      for (const key of batch) {
+        try {
+          readable.push([key, await AsyncStorage.getItem(key)]);
+        } catch {
+          unreadable.push(key);
+        }
+      }
+    }
+  }
+
+  return { readable, unreadable };
 }
 
 /**
  * Evict the oldest read-cache entries (by cachedAt) when the cache exceeds EITHER
  * the entry-count OR the byte budget, down to ~80% of whichever limit(s) it broke.
- * Best-effort + fire-and-forget from writeCache; only touches the CACHE_PREFIX
- * keys, NEVER the offline write-queue (a different key prefix = durable field work).
+ * Also always drops unreadable rows and orphaned part rows. Best-effort +
+ * fire-and-forget from writeCache; only touches the CACHE_PREFIX keys, NEVER the
+ * offline write-queue (a different key prefix = durable field work).
  */
-async function pruneCacheIfNeeded(): Promise<void> {
+async function pruneCacheIfNeeded(byteBudget: number = MAX_CACHE_BYTES): Promise<void> {
   try {
-    const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
+    const cacheKeys = (await AsyncStorage.getAllKeys()).filter((key) =>
       key.startsWith(CACHE_PREFIX),
     );
-    if (keys.length === 0) {
+    if (cacheKeys.length === 0) {
       return;
     }
 
-    const entries = await AsyncStorage.multiGet(keys);
+    const entryKeys = cacheKeys.filter((key) => !key.includes(PART_MARKER));
+    const entrySet = new Set(entryKeys);
+    const toRemove = cacheKeys.filter(
+      (key) => key.includes(PART_MARKER) && !entrySet.has(key.slice(0, key.indexOf(PART_MARKER))),
+    );
+
+    const { readable, unreadable } = await readForPrune(entryKeys);
+    for (const key of unreadable) {
+      toRemove.push(key, ...partsOf(key, cacheKeys));
+    }
+
     let totalBytes = 0;
-    const dated = entries.map(([key, raw]) => {
-      const bytes = raw ? approxBytes(raw) : 0;
+    const dated = readable.map(([key, raw]) => {
+      const manifest = raw ? parseManifest(raw) : null;
+      const bytes = manifest ? manifest.bytes : raw ? approxBytes(raw) : 0;
       totalBytes += bytes;
-      let cachedAt = 0;
-      try {
-        const parsed = raw ? (JSON.parse(raw) as CacheEnvelope<unknown>) : null;
-        cachedAt = parsed?.cachedAt ? Date.parse(parsed.cachedAt) || 0 : 0;
-      } catch {
-        cachedAt = 0;
-      }
-      return { key, cachedAt, bytes };
+      return { key, cachedAt: raw ? entryCachedAt(raw) : 0, bytes };
     });
 
-    // Nothing to do while under BOTH limits.
-    if (keys.length <= MAX_CACHE_ENTRIES && totalBytes <= MAX_CACHE_BYTES) {
-      return;
-    }
+    // Evict only while over EITHER limit.
+    if (dated.length > MAX_CACHE_ENTRIES || totalBytes > byteBudget) {
+      dated.sort((a, b) => a.cachedAt - b.cachedAt); // oldest first
 
-    dated.sort((a, b) => a.cachedAt - b.cachedAt); // oldest first
+      const entryTarget = Math.floor(MAX_CACHE_ENTRIES * EVICT_TO_RATIO);
+      const byteTarget = Math.floor(byteBudget * EVICT_TO_RATIO);
+      let remainingCount = dated.length;
+      let remainingBytes = totalBytes;
 
-    const entryTarget = Math.floor(MAX_CACHE_ENTRIES * EVICT_TO_RATIO);
-    const byteTarget = Math.floor(MAX_CACHE_BYTES * EVICT_TO_RATIO);
-    const toRemove: string[] = [];
-    let remainingCount = dated.length;
-    let remainingBytes = totalBytes;
-
-    // Evict oldest-first until BOTH the count and byte budgets are satisfied.
-    for (const entry of dated) {
-      if (remainingCount <= entryTarget && remainingBytes <= byteTarget) {
-        break;
+      // Evict oldest-first until BOTH the count and byte budgets are satisfied.
+      for (const entry of dated) {
+        if (remainingCount <= entryTarget && remainingBytes <= byteTarget) {
+          break;
+        }
+        toRemove.push(entry.key, ...partsOf(entry.key, cacheKeys));
+        remainingCount -= 1;
+        remainingBytes -= entry.bytes;
       }
-      toRemove.push(entry.key);
-      remainingCount -= 1;
-      remainingBytes -= entry.bytes;
     }
 
     if (toRemove.length > 0) {
@@ -187,9 +336,20 @@ async function pruneCacheIfNeeded(): Promise<void> {
   }
 }
 
+/**
+ * Emergency shrink when a DURABLE write (the sync queue, maintenance overlay) hit
+ * SQLITE_FULL: evict the oldest read-cache entries down to a small budget so the
+ * freed SQLite pages can take the durable write. Keeps the newest ~6MB so the
+ * crew's current Pencawang still renders offline. Everything evicted is
+ * re-fetchable; the durable work is not.
+ */
+export async function freeReadCacheSpace(): Promise<void> {
+  await pruneCacheIfNeeded(EMERGENCY_CACHE_BYTES);
+}
+
 export async function removeCache(namespace: string, id?: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(cacheKey(namespace, id));
+    await removeEntry(cacheKey(namespace, id));
   } catch {
     // ignore
   }

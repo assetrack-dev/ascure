@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../api';
+import { setItemWithRecovery } from '../deviceStorage';
 import type {
   RepairStage,
   WorkKejanggalan,
@@ -77,7 +78,7 @@ async function load(): Promise<Store> {
 function update(mutator: (store: Store) => Store): Promise<Store> {
   const next = chain.then(async () => {
     const store = mutator(await load());
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    await setItemWithRecovery(STORAGE_KEY, JSON.stringify(store));
     listeners.forEach((listener) => listener());
     return store;
   });

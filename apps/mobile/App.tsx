@@ -26,9 +26,25 @@ import { navigationRef } from './src/navigation/navigationRef';
 import { ThemeProvider, useTheme } from './src/theme';
 import { LoadingScreen } from './src/ui';
 import { initMapbox } from './src/mapbox';
+import { sweepTempPhotoFiles } from './src/deviceStorage';
 
 // Set the Mapbox access token once, before any MapView mounts (offline satellite).
 initMapbox();
+
+// Clear raw camera captures left in the app cache by earlier sessions — they
+// fill the phone and then every save fails with SQLITE_FULL. Delayed so it
+// never competes with boot; best-effort.
+setTimeout(() => {
+  void sweepTempPhotoFiles()
+    .then(({ deleted, freedBytes }) => {
+      if (deleted > 0) {
+        console.log(
+          `[deviceStorage] swept ${deleted} temp photos (${Math.round(freedBytes / (1024 * 1024))} MB)`,
+        );
+      }
+    })
+    .catch(() => undefined);
+}, 5000);
 
 function AppShell() {
   const { isBooting } = useAuth();
