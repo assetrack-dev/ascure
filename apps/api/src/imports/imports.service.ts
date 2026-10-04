@@ -20,6 +20,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { AssetsService } from '../assets/assets.service';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 import {
   ALL_TEMPLATE_KEYS,
   buildExternalRef,
@@ -348,7 +349,7 @@ export class ImportsService {
             if (locked > 0) { applied.qaLockedSkipped++; continue; }
 
             // Replace children (idempotent) — batched to bound round-trips.
-            await tx.inspectionItemResult.deleteMany({ where: { inspectionId: inspection.id } }); // cascades Defect
+            await tx.inspectionItemResult.deleteMany({ where: { inspectionId: inspection.id, ...SURVEY_ITEM_RESULT_WHERE } }); // cascades Defect; keeps maintenance findings (§13)
             await tx.inspectionResult.deleteMany({ where: { inspectionId: inspection.id } });
 
             const itemResultRows: Prisma.InspectionItemResultCreateManyInput[] = [];

@@ -71,6 +71,7 @@ import {
   parsePoleCode,
   parseSavtPoleCode,
 } from '@ascure/shared-utils';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
   'An asset with this code already exists in this Pencawang.';
@@ -1702,6 +1703,7 @@ export class AssetsService {
               },
             },
             itemResults: {
+              where: SURVEY_ITEM_RESULT_WHERE,
               orderBy: {
                 createdAt: 'asc',
               },
@@ -1913,6 +1915,7 @@ export class AssetsService {
               },
             },
             itemResults: {
+              where: SURVEY_ITEM_RESULT_WHERE,
               orderBy: { createdAt: 'asc' },
               select: {
                 id: true,

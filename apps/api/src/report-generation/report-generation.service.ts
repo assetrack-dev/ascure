@@ -52,6 +52,7 @@ import {
   type DefectReportPole,
 } from './defect-report-layout';
 import { loadReportImage } from './report-image.util';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
 /**
  * Everything the `.docx` template can reference. Fixed scalar tags plus the
@@ -176,6 +177,7 @@ const assetReportInclude = {
     },
   },
   itemResults: {
+    where: SURVEY_ITEM_RESULT_WHERE,
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,

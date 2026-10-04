@@ -226,3 +226,15 @@ export function deriveEditedChecklistVerdict(
     value.valueDateTime != null;
   return answered ? InspectionItemResultValue.PASS : InspectionItemResultValue.NA;
 }
+
+/**
+ * Would picking `value` on this SELECT / MULTI_SELECT item raise a defect? The
+ * same rule an inspector's pick follows (explicit isDefect flag, else keyword
+ * inference) — used to offer only defect options for a maintenance finding.
+ */
+export function isDefectSelectOption(
+  optionsJson: Prisma.JsonValue | null,
+  value: string,
+): boolean {
+  return inferSelectVerdict(optionsJson, value) === InspectionItemResultValue.FAIL;
+}

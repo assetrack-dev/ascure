@@ -184,6 +184,9 @@ export class MaintenanceClosureService {
             select: {
               label: true,
               remark: true,
+              source: true,
+              createdAt: true,
+              createdBy: { select: { id: true, name: true } },
               inspection: {
                 select: {
                   asset: {
@@ -252,6 +255,16 @@ export class MaintenanceClosureService {
           id: defect.id,
           label: defect.inspectionItemResult.label,
           remark: defect.inspectionItemResult.remark,
+          // §13: added during maintenance, not in the survey — verify it on its photos.
+          isNewFinding: defect.inspectionItemResult.source === 'MAINTENANCE_FINDING',
+          addedBy:
+            defect.inspectionItemResult.source === 'MAINTENANCE_FINDING'
+              ? defect.inspectionItemResult.createdBy
+              : null,
+          addedAt:
+            defect.inspectionItemResult.source === 'MAINTENANCE_FINDING'
+              ? defect.inspectionItemResult.createdAt.toISOString()
+              : null,
           severity: defect.severity,
           isEmergency: defect.isEmergency,
           category: defect.maintenanceCategory,

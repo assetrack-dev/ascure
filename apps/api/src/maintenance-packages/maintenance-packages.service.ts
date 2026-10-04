@@ -7,10 +7,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { extname, resolve } from 'path';
 import {
   DefectLifecycleStatus,
   DefectStatus,
   DefectTimelineEventType,
+  InspectionCompletionStatus,
   MaintenanceCategory,
   OrganizationType,
   Prisma,
@@ -21,7 +24,14 @@ import { buildScopeContext } from '../common/authorization/scope-context';
 import { isClientMaintenanceActor } from '../common/authorization/client-maintenance-actor';
 import { resolveMainContractorOrgIds } from '../common/authorization/maintenance-closure';
 import { RequestUser } from '../common/interfaces/request-user.interface';
+import {
+  buildDefectEvidenceImagePath,
+  buildDefectEvidenceImagesDirectory,
+  buildDefectEvidenceImageUrl,
+} from '../common/uploads.constants';
 import { PrismaService } from '../prisma/prisma.service';
+import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
+import { createMaintenanceFinding, loadVisitFindingItems } from './maintenance-finding.util';
 import {
   AssignEmergencyDto,
   AssignMaintenancePackageDto,
@@ -1360,5 +1370,121 @@ export class MaintenancePackagesService {
         rows.map((row) => row.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN),
       ),
     ];
+  }
+
+  // ── New finding during maintenance (docs/PLAN-maintenance-flow.md §13) ─────
+
+  /** The PE's surveyed poles and the checklist items a new finding can use. */
+  async getFindingOptions(user: RequestUser, siteVisitId: string) {
+    const actor = await this.resolveActor(user);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    const [inspections, findingTemplates] = await Promise.all([
+      this.prisma.inspection.findMany({
+        where: { siteVisitId: visit.id, completionStatus: InspectionCompletionStatus.SUBMITTED },
+        distinct: ['assetId'],
+        select: {
+          templateId: true,
+          asset: { select: { id: true, assetCode: true, noTiangLama: true, latitude: true, longitude: true } },
+        },
+      }),
+      loadVisitFindingItems(this.prisma, visit.id),
+    ]);
+    return {
+      siteVisitId: visit.id,
+      canAdd:
+        actor.canAssign &&
+        visit.lifecycleStatus !== null &&
+        ASSIGNABLE_VISIT_STATUSES.includes(visit.lifecycleStatus),
+      poles: inspections
+        .map(({ asset, templateId }) => ({ ...asset, assetId: asset.id, templateId }))
+        .sort((left, right) => left.assetCode.localeCompare(right.assetCode, undefined, { numeric: true })),
+      findingTemplates,
+    };
+  }
+
+  /**
+   * The office adds a Kejanggalan that was not in the survey, with the photo of
+   * the condition (usually sent in by the crew). It is routed like any other;
+   * the crew still takes its own BEFORE / AFTER. An MC may only add on poles
+   * whose work type is its group's (or unowned on its Mainheads).
+   */
+  async addFinding(
+    user: RequestUser,
+    siteVisitId: string,
+    dto: AddMaintenanceFindingDto,
+    file: { originalname: string; mimetype: string; size: number; buffer: Buffer } | undefined,
+  ) {
+    const actor = await this.resolveAssigner(user);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Attach a photo of the condition.');
+    }
+
+    const templateItem = await this.prisma.inspectionTemplateItem.findUnique({
+      where: { id: dto.templateItemId },
+      select: { maintenanceCategory: true },
+    });
+    if (!templateItem) {
+      throw new BadRequestException('That checklist item does not exist.');
+    }
+    const category = templateItem.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
+    if (!this.mayChangePole(actor, visit, dto.assetId, category)) {
+      throw new ForbiddenException(
+        'That work type on this pole belongs to a company outside your group.',
+      );
+    }
+
+    const now = new Date();
+    const extension = extname(file.originalname || '').toLowerCase();
+    const fileName = `${Date.now()}-${randomUUID()}${
+      ['.jpg', '.jpeg', '.png', '.webp'].includes(extension) ? extension : '.jpg'
+    }`;
+    let writtenPath: string | null = null;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const finding = await createMaintenanceFinding(tx, {
+          tenantId: user.tenantId,
+          siteVisitId: visit.id,
+          assetId: dto.assetId,
+          templateItemId: dto.templateItemId,
+          optionValue: dto.optionValue,
+          note: dto.note,
+          clientRef: dto.clientRef,
+          actorUserId: user.id,
+          now,
+        });
+        if (!finding.created) {
+          return finding;
+        }
+
+        const directory = buildDefectEvidenceImagesDirectory(finding.defectId);
+        await mkdir(directory, { recursive: true });
+        writtenPath = resolve(directory, fileName);
+        await writeFile(writtenPath, file.buffer);
+        await tx.defectEvidenceImage.create({
+          data: {
+            defectId: finding.defectId,
+            createdByUserId: user.id,
+            evidenceType: 'FINDING',
+            fileName,
+            storageKey: buildDefectEvidenceImagePath(finding.defectId, fileName),
+            contentType: file.mimetype || null,
+            sizeBytes: file.size,
+            url: buildDefectEvidenceImageUrl(finding.defectId, fileName),
+            note: dto.note?.trim() || null,
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            timestamp: now,
+          },
+        });
+        return finding;
+      });
+    } catch (error) {
+      if (writtenPath) {
+        await unlink(writtenPath).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 }

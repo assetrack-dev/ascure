@@ -41,6 +41,7 @@ import {
   type MasterlistRawValue,
   type MasterlistRow,
 } from './savr-masterlist';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
 const UPLOADS_URL_PREFIX = '/uploads';
 
@@ -195,6 +196,7 @@ const inspectionInclude = {
   template: { select: { id: true, name: true, version: true } },
   createdBy: { select: { id: true, name: true, email: true } },
   itemResults: {
+    where: SURVEY_ITEM_RESULT_WHERE,
     orderBy: { createdAt: 'asc' },
     include: {
       defect: {
@@ -1166,6 +1168,7 @@ export class ReportsService {
           },
         },
         itemResults: {
+          where: SURVEY_ITEM_RESULT_WHERE,
           select: { checklistItemId: true, label: true, isDefect: true },
         },
         results: {
@@ -1371,6 +1374,7 @@ export class ReportsService {
           },
         },
         itemResults: {
+          where: SURVEY_ITEM_RESULT_WHERE,
           select: {
             checklistItemId: true,
             label: true,
@@ -1847,7 +1851,7 @@ export class ReportsService {
               substation: { select: { name: true, code: true } },
             },
           },
-          itemResults: { select: { checklistItemId: true, result: true } },
+          itemResults: { where: SURVEY_ITEM_RESULT_WHERE, select: { checklistItemId: true, result: true } },
           results: {
             select: {
               templateItemId: true,
@@ -2231,7 +2235,7 @@ export class ReportsService {
             longitude: true,
           },
         },
-        itemResults: { select: { checklistItemId: true, result: true } },
+        itemResults: { where: SURVEY_ITEM_RESULT_WHERE, select: { checklistItemId: true, result: true } },
         results: {
           select: {
             templateItemId: true,
@@ -2420,7 +2424,7 @@ export class ReportsService {
             longitude: true,
           },
         },
-        itemResults: { select: { checklistItemId: true, result: true } },
+        itemResults: { where: SURVEY_ITEM_RESULT_WHERE, select: { checklistItemId: true, result: true } },
         results: {
           select: {
             templateItemId: true,
