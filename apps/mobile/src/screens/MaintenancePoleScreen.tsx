@@ -10,17 +10,22 @@ import {
   deleteRepairPhotoFile,
   enqueueMutation,
   enqueueRepairCompletion,
+  isTempId,
   mintTempId,
   persistRepairPhoto,
   withdrawQueuedRepairPhoto,
 } from '../syncQueue';
 import {
   addLocalCompletion,
+  addLocalFinding,
   addLocalPhoto,
   dismissLocalCompletion,
   overlayKejanggalan,
+  pendingFindingItems,
+  removeLocalFinding,
   removeLocalPhoto,
   toAbsoluteUrl,
+  type LocalFinding,
   type OverlaidKejanggalan,
 } from '../maintenance/maintenanceLocal';
 import { useWorkPack } from '../maintenance/useWorkPack';
@@ -28,7 +33,9 @@ import {
   CATEGORY_LABEL,
   STAGE_LABEL,
   STATE_LABEL,
+  type FindingItem,
   type RepairStage,
+  type WorkPole,
 } from '../maintenance/types';
 import { AppButton, Card, EmptyState, ErrorBanner, LoadingBlock, Screen, StatusChip, WarningBanner } from '../ui';
 import { Theme, useTheme } from '../theme';
@@ -45,6 +52,8 @@ const CANNOT_REPAIR_OUTCOMES: Array<{ value: string; label: string }> = [
 ];
 
 type Completing = { defectId: string; kind: 'DONE' | 'CANNOT' } | null;
+
+type PoleItem = OverlaidKejanggalan & { localFinding?: LocalFinding };
 
 /**
  * One pole in maintenance mode (docs/PLAN-maintenance-flow.md §7.1 / §6): its
@@ -67,13 +76,47 @@ export function MaintenancePoleScreen() {
   const [completing, setCompleting] = useState<Completing>(null);
   const [outcome, setOutcome] = useState<string>(CANNOT_REPAIR_OUTCOMES[0].value);
   const [notes, setNotes] = useState('');
+  // Plan §13 — adding a Kejanggalan that was not in the survey.
+  const [adding, setAdding] = useState(false);
+  const [findingItemId, setFindingItemId] = useState<string | null>(null);
+  const [findingOption, setFindingOption] = useState<string | null>(null);
+  const [findingNote, setFindingNote] = useState('');
+  const [isAddingFinding, setIsAddingFinding] = useState(false);
 
-  const pole = pack?.poles.find((candidate) => candidate.assetId === assetId) ?? null;
-  const items = useMemo(
-    () => (pole ? pole.kejanggalan.map((item) => overlayKejanggalan(item, local)) : []),
-    [local, pole],
-  );
+  const surveyedPole = pack?.surveyedPoles?.find((candidate) => candidate.assetId === assetId) ?? null;
+  // A pole with no Kejanggalan yet is still openable to add one.
+  const pole: WorkPole | null =
+    pack?.poles.find((candidate) => candidate.assetId === assetId) ??
+    (surveyedPole
+      ? {
+          assetId: surveyedPole.assetId,
+          assetCode: surveyedPole.assetCode,
+          refCode: surveyedPole.refCode,
+          noTiangLama: surveyedPole.noTiangLama,
+          latitude: surveyedPole.latitude,
+          longitude: surveyedPole.longitude,
+          counts: { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 },
+          kejanggalan: [],
+        }
+      : null);
+  const items: PoleItem[] = useMemo(() => {
+    if (!pole || !pack) return [];
+    const server = pole.kejanggalan.map((item) => overlayKejanggalan(item, local));
+    const added = pendingFindingItems(local, pack, pole.assetId).map((item) => ({
+      ...overlayKejanggalan(item, local),
+      localFinding: item.localFinding,
+    }));
+    return [...server, ...added];
+  }, [local, pack, pole]);
   const poleCode = pole ? pole.refCode || pole.assetCode : 'Pole';
+
+  /** Checklist items the crew may raise on this pole (its template, its work types). */
+  const findingItems: FindingItem[] = useMemo(() => {
+    if (!surveyedPole || !pack?.findingTemplates) return [];
+    const template = pack.findingTemplates.find((row) => row.templateId === surveyedPole.templateId);
+    return (template?.items ?? []).filter((item) => surveyedPole.categories.includes(item.category));
+  }, [pack, surveyedPole]);
+  const chosenFinding = findingItems.find((item) => item.templateItemId === findingItemId) ?? null;
 
   const kickSync = () => {
     if (!isOffline) void runQueueSync().catch(() => undefined);
@@ -99,6 +142,8 @@ export function MaintenancePoleScreen() {
       await enqueueMutation({
         type: 'UPLOAD_DEFECT_EVIDENCE',
         tempId: mintTempId('evidence'),
+        // A Kejanggalan added on site must reach the server first.
+        dependsOn: isTempId(item.id) ? [item.id] : undefined,
         payload: {
           localPhotoId: localId,
           defectId: item.id,
@@ -173,6 +218,119 @@ export function MaintenancePoleScreen() {
     kickSync();
   };
 
+  const resetFinding = () => {
+    setAdding(false);
+    setFindingItemId(null);
+    setFindingOption(null);
+    setFindingNote('');
+  };
+
+  /**
+   * Add a Kejanggalan found on site (plan §13): the stamped BEFORE photo IS the
+   * proof, so it is taken first; nothing is queued if the camera is cancelled.
+   * Works offline — the add and the photo sync in order.
+   */
+  const addFinding = async () => {
+    if (!pole || !pack || !chosenFinding) return;
+    const option = chosenFinding.options.find((candidate) => candidate.value === findingOption) ?? null;
+    if (chosenFinding.options.length > 0 && !option) {
+      setActionError('Pick which defect it is.');
+      return;
+    }
+    const alreadyOpen = items.some(
+      (item) =>
+        item.label === chosenFinding.label &&
+        item.displayState !== 'CLOSED' &&
+        !item.localFinding?.rejectedReason,
+    );
+    if (alreadyOpen) {
+      setActionError('This pole already has an open Kejanggalan for that item — use it below.');
+      return;
+    }
+    setActionError(null);
+    setIsAddingFinding(true);
+    try {
+      const severity = option?.severity ?? chosenFinding.severity;
+      const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(severity) });
+      if (!photo) return;
+
+      const tempId = mintTempId('defect');
+      const note = findingNote.trim() || null;
+      const remark = [option?.label, note].filter(Boolean).join(' — ') || null;
+      const localId = `repair_${tempId}_${Date.now().toString(36)}`;
+      const durableUri = await persistRepairPhoto(photo.uri, localId);
+
+      await addLocalFinding({
+        tempId,
+        siteVisitId,
+        assetId: pole.assetId,
+        label: chosenFinding.label,
+        remark,
+        severity,
+        category: chosenFinding.category,
+        addedAt: new Date().toISOString(),
+      });
+      await enqueueMutation({
+        type: 'CREATE_DEFECT_FINDING',
+        tempId,
+        payload: {
+          siteVisitId,
+          assetId: pole.assetId,
+          templateItemId: chosenFinding.templateItemId,
+          optionValue: option?.value ?? null,
+          note,
+          clientRef: tempId,
+        },
+        label: `New Kejanggalan · ${poleCode}`,
+        sublabel: remark ?? chosenFinding.label,
+        ownerUserId: user.id,
+      });
+      await addLocalPhoto({
+        id: localId,
+        defectId: tempId,
+        stage: 'BEFORE',
+        uri: durableUri,
+        takenAt: photo.takenAt,
+        latitude: photo.latitude,
+        longitude: photo.longitude,
+      });
+      await enqueueMutation({
+        type: 'UPLOAD_DEFECT_EVIDENCE',
+        tempId: mintTempId('evidence'),
+        dependsOn: [tempId],
+        payload: {
+          localPhotoId: localId,
+          defectId: tempId,
+          evidenceType: 'BEFORE',
+          uri: durableUri,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          timestamp: photo.takenAt,
+        },
+        label: `Before photo · ${poleCode}`,
+        sublabel: remark ?? chosenFinding.label,
+        ownerUserId: user.id,
+      });
+      if (photo.mocked) {
+        Alert.alert(
+          'Mock location detected',
+          'This phone is reporting a simulated GPS location. The photo is flagged for review — turn off any mock-location app.',
+        );
+      }
+      resetFinding();
+      kickSync();
+    } catch (addError) {
+      setActionError(addError instanceof Error ? addError.message : 'Unable to add the Kejanggalan.');
+    } finally {
+      setIsAddingFinding(false);
+    }
+  };
+
+  const dismissFinding = async (finding: LocalFinding) => {
+    const files = await removeLocalFinding(finding.tempId);
+    await Promise.all(files.map((uri) => deleteRepairPhotoFile(uri).catch(() => undefined)));
+  };
+
   const openDirections = () => {
     if (!pole || pole.latitude === null || pole.longitude === null) return;
     const url = `https://www.google.com/maps/dir/?api=1&destination=${pole.latitude},${pole.longitude}`;
@@ -229,9 +387,113 @@ export function MaintenancePoleScreen() {
         </View>
       ) : null}
 
+      {pole && findingItems.length > 0 && !adding ? (
+        <View style={styles.addRow}>
+          <AppButton
+            label="+ Add Kejanggalan (not in survey)"
+            variant="secondary"
+            onPress={() => {
+              resetFinding();
+              setAdding(true);
+            }}
+          />
+        </View>
+      ) : null}
+      {pole && pack && !pack.surveyedPoles ? (
+        <Text style={styles.hint}>
+          To add a new Kejanggalan here, refresh this package once while you have signal.
+        </Text>
+      ) : null}
+
+      {adding ? (
+        <Card>
+          <Text style={styles.title}>New Kejanggalan on {poleCode}</Text>
+          <Text style={styles.muted}>
+            Found after the survey (e.g. Rentis now needed). Take the BEFORE photo to add it, then repair it as usual.
+          </Text>
+          <Text style={styles.section}>Checklist item</Text>
+          {findingItems.map((candidate) => {
+            const active = findingItemId === candidate.templateItemId;
+            return (
+              <Pressable
+                key={candidate.templateItemId}
+                onPress={() => {
+                  setFindingItemId(candidate.templateItemId);
+                  setFindingOption(candidate.options.length === 1 ? candidate.options[0].value : null);
+                }}
+                style={[styles.option, active && styles.optionActive]}
+              >
+                <Feather
+                  name={active ? 'check-circle' : 'circle'}
+                  size={16}
+                  color={active ? theme.colors.primary : theme.colors.textMuted}
+                />
+                <Text style={styles.optionText}>
+                  {candidate.label}
+                  <Text style={styles.optionMeta}>{`  ·  ${CATEGORY_LABEL[candidate.category]}`}</Text>
+                </Text>
+              </Pressable>
+            );
+          })}
+          {chosenFinding && chosenFinding.options.length > 1 ? (
+            <>
+              <Text style={styles.section}>Which defect</Text>
+              {chosenFinding.options.map((option) => {
+                const active = findingOption === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => setFindingOption(option.value)}
+                    style={[styles.option, active && styles.optionActive]}
+                  >
+                    <Feather
+                      name={active ? 'check-circle' : 'circle'}
+                      size={16}
+                      color={active ? theme.colors.primary : theme.colors.textMuted}
+                    />
+                    <Text style={styles.optionText}>
+                      {option.label}
+                      <Text style={styles.optionMeta}>{`  ·  ${option.severity}`}</Text>
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </>
+          ) : null}
+          <Text style={styles.section}>Note (optional)</Text>
+          <TextInput
+            value={findingNote}
+            onChangeText={setFindingNote}
+            placeholder="What you found"
+            placeholderTextColor={theme.colors.textMuted}
+            multiline
+            style={styles.input}
+          />
+          <View style={styles.actionRow}>
+            <View style={styles.navButton}>
+              <AppButton label="Cancel" variant="ghost" onPress={resetFinding} />
+            </View>
+            <View style={styles.navButton}>
+              <AppButton
+                label={isAddingFinding || isStamping ? 'Saving…' : 'Take BEFORE photo & add'}
+                onPress={() => void addFinding()}
+                disabled={
+                  !chosenFinding ||
+                  (chosenFinding.options.length > 0 && !findingOption) ||
+                  isAddingFinding ||
+                  isStamping
+                }
+              />
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
       {items.map((item) => {
         const workable =
-          (item.displayState === 'TODO' || item.displayState === 'IN_PROGRESS') && !item.pendingCompletion;
+          (item.displayState === 'TODO' || item.displayState === 'IN_PROGRESS') &&
+          !item.pendingCompletion &&
+          !item.localFinding?.rejectedReason;
         const hasBefore = item.allPhotos.BEFORE.length > 0;
         const hasAfter = item.allPhotos.AFTER.length > 0;
         const surveyUrls = item.surveyPhotos.map((photo) => toAbsoluteUrl(photo.url));
@@ -241,6 +503,7 @@ export function MaintenancePoleScreen() {
           <Card key={item.id}>
             <View style={styles.chipRow}>
               {item.isEmergency ? <StatusChip label="EMERGENCY" tone="danger" /> : null}
+              {item.isNewFinding ? <StatusChip label="NEW FINDING" tone="info" /> : null}
               <StatusChip label={item.severity} tone={item.severity === 'CRITICAL' || item.severity === 'HIGH' ? 'danger' : 'warning'} />
               <StatusChip label={CATEGORY_LABEL[item.category]} />
               <StatusChip
@@ -262,6 +525,17 @@ export function MaintenancePoleScreen() {
                 <Text style={styles.sentBackText}>{item.sentBackReason}</Text>
               </View>
             ) : null}
+            {item.localFinding && !item.localFinding.realId && !item.localFinding.rejectedReason ? (
+              <Text style={styles.hint}>Added on this phone — waiting to sync.</Text>
+            ) : null}
+            {item.localFinding?.rejectedReason ? (
+              <View style={styles.rejected}>
+                <Text style={styles.rejectedText}>Not accepted: {item.localFinding.rejectedReason}</Text>
+                <Pressable onPress={() => void dismissFinding(item.localFinding as LocalFinding)}>
+                  <Text style={styles.link}>Dismiss</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {item.pendingCompletion?.rejectedReason ? (
               <View style={styles.rejected}>
                 <Text style={styles.rejectedText}>Not accepted: {item.pendingCompletion.rejectedReason}</Text>
@@ -281,7 +555,9 @@ export function MaintenancePoleScreen() {
                 ))}
               </ScrollView>
             ) : (
-              <Text style={styles.muted}>No survey photo for this Kejanggalan.</Text>
+              <Text style={styles.muted}>
+                {item.isNewFinding ? 'New finding — not in the survey.' : 'No survey photo for this Kejanggalan.'}
+              </Text>
             )}
 
             {STAGES.map((stage) => {
@@ -333,7 +609,7 @@ export function MaintenancePoleScreen() {
                   <AppButton
                     label="Mark done"
                     variant="success"
-                    disabled={!hasBefore || !hasAfter || !item.team}
+                    disabled={!hasBefore || !hasAfter || (!item.team && !item.localFinding)}
                     onPress={() => {
                       setNotes('');
                       setCompleting({ defectId: item.id, kind: 'DONE' });
@@ -344,7 +620,7 @@ export function MaintenancePoleScreen() {
                   <AppButton
                     label="Cannot repair"
                     variant="secondary"
-                    disabled={!hasBefore || !item.team}
+                    disabled={!hasBefore || (!item.team && !item.localFinding)}
                     onPress={() => {
                       setNotes('');
                       setOutcome(CANNOT_REPAIR_OUTCOMES[0].value);
@@ -421,6 +697,8 @@ function formatDate(value: string) {
 function createStyles(theme: Theme) {
   return StyleSheet.create({
     navRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+    addRow: { marginBottom: 12 },
+    optionMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textMuted },
     navButton: { flex: 1 },
     chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
     title: { fontFamily: theme.fonts.bodySemibold, fontSize: 16, color: theme.colors.textPrimary },

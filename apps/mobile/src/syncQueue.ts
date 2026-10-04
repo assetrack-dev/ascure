@@ -4,6 +4,8 @@ import { readDurable, writeDurable } from './deviceStorage';
 import { removeCache, removeFromCachedArray } from './offlineCache';
 import {
   markLocalCompletionRejected,
+  markLocalFindingRejected,
+  markLocalFindingSynced,
   markLocalPhotoRejected,
   markLocalPhotoUploaded,
 } from './maintenance/maintenanceLocal';
@@ -58,7 +60,10 @@ export type OfflineMutationType =
   // photo, and the crew's "done / cannot repair" — which dependsOn that
   // Kejanggalan's queued photos so the server's before/after gate sees them.
   | 'UPLOAD_DEFECT_EVIDENCE'
-  | 'COMPLETE_DEFECT_MAINTENANCE';
+  | 'COMPLETE_DEFECT_MAINTENANCE'
+  // Plan §13: a Kejanggalan the crew found on site (not in the survey). Mints a
+  // temp defect id; its BEFORE photo and "done" dependOn it.
+  | 'CREATE_DEFECT_FINDING';
 
 /**
  * An arrival site photo captured during an OFFLINE check-in. The file is copied
@@ -114,7 +119,7 @@ function nextLocalSuffix() {
  *  'link' = a queued shared-pole link (no new entity; the id is just the
  *  queue item's identity and maps to the linked asset on completion). */
 export function mintTempId(
-  entity: 'asset' | 'inspection' | 'visit' | 'link' | 'evidence' | 'completion',
+  entity: 'asset' | 'inspection' | 'visit' | 'link' | 'evidence' | 'completion' | 'defect',
 ) {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
@@ -500,8 +505,10 @@ export async function enqueueRepairCompletion(input: {
     const dependsOn = queue.mutations
       .filter(
         (mutation) =>
-          mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
-          mutation.payload.defectId === input.defectId &&
+          ((mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
+            mutation.payload.defectId === input.defectId) ||
+            // A Kejanggalan added on site must exist on the server first.
+            (mutation.type === 'CREATE_DEFECT_FINDING' && mutation.tempId === input.defectId)) &&
           !queue.tempIdMap[mutation.tempId],
       )
       .map((mutation) => mutation.tempId);
@@ -726,6 +733,35 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
         realId = completion.defectId;
         break;
       }
+      case 'CREATE_DEFECT_FINDING': {
+        const finding = payload as unknown as {
+          siteVisitId: string;
+          assetId: string;
+          templateItemId: string;
+          optionValue?: string | null;
+          note?: string | null;
+          clientRef: string;
+        };
+        try {
+          // clientRef makes a retry after a lost response return the same defect.
+          const added = await api.addMaintenanceFinding(token, finding.siteVisitId, finding);
+          realId = added.defectId;
+        } catch (error) {
+          // 409 = the pole already has an open Kejanggalan for that item (e.g.
+          // another crew member added it first). Adopt it: the BEFORE photo and
+          // "done" belong on that one.
+          const existing =
+            error instanceof ApiError && error.status === 409
+              ? (error.payload as { defectId?: unknown } | null)?.defectId
+              : undefined;
+          if (typeof existing !== 'string') {
+            throw error;
+          }
+          realId = existing;
+        }
+        await markLocalFindingSynced(mutation.tempId, realId);
+        break;
+      }
       default: {
         // Exhaustiveness: a new OfflineMutationType MUST add a branch above, or
         // this fails the build (rather than silently mis-routing the create).
@@ -785,6 +821,10 @@ async function recordMaintenanceRejection(mutation: OfflineMutation, reason: str
       );
     } else if (mutation.type === 'COMPLETE_DEFECT_MAINTENANCE') {
       await markLocalCompletionRejected(String(mutation.payload.defectId), reason);
+    } else if (mutation.type === 'CREATE_DEFECT_FINDING') {
+      // Its photos / "done" are dropped with it by the cascade; the pole screen
+      // shows the reason and lets the crew dismiss it.
+      await markLocalFindingRejected(mutation.tempId, reason);
     }
   } catch {
     // Best-effort UI note; the queue must keep draining regardless.

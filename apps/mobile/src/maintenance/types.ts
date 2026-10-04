@@ -50,6 +50,10 @@ export type WorkKejanggalan = {
   surveyedAt: string | null;
   surveyPhotos: Array<{ id: string; url: string }>;
   photos: Record<RepairStage, WorkPhoto[]>;
+  /** Added during maintenance, not in the survey (plan §13). */
+  isNewFinding?: boolean;
+  addedBy?: string | null;
+  addedAt?: string | null;
 };
 
 export type WorkPole = {
@@ -71,7 +75,36 @@ export type WorkPackageDetail = {
   mainhead: { id: string; name: string } | null;
   counts: WorkCounts;
   poles: WorkPole[];
+  /** §13 — poles this crew may add a new Kejanggalan on (absent in packs cached by older builds). */
+  surveyedPoles?: SurveyedPole[];
+  /** §13 — per checklist template, the items that can carry a Kejanggalan. */
+  findingTemplates?: Array<{ templateId: string; items: FindingItem[] }>;
   generatedAt: string;
+};
+
+export type SurveyedPole = {
+  assetId: string;
+  assetCode: string;
+  refCode: string | null;
+  noTiangLama: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  templateId: string;
+  /** Work types this crew may add on this pole. */
+  categories: MaintenanceCategory[];
+};
+
+export type FindingOption = { value: string; label: string; severity: string };
+
+export type FindingItem = {
+  templateItemId: string;
+  label: string;
+  section: string | null;
+  category: MaintenanceCategory;
+  severity: string;
+  inputType: string;
+  /** Empty for a yes/no item — adding it IS the defect answer. */
+  options: FindingOption[];
 };
 
 export const CATEGORY_LABEL: Record<MaintenanceCategory, string> = {

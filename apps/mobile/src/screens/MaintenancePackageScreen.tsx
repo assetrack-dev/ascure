@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
 import Mapbox from '@rnmapbox/maps';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -18,7 +18,7 @@ import {
 import { Theme, useTheme } from '../theme';
 import { SATELLITE_STYLE, downloadOfflineRegion, hasMapboxToken } from '../mapbox';
 import { getPositionWithTimeout } from '../location';
-import { overlayKejanggalan, toAbsoluteUrl } from '../maintenance/maintenanceLocal';
+import { overlayKejanggalan, pendingFindingItems, toAbsoluteUrl } from '../maintenance/maintenanceLocal';
 import { useWorkPack } from '../maintenance/useWorkPack';
 import { STATE_LABEL, type WorkPole, type WorkState } from '../maintenance/types';
 
@@ -65,6 +65,9 @@ export function MaintenancePackageScreen() {
   const [saving, setSaving] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Plan §13 — picking a pole to add a Kejanggalan that was not in the survey.
+  const [picking, setPicking] = useState(false);
+  const [pickQuery, setPickQuery] = useState('');
 
   // Returning from a pole: pick up the crew's new local work immediately.
   useFocusEffect(
@@ -80,8 +83,25 @@ export function MaintenancePackageScreen() {
 
   const rows: PoleRow[] = useMemo(() => {
     if (!pack) return [];
-    return pack.poles.map((pole) => {
-      const items = pole.kejanggalan.map((item) => overlayKejanggalan(item, local));
+    // Poles that so far only carry a Kejanggalan added on this phone (§13).
+    const packPoleIds = new Set(pack.poles.map((pole) => pole.assetId));
+    const addedOnly = (pack.surveyedPoles ?? [])
+      .filter((pole) => !packPoleIds.has(pole.assetId))
+      .filter((pole) => pendingFindingItems(local, pack, pole.assetId).length > 0)
+      .map((pole) => ({
+        assetId: pole.assetId,
+        assetCode: pole.assetCode,
+        refCode: pole.refCode,
+        noTiangLama: pole.noTiangLama,
+        latitude: pole.latitude,
+        longitude: pole.longitude,
+        counts: { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 },
+        kejanggalan: [],
+      }));
+    return [...pack.poles, ...addedOnly].map((pole) => {
+      const items = [...pole.kejanggalan, ...pendingFindingItems(local, pack, pole.assetId)].map((item) =>
+        overlayKejanggalan(item, local),
+      );
       const state = STATE_ORDER.find((candidate) => items.some((item) => item.displayState === candidate)) ?? 'CLOSED';
       return {
         ...pole,
@@ -118,6 +138,27 @@ export function MaintenancePackageScreen() {
 
   const openPole = (assetId: string) =>
     navigation.navigate('MaintenancePole', { siteVisitId, assetId });
+
+  const pickablePoles = useMemo(() => {
+    const query = pickQuery.trim().toLowerCase();
+    const poles = (pack?.surveyedPoles ?? []).filter(
+      (pole) =>
+        !query ||
+        pole.assetCode.toLowerCase().includes(query) ||
+        (pole.refCode ?? '').toLowerCase().includes(query) ||
+        (pole.noTiangLama ?? '').toLowerCase().includes(query),
+    );
+    const withDistance = poles.map((pole) => ({
+      ...pole,
+      distanceM:
+        here && pole.latitude !== null && pole.longitude !== null
+          ? distanceMeters(here, { latitude: pole.latitude, longitude: pole.longitude })
+          : null,
+    }));
+    return here
+      ? withDistance.sort((left, right) => (left.distanceM ?? Infinity) - (right.distanceM ?? Infinity))
+      : withDistance;
+  }, [here, pack, pickQuery]);
 
   const saveForOffline = async () => {
     if (!pack) return;
@@ -237,7 +278,62 @@ export function MaintenancePackageScreen() {
       ) : null}
       {isLoading && !pack ? <LoadingBlock label="Loading package…" /> : null}
 
-      {pack && mode === 'LIST' ? (
+      {pack && mode === 'LIST' && (pack.surveyedPoles?.length ?? 0) > 0 && !picking ? (
+        <Pressable
+          onPress={() => {
+            setPickQuery('');
+            setPicking(true);
+          }}
+          style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.addButtonText}>+ Add Kejanggalan (not in survey)</Text>
+        </Pressable>
+      ) : null}
+
+      {pack && mode === 'LIST' && picking ? (
+        <Card>
+          <Text style={styles.pickTitle}>Which pole?</Text>
+          <Text style={styles.pickHint}>
+            Any surveyed pole of this Pencawang that is yours — even one with no Kejanggalan yet. Nearest first.
+          </Text>
+          <TextInput
+            value={pickQuery}
+            onChangeText={setPickQuery}
+            placeholder="Search NO TIANG / old number"
+            placeholderTextColor={theme.colors.textMuted}
+            style={styles.pickInput}
+            autoCapitalize="characters"
+          />
+          {pickablePoles.slice(0, 50).map((pole) => (
+            <Pressable
+              key={pole.assetId}
+              onPress={() => {
+                setPicking(false);
+                openPole(pole.assetId);
+              }}
+              style={({ pressed }) => [styles.pickRow, pressed && styles.pressed]}
+            >
+              <Text style={styles.pickCode}>{pole.refCode || pole.assetCode}</Text>
+              <Text style={styles.pickMeta}>
+                {[
+                  pole.noTiangLama ? `Lama ${pole.noTiangLama}` : null,
+                  pole.distanceM !== null ? formatDistance(pole.distanceM) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            </Pressable>
+          ))}
+          {pickablePoles.length > 50 ? (
+            <Text style={styles.pickHint}>Showing the nearest 50 — search to find others.</Text>
+          ) : null}
+          <Pressable onPress={() => setPicking(false)} style={({ pressed }) => [styles.pickCancel, pressed && styles.pressed]}>
+            <Text style={styles.addButtonText}>Cancel</Text>
+          </Pressable>
+        </Card>
+      ) : null}
+
+      {pack && mode === 'LIST' && !picking ? (
         visibleRows.length === 0 ? (
           <Card>
             <EmptyState
@@ -409,6 +505,38 @@ function createStyles(theme: Theme) {
     saveButtonText: { fontFamily: theme.fonts.bodySemibold, fontSize: 14, color: theme.colors.primary },
     pressed: { opacity: 0.7 },
     disabled: { opacity: 0.5 },
+    addButton: {
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: theme.colors.primary,
+      borderRadius: theme.radius.control,
+      paddingVertical: 12,
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    addButtonText: { fontFamily: theme.fonts.bodySemibold, fontSize: 14, color: theme.colors.primary },
+    pickTitle: { fontFamily: theme.fonts.bodySemibold, fontSize: 16, color: theme.colors.textPrimary },
+    pickHint: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textSecondary, marginTop: 4 },
+    pickInput: {
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      borderRadius: theme.radius.control,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginTop: 10,
+      marginBottom: 6,
+      fontFamily: theme.fonts.body,
+      fontSize: 14,
+      color: theme.colors.textPrimary,
+    },
+    pickRow: {
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    pickCode: { fontFamily: theme.fonts.bodySemibold, fontSize: 15, color: theme.colors.textPrimary },
+    pickMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
+    pickCancel: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
     mapWrap: { flex: 1, minHeight: 420, borderRadius: theme.radius.card, overflow: 'hidden' },
     map: { flex: 1 },
     legend: {

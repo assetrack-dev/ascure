@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../api';
 import { setItemWithRecovery } from '../deviceStorage';
 import type {
+  MaintenanceCategory,
   RepairStage,
   WorkKejanggalan,
   WorkPackageDetail,
@@ -17,6 +18,10 @@ import type {
  * OVERLAYS it: repair photos taken here (queued or uploaded but not yet in a
  * fresh pack) and a queued "done / cannot repair". Entries drop away once a
  * fresh pack shows the server has them.
+ *
+ * Plus new Kejanggalan the crew added on site (plan §13) until the server pack
+ * carries them: shown as normal Kejanggalan, keyed by a temp defect id that is
+ * swapped for the real one when the queued add syncs.
  */
 
 const STORAGE_KEY = '@ascure/mobile/maintenance-local/v1';
@@ -44,10 +49,29 @@ export type LocalCompletion = {
   rejectedReason?: string;
 };
 
-type Store = {
+export type LocalFinding = {
+  /** Temp defect id minted on the phone (`temp_defect_…`). */
+  tempId: string;
+  /** The server's defect id once the queued add synced. */
+  realId?: string;
+  siteVisitId: string;
+  assetId: string;
+  label: string;
+  remark: string | null;
+  severity: string;
+  category: MaintenanceCategory;
+  addedAt: string;
+  /** Set when the server refused the add (e.g. the pole went to another team). */
+  rejectedReason?: string;
+};
+
+export type Store = {
   photos: LocalRepairPhoto[];
   completions: LocalCompletion[];
+  findings: LocalFinding[];
 };
+
+const EMPTY_STORE: Store = { photos: [], completions: [], findings: [] };
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -63,14 +87,15 @@ const listeners = new Set<() => void>();
 async function load(): Promise<Store> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return { photos: [], completions: [] };
+    if (!raw) return EMPTY_STORE;
     const parsed = JSON.parse(raw) as Partial<Store>;
     return {
       photos: Array.isArray(parsed.photos) ? parsed.photos : [],
       completions: Array.isArray(parsed.completions) ? parsed.completions : [],
+      findings: Array.isArray(parsed.findings) ? parsed.findings : [],
     };
   } catch {
-    return { photos: [], completions: [] };
+    return EMPTY_STORE;
   }
 }
 
@@ -117,6 +142,92 @@ export function markLocalPhotoRejected(photoId: string, reason: string) {
       photo.id === photoId ? { ...photo, rejectedReason: reason } : photo,
     ),
   }));
+}
+
+export function addLocalFinding(finding: LocalFinding) {
+  return update((store) => ({ ...store, findings: [...store.findings, finding] }));
+}
+
+/**
+ * The queued add synced: point the finding — and the photos / completion the
+ * crew already recorded against its temp id — at the server's defect id.
+ */
+export function markLocalFindingSynced(tempId: string, realId: string) {
+  const swap = (id: string) => (id === tempId ? realId : id);
+  return update((store) => ({
+    photos: store.photos.map((photo) => ({ ...photo, defectId: swap(photo.defectId) })),
+    completions: store.completions.map((item) => ({ ...item, defectId: swap(item.defectId) })),
+    findings: store.findings.map((finding) =>
+      finding.tempId === tempId ? { ...finding, realId } : finding,
+    ),
+  }));
+}
+
+export function markLocalFindingRejected(tempId: string, reason: string) {
+  return update((store) => ({
+    ...store,
+    findings: store.findings.map((finding) =>
+      finding.tempId === tempId ? { ...finding, rejectedReason: reason } : finding,
+    ),
+  }));
+}
+
+/** Drop a refused finding and everything recorded on it. Returns its photo files. */
+export async function removeLocalFinding(tempId: string): Promise<string[]> {
+  const files: string[] = [];
+  await update((store) => ({
+    photos: store.photos.filter((photo) => {
+      if (photo.defectId !== tempId) return true;
+      files.push(photo.uri);
+      return false;
+    }),
+    completions: store.completions.filter((item) => item.defectId !== tempId),
+    findings: store.findings.filter((finding) => finding.tempId !== tempId),
+  }));
+  return files;
+}
+
+/**
+ * The crew's added Kejanggalan on one pole that the cached pack does not carry
+ * yet, shaped like server ones so the pole screen treats them the same.
+ */
+export function pendingFindingItems(
+  store: Store,
+  pack: WorkPackageDetail,
+  assetId: string,
+): Array<WorkKejanggalan & { localFinding: LocalFinding }> {
+  const inPack = new Set(pack.poles.flatMap((pole) => pole.kejanggalan.map((item) => item.id)));
+  return store.findings
+    .filter(
+      (finding) =>
+        finding.siteVisitId === pack.siteVisitId &&
+        finding.assetId === assetId &&
+        !(finding.realId && inPack.has(finding.realId)),
+    )
+    .map((finding) => ({
+      id: finding.realId ?? finding.tempId,
+      label: finding.label,
+      remark: finding.remark,
+      severity: finding.severity,
+      isEmergency: false,
+      category: finding.category,
+      state: 'TODO' as const,
+      lifecycleStatus: null,
+      resolutionOutcome: null,
+      cannotRepair: false,
+      maintenanceNotes: null,
+      submittedAt: null,
+      team: null,
+      sentBackReason: null,
+      dueDate: null,
+      surveyedAt: null,
+      surveyPhotos: [],
+      photos: { BEFORE: [], DURING: [], AFTER: [] },
+      isNewFinding: true,
+      addedBy: null,
+      addedAt: finding.addedAt,
+      localFinding: finding,
+    }));
 }
 
 export function removeLocalPhoto(photoId: string) {
@@ -175,6 +286,10 @@ export async function reconcileWithPack(pack: WorkPackageDetail): Promise<string
 
   const removable: string[] = [];
   await update((store) => ({
+    // A synced finding the server pack now carries needs no local copy.
+    findings: store.findings.filter(
+      (finding) => !(finding.realId && inPack.has(finding.realId) && !finding.rejectedReason),
+    ),
     photos: store.photos.filter((photo) => {
       const confirmed =
         inPack.has(photo.defectId) &&

@@ -7,14 +7,11 @@ import {
   loadMaintenanceLocal,
   reconcileWithPack,
   subscribeMaintenanceLocal,
-  type LocalCompletion,
-  type LocalRepairPhoto,
+  type Store as LocalStore,
 } from './maintenanceLocal';
 import type { WorkPackageDetail } from './types';
 
 export const WORK_CACHE_NAMESPACE = 'maintenance-work';
-
-type LocalStore = { photos: LocalRepairPhoto[]; completions: LocalCompletion[] };
 
 /**
  * One package's work pack — server data (network, or the cached copy when
@@ -23,7 +20,7 @@ type LocalStore = { photos: LocalRepairPhoto[]; completions: LocalCompletion[] }
 export function useWorkPack(siteVisitId: string) {
   const { token, handleUnauthorized } = useSession();
   const [pack, setPack] = useState<WorkPackageDetail | null>(null);
-  const [local, setLocal] = useState<LocalStore>({ photos: [], completions: [] });
+  const [local, setLocal] = useState<LocalStore>({ photos: [], completions: [], findings: [] });
   const [fromCache, setFromCache] = useState(false);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);

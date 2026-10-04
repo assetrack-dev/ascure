@@ -769,6 +769,34 @@ export const api = {
     return request<WorkPackageDetail>(`/maintenance-work/${siteVisitId}`, { token });
   },
 
+  /** Plan §13 — a Kejanggalan found during maintenance (not in the survey). */
+  addMaintenanceFinding(
+    token: string,
+    siteVisitId: string,
+    input: {
+      assetId: string;
+      templateItemId: string;
+      optionValue?: string | null;
+      note?: string | null;
+      clientRef: string;
+    },
+  ) {
+    return request<{ defectId: string; created: boolean }>(
+      `/maintenance-work/${siteVisitId}/findings`,
+      {
+        method: 'POST',
+        token,
+        body: {
+          assetId: input.assetId,
+          templateItemId: input.templateItemId,
+          ...(input.optionValue ? { optionValue: input.optionValue } : {}),
+          ...(input.note ? { note: input.note } : {}),
+          clientRef: input.clientRef,
+        },
+      },
+    );
+  },
+
   completeDefectMaintenance(
     token: string,
     defectId: string,
