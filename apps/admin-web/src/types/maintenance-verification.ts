@@ -21,6 +21,10 @@ export interface VerificationItem {
   remark: string | null;
   severity: string;
   isEmergency: boolean;
+  /** Added during maintenance, not in the survey (plan §13). */
+  isNewFinding?: boolean;
+  addedBy?: { id: string; name: string } | null;
+  addedAt?: string | null;
   category: MaintenanceCategory | null;
   lifecycleStatus: string | null;
   resolutionOutcome: string | null;

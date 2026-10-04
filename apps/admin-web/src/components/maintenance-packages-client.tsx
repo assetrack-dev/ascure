@@ -21,6 +21,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PackageMapPoint } from "@/components/maintenance-packages-map";
+import { AddFindingDialog } from "@/components/maintenance-add-finding-dialog";
 import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
 import {
   CATEGORY_LABEL,
@@ -1054,6 +1055,7 @@ function MaintenancePackagesContent() {
   const [dialogError, setDialogError] = useState("");
   const [withdrawTarget, setWithdrawTarget] = useState<MaintenancePackageRecord | null>(null);
   const [poleRow, setPoleRow] = useState<PackagePencawang | null>(null);
+  const [findingRow, setFindingRow] = useState<PackagePencawang | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -1448,6 +1450,16 @@ function MaintenancePackagesContent() {
                                     <Tbtn variant="ghost" onClick={() => setPoleRow(row)} className="mr-1">
                                       Poles
                                     </Tbtn>
+                                    {board.canAssign ? (
+                                      <Tbtn
+                                        variant="ghost"
+                                        onClick={() => setFindingRow(row)}
+                                        className="mr-1"
+                                        title="Add a Kejanggalan found after the survey"
+                                      >
+                                        + Kejanggalan
+                                      </Tbtn>
+                                    ) : null}
                                     {board.canAssign && selectable ? (
                                       <Tbtn
                                         variant={row.packages.length === 0 ? "primary" : "secondary"}
@@ -1549,6 +1561,20 @@ function MaintenancePackagesContent() {
               setBulkOpen(false);
             });
           }}
+        />
+      ) : null}
+
+      {findingRow && session?.token ? (
+        <AddFindingDialog
+          token={session.token}
+          siteVisitId={findingRow.siteVisitId}
+          title={pencawangLabel(findingRow)}
+          onClose={() => setFindingRow(null)}
+          onAdded={(message) => {
+            setNotice(message);
+            void loadBoard(session.token);
+          }}
+          onUnauthorized={handleLogout}
         />
       ) : null}
 

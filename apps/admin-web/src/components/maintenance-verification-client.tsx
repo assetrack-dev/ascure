@@ -84,6 +84,8 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 /** Before → During → After, then anything else the crew uploaded. */
 const EVIDENCE_GROUPS: Array<{ key: string; label: string }> = [
+  // New finding (§13): the condition photo the office attached when adding it.
+  { key: "FINDING", label: "Reported condition" },
   { key: "BEFORE", label: "Before" },
   { key: "DURING", label: "During" },
   { key: "AFTER", label: "After" },
@@ -92,7 +94,7 @@ const EVIDENCE_GROUPS: Array<{ key: string; label: string }> = [
 
 function evidenceGroup(image: RepairEvidence) {
   const type = image.evidenceType.toUpperCase();
-  return type === "BEFORE" || type === "DURING" || type === "AFTER" ? type : "OTHER";
+  return type === "BEFORE" || type === "DURING" || type === "AFTER" || type === "FINDING" ? type : "OTHER";
 }
 
 function formatDateTime(value: string | null) {
@@ -236,6 +238,11 @@ function RepairCard({
           <div className="flex flex-wrap items-center gap-2">
             <Chip tone={severityTone(item.severity)}>{item.severity}</Chip>
             {item.isEmergency ? <Chip tone="critical">Emergency</Chip> : null}
+            {item.isNewFinding ? (
+              <Chip tone="high" title={item.addedBy ? `Added by ${item.addedBy.name} during maintenance` : undefined}>
+                New finding · not in survey
+              </Chip>
+            ) : null}
             {item.category ? <Chip tone="neutral">{CATEGORY_LABEL[item.category] ?? item.category}</Chip> : null}
             {item.resolutionOutcome ? (
               <Chip tone={item.cannotRepair ? "high" : "success"}>

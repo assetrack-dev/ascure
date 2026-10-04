@@ -177,3 +177,45 @@ export interface BulkAssignResult {
   skipped: number;
   results: BulkAssignRow[];
 }
+
+// ── New finding during maintenance (docs/PLAN-maintenance-flow.md §13) ──────
+
+export interface FindingOption {
+  value: string;
+  label: string;
+  severity: string;
+}
+
+export interface FindingItem {
+  templateItemId: string;
+  label: string;
+  section: string | null;
+  category: MaintenanceCategory;
+  severity: string;
+  inputType: string;
+  /** Empty for a yes/no item — adding it IS the defect answer. */
+  options: FindingOption[];
+}
+
+export interface FindingPole {
+  assetId: string;
+  assetCode: string;
+  noTiangLama: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  templateId: string;
+}
+
+export interface FindingOptionsResponse {
+  siteVisitId: string;
+  canAdd: boolean;
+  poles: FindingPole[];
+  findingTemplates: Array<{ templateId: string; items: FindingItem[] }>;
+}
+
+export interface AddFindingPayload {
+  assetId: string;
+  templateItemId: string;
+  optionValue?: string;
+  note?: string;
+}

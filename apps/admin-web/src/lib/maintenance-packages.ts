@@ -1,6 +1,8 @@
-import { apiRequest } from "@/lib/api";
+import { API_BASE_URL, ApiError, apiRequest } from "@/lib/api";
 import type {
+  AddFindingPayload,
   AssignPackagePayload,
+  FindingOptionsResponse,
   AssignPolesPayload,
   MaintenanceCategory,
   PackagePolesResponse,
@@ -69,4 +71,50 @@ export function clearPackagePoles(
     `/maintenance-packages/${encodeURIComponent(siteVisitId)}/poles/clear`,
     { method: "POST", token, body: JSON.stringify(payload) },
   );
+}
+
+/** Plan §13 — the PE's surveyed poles and the checklist items a new finding can use. */
+export function fetchFindingOptions(token: string, siteVisitId: string) {
+  return apiRequest<FindingOptionsResponse>(
+    `/maintenance-packages/${encodeURIComponent(siteVisitId)}/finding-options`,
+    { token },
+  );
+}
+
+/** Plan §13 — add a Kejanggalan that was not in the survey, with its condition photo. */
+export async function addMaintenanceFinding(
+  token: string,
+  siteVisitId: string,
+  payload: AddFindingPayload,
+  photo: File,
+) {
+  const form = new FormData();
+  form.append("assetId", payload.assetId);
+  form.append("templateItemId", payload.templateItemId);
+  if (payload.optionValue) form.append("optionValue", payload.optionValue);
+  if (payload.note?.trim()) form.append("note", payload.note.trim());
+  form.append("file", photo);
+
+  // Multipart: let the browser set Content-Type (apiRequest would force JSON).
+  let response: Response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/maintenance-packages/${encodeURIComponent(siteVisitId)}/findings`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        body: form,
+      },
+    );
+  } catch {
+    throw new ApiError(`Unable to reach the ASCURE API at ${API_BASE_URL}.`, 0);
+  }
+  const body = (await response.json().catch(() => null)) as
+    | { defectId: string; created: boolean; message?: string | string[] }
+    | null;
+  if (!response.ok) {
+    const message = Array.isArray(body?.message) ? body?.message.join(", ") : body?.message;
+    throw new ApiError(message || "Could not add the Kejanggalan.", response.status, body);
+  }
+  return body as { defectId: string; created: boolean };
 }

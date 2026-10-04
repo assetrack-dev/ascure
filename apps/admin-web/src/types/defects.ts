@@ -209,6 +209,8 @@ export interface DefectListItem {
 
 export interface DefectDetail extends DefectListItem {
   checklistItemId?: string | null;
+  /** Added during maintenance, not in the survey (plan §13). */
+  isNewFinding?: boolean;
   checklistRemark: string | null;
   result: string | null;
   cycleNumber?: number;
