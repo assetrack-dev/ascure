@@ -8,6 +8,7 @@ import {
 } from '../common/authorization/scope-context';
 import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
 import { isSurveyFinished } from '../common/client-visibility';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
 /** Open defect statuses — mirrors the map/dashboard definition of "open". */
 const OPEN_DEFECT_STATUSES = ['OPEN', 'IN_PROGRESS', 'MONITORING'] as const;
@@ -336,7 +337,7 @@ export class ClientProgressService {
         submittedAt: true,
         siteVisit: { select: { id: true, lifecycleStatus: true } },
         itemResults: {
-          where: { isDefect: true },
+          where: { ...SURVEY_ITEM_RESULT_WHERE, isDefect: true },
           select: { id: true, label: true, severity: true },
         },
         _count: { select: { inspectionImages: true } },

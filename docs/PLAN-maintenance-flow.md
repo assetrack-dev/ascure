@@ -298,3 +298,70 @@ Later (not now): suggested visiting order per team (nearest-neighbour route).
 - Web: "Split by poles" view — pole map coloured by owner team, click / box select, give to a company/team, or return to the PE owner.
 - Crews: no APK — `/maintenance-work` already scopes by team; Team B sees the PE with only its poles.
 - The per-PE repair PDF (M4) will be per company (each company's own Kejanggalan).
+
+## 13. New finding during maintenance (owner, 2026-10-04)
+
+Field request: a pole that did not need work at survey time (e.g. no Rentis) needs it now.
+The crew must be able to record it and repair it in the same flow.
+
+| # | Decision |
+|---|---|
+| H21 | A **new Kejanggalan** can be added to a pole of a maintenance package — by the **office on the web** and by the **crew in the app**. |
+| H22 | **Repair straight away**, no prior approval. A stamped **BEFORE photo is required** when adding; it is tagged **"New finding (not in survey)"**, and TNB / Main Contractor / Admin see the tag + photos when verifying closure (C8 unchanged). |
+| H23 | **Any checklist item** of the pole's template; severity and work type come from that item (and the chosen defect option), exactly like the survey. |
+
+### 13.1 Model — one flagged answer on the pole's survey inspection
+- A Defect must hang off an `InspectionItemResult` (`inspectionItemResultId` is required + unique).
+  The finding is **one extra `InspectionItemResult`** on the pole's **latest SUBMITTED survey
+  inspection in the packaged visit**, flagged `source = MAINTENANCE_FINDING` (new enum, default
+  `SURVEY`), plus its Defect. Same pattern as `declareEmergency` (inspections.service).
+- The survey's own answers (`InspectionResult`) and item results are **never touched**.
+- Rejected alternative: a separate `Inspection` row. It would need an `origin` filter in 40+
+  "latest inspection" / count / export / billing paths, and one missed filter would blank a
+  pole's survey data. With the flagged answer, a missed filter only shows one extra line.
+- Migration (additive): `InspectionItemResultSource` enum + `InspectionItemResult.source`
+  (default SURVEY) + `createdByUserId?` (who added the finding).
+
+### 13.2 API
+- `POST /maintenance-work/:siteVisitId/findings` `{ clientRef, assetId, templateItemId, optionValue?, remark? }`
+  (clientRef = idempotency for the offline queue). In one transaction:
+  1. Pole must be in the visit, with a SUBMITTED survey inspection there (else 400 "pole not surveyed in this package").
+  2. **No duplicate:** if the pole already has an open Kejanggalan for that item (survey or finding) → 409 with its id ("already listed — use it").
+  3. Create the item result (FAIL, isDefect, checklistItemId, label, severity via the option/item, maintenanceCategory from the item, remark, source=MAINTENANCE_FINDING, createdByUserId).
+  4. Create the Defect opened **VERIFIED** (not DETECTED), timeline `CREATED` "New finding (not in survey)".
+  5. `applyPackageRouting(tx, siteVisitId)` → company + team from the pole/PE package (→ ASSIGNED).
+     If routing yields no team and the actor is a contractor team member, assign the actor's team
+     (so the crew that found it can complete it).
+- Who may add: contractor Manager / Supervisor / Technician whose scope covers that pole (same rule
+  as `workScope`), TNB maintenance actors, Main Contractor managers (own group), Admin.
+- Pack payload (`GET /maintenance-work/:siteVisitId`): each Kejanggalan gets `isNewFinding`,
+  `addedBy`, `addedAt`; plus **all poles of the visit** (id, code, lat/lng — so a pole with no
+  Kejanggalan yet can be picked) and **`findingItems`** = the visit template's defect-capable items
+  with their defect options (so adding works offline after "Save for offline").
+- Verification queue item + defect detail: `isNewFinding`.
+- **Survey isolation** (`source = SURVEY` filter): Laporan Kejanggalan + its ZIP, checklist / QR /
+  SAVT exports, visit rollup `defectsFound`, client progress defect counts, asset detail checklist
+  rows. Survey re-save must **keep** finding rows (today it deletes all item results except
+  emergencies), and office checklist edits must ignore them (match by checklistItemId on SURVEY rows only).
+  Defect lists / board / dashboards / maintenance views read the Defect table → findings appear there (intended).
+- Repair report PDF (M4): findings listed under their own heading.
+
+### 13.3 Admin web (office)
+- Maintenance Packages → a package's **Poles** view: "Add Kejanggalan" on any pole (incl. poles with
+  none yet) → pick item / defect option, note, **upload BEFORE photo (required)** → appears in the
+  crew's pack on their next refresh. "New finding" chip in the pole table and on the verification RepairCard.
+
+### 13.4 Mobile (crew) — next APK
+- Pole screen: **"+ Add Kejanggalan"**; package screen: add on another pole (list / map pick).
+- Flow: pick item → defect option (if several) → note → **stamped BEFORE photo** (marking circle,
+  colour from the item's category) → shows immediately ("New finding", pending sync).
+- Offline: new queue op `CREATE_DEFECT_FINDING` mints a temp defect id; the BEFORE upload and
+  "Mark done" `dependsOn` it; temp id remapped on sync (same reconciler as offline creates).
+  A 409 duplicate on sync → drop the local copy and point the crew to the existing Kejanggalan.
+
+### 13.5 Build order
+1. API: migration + endpoint + routing + survey-isolation filters + pack/verification fields; unit + e2e
+   (add → routed → BEFORE → AFTER → done → verify; duplicate 409; technician scope; survey report/export
+   unchanged; survey re-save keeps the finding). **Deploy API + web together** → office can add same day.
+2. Admin web: add dialog + chips.
+3. Mobile: add flow + offline op → APK v2.0.17 (+ release notes BM/EN).

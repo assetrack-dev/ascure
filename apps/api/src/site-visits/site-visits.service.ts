@@ -68,6 +68,7 @@ import { LinkSiteVisitAssetDto } from './dto/link-site-visit-asset.dto';
 import { ListSiteVisitsQueryDto } from './dto/list-site-visits-query.dto';
 import { ReassignSiteVisitDto } from './dto/reassign-site-visit.dto';
 import { UpdateSiteVisitDto } from './dto/update-site-visit.dto';
+import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
 const ACTIVE_SITE_VISIT_STATUSES = [
   SiteVisitStatus.ACTIVE,
@@ -410,6 +411,7 @@ const SITE_VISIT_DETAIL_INCLUDE = Prisma.validator<Prisma.SiteVisitInclude>()({
         },
       },
       itemResults: {
+        where: SURVEY_ITEM_RESULT_WHERE,
         select: {
           id: true,
           label: true,
@@ -2237,6 +2239,7 @@ export class SiteVisitsService {
         FROM "InspectionItemResult" r
         JOIN "Inspection" i ON i."id" = r."inspectionId"
         WHERE r."isDefect" = TRUE
+          AND r."source" = 'SURVEY'
           AND i."siteVisitId" = ANY(${siteVisitIds}::uuid[])
         GROUP BY i."siteVisitId"
       `,

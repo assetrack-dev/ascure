@@ -2,6 +2,9 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import {
   DefectLifecycleStatus,
   DefectStatus,
+  DefectTimelineEventType,
+  InspectionCompletionStatus,
+  InspectionItemResultSource,
   MaintenanceCategory,
   Prisma,
   UserRole,
@@ -10,6 +13,9 @@ import { buildScopeContext } from '../common/authorization/scope-context';
 import { isCannotRepairOutcome } from '../common/authorization/maintenance-closure';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
+import { createMaintenanceFinding, loadVisitFindingItems } from './maintenance-finding.util';
+import { resolveRoutingTarget } from './package-routing.util';
 
 /**
  * The contractor crew's "my work" (docs/PLAN-maintenance-flow.md §7.1, M2):
@@ -59,6 +65,8 @@ export class MaintenanceWorkService {
   private async workScope(user: RequestUser): Promise<{
     where: Prisma.DefectWhereInput;
     role: 'MANAGER' | 'SUPERVISOR' | 'TECHNICIAN';
+    /** Which owners (company, team) count as this user's — for pole pickers. */
+    owns: (target: { organizationId: string | null; teamId: string | null }) => boolean;
   }> {
     if (!user.organizationId) {
       throw new ForbiddenException('Your account is not linked to a maintenance company.');
@@ -74,6 +82,7 @@ export class MaintenanceWorkService {
       return {
         role: 'MANAGER',
         where: { ...tenant, maintenanceOrganizationId: { in: organizationIds } },
+        owns: (target) => target.organizationId !== null && organizationIds.includes(target.organizationId),
       };
     }
 
@@ -95,8 +104,14 @@ export class MaintenanceWorkService {
     ]);
     const teamIds = [...new Set([...memberships, ...supervised].map((row) => row.teamId))];
 
+    const organizationId = user.organizationId;
     return {
       role: user.role === UserRole.SUPERVISOR ? 'SUPERVISOR' : 'TECHNICIAN',
+      // A company-only owner (no team) counts: a new finding there goes to the
+      // adding crew's own team (assignOwnTeamIfUnassigned).
+      owns: (target) =>
+        target.organizationId === organizationId &&
+        (target.teamId === null || teamIds.includes(target.teamId)),
       where: {
         ...tenant,
         maintenanceOrganizationId: user.organizationId,
@@ -257,6 +272,9 @@ export class MaintenanceWorkService {
             label: true,
             remark: true,
             checklistItemId: true,
+            source: true,
+            createdAt: true,
+            createdBy: { select: { name: true } },
             inspection: {
               select: {
                 id: true,
@@ -286,7 +304,7 @@ export class MaintenanceWorkService {
       throw new NotFoundException('No maintenance work for you on this Pencawang.');
     }
 
-    const [visit, packages] = await Promise.all([
+    const [visit, packages, visitPoles, findingTemplates] = await Promise.all([
       this.prisma.siteVisit.findUniqueOrThrow({
         where: { id: siteVisitId },
         select: {
@@ -299,9 +317,32 @@ export class MaintenanceWorkService {
       }),
       this.prisma.maintenancePackage.findMany({
         where: { siteVisitId },
-        select: { category: true, dueDate: true },
+        select: { category: true, dueDate: true, maintenanceOrganizationId: true, assignedTeamId: true },
       }),
+      // Every surveyed pole of the PE — a new finding may go on a pole that had
+      // no Kejanggalan at survey time (§13).
+      this.prisma.inspection.findMany({
+        where: { siteVisitId, completionStatus: InspectionCompletionStatus.SUBMITTED },
+        distinct: ['assetId'],
+        select: {
+          templateId: true,
+          asset: {
+            select: { id: true, assetCode: true, refCode: true, noTiangLama: true, latitude: true, longitude: true },
+          },
+        },
+      }),
+      loadVisitFindingItems(this.prisma, siteVisitId),
     ]);
+    const poleOwners = await this.prisma.maintenancePoleAssignment.findMany({
+      where: { siteVisitId },
+      select: { assetId: true, category: true, maintenanceOrganizationId: true, assignedTeamId: true },
+    });
+    const ALL_CATEGORIES = Object.values(MaintenanceCategory);
+    /** The work types this user may raise a finding for on a pole (§13). */
+    const findingCategories = (assetId: string) =>
+      ALL_CATEGORIES.filter((category) =>
+        scope.owns(resolveRoutingTarget(packages, poleOwners, assetId, category)),
+      );
 
     type Pole = {
       assetId: string;
@@ -341,9 +382,14 @@ export class MaintenanceWorkService {
         packages.find((pkg) => pkg.category === null)
       )?.dueDate;
 
+      const isNewFinding = item.source === InspectionItemResultSource.MAINTENANCE_FINDING;
       pole.kejanggalan.push({
         id: defect.id,
         label: item.label,
+        // §13: added during maintenance, not in the survey.
+        isNewFinding,
+        addedBy: isNewFinding ? item.createdBy?.name ?? null : null,
+        addedAt: isNewFinding ? item.createdAt.toISOString() : null,
         remark: item.remark,
         severity: defect.severity,
         isEmergency: defect.isEmergency,
@@ -380,7 +426,114 @@ export class MaintenanceWorkService {
       mainhead: visit.mainheadRecord,
       counts,
       poles: poleList,
+      // §13 — for "Add Kejanggalan": every surveyed pole (incl. ones with no
+      // work yet) with its checklist template, and each template's items that
+      // can carry a defect. Shipped with the pack so adding works offline.
+      // Only poles where at least one work type is this crew's; each lists the
+      // work types it may add (a split PE gives other poles to other teams).
+      surveyedPoles: visitPoles
+        .map(({ asset, templateId }) => ({
+          assetId: asset.id,
+          assetCode: asset.assetCode,
+          refCode: asset.refCode,
+          noTiangLama: asset.noTiangLama,
+          latitude: asset.latitude,
+          longitude: asset.longitude,
+          templateId,
+          categories: findingCategories(asset.id),
+        }))
+        .filter((pole) => pole.categories.length > 0)
+        .sort((left, right) => left.assetCode.localeCompare(right.assetCode, undefined, { numeric: true })),
+      findingTemplates,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * The crew adds a Kejanggalan that was not in the survey (§13). It is routed
+   * like any other; if the package names no team, it goes to the adding crew's
+   * own team so they can complete it. Refused (rolled back) when the pole / work
+   * type belongs to another company or team.
+   */
+  async addFinding(user: RequestUser, siteVisitId: string, dto: AddMaintenanceFindingDto) {
+    const scope = await this.workScope(user);
+    const now = new Date();
+
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await createMaintenanceFinding(tx, {
+        tenantId: user.tenantId,
+        siteVisitId,
+        assetId: dto.assetId,
+        templateItemId: dto.templateItemId,
+        optionValue: dto.optionValue,
+        note: dto.note,
+        clientRef: dto.clientRef,
+        actorUserId: user.id,
+        now,
+      });
+
+      if (finding.created && scope.role !== 'MANAGER') {
+        await this.assignOwnTeamIfUnassigned(tx, user, finding.defectId, now);
+      }
+
+      const visible = await tx.defect.findFirst({
+        where: { AND: [scope.where, { id: finding.defectId }] },
+        select: { id: true },
+      });
+      if (!visible) {
+        throw new ForbiddenException(
+          'This pole or work type is assigned to another company or team — ask your manager.',
+        );
+      }
+      return finding;
+    });
+  }
+
+  private async assignOwnTeamIfUnassigned(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    defectId: string,
+    now: Date,
+  ) {
+    const defect = await tx.defect.findUniqueOrThrow({
+      where: { id: defectId },
+      select: { assignedToTeamId: true, assignedTeamId: true, maintenanceOrganizationId: true, lifecycleStatus: true },
+    });
+    if (defect.assignedToTeamId || defect.assignedTeamId || defect.maintenanceOrganizationId !== user.organizationId) {
+      return;
+    }
+    const membership = await tx.teamMember.findFirst({
+      where: { userId: user.id, isActive: true, team: { organizationId: user.organizationId, isActive: true } },
+      orderBy: { createdAt: 'asc' },
+      select: { team: { select: { id: true, name: true } } },
+    });
+    if (!membership) {
+      return;
+    }
+    await tx.defect.update({
+      where: { id: defectId },
+      data: {
+        assignedToTeamId: membership.team.id,
+        assignedTeamId: membership.team.id,
+        assignedAt: now,
+        ...(defect.lifecycleStatus === DefectLifecycleStatus.VERIFIED
+          ? { lifecycleStatus: DefectLifecycleStatus.ASSIGNED }
+          : {}),
+      },
+    });
+    await tx.defectTimelineEntry.create({
+      data: {
+        defectId,
+        type: DefectTimelineEventType.DEFECT_ASSIGNED,
+        fromLifecycleStatus: defect.lifecycleStatus,
+        toLifecycleStatus:
+          defect.lifecycleStatus === DefectLifecycleStatus.VERIFIED
+            ? DefectLifecycleStatus.ASSIGNED
+            : defect.lifecycleStatus,
+        comment: `New finding: assigned to ${membership.team.name} (the crew that found it).`,
+        createdByUserId: user.id,
+        createdAt: now,
+      },
+    });
   }
 }

@@ -125,6 +125,15 @@ enum InspectionItemResultValue {
   NA
 }
 
+// Where an item result came from. SURVEY = the inspection's own checklist.
+// MAINTENANCE_FINDING = a Kejanggalan a crew/office added to the pole during
+// maintenance, after the survey (docs/PLAN-maintenance-flow.md §13) — kept out of
+// survey outputs (Laporan Kejanggalan, exports, rollups).
+enum InspectionItemResultSource {
+  SURVEY
+  MAINTENANCE_FINDING
+}
+
 enum DefectStatus {
   OPEN
   IN_PROGRESS
@@ -459,6 +468,7 @@ model User {
   maintainedDefects         Defect[]                      @relation("DefectMaintainedByUser")
   closureVerifiedDefects    Defect[]                      @relation("DefectClosureVerifiedByUser")
   defectEvidenceImages      DefectEvidenceImage[]         @relation("DefectEvidenceCreatedBy")
+  addedFindings             InspectionItemResult[]        @relation("InspectionItemResultCreatedBy")
   organizationMemberships   OrganizationMembership[]
   projectMemberships        ProjectMembership[]
   siteVisitParticipants     SiteVisitParticipant[]
@@ -1516,13 +1526,20 @@ model InspectionItemResult {
   // Denormalized from the template item at save (mirrors severity/isEmergency)
   // so every defect-creation path can stamp the defect without a re-lookup.
   maintenanceCategory MaintenanceCategory?
+  source              InspectionItemResultSource @default(SURVEY)
+  // MAINTENANCE_FINDING only: who added it, and the client's idempotency key
+  // (the offline queue may retry the same add).
+  createdByUserId     String?                   @db.Uuid
+  clientRef           String?                   @unique
   createdAt           DateTime                  @default(now())
   updatedAt           DateTime                  @updatedAt
   inspection          Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  createdBy           User?                     @relation("InspectionItemResultCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   defect              Defect?
 
   @@index([inspectionId])
   @@index([checklistItemId])
+  @@index([source])
 }
 
 model Defect {

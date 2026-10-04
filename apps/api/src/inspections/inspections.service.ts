@@ -13,6 +13,7 @@ import {
   SurveyLifecycleStatus,
   InspectionCompletionStatus,
   InspectionItemInputType,
+  InspectionItemResultSource,
   InspectionItemResultValue,
   MaintenanceCategory,
   Prisma,
@@ -377,6 +378,9 @@ export class InspectionsService {
           },
         },
         itemResults: {
+          // Survey answers only — maintenance findings (§13) hang off this
+          // inspection too but are not part of its checklist.
+          where: { source: InspectionItemResultSource.SURVEY },
           orderBy: {
             createdAt: 'asc',
           },
@@ -1296,7 +1300,12 @@ export class InspectionsService {
           // (no checklistItemId), NOT checklist answers. Deleting one would
           // cascade-delete its routed emergency defect, so a re-save of the
           // checklist must leave them intact.
-          NOT: { isEmergency: true, checklistItemId: null },
+          // Maintenance findings (§13) are not checklist answers either — each
+          // carries a routed defect a crew may be working.
+          NOT: [
+            { isEmergency: true, checklistItemId: null },
+            { source: InspectionItemResultSource.MAINTENANCE_FINDING },
+          ],
         },
       }),
       this.prisma.inspectionItemResult.createMany({
@@ -1770,6 +1779,9 @@ export class InspectionsService {
           },
         },
         itemResults: {
+          // Survey answers only — maintenance findings (§13) hang off this
+          // inspection too but are not part of its checklist.
+          where: { source: InspectionItemResultSource.SURVEY },
           orderBy: {
             createdAt: 'asc',
           },

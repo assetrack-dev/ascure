@@ -12,6 +12,10 @@ export const DEFECT_EVIDENCE_TYPES = [
   ...REPAIR_STAGE_EVIDENCE_TYPES,
   'MAINTENANCE_PROOF',
   'EMERGENCY',
+  // The condition photo the office attaches when it adds a new finding
+  // (docs/PLAN-maintenance-flow.md §13). Not a repair stage — the crew still
+  // takes its own BEFORE.
+  'FINDING',
 ] as const;
 export type DefectEvidenceType = (typeof DEFECT_EVIDENCE_TYPES)[number];
 
@@ -27,6 +31,7 @@ const TYPE_LABEL: Record<DefectEvidenceType, string> = {
   AFTER: 'After photo',
   MAINTENANCE_PROOF: 'Maintenance proof image',
   EMERGENCY: 'Emergency evidence',
+  FINDING: 'Reported condition photo',
 };
 
 export function evidenceTypeLabel(value: string): string {

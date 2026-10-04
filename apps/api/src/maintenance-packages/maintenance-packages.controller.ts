@@ -6,8 +6,12 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -18,6 +22,7 @@ import {
   BulkAssignMaintenancePackagesDto,
   ClearPolesDto,
 } from './dto/assign-maintenance-package.dto';
+import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
 import { MaintenancePackagesService } from './maintenance-packages.service';
 
 /**
@@ -85,5 +90,27 @@ export class MaintenancePackagesController {
     @Body() dto: AssignEmergencyDto,
   ) {
     return this.packages.assignEmergency(user, defectId, dto);
+  }
+
+  /** §13: the PE's surveyed poles + the checklist items a new finding can use. */
+  @Get(':siteVisitId/finding-options')
+  getFindingOptions(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', ParseUUIDPipe) siteVisitId: string,
+  ) {
+    return this.packages.getFindingOptions(user, siteVisitId);
+  }
+
+  /** §13: the office adds a Kejanggalan that was not in the survey, with its condition photo. */
+  @Post(':siteVisitId/findings')
+  @UseInterceptors(FileInterceptor('file', IMAGE_UPLOAD_OPTIONS))
+  addFinding(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', ParseUUIDPipe) siteVisitId: string,
+    @Body() dto: AddMaintenanceFindingDto,
+    @UploadedFile()
+    file: { originalname: string; mimetype: string; size: number; buffer: Buffer } | undefined,
+  ) {
+    return this.packages.addFinding(user, siteVisitId, dto, file);
   }
 }

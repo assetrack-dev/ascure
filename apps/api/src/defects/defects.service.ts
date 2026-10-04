@@ -3977,6 +3977,8 @@ export class DefectsService {
       status: defect.status,
       severity: defect.severity,
       isEmergency: defect.isEmergency,
+      // Added during maintenance, not in the survey (docs/PLAN-maintenance-flow.md §13).
+      isNewFinding: item.source === 'MAINTENANCE_FINDING',
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,
       assignedUserId,
