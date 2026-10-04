@@ -740,9 +740,13 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
       const type = String(
         (entry.image as { evidenceType?: string | null }).evidenceType ?? "",
       ).toUpperCase();
-      return type === "BEFORE" || type === "DURING" || type === "AFTER" ? type : "OTHER";
+      return type === "BEFORE" || type === "DURING" || type === "AFTER" || type === "FINDING"
+        ? type
+        : "OTHER";
     };
     return [
+      // New finding (plan §13): the condition photo attached when it was added.
+      { key: "FINDING", label: "Reported condition (new finding)" },
       { key: "BEFORE", label: "Before" },
       { key: "DURING", label: "During" },
       { key: "AFTER", label: "After" },
@@ -1034,6 +1038,11 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                       : "Read-only"}
                 </span>
                 {defect ? <SeverityBadge severity={defect.severity} /> : null}
+                {defect?.isNewFinding ? (
+                  <span className="inline-flex items-center rounded-full border border-[var(--high-border)] bg-[var(--high-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--high-text)]">
+                    New finding · not in survey
+                  </span>
+                ) : null}
                 {defect ? <StatusBadge status={defect.status} /> : null}
                 {defect ? <LifecycleBadge status={defect.lifecycleStatus} /> : null}
                 {defect ? <OutcomeBadge outcome={defect.resolutionOutcome} /> : null}
