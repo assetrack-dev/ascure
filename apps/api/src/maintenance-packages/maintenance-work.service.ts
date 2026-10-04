@@ -327,7 +327,7 @@ export class MaintenanceWorkService {
         select: {
           templateId: true,
           asset: {
-            select: { id: true, assetCode: true, refCode: true, noTiangLama: true, latitude: true, longitude: true },
+            select: { id: true, assetCode: true, noTiangLama: true, latitude: true, longitude: true },
           },
         },
       }),
@@ -435,7 +435,7 @@ export class MaintenanceWorkService {
         .map(({ asset, templateId }) => ({
           assetId: asset.id,
           assetCode: asset.assetCode,
-          refCode: asset.refCode,
+          refCode: null, // prod has no Asset.refCode (see 65150de)
           noTiangLama: asset.noTiangLama,
           latitude: asset.latitude,
           longitude: asset.longitude,
