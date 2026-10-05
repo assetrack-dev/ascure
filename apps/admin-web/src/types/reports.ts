@@ -17,6 +17,10 @@ export interface ReportSubstation {
   statuses: string[];
   /** Poles/assets registered under this Pencawang (0 = empty; used to hide empties). */
   assetCount: number;
+  /** The current (most recent) survey's start (ISO); null = never surveyed. */
+  surveyStartedAt: string | null;
+  /** That same survey's Complete Visit time (ISO); null = never surveyed / still open. */
+  surveyCompletedAt: string | null;
   /**
    * The most recent visit that actually HAS a compiled visual report — not simply
    * the most recent visit (a re-survey in progress has none while an older cycle
@@ -46,6 +50,10 @@ export interface ReportSavtRoute {
   displayStatusLabel: string | null;
   /** Distinct survey lifecycle statuses across this route's visits (legacy filter). */
   statuses: string[];
+  /** The current (most recent) survey's start (ISO); null = never started. */
+  surveyStartedAt: string | null;
+  /** That same survey's Complete Visit time (ISO); null = still open. */
+  surveyCompletedAt: string | null;
   /** Newest visit on the route carrying a compiled visual report; null if none. */
   reportVisitId: string | null;
   hasReport: boolean;
