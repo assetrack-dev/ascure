@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, FileText, MapPin, RefreshCw } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Download,
+  FileText,
+  MapPin,
+  RefreshCw,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import {
@@ -67,6 +75,129 @@ const DISPLAY_STATUS_TONE: Record<DisplayStatus, Tone> = {
   CANCELLED: "neutral",
 };
 
+// Default keeps the API's order (SAVR = name A–Z, SAVT = route code). The date
+// sorts answer "which survey started / completed first or last"; rows without
+// that date always sink to the bottom so they never pose as the oldest.
+type DateField = "surveyStartedAt" | "surveyCompletedAt";
+type SortOrder =
+  | "DEFAULT"
+  | "STARTED_DESC"
+  | "STARTED_ASC"
+  | "COMPLETED_DESC"
+  | "COMPLETED_ASC";
+
+const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+  { value: "DEFAULT", label: "Sort: Name" },
+  { value: "STARTED_DESC", label: "Started: latest first" },
+  { value: "STARTED_ASC", label: "Started: earliest first" },
+  { value: "COMPLETED_DESC", label: "Completed: latest first" },
+  { value: "COMPLETED_ASC", label: "Completed: earliest first" },
+];
+
+const SORT_SPEC: Record<
+  Exclude<SortOrder, "DEFAULT">,
+  { field: DateField; direction: 1 | -1 }
+> = {
+  STARTED_DESC: { field: "surveyStartedAt", direction: -1 },
+  STARTED_ASC: { field: "surveyStartedAt", direction: 1 },
+  COMPLETED_DESC: { field: "surveyCompletedAt", direction: -1 },
+  COMPLETED_ASC: { field: "surveyCompletedAt", direction: 1 },
+};
+
+type DatedRow = Record<DateField, string | null>;
+
+function dateTime(value: string | null): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function sortByDate<T extends DatedRow>(rows: T[], order: SortOrder): T[] {
+  if (order === "DEFAULT") return rows;
+  const { field, direction } = SORT_SPEC[order];
+  // Array.prototype.sort is stable, so equal dates keep the API's name order.
+  return [...rows].sort((a, b) => {
+    const at = dateTime(a[field]);
+    const bt = dateTime(b[field]);
+    if (at === null || bt === null) {
+      return at === bt ? 0 : at === null ? 1 : -1;
+    }
+    return (at - bt) * direction;
+  });
+}
+
+// Field dates read in Malaysia time regardless of the viewer's browser zone.
+const MYT = "Asia/Kuala_Lumpur";
+const displayDateFormat = new Intl.DateTimeFormat("en-MY", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  timeZone: MYT,
+});
+// en-CA formats as YYYY-MM-DD — the same shape <input type="date"> yields, so
+// the range filter compares plain strings on the MYT calendar day.
+const isoDayFormat = new Intl.DateTimeFormat("en-CA", { timeZone: MYT });
+
+/** True when the survey started within [from, to] (MYT days, both inclusive). */
+function startedWithin(value: string | null, from: string, to: string) {
+  if (!from && !to) return true;
+  const time = dateTime(value);
+  if (time === null) return false;
+  const day = isoDayFormat.format(time);
+  return (!from || day >= from) && (!to || day <= to);
+}
+
+function DateCell({ value }: { value: string | null }) {
+  const time = dateTime(value);
+  if (time === null) {
+    return <span className="text-[12px] text-[var(--muted-2)]">—</span>;
+  }
+  return (
+    <span className="whitespace-nowrap text-[12.5px] font-medium text-[var(--foreground-soft)]">
+      {displayDateFormat.format(time)}
+    </span>
+  );
+}
+
+/** Clickable date header: cycles latest first → earliest first → name order. */
+function SortableDateHeader({
+  label,
+  desc,
+  asc,
+  sortOrder,
+  onSort,
+}: {
+  label: string;
+  desc: SortOrder;
+  asc: SortOrder;
+  sortOrder: SortOrder;
+  onSort: (next: SortOrder) => void;
+}) {
+  const next = sortOrder === desc ? asc : sortOrder === asc ? "DEFAULT" : desc;
+  return (
+    <th
+      className={tableHeadCellClass}
+      aria-sort={sortOrder === asc ? "ascending" : sortOrder === desc ? "descending" : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(next)}
+        title={`Sort by survey ${label.toLowerCase()} date`}
+        className="inline-flex items-center gap-1 uppercase tracking-[inherit] transition hover:text-[var(--foreground)]"
+      >
+        {label}
+        {sortOrder === asc ? (
+          <ArrowUp size={12} />
+        ) : sortOrder === desc ? (
+          <ArrowDown size={12} />
+        ) : (
+          <ArrowUpDown size={12} className="opacity-50" />
+        )}
+      </button>
+    </th>
+  );
+}
+
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -117,6 +248,10 @@ function ReportsContent() {
   const [scope, setScope] = useState<"SAVR" | "SAVT">("SAVR");
   const [mainhead, setMainhead] = useState("ALL");
   const [status, setStatus] = useState("ALL");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("DEFAULT");
+  // "Started between" range (YYYY-MM-DD, MYT days); blank = open-ended.
+  const [startedFrom, setStartedFrom] = useState("");
+  const [startedTo, setStartedTo] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
@@ -194,20 +329,30 @@ function ReportsContent() {
   }, [isSavt, routes, substations]);
 
   const filteredSubstations = useMemo(() => {
-    return substations.filter((substation) => {
+    const matching = substations.filter((substation) => {
       const matchesStatus = status === "ALL" || substation.displayStatus === status;
       const matchesMainhead = mainhead === "ALL" || substation.mainhead === mainhead;
-      return matchesStatus && matchesMainhead;
+      return (
+        matchesStatus &&
+        matchesMainhead &&
+        startedWithin(substation.surveyStartedAt, startedFrom, startedTo)
+      );
     });
-  }, [substations, status, mainhead]);
+    return sortByDate(matching, sortOrder);
+  }, [substations, status, mainhead, startedFrom, startedTo, sortOrder]);
 
   const filteredRoutes = useMemo(() => {
-    return routes.filter((route) => {
+    const matching = routes.filter((route) => {
       const matchesStatus = status === "ALL" || route.displayStatus === status;
       const matchesMainhead = mainhead === "ALL" || route.mainhead === mainhead;
-      return matchesStatus && matchesMainhead;
+      return (
+        matchesStatus &&
+        matchesMainhead &&
+        startedWithin(route.surveyStartedAt, startedFrom, startedTo)
+      );
     });
-  }, [routes, status, mainhead]);
+    return sortByDate(matching, sortOrder);
+  }, [routes, status, mainhead, startedFrom, startedTo, sortOrder]);
 
   // Keys currently shown (for select-all + bulk).
   const visibleKeys = useMemo(
@@ -471,6 +616,38 @@ function ReportsContent() {
                   ))}
                 </select>
 
+                <select
+                  aria-label="Sort"
+                  value={sortOrder}
+                  onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+                  className={filterSelectClass}
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="date"
+                  aria-label="Started from"
+                  title="Started on or after"
+                  value={startedFrom}
+                  max={startedTo || undefined}
+                  onChange={(event) => setStartedFrom(event.target.value)}
+                  className={filterSelectClass}
+                />
+                <input
+                  type="date"
+                  aria-label="Started to"
+                  title="Started on or before"
+                  value={startedTo}
+                  min={startedFrom || undefined}
+                  onChange={(event) => setStartedTo(event.target.value)}
+                  className={filterSelectClass}
+                />
+
                 <div className="ml-auto flex items-center gap-3">
                   <span className="text-[12.5px] text-[var(--muted)]">
                     {isLoading
@@ -516,7 +693,7 @@ function ReportsContent() {
 
             {/* List */}
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left">
+              <table className="w-full min-w-[880px] text-left">
                 <thead>
                   <tr className={`${tableHeadClass} border-b border-[var(--line2)]`}>
                     <th className="w-10 px-3.5 py-2.5">
@@ -533,6 +710,20 @@ function ReportsContent() {
                       {isSavt ? "Route (From → To)" : "Nama Pencawang"}
                     </th>
                     <th className={tableHeadCellClass}>Lokasi Pencawang</th>
+                    <SortableDateHeader
+                      label="Started"
+                      desc="STARTED_DESC"
+                      asc="STARTED_ASC"
+                      sortOrder={sortOrder}
+                      onSort={setSortOrder}
+                    />
+                    <SortableDateHeader
+                      label="Completed"
+                      desc="COMPLETED_DESC"
+                      asc="COMPLETED_ASC"
+                      sortOrder={sortOrder}
+                      onSort={setSortOrder}
+                    />
                     <th className={tableHeadCellClass}>Status</th>
                     <th className={`${tableHeadCellClass} text-right`}>Download</th>
                   </tr>
@@ -540,13 +731,13 @@ function ReportsContent() {
                 <tbody>
                   {isLoading ? (
                     <tr>
-                      <td colSpan={5} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
+                      <td colSpan={7} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
                         Loading…
                       </td>
                     </tr>
                   ) : rowCount === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
+                      <td colSpan={7} className="px-3.5 py-10 text-center text-[13px] text-[var(--muted)]">
                         No {isSavt ? "routes" : "Pencawang"} for this filter.
                       </td>
                     </tr>
@@ -581,6 +772,12 @@ function ReportsContent() {
                           </td>
                           <td className={tableCellClass}>
                             <CoordCell latitude={route.latitude} longitude={route.longitude} />
+                          </td>
+                          <td className={tableCellClass}>
+                            <DateCell value={route.surveyStartedAt} />
+                          </td>
+                          <td className={tableCellClass}>
+                            <DateCell value={route.surveyCompletedAt} />
                           </td>
                           <td className={tableCellClass}>
                             <StatusPill
@@ -667,6 +864,12 @@ function ReportsContent() {
                               latitude={substation.latitude}
                               longitude={substation.longitude}
                             />
+                          </td>
+                          <td className={tableCellClass}>
+                            <DateCell value={substation.surveyStartedAt} />
+                          </td>
+                          <td className={tableCellClass}>
+                            <DateCell value={substation.surveyCompletedAt} />
                           </td>
                           <td className={tableCellClass}>
                             <StatusPill
