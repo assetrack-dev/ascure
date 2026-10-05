@@ -13,6 +13,7 @@ import {
   InspectionItemResultValue,
   OperationalScope,
   Prisma,
+  SiteVisitStatus,
   SurveyLifecycleStatus,
   UserRole,
 } from '@prisma/client';
@@ -63,6 +64,42 @@ const EXPORTABLE_INSPECTION_WHERE = {
     { reinspectionRequestedAt: { not: null } },
   ],
 } satisfies Prisma.InspectionWhereInput;
+
+// Lifecycle stages where the field work is done (submitted for / past review).
+const FIELD_DONE_LIFECYCLE = new Set<SurveyLifecycleStatus>([
+  SurveyLifecycleStatus.RONDAAN_SELESAI,
+  SurveyLifecycleStatus.PINDAAN_SELESAI,
+  SurveyLifecycleStatus.DISAHKAN_PENGURUS,
+  SurveyLifecycleStatus.LAPORAN_SELESAI,
+  SurveyLifecycleStatus.ARKIB,
+]);
+
+/**
+ * When the crew finished the visit — the Reports page's "Completed" column/sort.
+ * completedAt (Complete Visit), else a legacy COMPLETED visit's endedAt — the
+ * Site Visits page's rule. A DC/manager send-back clears both stamps, and a
+ * survey can move on past review without them being re-set, so a visit whose
+ * lifecycle says the field work is done falls back to its review/report stamps.
+ * Null while the survey is still open (in progress or being amended).
+ */
+function visitCompletedAt(visit: {
+  status: SiteVisitStatus;
+  lifecycleStatus: SurveyLifecycleStatus | null;
+  completedAt: Date | null;
+  endedAt: Date | null;
+  rondaanSelesaiAt: Date | null;
+  laporanSelesaiAt: Date | null;
+  archivedAt: Date | null;
+}): Date | null {
+  const stamped =
+    visit.completedAt ??
+    (visit.status === SiteVisitStatus.COMPLETED ? visit.endedAt : null);
+  if (stamped) return stamped;
+  if (visit.lifecycleStatus && FIELD_DONE_LIFECYCLE.has(visit.lifecycleStatus)) {
+    return visit.rondaanSelesaiAt ?? visit.laporanSelesaiAt ?? visit.archivedAt;
+  }
+  return null;
+}
 
 /**
  * The inspection's ORIGINAL field date (owner rule 2026-09-08, everywhere a
@@ -673,6 +710,11 @@ export class ReportsService {
         substationId: true,
         status: true,
         startedAt: true,
+        completedAt: true,
+        endedAt: true,
+        rondaanSelesaiAt: true,
+        laporanSelesaiAt: true,
+        archivedAt: true,
         mainhead: true,
         mainheadRecord: { select: { name: true } },
         lifecycleStatus: true,
@@ -693,6 +735,8 @@ export class ReportsService {
     // The CURRENT survey's start date (most recent visit — same source as the
     // Status column, so the two always describe the same survey).
     const startedAtBySubstation = new Map<string, Date>();
+    // ...and that same survey's completion (null = not completed yet).
+    const completedAtBySubstation = new Map<string, Date | null>();
     const coordsBySubstation = new Map<
       string,
       { latitude: number; longitude: number }
@@ -722,6 +766,7 @@ export class ReportsService {
 
       if (!startedAtBySubstation.has(visit.substationId)) {
         startedAtBySubstation.set(visit.substationId, visit.startedAt);
+        completedAtBySubstation.set(visit.substationId, visitCompletedAt(visit));
       }
 
       // First visit (most recent) that carries a check-in fix = the Pencawang point.
@@ -772,6 +817,8 @@ export class ReportsService {
         assetCount: _count.assets,
         // The current (most recent) survey's start date; null = never surveyed.
         surveyStartedAt: startedAtBySubstation.get(substation.id) ?? null,
+        // That same survey's completion; null = never surveyed or still open.
+        surveyCompletedAt: completedAtBySubstation.get(substation.id) ?? null,
         // Drives the "Visual Report" download button (null => nothing compiled).
         reportVisitId,
         hasReport: reportVisitId != null,
@@ -1970,6 +2017,11 @@ export class ReportsService {
         status: true,
         lifecycleStatus: true,
         startedAt: true,
+        completedAt: true,
+        endedAt: true,
+        rondaanSelesaiAt: true,
+        laporanSelesaiAt: true,
+        archivedAt: true,
         checkInLatitude: true,
         checkInLongitude: true,
       },
@@ -2017,6 +2069,7 @@ export class ReportsService {
     const statusesByRoute = new Map<string, Set<SurveyLifecycleStatus>>();
     const displayStatusByRoute = new Map<string, DisplayStatus>();
     const startedAtByRoute = new Map<string, Date>();
+    const completedAtByRoute = new Map<string, Date | null>();
     // Newest visit on the route that actually HAS a compiled visual report.
     const reportVisitByRoute = new Map<string, string>();
     const coordsByRoute = new Map<
@@ -2049,6 +2102,7 @@ export class ReportsService {
       // Status, so the two always describe the same cycle).
       if (!startedAtByRoute.has(code)) {
         startedAtByRoute.set(code, visit.startedAt);
+        completedAtByRoute.set(code, visitCompletedAt(visit));
       }
       if (
         !coordsByRoute.has(code) &&
@@ -2100,6 +2154,8 @@ export class ReportsService {
           statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
           // The current (most recent) survey's start date; null = never started.
           surveyStartedAt: startedAtByRoute.get(route.routeCode) ?? null,
+          // That same survey's completion; null = still open.
+          surveyCompletedAt: completedAtByRoute.get(route.routeCode) ?? null,
           // Drives the "Visual Report" download button (null => nothing compiled).
           reportVisitId,
           hasReport: reportVisitId != null,
