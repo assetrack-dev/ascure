@@ -392,3 +392,15 @@ visual help to find the pole in front of them.
 | J33 | **Crew Performance → "Maintenance" tab** — **credit by TEAM only**: repaired (marked done), closed (verified), sent back, cannot repair, active days, avg assigned→done, verification pass rate; month picker; same scope as survey tab (Admin all, Manager own company, MC + subtree). **XLSX download** too. |
 
 Data exists (Defect.maintainedAt/maintainedByUserId, assignedToTeamId, closureVerifiedAt, timeline STATUS_CHANGED) → **no migration**. Ships API + web, no APK.
+
+## 16. Repair report (M4) — decisions (owner, 2026-10-08)
+
+| # | Decision |
+|---|---|
+| K34 | **One PDF per Pencawang per company** ("Laporan Pembaikan Kejanggalan"); optional **one work type** (e.g. a Rentis-only claim). |
+| K35 | **Every** Kejanggalan of that company on the PE, each with its status; the PDF is watermarked **DRAF** until all are Closed. Sections: survey Kejanggalan · new findings (not in survey) · cannot repair (with reason). |
+| K36 | Photos per Kejanggalan: **BEFORE + DURING (if any) + AFTER** with stage + time captions (no survey photo). |
+| K37 | Download from the **Maintenance Packages row** and as a **batch ZIP** of many PEs (background job, like the Laporan Kejanggalan ZIP). |
+| Q7 | Contractor **Manager / Supervisor** (own company), Main Contractor (own group), TNB, Admin — not Technicians. |
+
+Layout: pdf-lib, Kad Kerja style (ASCURE + TNB logos, navy title, identity + company/teams/scope/target, status summary strip); one card per Kejanggalan: pole + GPS + work type + A/B/C + status, Kejanggalan text, repaired by team/date, verified by name/date, photo row. API + web, no migration, no APK.
