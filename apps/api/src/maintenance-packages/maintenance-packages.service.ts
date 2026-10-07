@@ -86,7 +86,12 @@ const NOT_FINISHED_WHERE: Prisma.DefectWhereInput = {
   ],
 };
 
-type ActorKind = 'ADMIN' | 'TNB' | 'MAIN_CONTRACTOR';
+/**
+ * COMPANY (plan §15, J30/J31): a contractor's own Manager (any contractor type
+ * other than an MC Manager) or Supervisor — sees only work routed to its own
+ * company; a Manager re-teams within it, a Supervisor only views.
+ */
+type ActorKind = 'ADMIN' | 'TNB' | 'MAIN_CONTRACTOR' | 'COMPANY';
 
 type ActorScope = {
   kind: ActorKind;
@@ -119,7 +124,27 @@ type LaneRow = {
   total: number;
   finished: number;
   unrouted: number;
+  inProgress: number;
+  awaiting: number;
+  closed: number;
+  noTeam: number;
 };
+
+/** Repair progress of a lane / PE (plan §15, J32). todo = not started yet. */
+type Progress = { todo: number; inProgress: number; awaiting: number; closed: number };
+
+function laneProgress(row: LaneRow | undefined): Progress {
+  if (!row) return { todo: 0, inProgress: 0, awaiting: 0, closed: 0 };
+  return {
+    todo: Math.max(0, row.total - row.inProgress - row.awaiting - row.closed),
+    inProgress: row.inProgress,
+    awaiting: row.awaiting,
+    closed: row.closed,
+  };
+}
+
+/** Closed for good (verified, or resolved/closed outside the maintenance flow). */
+const CLOSED_SQL = Prisma.sql`(d."lifecycleStatus" = 'CLOSED' OR d."status" IN ('RESOLVED', 'CLOSED'))`;
 
 /** JS twin of FINISHED_SQL. */
 function isFinishedDefect(defect: {
@@ -214,6 +239,11 @@ export class MaintenancePackagesService {
       };
     }
 
+    const company = await this.resolveCompanyActor(user);
+    if (company) {
+      return company;
+    }
+
     const ctx = await buildScopeContext(this.prisma, user);
     if (!ctx.isClientViewer) {
       throw new ForbiddenException(
@@ -229,11 +259,37 @@ export class MaintenancePackagesService {
     };
   }
 
+  /**
+   * A contractor Manager / Supervisor (plan §15): only its own company's work —
+   * no Mainheads to pick unassigned PEs from, and only its own teams to hand to.
+   */
+  private async resolveCompanyActor(user: RequestUser): Promise<ActorScope | null> {
+    if (
+      !user.organizationId ||
+      (user.role !== UserRole.MANAGER && user.role !== UserRole.SUPERVISOR)
+    ) {
+      return null;
+    }
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { isActive: true, type: true },
+    });
+    if (!organization?.isActive || !CONTRACTOR_TYPES.includes(organization.type)) {
+      return null;
+    }
+    return {
+      kind: 'COMPANY',
+      mainheadIds: [],
+      orgIds: [user.organizationId],
+      canAssign: user.role === UserRole.MANAGER,
+    };
+  }
+
   private async resolveAssigner(user: RequestUser): Promise<ActorScope> {
     const actor = await this.resolveActor(user);
     if (!actor.canAssign) {
       throw new ForbiddenException(
-        'Only a TNB Foreman or Technician, a main contractor manager, or an admin can assign maintenance packages.',
+        'Only a TNB Foreman or Technician, a contractor manager, or an admin can assign maintenance packages.',
       );
     }
     return actor;
@@ -328,6 +384,12 @@ export class MaintenancePackagesService {
                   AND mpa."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])
               )
             )`;
+    // A company counts only the Kejanggalan routed to it (other lanes of a
+    // shared PE are someone else's progress).
+    const ownWorkSql =
+      actor.kind === 'COMPANY' && actor.orgIds
+        ? Prisma.sql`AND d."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])`
+        : Prisma.empty;
     const fromSql = Prisma.sql`
       FROM "Defect" d
       JOIN "InspectionItemResult" r ON r."id" = d."inspectionItemResultId"
@@ -339,6 +401,7 @@ export class MaintenancePackagesService {
         AND (d."lifecycleStatus" IS NULL OR d."lifecycleStatus" NOT IN ('DETECTED', 'REJECTED'))
         AND (i."completionStatus" = 'SUBMITTED' OR d."isEmergency" = TRUE)
         ${scopeSql}
+        ${ownWorkSql}
     `;
 
     const [laneRows, poleRows] = await Promise.all([
@@ -350,7 +413,20 @@ export class MaintenancePackagesService {
           COUNT(*) FILTER (WHERE ${FINISHED_SQL})::int AS "finished",
           COUNT(*) FILTER (
             WHERE d."maintenanceOrganizationId" IS NULL AND NOT ${FINISHED_SQL}
-          )::int AS "unrouted"
+          )::int AS "unrouted",
+          COUNT(*) FILTER (
+            WHERE d."lifecycleStatus" = 'IN_PROGRESS' AND NOT ${CLOSED_SQL}
+          )::int AS "inProgress",
+          COUNT(*) FILTER (
+            WHERE d."lifecycleStatus" IN ('COMPLETED', 'VERIFICATION_PENDING') AND NOT ${CLOSED_SQL}
+          )::int AS "awaiting",
+          COUNT(*) FILTER (WHERE ${CLOSED_SQL})::int AS "closed",
+          COUNT(*) FILTER (
+            WHERE d."maintenanceOrganizationId" IS NOT NULL
+              AND d."assignedToTeamId" IS NULL
+              AND d."assignedTeamId" IS NULL
+              AND NOT ${FINISHED_SQL}
+          )::int AS "noTeam"
         ${fromSql}
         GROUP BY 1, 2
       `,
@@ -432,6 +508,8 @@ export class MaintenancePackagesService {
             total: row?.total ?? 0,
             open: (row?.total ?? 0) - (row?.finished ?? 0),
             finished: row?.finished ?? 0,
+            noTeam: row?.noTeam ?? 0,
+            progress: laneProgress(row),
             organization: pkg?.maintenanceOrganization ?? null,
             team: pkg?.assignedTeam ?? null,
             canAssign: this.mayChange(
@@ -445,6 +523,16 @@ export class MaintenancePackagesService {
         const total = rows.reduce((sum, row) => sum + row.total, 0);
         const finished = rows.reduce((sum, row) => sum + row.finished, 0);
         const unrouted = rows.reduce((sum, row) => sum + row.unrouted, 0);
+        const noTeam = rows.reduce((sum, row) => sum + row.noTeam, 0);
+        const progress = rows.map(laneProgress).reduce(
+          (sum, lane) => ({
+            todo: sum.todo + lane.todo,
+            inProgress: sum.inProgress + lane.inProgress,
+            awaiting: sum.awaiting + lane.awaiting,
+            closed: sum.closed + lane.closed,
+          }),
+          { todo: 0, inProgress: 0, awaiting: 0, closed: 0 },
+        );
 
         return {
           siteVisitId: visit.id,
@@ -465,7 +553,8 @@ export class MaintenancePackagesService {
           suggestedOrganizationId:
             visit.mainheadRecord?.maintenanceOrganizationId ?? null,
           poleCount: polesByVisit.get(visit.id) ?? 0,
-          totals: { total, open: total - finished, finished, unrouted },
+          totals: { total, open: total - finished, finished, unrouted, noTeam },
+          progress,
           lanes,
           poleSplits: summarizePoleSplits(visit.maintenancePoleAssignments),
           packages: visit.maintenancePackages
@@ -753,14 +842,38 @@ export class MaintenancePackagesService {
           where: { siteVisitId: visit.id },
         });
         const whole = existing.find((pkg) => pkg.category === null) ?? null;
-        const fields = {
-          maintenanceOrganizationId: destination.company.id,
-          assignedTeamId: destination.team?.id ?? null,
-          dueDate,
-          notes,
-          assignedByUserId: user.id,
-          assignedAt: now,
-        };
+        // A company only re-teams its own work: TNB's / the MC's target date,
+        // notes and "assigned by" stay as they were (plan §15, J30).
+        const kept =
+          actor.kind === 'COMPANY'
+            ? (category === null
+                ? whole ?? existing[0]
+                : existing.find((pkg) => pkg.category === category) ?? whole) ?? null
+            : null;
+        const keptDue =
+          actor.kind === 'COMPANY' && category === null && !whole
+            ? existing
+                .map((pkg) => pkg.dueDate)
+                .filter((date): date is Date => date !== null)
+                .sort((left, right) => left.getTime() - right.getTime())[0] ?? null
+            : kept?.dueDate ?? null;
+        const fields = kept
+          ? {
+              maintenanceOrganizationId: destination.company.id,
+              assignedTeamId: destination.team?.id ?? null,
+              dueDate: keptDue,
+              notes: kept.notes,
+              assignedByUserId: kept.assignedByUserId,
+              assignedAt: kept.assignedAt,
+            }
+          : {
+              maintenanceOrganizationId: destination.company.id,
+              assignedTeamId: destination.team?.id ?? null,
+              dueDate,
+              notes,
+              assignedByUserId: user.id,
+              assignedAt: now,
+            };
 
         if (category === null) {
           // Whole PE: replaces any per-work-type split.
@@ -817,6 +930,9 @@ export class MaintenancePackagesService {
   /** Withdraw a package; its not-yet-started Kejanggalan return to TNB. */
   async unassign(user: RequestUser, packageId: string) {
     const actor = await this.resolveAssigner(user);
+    if (actor.kind === 'COMPANY') {
+      throw new ForbiddenException('Only TNB or the main contractor can withdraw a package.');
+    }
     const pkg = await this.prisma.maintenancePackage.findFirst({
       where: { id: packageId, tenantId: user.tenantId },
       select: {
@@ -971,6 +1087,8 @@ export class MaintenancePackagesService {
             category: true,
             maintenanceOrganizationId: true,
             assignedTeamId: true,
+            dueDate: true,
+            notes: true,
             maintenanceOrganization: { select: { id: true, name: true } },
             assignedTeam: { select: { id: true, name: true } },
           },
@@ -1192,11 +1310,24 @@ export class MaintenancePackagesService {
     }
 
     const now = new Date();
+    // A company splitting its own work between its teams keeps the package's
+    // target date / notes (plan §15, J30).
+    const keptPackage =
+      actor.kind === 'COMPANY'
+        ? visit.maintenancePackages.find((pkg) => pkg.category === category) ??
+          visit.maintenancePackages.find((pkg) => pkg.category === null) ??
+          null
+        : null;
     const fields = {
       maintenanceOrganizationId: destination.company.id,
       assignedTeamId: destination.team?.id ?? null,
-      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-      notes: dto.notes ?? null,
+      dueDate:
+        actor.kind === 'COMPANY'
+          ? keptPackage?.dueDate ?? null
+          : dto.dueDate
+            ? new Date(dto.dueDate)
+            : null,
+      notes: actor.kind === 'COMPANY' ? keptPackage?.notes ?? null : dto.notes ?? null,
       assignedByUserId: user.id,
       assignedAt: now,
     };

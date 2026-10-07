@@ -381,3 +381,14 @@ visual help to find the pole in front of them.
 | I27 | **Pole survey photos** (up to 4 per pole; whole-pole IMAGE field first, labelled) on the pole screen + map card, so the crew can match the pole. |
 | I28 | **Save for offline** downloads photos to app storage (not the ~40 MB image cache): every photo on poles with work + the first pole photo on the others; total size shown first. |
 | I29 | Ships in **APK v2.0.18** together with §13 (v2.0.17 is never distributed). API change is additive → deploy API first. |
+
+## 15. Contractor Manager view, progress, maintenance crew performance (owner, 2026-10-08)
+
+| # | Decision |
+|---|---|
+| J30 | **Every contractor Manager gets Maintenance Packages (List + Map).** A SUBCONTRACTOR Manager sees only the PEs / work types / poles routed to **its company** and may **assign / re-team its own teams** (single, bulk, map box, split by poles between its own teams). Company change + withdraw stay with TNB / Main Contractor / Admin. MC + TNB unchanged. |
+| J31 | **Contractor Supervisors: view only** (their company's packages + progress, no assign). |
+| J32 | **Progress at a glance** on List + Map: per PE To do · In progress · Awaiting verification · Closed bar, % closed, target date (red when overdue); map marker colour by progress (not started / in progress / awaiting verification / all closed; hollow = no team), label done/total; KPI strip (total, % closed, awaiting verification, overdue PEs, no team) + per work type. |
+| J33 | **Crew Performance → "Maintenance" tab** — **credit by TEAM only**: repaired (marked done), closed (verified), sent back, cannot repair, active days, avg assigned→done, verification pass rate; month picker; same scope as survey tab (Admin all, Manager own company, MC + subtree). **XLSX download** too. |
+
+Data exists (Defect.maintainedAt/maintainedByUserId, assignedToTeamId, closureVerifiedAt, timeline STATUS_CHANGED) → **no migration**. Ships API + web, no APK.
