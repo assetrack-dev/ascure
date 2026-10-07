@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UserRole } from '@prisma/client';
+import { OrganizationType, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
@@ -118,6 +118,8 @@ export class AuthService {
       requestUser,
       isClientViewer,
     );
+    const canViewMaintenancePackages =
+      canViewRepairVerification || (await this.resolveIsContractorStaff(requestUser));
 
     return {
       access_token: accessToken,
@@ -144,6 +146,7 @@ export class AuthService {
         isClientViewer,
         canActOnMaintenanceAsClient,
         canViewRepairVerification,
+        canViewMaintenancePackages,
       },
     };
   }
@@ -219,6 +222,29 @@ export class AuthService {
       return true;
     }
     return (await resolveMainContractorOrgIds(this.prisma, user)) !== null;
+  }
+
+  /**
+   * A contractor's own Manager / Supervisor also gets Maintenance Packages —
+   * their company's work only (docs/PLAN-maintenance-flow.md §15). Mirrors
+   * MaintenancePackagesService.resolveCompanyActor.
+   */
+  private async resolveIsContractorStaff(user: RequestUser): Promise<boolean> {
+    if (
+      !user.organizationId ||
+      (user.role !== UserRole.MANAGER && user.role !== UserRole.SUPERVISOR)
+    ) {
+      return false;
+    }
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { isActive: true, type: true },
+    });
+    return (
+      organization?.isActive === true &&
+      (organization.type === OrganizationType.MAIN_CONTRACTOR ||
+        organization.type === OrganizationType.SUBCONTRACTOR)
+    );
   }
 
   private async resolveIsClientViewer(user: RequestUser): Promise<boolean> {
@@ -324,6 +350,8 @@ export class AuthService {
       user,
       isClientViewer,
     );
+    const canViewMaintenancePackages =
+      canViewRepairVerification || (await this.resolveIsContractorStaff(user));
     const { organization, ...currentUserFields } = currentUser;
 
     return {
@@ -342,6 +370,7 @@ export class AuthService {
       isClientViewer,
       canActOnMaintenanceAsClient,
       canViewRepairVerification,
+      canViewMaintenancePackages,
     };
   }
 

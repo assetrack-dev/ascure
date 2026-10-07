@@ -234,8 +234,11 @@ describe('Authz · maintenance packages (TNB → company)', () => {
     });
 
     // Main Contractor managers may (plan §12 — see maintenance-package-teams spec).
-    it('a subcontractor manager / crew cannot open the board (403)', async () => {
-      await http(app, token.subMgr).get('/api/v1/maintenance-packages/board').expect(403);
+    // A subcontractor manager sees only its own company's work (plan §15 — see
+    // maintenance-company-view spec): nothing is routed to it here.
+    it('a subcontractor manager sees an empty company board; a crew member cannot open it (403)', async () => {
+      const res = await http(app, token.subMgr).get('/api/v1/maintenance-packages/board').expect(200);
+      expect(res.body).toMatchObject({ actorKind: 'COMPANY', canAssign: true, pencawangs: [], emergencies: [] });
       await http(app, token.maintUser).get('/api/v1/maintenance-packages/board').expect(403);
     });
 
