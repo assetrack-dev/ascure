@@ -57,12 +57,15 @@ export function RepairReportDialog({
   token,
   rows,
   board,
+  initialCategory = null,
   onClose,
   onUnauthorized,
 }: {
   token: string;
   rows: PackagePencawang[];
   board: MaintenancePackageBoard;
+  /** The board's work-type filter, preselected. */
+  initialCategory?: MaintenanceCategory | null;
   onClose: () => void;
   onUnauthorized: () => void;
 }) {
@@ -71,7 +74,7 @@ export function RepairReportDialog({
   // A company's own staff always report on their own company.
   const fixedCompany = board.actorKind === "COMPANY" || companies.length === 1;
   const [organizationId, setOrganizationId] = useState(fixedCompany ? companies[0]?.id ?? "" : "");
-  const [category, setCategory] = useState<MaintenanceCategory | "">("");
+  const [category, setCategory] = useState<MaintenanceCategory | "">(initialCategory ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<{ id: string; status: RepairZipJobStatus } | null>(null);
