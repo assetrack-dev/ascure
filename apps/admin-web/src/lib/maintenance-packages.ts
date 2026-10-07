@@ -1,4 +1,5 @@
-import { API_BASE_URL, ApiError, apiRequest } from "@/lib/api";
+import { API_BASE_URL, ApiError, apiRequest, apiRequestBlob } from "@/lib/api";
+import { triggerBrowserDownload } from "@/lib/reports";
 import type {
   AddFindingPayload,
   AssignPackagePayload,
@@ -117,4 +118,72 @@ export async function addMaintenanceFinding(
     throw new ApiError(message || "Could not add the Kejanggalan.", response.status, body);
   }
   return body as { defectId: string; created: boolean };
+}
+
+// ── Repair report (docs/PLAN-maintenance-flow.md §16) ──────────────────────
+
+export type RepairReportOptions = {
+  organizationId?: string | null;
+  category?: MaintenanceCategory | null;
+};
+
+function repairReportQuery(options: RepairReportOptions) {
+  const params = new URLSearchParams();
+  if (options.organizationId) params.set("organizationId", options.organizationId);
+  if (options.category) params.set("category", options.category);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** One Pencawang's repair report PDF for one company (DRAF until all closed). */
+export async function downloadRepairReport(
+  token: string,
+  siteVisitId: string,
+  options: RepairReportOptions,
+): Promise<void> {
+  const { blob, filename } = await apiRequestBlob(
+    `/maintenance-packages/${encodeURIComponent(siteVisitId)}/repair-report.pdf${repairReportQuery(options)}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "laporan-pembaikan.pdf");
+}
+
+export interface RepairZipJobStatus {
+  status: "RUNNING" | "COMPLETED" | "FAILED" | string;
+  processed: number;
+  total: number;
+  currentLabel: string | null;
+  error: string | null;
+}
+
+/** Many Pencawang → one ZIP, built in the background (max 40). */
+export function startRepairReportsZip(
+  token: string,
+  siteVisitIds: string[],
+  options: RepairReportOptions,
+): Promise<{ jobId: string; total: number }> {
+  return apiRequest<{ jobId: string; total: number }>("/maintenance-packages/repair-reports/jobs", {
+    method: "POST",
+    token,
+    body: JSON.stringify({
+      siteVisitIds,
+      ...(options.organizationId ? { organizationId: options.organizationId } : {}),
+      ...(options.category ? { category: options.category } : {}),
+    }),
+  });
+}
+
+export function fetchRepairReportsZipStatus(token: string, jobId: string) {
+  return apiRequest<RepairZipJobStatus>(
+    `/maintenance-packages/repair-reports/jobs/${encodeURIComponent(jobId)}`,
+    { token },
+  );
+}
+
+export async function downloadRepairReportsZipFile(token: string, jobId: string): Promise<void> {
+  const { blob, filename } = await apiRequestBlob(
+    `/maintenance-packages/repair-reports/jobs/${encodeURIComponent(jobId)}/download.zip`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "laporan-pembaikan.zip");
 }
