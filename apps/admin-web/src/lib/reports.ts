@@ -89,6 +89,52 @@ export function fetchCrewPerformanceDaily(
   );
 }
 
+/** One maintenance crew's repair output over a period (plan §15 — credit by team). */
+export interface MaintenancePerformanceRow {
+  teamId: string;
+  teamName: string;
+  companyName: string | null;
+  repaired: number;
+  closed: number;
+  sentBack: number;
+  cannotRepair: number;
+  activeDays: number;
+  /** Mean hours from assigned to marked done; null when nothing was repaired. */
+  avgHoursToDone: number | null;
+  /** closed / (closed + sent back) in %, null when nothing was decided. */
+  passRate: number | null;
+  onHand: number;
+}
+
+export interface MaintenancePerformance {
+  period: string;
+  from: string;
+  to: string;
+  totals: { repaired: number; closed: number; sentBack: number; cannotRepair: number; onHand: number };
+  teams: MaintenancePerformanceRow[];
+  generatedAt: string;
+}
+
+/** Maintenance crews (by team) for a period — the Crew Performance "Maintenance" tab. */
+export function fetchMaintenancePerformance(token: string, from?: string, to?: string) {
+  return apiRequest<MaintenancePerformance>(
+    `/reports/maintenance-performance${crewPerformanceQuery(from, to)}`,
+    { token },
+  );
+}
+
+export async function downloadMaintenancePerformance(
+  token: string,
+  from?: string,
+  to?: string,
+): Promise<void> {
+  const { blob, filename } = await apiRequestBlob(
+    `/reports/maintenance-performance.xlsx${crewPerformanceQuery(from, to)}`,
+    { token },
+  );
+  triggerBrowserDownload(blob, filename ?? "maintenance-performance.xlsx");
+}
+
 /** Downloads the crew-performance XLSX (pay sheet) for the period. */
 export async function downloadCrewPerformance(
   token: string,
