@@ -6,11 +6,16 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { createReadStream } from 'fs';
 import { IMAGE_UPLOAD_OPTIONS } from '../common/upload-options';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -23,7 +28,9 @@ import {
   ClearPolesDto,
 } from './dto/assign-maintenance-package.dto';
 import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
+import { RepairReportQueryDto, RepairReportZipDto } from './dto/repair-report.dto';
 import { MaintenancePackagesService } from './maintenance-packages.service';
+import { RepairReportService } from './repair-report.service';
 
 /**
  * TNB → maintenance company hand-off of surveyed Pencawang
@@ -34,7 +41,53 @@ import { MaintenancePackagesService } from './maintenance-packages.service';
 @UseGuards(JwtAuthGuard)
 @Controller('maintenance-packages')
 export class MaintenancePackagesController {
-  constructor(private readonly packages: MaintenancePackagesService) {}
+  constructor(
+    private readonly packages: MaintenancePackagesService,
+    private readonly repairReports: RepairReportService,
+  ) {}
+
+  // ── Repair report (plan §16): one PDF per Pencawang per company ──────────
+
+  @Get(':siteVisitId/repair-report.pdf')
+  async repairReport(
+    @CurrentUser() user: RequestUser,
+    @Param('siteVisitId', new ParseUUIDPipe()) siteVisitId: string,
+    @Query() query: RepairReportQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.repairReports.generate(user, siteVisitId, query);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    return new StreamableFile(buffer);
+  }
+
+  /** Many Pencawang → one ZIP, built in the background; poll then download. */
+  @Post('repair-reports/jobs')
+  startRepairReportZip(@CurrentUser() user: RequestUser, @Body() dto: RepairReportZipDto) {
+    return this.repairReports.startZipJob(user, dto.siteVisitIds, dto);
+  }
+
+  @Get('repair-reports/jobs/:jobId')
+  repairReportZipStatus(
+    @CurrentUser() user: RequestUser,
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
+  ) {
+    return this.repairReports.getZipJobStatus(user, jobId);
+  }
+
+  @Get('repair-reports/jobs/:jobId/download.zip')
+  downloadRepairReportZip(
+    @CurrentUser() user: RequestUser,
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): StreamableFile {
+    const { filePath, fileName } = this.repairReports.getZipFile(user, jobId);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    return new StreamableFile(createReadStream(filePath));
+  }
 
   @Get('board')
   getBoard(@CurrentUser() user: RequestUser) {

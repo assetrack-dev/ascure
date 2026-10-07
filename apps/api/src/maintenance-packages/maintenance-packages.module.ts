@@ -6,6 +6,7 @@ import { MaintenanceClosureService } from './maintenance-closure.service';
 import { MaintenanceVerificationController } from './maintenance-verification.controller';
 import { MaintenanceWorkController } from './maintenance-work.controller';
 import { MaintenanceWorkService } from './maintenance-work.service';
+import { RepairReportService } from './repair-report.service';
 
 @Module({
   imports: [PrismaModule],
@@ -14,6 +15,11 @@ import { MaintenanceWorkService } from './maintenance-work.service';
     MaintenanceVerificationController,
     MaintenanceWorkController,
   ],
-  providers: [MaintenancePackagesService, MaintenanceClosureService, MaintenanceWorkService],
+  providers: [
+    MaintenancePackagesService,
+    MaintenanceClosureService,
+    MaintenanceWorkService,
+    RepairReportService,
+  ],
 })
 export class MaintenancePackagesModule {}

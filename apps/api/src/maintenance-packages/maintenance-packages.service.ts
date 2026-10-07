@@ -1069,6 +1069,57 @@ export class MaintenancePackagesService {
     };
   }
 
+  // ── Repair report scope (docs/PLAN-maintenance-flow.md §16) ─────────────
+
+  /**
+   * Which company's repair report the actor may download for this PE. Anyone
+   * who sees the board may (TNB every rank, Admin, Main Contractor for its
+   * group, a contractor Manager / Supervisor for its own company — never a
+   * Technician). Without `organizationId` the PE's only company in reach is
+   * used; several → 400 listing them.
+   */
+  async resolveRepairReportScope(
+    user: RequestUser,
+    siteVisitId: string,
+    organizationId?: string | null,
+  ) {
+    const actor = await this.resolveActor(user);
+    const visit = await this.loadPoleContext(user, actor, siteVisitId);
+    const routed = await this.prisma.defect.findMany({
+      where: {
+        maintenanceOrganizationId: { not: null },
+        inspectionItemResult: { isDefect: true, inspection: { siteVisitId: visit.id } },
+      },
+      distinct: ['maintenanceOrganizationId'],
+      select: { maintenanceOrganization: { select: { id: true, name: true } } },
+    });
+    const companies = new Map<string, { id: string; name: string }>();
+    for (const row of routed) {
+      if (row.maintenanceOrganization) companies.set(row.maintenanceOrganization.id, row.maintenanceOrganization);
+    }
+    for (const owner of [...visit.maintenancePackages, ...visit.maintenancePoleAssignments]) {
+      companies.set(owner.maintenanceOrganization.id, owner.maintenanceOrganization);
+    }
+    const allowed = [...companies.values()].filter((company) => this.ownsCompany(actor, company.id));
+
+    if (organizationId) {
+      const chosen = allowed.find((company) => company.id === organizationId);
+      if (!chosen) {
+        throw new ForbiddenException('You cannot download the repair report of that company.');
+      }
+      return { visit, organization: chosen };
+    }
+    if (allowed.length === 1) {
+      return { visit, organization: allowed[0] };
+    }
+    if (allowed.length === 0) {
+      throw new BadRequestException('No maintenance company has work on this Pencawang yet.');
+    }
+    throw new BadRequestException(
+      `Choose the company: ${allowed.map((company) => company.name).join(', ')}.`,
+    );
+  }
+
   // ── Pole splits (docs/PLAN-maintenance-flow.md §12.6) ─────────────────────
 
   /** A PE with everything that decides who owns each of its poles. */
