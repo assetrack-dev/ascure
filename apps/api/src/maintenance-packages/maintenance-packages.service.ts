@@ -128,6 +128,8 @@ type LaneRow = {
   awaiting: number;
   closed: number;
   noTeam: number;
+  /** Distinct poles carrying this work type (a pole can carry several). */
+  poles: number;
 };
 
 /** Repair progress of a lane / PE (plan §15, J32). todo = not started yet. */
@@ -426,7 +428,8 @@ export class MaintenancePackagesService {
               AND d."assignedToTeamId" IS NULL
               AND d."assignedTeamId" IS NULL
               AND NOT ${FINISHED_SQL}
-          )::int AS "noTeam"
+          )::int AS "noTeam",
+          COUNT(DISTINCT i."assetId")::int AS "poles"
         ${fromSql}
         GROUP BY 1, 2
       `,
@@ -508,7 +511,9 @@ export class MaintenancePackagesService {
             total: row?.total ?? 0,
             open: (row?.total ?? 0) - (row?.finished ?? 0),
             finished: row?.finished ?? 0,
+            unrouted: row?.unrouted ?? 0,
             noTeam: row?.noTeam ?? 0,
+            poles: row?.poles ?? 0,
             progress: laneProgress(row),
             organization: pkg?.maintenanceOrganization ?? null,
             team: pkg?.assignedTeam ?? null,

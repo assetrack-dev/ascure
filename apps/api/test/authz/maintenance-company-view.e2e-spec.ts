@@ -194,7 +194,7 @@ describe('Authz · maintenance packages — contractor company view + progress (
       // Only the Rentis Kejanggalan is the subcontractor's.
       expect(row?.totals).toMatchObject({ total: 1, open: 1, noTeam: 1 });
       expect(row?.progress).toEqual({ todo: 1, inProgress: 0, awaiting: 0, closed: 0 });
-      expect(lane(row, 'RENTIS')).toMatchObject({ total: 1, canAssign: true });
+      expect(lane(row, 'RENTIS')).toMatchObject({ total: 1, poles: 1, noTeam: 1, unrouted: 0, canAssign: true });
       expect(lane(row, 'SELENGGARAAN')).toMatchObject({ total: 0, canAssign: false });
       expect(lane(row, 'CAT_TIANG')).toMatchObject({ canAssign: false });
     });
