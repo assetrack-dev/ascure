@@ -500,8 +500,14 @@ export function MaintenancePoleScreen() {
                 );
               })}
             </View>
-          ) : ownedTypes.length === 1 ? (
-            <Text style={styles.hint}>Your work here: {CATEGORY_LABEL[ownedTypes[0]]}</Text>
+          ) : null}
+          {surveyedPole && surveyedPole.categories.length > 0 ? (
+            <Text style={styles.hint}>
+              Your work here:{' '}
+              {WORK_TYPE_ORDER.filter((type) => surveyedPole.categories.includes(type))
+                .map((type) => CATEGORY_LABEL[type])
+                .join(', ')}
+            </Text>
           ) : null}
           <Text style={styles.section}>Checklist item</Text>
           {shownFindingItems.map((candidate, index) => {
