@@ -136,6 +136,39 @@ export class ReportsController {
     );
   }
 
+  // Maintenance crews — credit by team (docs/PLAN-maintenance-flow.md §15, J33).
+  @Get('maintenance-performance')
+  getMaintenancePerformance(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateMaintenancePerformance(user, from, to);
+  }
+
+  @Get('maintenance-performance.xlsx')
+  async exportMaintenancePerformance(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.reportsService.buildMaintenancePerformance(
+      user,
+      from,
+      to,
+    );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+    return new StreamableFile(buffer);
+  }
+
   @Get('crew-performance.xlsx')
   async exportCrewPerformance(
     @CurrentUser() user: RequestUser,
