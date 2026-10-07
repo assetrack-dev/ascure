@@ -23,13 +23,25 @@ export interface PackageTeam {
   organizationId: string;
 }
 
-export type PackageActorKind = "ADMIN" | "TNB" | "MAIN_CONTRACTOR";
+/** COMPANY = a contractor's own Manager (re-teams its work) or Supervisor (view only) — plan §15. */
+export type PackageActorKind = "ADMIN" | "TNB" | "MAIN_CONTRACTOR" | "COMPANY";
+
+/** Repair progress (plan §15): todo = not started yet; awaiting = done, waiting for verification. */
+export interface PackageProgress {
+  todo: number;
+  inProgress: number;
+  awaiting: number;
+  closed: number;
+}
 
 export interface PackageLane {
   category: MaintenanceCategory;
   total: number;
   open: number;
   finished: number;
+  /** Routed, not finished, no team yet (absent from older APIs). */
+  noTeam?: number;
+  progress?: PackageProgress;
   organization: PackageOrgRef | null;
   team: PackageOrgRef | null;
   /** False when the lane sits with a company outside a Main Contractor's group. */
@@ -65,7 +77,8 @@ export interface PackagePencawang {
   laporanSelesaiAt: string | null;
   suggestedOrganizationId: string | null;
   poleCount: number;
-  totals: { total: number; open: number; finished: number; unrouted: number };
+  totals: { total: number; open: number; finished: number; unrouted: number; noTeam?: number };
+  progress?: PackageProgress;
   lanes: PackageLane[];
   /** Plan §12.6: poles handed to other crews, grouped by owner + work type. */
   poleSplits: PackagePoleSplit[];

@@ -467,18 +467,25 @@ export function PoleSplitDialog({
                     value={destination}
                     onChange={setDestination}
                     className={modalSelectClass}
+                    teamsOnly={board.actorKind === "COMPANY"}
                   />
                 </label>
 
-                <label className="block">
-                  <span className={modalLabelClass}>Target date</span>
-                  <input
-                    type="date"
-                    value={dueDate}
-                    onChange={(event) => setDueDate(event.target.value)}
-                    className={modalInputClass}
-                  />
-                </label>
+                {board.actorKind === "COMPANY" ? (
+                  <p className="text-[11.5px] text-[var(--muted)]">
+                    The target date set by TNB / the main contractor stays.
+                  </p>
+                ) : (
+                  <label className="block">
+                    <span className={modalLabelClass}>Target date</span>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={(event) => setDueDate(event.target.value)}
+                      className={modalInputClass}
+                    />
+                  </label>
+                )}
 
                 <p className="text-[11.5px] text-[var(--muted)]">
                   Kejanggalan the current crew has already photographed stay with them.

@@ -73,6 +73,7 @@ export function DestinationSelect({
   suggestedOrganizationId,
   className,
   ariaLabel,
+  teamsOnly = false,
 }: {
   companies: PackageCompany[];
   teams: PackageTeam[];
@@ -81,6 +82,8 @@ export function DestinationSelect({
   suggestedOrganizationId?: string | null;
   className: string;
   ariaLabel?: string;
+  /** A contractor Manager only re-teams its own work (plan §15) — no "company picks" option. */
+  teamsOnly?: boolean;
 }) {
   return (
     <select
@@ -90,13 +93,15 @@ export function DestinationSelect({
       className={className}
       required
     >
-      <option value="">Choose a company or team…</option>
+      <option value="">{teamsOnly ? "Choose a team…" : "Choose a company or team…"}</option>
       {companies.map((company) => (
         <optgroup key={company.id} label={companyLabel(company)}>
-          <option value={`org:${company.id}`}>
-            {company.name} — company picks the team
-            {company.id === suggestedOrganizationId ? " (Mainhead default)" : ""}
-          </option>
+          {teamsOnly ? null : (
+            <option value={`org:${company.id}`}>
+              {company.name} — company picks the team
+              {company.id === suggestedOrganizationId ? " (Mainhead default)" : ""}
+            </option>
+          )}
           {teams
             .filter((team) => team.organizationId === company.id)
             .map((team) => (

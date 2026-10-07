@@ -34,6 +34,8 @@ export interface ApiUser {
   canActOnMaintenanceAsClient?: boolean;
   /** ADMIN, TNB, or a main-contractor manager → the repair-verification page. */
   canViewRepairVerification?: boolean;
+  /** Maintenance Packages page: + a contractor Manager / Supervisor (own company, plan §15). */
+  canViewMaintenancePackages?: boolean;
 }
 
 export interface AuthUser {
@@ -123,6 +125,8 @@ export interface AuthUser {
   canActOnMaintenanceAsClient?: boolean;
   /** ADMIN, TNB, or a main-contractor manager → the repair-verification page. */
   canViewRepairVerification?: boolean;
+  /** Maintenance Packages page: + a contractor Manager / Supervisor (own company, plan §15). */
+  canViewMaintenancePackages?: boolean;
 }
 
 export interface AuthSession {
