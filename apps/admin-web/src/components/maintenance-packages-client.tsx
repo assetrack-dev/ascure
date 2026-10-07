@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PackageMapPoint } from "@/components/maintenance-packages-map";
 import { AddFindingDialog } from "@/components/maintenance-add-finding-dialog";
 import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
+import { RepairReportDialog } from "@/components/maintenance-repair-report-dialog";
 import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
@@ -830,10 +831,12 @@ function SelectionBar({
   count,
   onAssign,
   onClear,
+  onReports,
 }: {
   count: number;
   onAssign: () => void;
   onClear: () => void;
+  onReports: () => void;
 }) {
   if (count === 0) return null;
   return (
@@ -844,6 +847,9 @@ function SelectionBar({
       <div className="flex gap-2">
         <Tbtn variant="ghost" onClick={onClear}>
           Clear
+        </Tbtn>
+        <Tbtn onClick={onReports} title="Laporan Pembaikan Kejanggalan — one PDF per Pencawang, in a ZIP">
+          Repair reports (ZIP)…
         </Tbtn>
         <Tbtn variant="primary" onClick={onAssign}>
           Assign selected…
@@ -865,6 +871,7 @@ function MapView({
   onAssign,
   onClear,
   onOpenPoles,
+  onReports,
 }: {
   board: MaintenancePackageBoard;
   rows: PackagePencawang[];
@@ -876,6 +883,7 @@ function MapView({
   onAssign: () => void;
   onClear: () => void;
   onOpenPoles: (row: PackagePencawang) => void;
+  onReports: (rows: PackagePencawang[]) => void;
 }) {
   const [boxMode, setBoxMode] = useState(false);
   const [mapError, setMapError] = useState(false);
@@ -1183,6 +1191,13 @@ function MapView({
                   >
                     Poles
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => onReports([row])}
+                    className="rounded px-1.5 py-0.5 text-[11.5px] font-semibold text-[var(--brand)] hover:underline"
+                  >
+                    Report
+                  </button>
                   <IconBtn onClick={() => onToggle(row.siteVisitId)} aria-label="Remove from selection">
                     <X size={14} />
                   </IconBtn>
@@ -1196,6 +1211,13 @@ function MapView({
           <div className="mt-auto flex gap-2">
             <Tbtn variant="ghost" onClick={onClear} disabled={selectedRows.length === 0}>
               Clear
+            </Tbtn>
+            <Tbtn
+              onClick={() => onReports(selectedRows)}
+              disabled={selectedRows.length === 0}
+              title="Laporan Pembaikan Kejanggalan for the selection (ZIP)"
+            >
+              Reports
             </Tbtn>
             <Tbtn
               variant="primary"
@@ -1226,6 +1248,8 @@ function MaintenancePackagesContent() {
   const [withdrawTarget, setWithdrawTarget] = useState<MaintenancePackageRecord | null>(null);
   const [poleRow, setPoleRow] = useState<PackagePencawang | null>(null);
   const [findingRow, setFindingRow] = useState<PackagePencawang | null>(null);
+  // Plan §16: repair report for one Pencawang (PDF) or a selection (ZIP).
+  const [reportRows, setReportRows] = useState<PackagePencawang[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -1585,6 +1609,7 @@ function MaintenancePackagesContent() {
                     onAssign={openBulk}
                     onClear={() => setSelected(new Set())}
                     onOpenPoles={setPoleRow}
+                    onReports={setReportRows}
                   />
                 ) : (
                   <>
@@ -1593,6 +1618,7 @@ function MaintenancePackagesContent() {
                         count={selected.size}
                         onAssign={openBulk}
                         onClear={() => setSelected(new Set())}
+                        onReports={() => setReportRows(selectedRows)}
                       />
                     ) : null}
                     <Card padded={false}>
@@ -1717,6 +1743,14 @@ function MaintenancePackagesContent() {
                                   <td className={`${tableCellClass} whitespace-nowrap text-right`}>
                                     <Tbtn variant="ghost" onClick={() => setPoleRow(row)} className="mr-1">
                                       Poles
+                                    </Tbtn>
+                                    <Tbtn
+                                      variant="ghost"
+                                      onClick={() => setReportRows([row])}
+                                      className="mr-1"
+                                      title="Laporan Pembaikan Kejanggalan (PDF)"
+                                    >
+                                      Report
                                     </Tbtn>
                                     {board.canAssign ? (
                                       <Tbtn
@@ -1846,6 +1880,16 @@ function MaintenancePackagesContent() {
             setNotice(message);
             void loadBoard(session.token);
           }}
+          onUnauthorized={handleLogout}
+        />
+      ) : null}
+
+      {reportRows && board && session?.token ? (
+        <RepairReportDialog
+          token={session.token}
+          rows={reportRows}
+          board={board}
+          onClose={() => setReportRows(null)}
           onUnauthorized={handleLogout}
         />
       ) : null}
