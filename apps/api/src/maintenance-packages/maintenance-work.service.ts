@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
 import { createMaintenanceFinding, loadVisitFindingItems } from './maintenance-finding.util';
 import { resolveRoutingTarget } from './package-routing.util';
+import { pickPolePhotos, type PolePhoto } from './pole-photos.util';
 
 /**
  * The contractor crew's "my work" (docs/PLAN-maintenance-flow.md §7.1, M2):
@@ -265,7 +266,7 @@ export class MaintenanceWorkService {
         evidenceImages: {
           where: { evidenceType: { in: ['BEFORE', 'DURING', 'AFTER'] } },
           orderBy: { createdAt: 'asc' },
-          select: { id: true, evidenceType: true, url: true, timestamp: true, createdAt: true },
+          select: { id: true, evidenceType: true, url: true, sizeBytes: true, timestamp: true, createdAt: true },
         },
         inspectionItemResult: {
           select: {
@@ -289,7 +290,7 @@ export class MaintenanceWorkService {
                   },
                 },
                 inspectionImages: {
-                  select: { id: true, url: true, templateItemId: true },
+                  select: { id: true, url: true, templateItemId: true, sizeBytes: true },
                   orderBy: { createdAt: 'asc' },
                 },
               },
@@ -321,13 +322,20 @@ export class MaintenanceWorkService {
       }),
       // Every surveyed pole of the PE — a new finding may go on a pole that had
       // no Kejanggalan at survey time (§13).
+      // Latest submitted inspection per pole; its photos help the crew
+      // recognise the pole on site (§14).
       this.prisma.inspection.findMany({
         where: { siteVisitId, completionStatus: InspectionCompletionStatus.SUBMITTED },
         distinct: ['assetId'],
+        orderBy: [{ assetId: 'asc' }, { submittedAt: 'desc' }],
         select: {
           templateId: true,
           asset: {
             select: { id: true, assetCode: true, noTiangLama: true, latitude: true, longitude: true },
+          },
+          inspectionImages: {
+            select: { id: true, url: true, templateItemId: true, sizeBytes: true, createdAt: true },
+            orderBy: { createdAt: 'asc' },
           },
         },
       }),
@@ -337,6 +345,26 @@ export class MaintenanceWorkService {
       where: { siteVisitId },
       select: { assetId: true, category: true, maintenanceOrganizationId: true, assignedTeamId: true },
     });
+    const photoItemIds = [
+      ...new Set(
+        visitPoles.flatMap((row) =>
+          row.inspectionImages.map((image) => image.templateItemId).filter((id): id is string => id !== null),
+        ),
+      ),
+    ];
+    const photoItemLabels = new Map(
+      photoItemIds.length === 0
+        ? []
+        : (
+            await this.prisma.inspectionTemplateItem.findMany({
+              where: { id: { in: photoItemIds } },
+              select: { id: true, label: true },
+            })
+          ).map((item) => [item.id, item.label] as const),
+    );
+    const polePhotos = new Map<string, PolePhoto[]>(
+      visitPoles.map((row) => [row.asset.id, pickPolePhotos(row.inspectionImages, photoItemLabels)]),
+    );
     const ALL_CATEGORIES = Object.values(MaintenanceCategory);
     /** The work types this user may raise a finding for on a pole (§13). */
     const findingCategories = (assetId: string) =>
@@ -352,6 +380,7 @@ export class MaintenanceWorkService {
       latitude: number | null;
       longitude: number | null;
       counts: Counts;
+      photos: PolePhoto[];
       kejanggalan: unknown[];
     };
     const poles = new Map<string, Pole>();
@@ -361,7 +390,7 @@ export class MaintenanceWorkService {
       const asset = item.inspection.asset;
       let pole = poles.get(asset.id);
       if (!pole) {
-        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: null, noTiangLama: asset.noTiangLama, latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), kejanggalan: [] };
+        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: null, noTiangLama: asset.noTiangLama, latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), photos: polePhotos.get(asset.id) ?? [], kejanggalan: [] };
         poles.set(asset.id, pole);
       }
       const state = workState(defect);
@@ -375,7 +404,12 @@ export class MaintenanceWorkService {
       const stage = (type: string) =>
         defect.evidenceImages
           .filter((image) => image.evidenceType === type)
-          .map((image) => ({ id: image.id, url: image.url, takenAt: (image.timestamp ?? image.createdAt).toISOString() }));
+          .map((image) => ({
+            id: image.id,
+            url: image.url,
+            sizeBytes: image.sizeBytes,
+            takenAt: (image.timestamp ?? image.createdAt).toISOString(),
+          }));
       const category = defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
       const packageDue = (
         packages.find((pkg) => pkg.category === category) ??
@@ -405,7 +439,7 @@ export class MaintenanceWorkService {
         sentBackReason: state === 'IN_PROGRESS' ? defect.timelineEntries[0]?.comment ?? null : null,
         dueDate: packageDue?.toISOString() ?? null,
         surveyedAt: item.inspection.submittedAt?.toISOString() ?? null,
-        surveyPhotos: surveyPhotos.map((image) => ({ id: image.id, url: image.url })),
+        surveyPhotos: surveyPhotos.map((image) => ({ id: image.id, url: image.url, sizeBytes: image.sizeBytes })),
         photos: { BEFORE: stage('BEFORE'), DURING: stage('DURING'), AFTER: stage('AFTER') },
       });
     }
@@ -433,6 +467,7 @@ export class MaintenanceWorkService {
       // work types it may add (a split PE gives other poles to other teams).
       surveyedPoles: visitPoles
         .map(({ asset, templateId }) => ({
+          photos: polePhotos.get(asset.id) ?? [],
           assetId: asset.id,
           assetCode: asset.assetCode,
           refCode: null, // prod has no Asset.refCode (see 65150de)
