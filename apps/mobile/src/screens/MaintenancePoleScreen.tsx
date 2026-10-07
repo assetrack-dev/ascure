@@ -24,10 +24,10 @@ import {
   pendingFindingItems,
   removeLocalFinding,
   removeLocalPhoto,
-  toAbsoluteUrl,
   type LocalFinding,
   type OverlaidKejanggalan,
 } from '../maintenance/maintenanceLocal';
+import { usePackPhotos } from '../maintenance/packPhotos';
 import { useWorkPack } from '../maintenance/useWorkPack';
 import {
   CATEGORY_LABEL,
@@ -70,6 +70,7 @@ export function MaintenancePoleScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { pack, local, fromCache, isLoading, error, reload } = useWorkPack(siteVisitId);
+  const { resolve: photoUri } = usePackPhotos(siteVisitId);
   const { takeStampedPhoto, overlay, isStamping } = useStampedPhoto();
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -96,9 +97,12 @@ export function MaintenancePoleScreen() {
           latitude: surveyedPole.latitude,
           longitude: surveyedPole.longitude,
           counts: { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 },
+          photos: surveyedPole.photos,
           kejanggalan: [],
         }
       : null);
+  // §14 — survey photos of the whole pole, so the crew can match it on site.
+  const polePhotos = pole?.photos ?? surveyedPole?.photos ?? [];
   const items: PoleItem[] = useMemo(() => {
     if (!pole || !pack) return [];
     const server = pole.kejanggalan.map((item) => overlayKejanggalan(item, local));
@@ -387,6 +391,39 @@ export function MaintenancePoleScreen() {
         </View>
       ) : null}
 
+      {pole ? (
+        <Card>
+          <Text style={styles.sectionFirst}>Survey photos of this pole</Text>
+          {polePhotos.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbRow}>
+              {polePhotos.map((photo, index) => (
+                <Pressable
+                  key={photo.id}
+                  onPress={() =>
+                    navigation.navigate('ImagePreview', {
+                      images: polePhotos.map((entry) => ({
+                        uri: photoUri(entry.url),
+                        title: entry.label ?? `Survey photo · ${poleCode}`,
+                      })),
+                      index,
+                    })
+                  }
+                >
+                  <Image source={{ uri: photoUri(photo.url) }} style={styles.polePhoto} />
+                  {photo.label ? (
+                    <Text style={styles.polePhotoLabel} numberOfLines={1}>
+                      {photo.label}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : (
+            <Text style={styles.muted}>No survey photo of this pole.</Text>
+          )}
+        </Card>
+      ) : null}
+
       {pole && findingItems.length > 0 && !adding ? (
         <View style={styles.addRow}>
           <AppButton
@@ -496,7 +533,7 @@ export function MaintenancePoleScreen() {
           !item.localFinding?.rejectedReason;
         const hasBefore = item.allPhotos.BEFORE.length > 0;
         const hasAfter = item.allPhotos.AFTER.length > 0;
-        const surveyUrls = item.surveyPhotos.map((photo) => toAbsoluteUrl(photo.url));
+        const surveyUrls = item.surveyPhotos.map((photo) => photoUri(photo.url));
         const isThisCompleting = completing?.defectId === item.id;
 
         return (
@@ -573,10 +610,10 @@ export function MaintenancePoleScreen() {
                     {photos.map((photo, index) => (
                       <Pressable
                         key={photo.id}
-                        onPress={() => openPhotos(photos.map((entry) => entry.url), index, `${STAGE_LABEL[stage]} photo`)}
+                        onPress={() => openPhotos(photos.map((entry) => photoUri(entry.url)), index, `${STAGE_LABEL[stage]} photo`)}
                         onLongPress={photo.pending ? () => confirmRemoveLocal(photo.id, photo.url) : undefined}
                       >
-                        <Image source={{ uri: photo.url }} style={styles.thumb} />
+                        <Image source={{ uri: photoUri(photo.url) }} style={styles.thumb} />
                         {photo.rejectedReason ? (
                           <View style={[styles.badge, styles.badgeDanger]}>
                             <Text style={styles.badgeText}>Rejected</Text>
@@ -700,6 +737,9 @@ function createStyles(theme: Theme) {
     addRow: { marginBottom: 12 },
     optionMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textMuted },
     navButton: { flex: 1 },
+    sectionFirst: { fontFamily: theme.fonts.bodySemibold, fontSize: 13, color: theme.colors.textSecondary, marginBottom: 8 },
+    polePhoto: { width: 120, height: 120, borderRadius: 8, backgroundColor: theme.colors.surfaceMuted },
+    polePhotoLabel: { width: 120, fontFamily: theme.fonts.body, fontSize: 11, color: theme.colors.textSecondary, marginTop: 3 },
     chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
     title: { fontFamily: theme.fonts.bodySemibold, fontSize: 16, color: theme.colors.textPrimary },
     muted: { fontFamily: theme.fonts.body, fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },

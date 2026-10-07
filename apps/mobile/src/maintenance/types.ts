@@ -29,7 +29,10 @@ export type WorkPackageList = {
   packages: WorkPackageSummary[];
 };
 
-export type WorkPhoto = { id: string; url: string; takenAt: string };
+export type WorkPhoto = { id: string; url: string; takenAt: string; sizeBytes?: number | null };
+
+/** A survey photo of the whole pole, to recognise it on site (§14; absent in older packs). */
+export type PolePhoto = { id: string; url: string; label: string | null; sizeBytes?: number | null };
 
 export type WorkKejanggalan = {
   id: string;
@@ -48,7 +51,7 @@ export type WorkKejanggalan = {
   sentBackReason: string | null;
   dueDate: string | null;
   surveyedAt: string | null;
-  surveyPhotos: Array<{ id: string; url: string }>;
+  surveyPhotos: Array<{ id: string; url: string; sizeBytes?: number | null }>;
   photos: Record<RepairStage, WorkPhoto[]>;
   /** Added during maintenance, not in the survey (plan §13). */
   isNewFinding?: boolean;
@@ -64,6 +67,7 @@ export type WorkPole = {
   latitude: number | null;
   longitude: number | null;
   counts: WorkCounts;
+  photos?: PolePhoto[];
   kejanggalan: WorkKejanggalan[];
 };
 
@@ -90,6 +94,7 @@ export type SurveyedPole = {
   latitude: number | null;
   longitude: number | null;
   templateId: string;
+  photos?: PolePhoto[];
   /** Work types this crew may add on this pole. */
   categories: MaintenanceCategory[];
 };

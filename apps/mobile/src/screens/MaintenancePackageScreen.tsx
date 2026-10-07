@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import Mapbox from '@rnmapbox/maps';
+import Mapbox, { type Camera as MapboxCamera } from '@rnmapbox/maps';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
@@ -18,12 +19,27 @@ import {
 import { Theme, useTheme } from '../theme';
 import { SATELLITE_STYLE, downloadOfflineRegion, hasMapboxToken } from '../mapbox';
 import { getPositionWithTimeout } from '../location';
-import { overlayKejanggalan, pendingFindingItems, toAbsoluteUrl } from '../maintenance/maintenanceLocal';
+import {
+  overlayKejanggalan,
+  pendingFindingItems,
+  type OverlaidKejanggalan,
+} from '../maintenance/maintenanceLocal';
+import { downloadPackPhotos, formatBytes, planPackPhotos, usePackPhotos } from '../maintenance/packPhotos';
 import { useWorkPack } from '../maintenance/useWorkPack';
-import { STATE_LABEL, type WorkPole, type WorkState } from '../maintenance/types';
+import {
+  CATEGORY_LABEL,
+  STATE_LABEL,
+  type MaintenanceCategory,
+  type PolePhoto,
+  type WorkPole,
+  type WorkState,
+} from '../maintenance/types';
 
 type View_ = 'LIST' | 'MAP';
 type Filter = 'OPEN' | 'ALL' | 'SUBMITTED';
+type WorkType = 'ALL' | MaintenanceCategory;
+/** NONE = no Kejanggalan (of the chosen work type) on this pole. */
+type PoleState = WorkState | 'NONE';
 
 /** Map / tile colour per pole state (worst Kejanggalan wins). */
 const STATE_COLOR: Record<WorkState, string> = {
@@ -32,6 +48,7 @@ const STATE_COLOR: Record<WorkState, string> = {
   SUBMITTED: '#2563EB',
   CLOSED: '#15A34A',
 };
+const NONE_COLOR = '#F1F5F9';
 const STATE_SPINE: Record<WorkState, SpineTone> = {
   TODO: 'red',
   IN_PROGRESS: 'amber',
@@ -39,18 +56,29 @@ const STATE_SPINE: Record<WorkState, SpineTone> = {
   CLOSED: 'green',
 };
 const STATE_ORDER: WorkState[] = ['TODO', 'IN_PROGRESS', 'SUBMITTED', 'CLOSED'];
+/** Draw order on the map: work to do on top. */
+const SORT_KEY: Record<PoleState, number> = { TODO: 4, IN_PROGRESS: 3, SUBMITTED: 2, CLOSED: 1, NONE: 0 };
+const WORK_TYPES: MaintenanceCategory[] = ['RENTIS', 'SELENGGARAAN', 'CAT_TIANG'];
 
 type PoleRow = WorkPole & {
-  state: WorkState;
+  photos: PolePhoto[];
+  /** Every Kejanggalan on the pole (server + added on this phone). */
+  items: OverlaidKejanggalan[];
+  /** The ones of the chosen work type. */
+  matching: OverlaidKejanggalan[];
+  state: PoleState;
   openCount: number;
   distanceM: number | null;
   labels: string[];
 };
 
+const isOpen = (item: OverlaidKejanggalan) => item.displayState === 'TODO' || item.displayState === 'IN_PROGRESS';
+
 /**
  * One Pencawang package in maintenance mode (docs/PLAN-maintenance-flow.md
- * §7.1): every pole that needs repair, as a list or a map, with a one-tap
- * "save for offline" (work pack + photos + map tiles).
+ * §7.1 / §14): every pole of the crew — with or without Kejanggalan — as a list
+ * or a map, filtered by work type, with the crew's own location and the nearest
+ * pole's survey photos; one-tap "save for offline" (work pack + photos + tiles).
  */
 export function MaintenancePackageScreen() {
   const navigation = useNavigation<RootStackScreenProps<'MaintenancePackage'>['navigation']>();
@@ -59,9 +87,14 @@ export function MaintenancePackageScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { pack, local, fromCache, cachedAt, isLoading, error, reload } = useWorkPack(siteVisitId);
+  const { resolve: photoUri, refresh: refreshSavedPhotos } = usePackPhotos(siteVisitId);
+  const cameraRef = useRef<MapboxCamera>(null);
   const [mode, setMode] = useState<View_>('LIST');
   const [filter, setFilter] = useState<Filter>('OPEN');
+  const [workType, setWorkType] = useState<WorkType>('ALL');
   const [here, setHere] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationGranted, setLocationGranted] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -69,56 +102,89 @@ export function MaintenancePackageScreen() {
   const [picking, setPicking] = useState(false);
   const [pickQuery, setPickQuery] = useState('');
 
-  // Returning from a pole: pick up the crew's new local work immediately.
+  // Follow the crew while this screen is open (nearest pole, distances).
   useFocusEffect(
     useCallback(() => {
+      let cancelled = false;
+      let subscription: Location.LocationSubscription | null = null;
       void (async () => {
         const permission = await Location.getForegroundPermissionsAsync();
-        if (!permission.granted) return;
+        if (!permission.granted || cancelled) return;
+        setLocationGranted(true);
         const fix = await getPositionWithTimeout({ timeoutMs: 4000 });
+        if (cancelled) return;
         if (fix) setHere({ latitude: fix.coords.latitude, longitude: fix.coords.longitude });
+        const watch = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 3, timeInterval: 2000 },
+          (position) => setHere({ latitude: position.coords.latitude, longitude: position.coords.longitude }),
+        ).catch(() => null);
+        if (cancelled) watch?.remove();
+        else subscription = watch;
       })();
-    }, []),
+      return () => {
+        cancelled = true;
+        subscription?.remove();
+      };
+    }, [locationGranted]),
   );
 
   const rows: PoleRow[] = useMemo(() => {
     if (!pack) return [];
-    // Poles that so far only carry a Kejanggalan added on this phone (§13).
+    const surveyed = pack.surveyedPoles ?? [];
+    const photosOf = new Map(surveyed.map((pole) => [pole.assetId, pole.photos ?? []]));
     const packPoleIds = new Set(pack.poles.map((pole) => pole.assetId));
-    const addedOnly = (pack.surveyedPoles ?? [])
-      .filter((pole) => !packPoleIds.has(pole.assetId))
-      .filter((pole) => pendingFindingItems(local, pack, pole.assetId).length > 0)
-      .map((pole) => ({
-        assetId: pole.assetId,
-        assetCode: pole.assetCode,
-        refCode: pole.refCode,
-        noTiangLama: pole.noTiangLama,
-        latitude: pole.latitude,
-        longitude: pole.longitude,
-        counts: { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 },
-        kejanggalan: [],
-      }));
-    return [...pack.poles, ...addedOnly].map((pole) => {
+    // Every pole of the crew (I24): with work, plus the surveyed poles with none
+    // yet — a Kejanggalan can be added there (§13).
+    const poles: WorkPole[] = [
+      ...pack.poles,
+      ...surveyed
+        .filter((pole) => !packPoleIds.has(pole.assetId))
+        .map((pole) => ({
+          assetId: pole.assetId,
+          assetCode: pole.assetCode,
+          refCode: pole.refCode,
+          noTiangLama: pole.noTiangLama,
+          latitude: pole.latitude,
+          longitude: pole.longitude,
+          counts: { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 },
+          photos: pole.photos,
+          kejanggalan: [],
+        })),
+    ];
+    return poles.map((pole) => {
       const items = [...pole.kejanggalan, ...pendingFindingItems(local, pack, pole.assetId)].map((item) =>
         overlayKejanggalan(item, local),
       );
-      const state = STATE_ORDER.find((candidate) => items.some((item) => item.displayState === candidate)) ?? 'CLOSED';
+      const matching = workType === 'ALL' ? items : items.filter((item) => item.category === workType);
+      const state: PoleState =
+        matching.length === 0
+          ? 'NONE'
+          : STATE_ORDER.find((candidate) => matching.some((item) => item.displayState === candidate)) ?? 'CLOSED';
       return {
         ...pole,
+        photos: pole.photos ?? photosOf.get(pole.assetId) ?? [],
+        items,
+        matching,
         state,
-        openCount: items.filter((item) => item.displayState === 'TODO' || item.displayState === 'IN_PROGRESS').length,
+        openCount: matching.filter(isOpen).length,
         distanceM:
           here && pole.latitude !== null && pole.longitude !== null
             ? distanceMeters(here, { latitude: pole.latitude, longitude: pole.longitude })
             : null,
-        labels: [...new Set(items.map((item) => item.remark || item.label))],
+        labels: [...new Set(matching.map((item) => item.remark || item.label))],
       };
     });
-  }, [here, local, pack]);
+  }, [here, local, pack, workType]);
 
   const visibleRows = useMemo(() => {
     const filtered = rows.filter((row) =>
-      filter === 'ALL' ? true : filter === 'OPEN' ? row.openCount > 0 : row.state === 'SUBMITTED',
+      row.state === 'NONE'
+        ? false
+        : filter === 'ALL'
+          ? true
+          : filter === 'OPEN'
+            ? row.openCount > 0
+            : row.state === 'SUBMITTED',
     );
     // Nearest first when we know where the crew is; else pole order.
     return here
@@ -128,16 +194,65 @@ export function MaintenancePackageScreen() {
 
   const totals = useMemo(() => {
     const counts: Record<WorkState, number> = { TODO: 0, IN_PROGRESS: 0, SUBMITTED: 0, CLOSED: 0 };
-    pack?.poles.forEach((pole) =>
-      pole.kejanggalan.forEach((item) => {
-        counts[overlayKejanggalan(item, local).displayState] += 1;
-      }),
-    );
+    rows.forEach((row) => row.matching.forEach((item) => (counts[item.displayState] += 1)));
     return counts;
-  }, [local, pack]);
+  }, [rows]);
+
+  /** Poles with open work, per work type (filter chip badges). */
+  const openPolesByType = useMemo(() => {
+    const counts: Record<WorkType, number> = { ALL: 0, RENTIS: 0, SELENGGARAAN: 0, CAT_TIANG: 0 };
+    rows.forEach((row) => {
+      const open = row.items.filter(isOpen);
+      if (open.length > 0) counts.ALL += 1;
+      WORK_TYPES.forEach((type) => {
+        if (open.some((item) => item.category === type)) counts[type] += 1;
+      });
+    });
+    return counts;
+  }, [rows]);
+
+  const nearest = useMemo(() => {
+    let best: PoleRow | null = null;
+    for (const row of rows) {
+      if (row.distanceM === null) continue;
+      if (!best || row.distanceM < (best.distanceM ?? Infinity)) best = row;
+    }
+    return best;
+  }, [rows]);
+  const selected = selectedId ? rows.find((row) => row.assetId === selectedId) ?? null : null;
+  const cardRow = selected ?? nearest;
 
   const openPole = (assetId: string) =>
     navigation.navigate('MaintenancePole', { siteVisitId, assetId });
+
+  const openPhotos = (photos: PolePhoto[], index: number, code: string) =>
+    navigation.navigate('ImagePreview', {
+      images: photos.map((photo) => ({ uri: photoUri(photo.url), title: photo.label ?? `Survey photo · ${code}` })),
+      index,
+    });
+
+  const locateMe = async () => {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Location is off', 'Allow ASCURE to use your location to see where you are on the map.');
+      return;
+    }
+    setLocationGranted(true);
+    setSelectedId(null);
+    const fix = await getPositionWithTimeout({ accuracy: Location.Accuracy.High, timeoutMs: 6000 });
+    const position = fix ? { latitude: fix.coords.latitude, longitude: fix.coords.longitude } : here;
+    if (!position) {
+      Alert.alert('No GPS fix yet', 'Move to open sky and try again.');
+      return;
+    }
+    setHere(position);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [position.longitude, position.latitude],
+      zoomLevel: 18,
+      animationDuration: 600,
+      animationMode: 'flyTo',
+    });
+  };
 
   const pickablePoles = useMemo(() => {
     const query = pickQuery.trim().toLowerCase();
@@ -160,33 +275,37 @@ export function MaintenancePackageScreen() {
       : withDistance;
   }, [here, pack, pickQuery]);
 
-  const saveForOffline = async () => {
+  const saveForOffline = () => {
+    if (!pack) return;
+    const plan = planPackPhotos(pack);
+    Alert.alert(
+      'Save for offline?',
+      `${plan.photos.length} photos (about ${formatBytes(plan.totalBytes)}) and the map around the poles. Use Wi-Fi if you can.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Save', onPress: () => void runSaveForOffline(plan) },
+      ],
+    );
+  };
+
+  const runSaveForOffline = async (plan: ReturnType<typeof planPackPhotos>) => {
     if (!pack) return;
     setSaveError(null);
     setNotice(null);
     try {
-      // 1) Photos: warm the image cache so survey + repair photos show offline.
-      const urls = pack.poles.flatMap((pole) =>
-        pole.kejanggalan.flatMap((item) => [
-          ...item.surveyPhotos.map((photo) => photo.url),
-          ...item.photos.BEFORE.map((photo) => photo.url),
-          ...item.photos.DURING.map((photo) => photo.url),
-          ...item.photos.AFTER.map((photo) => photo.url),
-        ]),
+      // 1) Photos into the app's own storage (I28) — not the small image cache.
+      setSaving(`Saving photos 0/${plan.photos.length}…`);
+      const photoResult = await downloadPackPhotos(siteVisitId, plan, (done, total) =>
+        setSaving(`Saving photos ${done}/${total}…`),
       );
-      let done = 0;
-      for (const url of urls) {
-        setSaving(`Saving photos ${done + 1}/${urls.length}…`);
-        await Image.prefetch(toAbsoluteUrl(url)).catch(() => false);
-        done += 1;
-      }
+      await refreshSavedPhotos();
 
-      // 2) Map tiles around the poles (satellite), if the map is configured.
-      const located = pack.poles.filter((pole) => pole.latitude !== null && pole.longitude !== null);
+      // 2) Map tiles around every pole (satellite), if the map is configured.
+      const located = rows.filter((row) => row.latitude !== null && row.longitude !== null);
       let mapNote = '';
       if (hasMapboxToken() && located.length > 0) {
-        const lats = located.map((pole) => pole.latitude as number);
-        const lngs = located.map((pole) => pole.longitude as number);
+        const lats = located.map((row) => row.latitude as number);
+        const lngs = located.map((row) => row.longitude as number);
         const pad = 0.004; // ~400 m around the outermost poles
         setSaving('Saving map tiles… 0%');
         try {
@@ -204,7 +323,10 @@ export function MaintenancePackageScreen() {
           mapNote = ` Map tiles not saved: ${tileError instanceof Error ? tileError.message : 'download failed'}`;
         }
       }
-      setNotice(`Saved for offline: ${pack.poles.length} poles, ${urls.length} photos.${mapNote}`);
+      const savedPhotos = photoResult.saved + photoResult.alreadySaved;
+      const failedNote =
+        photoResult.failed > 0 ? ` ${photoResult.failed} photos failed — try again on a better signal.` : '';
+      setNotice(`Saved for offline: ${rows.length} poles, ${savedPhotos} photos.${failedNote}${mapNote}`);
     } catch (offlineError) {
       setSaveError(offlineError instanceof Error ? offlineError.message : 'Unable to save for offline.');
     } finally {
@@ -220,11 +342,19 @@ export function MaintenancePackageScreen() {
         .map((row) => ({
           type: 'Feature' as const,
           id: row.assetId,
-          properties: { assetId: row.assetId, color: STATE_COLOR[row.state], label: row.refCode || row.assetCode },
+          properties: {
+            assetId: row.assetId,
+            color: row.state === 'NONE' ? NONE_COLOR : STATE_COLOR[row.state],
+            stroke: row.state === 'NONE' ? '#334155' : '#ffffff',
+            radius: row.state === 'NONE' ? 6 : 9,
+            sortKey: SORT_KEY[row.state],
+            selected: row.assetId === selectedId ? 1 : 0,
+            label: row.refCode || row.assetCode,
+          },
           geometry: { type: 'Point' as const, coordinates: [row.longitude as number, row.latitude as number] },
         })),
     }),
-    [rows],
+    [rows, selectedId],
   );
   const center = useMemo(() => {
     const located = rows.filter((row) => row.latitude !== null && row.longitude !== null);
@@ -234,6 +364,30 @@ export function MaintenancePackageScreen() {
       located.reduce((sum, row) => sum + (row.latitude as number), 0) / located.length,
     ] as [number, number];
   }, [rows]);
+
+  const workTypeChips = (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      {(['ALL', ...WORK_TYPES] as WorkType[]).map((type) => {
+        const active = workType === type;
+        return (
+          <Pressable
+            key={type}
+            onPress={() => setWorkType(type)}
+            style={[styles.typeChip, active && styles.typeChipActive]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.typeChipText, active && styles.typeChipTextActive]}>
+              {type === 'ALL' ? 'All work' : CATEGORY_LABEL[type]}
+            </Text>
+            <View style={[styles.typeBadge, active && styles.typeBadgeActive]}>
+              <Text style={[styles.typeBadgeText, active && styles.typeBadgeTextActive]}>{openPolesByType[type]}</Text>
+            </View>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 
   return (
     <Screen
@@ -254,15 +408,18 @@ export function MaintenancePackageScreen() {
           </View>
           <View style={styles.toggleRow}>
             <Segment options={[['LIST', 'List'], ['MAP', 'Map']]} value={mode} onChange={setMode} styles={styles} />
-            <Segment
-              options={[['OPEN', 'To repair'], ['SUBMITTED', 'Submitted'], ['ALL', 'All']]}
-              value={filter}
-              onChange={setFilter}
-              styles={styles}
-            />
+            {mode === 'LIST' ? (
+              <Segment
+                options={[['OPEN', 'To repair'], ['SUBMITTED', 'Submitted'], ['ALL', 'All']]}
+                value={filter}
+                onChange={setFilter}
+                styles={styles}
+              />
+            ) : null}
           </View>
+          {workTypeChips}
           <Pressable
-            onPress={() => void saveForOffline()}
+            onPress={saveForOffline}
             disabled={!pack || saving !== null}
             style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, (!pack || saving) && styles.disabled]}
           >
@@ -339,28 +496,38 @@ export function MaintenancePackageScreen() {
             <EmptyState
               icon="check-circle"
               title={filter === 'OPEN' ? 'Nothing left to repair' : 'No poles here'}
-              description={filter === 'OPEN' ? 'Every Kejanggalan on this Pencawang has been submitted.' : 'Try another filter.'}
+              description={
+                filter !== 'OPEN'
+                  ? 'Try another filter.'
+                  : workType === 'ALL'
+                    ? 'Every Kejanggalan on this Pencawang has been submitted.'
+                    : `No open ${CATEGORY_LABEL[workType]} work on this Pencawang.`
+              }
             />
           </Card>
         ) : (
-          visibleRows.map((row) => (
-            <StatusSpineTile
-              key={row.assetId}
-              code={row.refCode || row.assetCode}
-              spine={STATE_SPINE[row.state]}
-              chip={{
-                label: row.openCount > 0 ? `${row.openCount} to repair` : STATE_LABEL[row.state],
-                tone: row.state === 'TODO' ? 'danger' : row.state === 'IN_PROGRESS' ? 'warning' : row.state === 'SUBMITTED' ? 'info' : 'success',
-              }}
-              secondary={row.labels.join(' · ')}
-              meta={[
-                row.refCode ? row.assetCode : null,
-                row.distanceM !== null ? formatDistance(row.distanceM) : null,
-                row.latitude === null ? 'No GPS on record' : null,
-              ]}
-              onPress={() => openPole(row.assetId)}
-            />
-          ))
+          visibleRows.map((row) => {
+            const state = row.state as WorkState;
+            return (
+              <StatusSpineTile
+                key={row.assetId}
+                code={row.refCode || row.assetCode}
+                spine={STATE_SPINE[state]}
+                chip={{
+                  label: row.openCount > 0 ? `${row.openCount} to repair` : STATE_LABEL[state],
+                  tone:
+                    state === 'TODO' ? 'danger' : state === 'IN_PROGRESS' ? 'warning' : state === 'SUBMITTED' ? 'info' : 'success',
+                }}
+                secondary={row.labels.join(' · ')}
+                meta={[
+                  row.refCode ? row.assetCode : null,
+                  row.distanceM !== null ? formatDistance(row.distanceM) : null,
+                  row.latitude === null ? 'No GPS on record' : null,
+                ]}
+                onPress={() => openPole(row.assetId)}
+              />
+            );
+          })
         )
       ) : null}
 
@@ -368,29 +535,45 @@ export function MaintenancePackageScreen() {
         hasMapboxToken() && center ? (
           <View style={styles.mapWrap}>
             <Mapbox.MapView style={styles.map} styleURL={SATELLITE_STYLE} scaleBarEnabled={false}>
-              <Mapbox.Camera defaultSettings={{ centerCoordinate: center, zoomLevel: 15 }} animationMode="none" />
-              <Mapbox.LocationPuck visible puckBearing="heading" />
+              <Mapbox.Camera
+                ref={cameraRef}
+                defaultSettings={{ centerCoordinate: center, zoomLevel: 15 }}
+                animationMode="none"
+              />
+              <Mapbox.LocationPuck visible={locationGranted} puckBearing="heading" puckBearingEnabled />
               {/* GPU circle layer (never one native view per pole). */}
               <Mapbox.ShapeSource
                 id="repair-poles"
                 shape={features}
+                hitbox={{ width: 28, height: 28 }}
                 onPress={(event) => {
                   const assetId = event.features?.[0]?.properties?.assetId;
-                  if (typeof assetId === 'string') openPole(assetId);
+                  if (typeof assetId === 'string') setSelectedId(assetId);
                 }}
               >
+                <Mapbox.CircleLayer
+                  id="repair-pole-selected"
+                  filter={['==', ['get', 'selected'], 1]}
+                  style={{
+                    circleColor: 'rgba(56, 189, 248, 0.35)',
+                    circleRadius: 18,
+                    circleStrokeWidth: 2,
+                    circleStrokeColor: '#38BDF8',
+                  }}
+                />
                 <Mapbox.CircleLayer
                   id="repair-pole-circles"
                   style={{
                     circleColor: ['get', 'color'],
-                    circleRadius: 9,
+                    circleRadius: ['get', 'radius'],
                     circleStrokeWidth: 2,
-                    circleStrokeColor: '#ffffff',
+                    circleStrokeColor: ['get', 'stroke'],
+                    circleSortKey: ['get', 'sortKey'],
                   }}
                 />
                 <Mapbox.SymbolLayer
                   id="repair-pole-labels"
-                  minZoomLevel={15}
+                  minZoomLevel={16}
                   style={{
                     textField: ['get', 'label'],
                     textSize: 11,
@@ -403,6 +586,7 @@ export function MaintenancePackageScreen() {
                 />
               </Mapbox.ShapeSource>
             </Mapbox.MapView>
+
             <View style={styles.legend}>
               {STATE_ORDER.map((state) => (
                 <View key={state} style={styles.legendItem}>
@@ -410,7 +594,40 @@ export function MaintenancePackageScreen() {
                   <Text style={styles.legendText}>{STATE_LABEL[state]}</Text>
                 </View>
               ))}
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendDotNone]} />
+                <Text style={styles.legendText}>
+                  {workType === 'ALL' ? 'No Kejanggalan' : `No ${CATEGORY_LABEL[workType]}`}
+                </Text>
+              </View>
             </View>
+
+            <Pressable
+              onPress={() => void locateMe()}
+              style={({ pressed }) => [styles.locateButton, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Show my location"
+            >
+              <Feather name="crosshair" size={22} color="#0F172A" />
+            </Pressable>
+
+            {cardRow ? (
+              <PoleCard
+                row={cardRow}
+                heading={selected ? 'Selected pole' : 'Nearest pole'}
+                onOpen={() => openPole(cardRow.assetId)}
+                onClose={selected ? () => setSelectedId(null) : undefined}
+                onPhoto={(index) => openPhotos(cardPhotos(cardRow), index, cardRow.refCode || cardRow.assetCode)}
+                photoUri={photoUri}
+                styles={styles}
+              />
+            ) : (
+              <View style={styles.mapHint}>
+                <Text style={styles.mapHintText}>
+                  Tap a pole for its photos · tap the target button to see where you are.
+                </Text>
+              </View>
+            )}
           </View>
         ) : (
           <Card>
@@ -419,6 +636,90 @@ export function MaintenancePackageScreen() {
         )
       ) : null}
     </Screen>
+  );
+}
+
+/** Photos that identify a pole: its own survey photos, else its Kejanggalan survey photos. */
+function cardPhotos(row: PoleRow): PolePhoto[] {
+  if (row.photos.length > 0) return row.photos;
+  return row.items
+    .flatMap((item) => item.surveyPhotos.map((photo) => ({ ...photo, label: item.label })))
+    .slice(0, 4);
+}
+
+function PoleCard({
+  row,
+  heading,
+  onOpen,
+  onClose,
+  onPhoto,
+  photoUri,
+  styles,
+}: {
+  row: PoleRow;
+  heading: string;
+  onOpen: () => void;
+  onClose?: () => void;
+  onPhoto: (index: number) => void;
+  photoUri: (url: string) => string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const photos = cardPhotos(row);
+  const shown = row.items.slice(0, 3);
+  return (
+    <View style={styles.poleCard}>
+      <View style={styles.poleCardHeader}>
+        <Text style={styles.poleCardHeading}>
+          {heading}
+          {row.distanceM !== null ? ` · ${formatDistance(row.distanceM)}` : ''}
+        </Text>
+        {onClose ? (
+          <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close">
+            <Feather name="x" size={18} color="#CBD5E1" />
+          </Pressable>
+        ) : null}
+      </View>
+      <Text style={styles.poleCardCode}>{row.refCode || row.assetCode}</Text>
+      {row.noTiangLama || row.refCode ? (
+        <Text style={styles.poleCardMeta}>
+          {[row.refCode ? row.assetCode : null, row.noTiangLama ? `Lama ${row.noTiangLama}` : null]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
+      ) : null}
+      {photos.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.poleCardPhotos}>
+          {photos.map((photo, index) => (
+            <Pressable key={photo.id} onPress={() => onPhoto(index)}>
+              <Image source={{ uri: photoUri(photo.url) }} style={styles.poleCardPhoto} />
+              {photo.label ? (
+                <Text style={styles.poleCardPhotoLabel} numberOfLines={1}>
+                  {photo.label}
+                </Text>
+              ) : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : (
+        <Text style={styles.poleCardMeta}>No survey photo of this pole.</Text>
+      )}
+      {shown.length > 0 ? (
+        shown.map((item) => (
+          <Text key={item.id} style={styles.poleCardItem} numberOfLines={1}>
+            <Text style={{ color: STATE_COLOR[item.displayState] }}>● </Text>
+            {item.remark || item.label} · {CATEGORY_LABEL[item.category]} · {STATE_LABEL[item.displayState]}
+          </Text>
+        ))
+      ) : (
+        <Text style={styles.poleCardMeta}>No Kejanggalan — open it to add one found on site.</Text>
+      )}
+      {row.items.length > shown.length ? (
+        <Text style={styles.poleCardMeta}>+{row.items.length - shown.length} more</Text>
+      ) : null}
+      <Pressable onPress={onOpen} style={({ pressed }) => [styles.poleCardButton, pressed && styles.pressed]}>
+        <Text style={styles.poleCardButtonText}>Open pole</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -537,12 +838,12 @@ function createStyles(theme: Theme) {
     pickCode: { fontFamily: theme.fonts.bodySemibold, fontSize: 15, color: theme.colors.textPrimary },
     pickMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
     pickCancel: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
-    mapWrap: { flex: 1, minHeight: 420, borderRadius: theme.radius.card, overflow: 'hidden' },
+    mapWrap: { flex: 1, minHeight: 480, borderRadius: theme.radius.card, overflow: 'hidden' },
     map: { flex: 1 },
     legend: {
       position: 'absolute',
       left: 10,
-      bottom: 10,
+      top: 10,
       backgroundColor: 'rgba(15, 23, 42, 0.8)',
       borderRadius: 8,
       padding: 8,
@@ -551,5 +852,83 @@ function createStyles(theme: Theme) {
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     legendDot: { width: 10, height: 10, borderRadius: 5 },
     legendText: { color: '#ffffff', fontSize: 11, fontFamily: theme.fonts.body },
+    legendDotNone: { backgroundColor: NONE_COLOR, borderWidth: 1, borderColor: '#334155' },
+    chipRow: { gap: 8, paddingRight: 8 },
+    typeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.card,
+    },
+    typeChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+    typeChipText: { fontFamily: theme.fonts.bodySemibold, fontSize: 13, color: theme.colors.textSecondary },
+    typeChipTextActive: { color: theme.colors.textOnPrimary },
+    typeBadge: {
+      minWidth: 20,
+      paddingHorizontal: 5,
+      borderRadius: 10,
+      backgroundColor: theme.colors.surfaceMuted,
+      alignItems: 'center',
+    },
+    typeBadgeActive: { backgroundColor: 'rgba(255, 255, 255, 0.25)' },
+    typeBadgeText: { fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.textPrimary },
+    typeBadgeTextActive: { color: theme.colors.textOnPrimary },
+    locateButton: {
+      position: 'absolute',
+      right: 10,
+      top: 10,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: '#ffffff',
+      alignItems: 'center',
+      justifyContent: 'center',
+      elevation: 4,
+      shadowColor: '#000',
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
+    },
+    mapHint: {
+      position: 'absolute',
+      left: 10,
+      right: 10,
+      bottom: 10,
+      backgroundColor: 'rgba(15, 23, 42, 0.85)',
+      borderRadius: 10,
+      padding: 10,
+    },
+    mapHintText: { color: '#E2E8F0', fontSize: 12, fontFamily: theme.fonts.body, textAlign: 'center' },
+    poleCard: {
+      position: 'absolute',
+      left: 10,
+      right: 10,
+      bottom: 10,
+      backgroundColor: 'rgba(15, 23, 42, 0.94)',
+      borderRadius: 12,
+      padding: 12,
+      gap: 4,
+    },
+    poleCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    poleCardHeading: { color: '#93C5FD', fontSize: 12, fontFamily: theme.fonts.bodySemibold },
+    poleCardCode: { color: '#ffffff', fontSize: 17, fontFamily: theme.fonts.bodyBold },
+    poleCardMeta: { color: '#CBD5E1', fontSize: 12, fontFamily: theme.fonts.body },
+    poleCardPhotos: { gap: 8, paddingVertical: 4 },
+    poleCardPhoto: { width: 96, height: 96, borderRadius: 8, backgroundColor: '#1E293B' },
+    poleCardPhotoLabel: { width: 96, color: '#CBD5E1', fontSize: 10, fontFamily: theme.fonts.body, marginTop: 2 },
+    poleCardItem: { color: '#F1F5F9', fontSize: 13, fontFamily: theme.fonts.body },
+    poleCardButton: {
+      marginTop: 6,
+      backgroundColor: theme.colors.primary,
+      borderRadius: theme.radius.control,
+      paddingVertical: 10,
+      alignItems: 'center',
+    },
+    poleCardButtonText: { color: theme.colors.textOnPrimary, fontSize: 14, fontFamily: theme.fonts.bodySemibold },
   });
 }

@@ -4,6 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { cachedFetch } from '../offlineCache';
+import { prunePackPhotos } from '../maintenance/packPhotos';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
@@ -43,6 +44,10 @@ export function MaintenancePackagesScreen() {
         const result = await cachedFetch(WORK_CACHE_NAMESPACE, 'list', () => api.getMaintenanceWork(token));
         setData(result.value);
         setFromCache(result.fromCache);
+        if (!result.fromCache) {
+          // Offline photos of packages that are no longer this crew's (§14).
+          void prunePackPhotos(result.value.packages.map((pkg) => pkg.siteVisitId)).catch(() => undefined);
+        }
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
           await handleUnauthorized(loadError);
