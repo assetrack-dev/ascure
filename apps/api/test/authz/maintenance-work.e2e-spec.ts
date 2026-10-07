@@ -166,9 +166,17 @@ describe('Authz · maintenance work (mobile crew scope)', () => {
     expect(idsIn(detail.body)).toEqual([defectId('teamA')]);
 
     const item = detail.body.poles[0].kejanggalan[0];
-    expect(item.surveyPhotos).toEqual([{ id: W.surveyImage, url: '/uploads/inspections/x/survey.jpg' }]);
+    expect(item.surveyPhotos).toEqual([{ id: W.surveyImage, url: '/uploads/inspections/x/survey.jpg', sizeBytes: null }]);
     expect(item.photos).toEqual({ BEFORE: [], DURING: [], AFTER: [] });
     expect(item.state).toBe('TODO');
+
+    // §14: the pole carries its survey photos (labelled) so the crew can recognise it.
+    const pole = detail.body.poles[0];
+    expect(pole.photos).toEqual([
+      expect.objectContaining({ id: W.surveyImage, url: '/uploads/inspections/x/survey.jpg' }),
+    ]);
+    const surveyed = detail.body.surveyedPoles.find((row: { assetId: string }) => row.assetId === pole.assetId);
+    expect(surveyed.photos).toEqual(pole.photos);
   });
 
   it('supervisor: the teams they supervise', async () => {

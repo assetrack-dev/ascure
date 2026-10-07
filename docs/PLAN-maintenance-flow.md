@@ -199,10 +199,12 @@ Resolved 2026-09-26:
 - Q5 TNB may **re-open** a contractor-closed Kejanggalan (→ back to IN_PROGRESS, timeline event, reason required).
 - Q6 Due date → **one target date per package, set by TNB** (no per-severity SLA).
 
+Resolved later:
+- Q2 TNB rank storage → new `User.clientRank` (built M1 step 1).
+- Q7 Repair report download → **contractor Manager / Supervisor only** (+ TNB, Admin); Technicians do not (owner, 2026-10-07).
+
 Still open:
-- Q2 TNB rank storage: new `clientRank` field (recommended) vs reuse `MainheadAccessRole` — implementation detail, decided in M1.
-- Q7 Do contractor Technicians download the report, or Manager/Supervisor only? (default: Manager/Supervisor) — M4.
-- Q8 Photo time-gap threshold for the fraud flag — **owner to discuss later**; flags off until set — M2/M3.
+- Q8 Photo time-gap threshold for the fraud flag — **on hold** (owner, 2026-10-07); flags off until set — M2/M3.
 
 ---
 
@@ -365,3 +367,17 @@ The crew must be able to record it and repair it in the same flow.
    unchanged; survey re-save keeps the finding). **Deploy API + web together** → office can add same day.
 2. Admin web: add dialog + chips.
 3. Mobile: add flow + offline op → APK v2.0.17 (+ release notes BM/EN).
+
+## 14. Crew navigation — all poles, work-type filter, pole photos (owner, 2026-10-07)
+
+Smoke-test feedback from crews: maintenance teams are not the surveyors — they need more
+visual help to find the pole in front of them.
+
+| # | Decision |
+|---|---|
+| I24 | The package **map shows every pole the crew works on** (incl. poles with no Kejanggalan, so one can be added there). Colours: red = to repair, amber = in progress, blue = submitted, green = closed, grey/white = no Kejanggalan. On a pole-split PE: **only the crew's own poles** (other teams' poles hidden). |
+| I25 | **Work-type filter** All / Rentis / Selenggaraan / Cat Tiang — matching poles coloured by state, the rest grey but visible. |
+| I26 | **My location**: button asks permission + centres on the crew; heading puck; a **nearest pole** card (number, distance, photo, Kejanggalan, Open). Tapping a pole shows the same card. |
+| I27 | **Pole survey photos** (up to 4 per pole; whole-pole IMAGE field first, labelled) on the pole screen + map card, so the crew can match the pole. |
+| I28 | **Save for offline** downloads photos to app storage (not the ~40 MB image cache): every photo on poles with work + the first pole photo on the others; total size shown first. |
+| I29 | Ships in **APK v2.0.18** together with §13 (v2.0.17 is never distributed). API change is additive → deploy API first. |
