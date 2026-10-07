@@ -52,6 +52,8 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
         : undefined,
     canViewRepairVerification:
       "canViewRepairVerification" in user ? user.canViewRepairVerification : undefined,
+    canViewMaintenancePackages:
+      "canViewMaintenancePackages" in user ? user.canViewMaintenancePackages : undefined,
   };
 }
 

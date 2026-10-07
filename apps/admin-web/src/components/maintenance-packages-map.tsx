@@ -21,6 +21,14 @@ export interface PackageMapPoint {
   selected: boolean;
   /** Matches the search box — drawn with a blue halo. */
   highlighted?: boolean;
+  /** Text on the marker (default: the open count) — plan §15 shows done/total. */
+  label?: string;
+  /** Hollow marker: work with no team yet. */
+  hollow?: boolean;
+  /** Faded: outside the focus team. */
+  dimmed?: boolean;
+  /** 0–1 share closed, drawn as a green arc around the marker. */
+  progress?: number;
 }
 
 interface PackagesMapProps {
@@ -51,26 +59,44 @@ function markerIcon(
   selected: boolean,
   digits: number,
   highlighted = false,
+  options: { hollow?: boolean; dimmed?: boolean; progress?: number } = {},
 ): google.maps.Icon {
-  const key = `${color}|${selected ? 1 : 0}|${digits}|${highlighted ? 1 : 0}`;
+  const tenths = options.progress === undefined ? -1 : Math.round(options.progress * 10);
+  const key = `${color}|${selected ? 1 : 0}|${digits}|${highlighted ? 1 : 0}|${options.hollow ? 1 : 0}|${options.dimmed ? 1 : 0}|${tenths}`;
   const cached = iconCache.get(key);
   if (cached) return cached;
   const halo = highlighted ? 8 : 0;
-  const size = (digits > 2 ? 34 : 28) + (selected ? 6 : 0) + halo * 2;
+  const arc = tenths >= 0 ? 4 : 0;
+  const size = Math.min(56, Math.max(28, 12 + digits * 6)) + (selected ? 6 : 0) + halo * 2 + arc * 2;
   const c = size / 2;
-  const body = c - halo - (selected ? 5 : 1.5);
+  const body = c - halo - arc - (selected ? 5 : 1.5);
   const haloRing = highlighted
     ? `<circle cx='${c}' cy='${c}' r='${c - 2}' fill='#2563eb' fill-opacity='0.25' stroke='#2563eb' stroke-width='3'/>`
     : "";
   const ring = selected
-    ? `<circle cx='${c}' cy='${c}' r='${c - halo - 1.5}' fill='none' stroke='#0f172a' stroke-width='3'/>`
+    ? `<circle cx='${c}' cy='${c}' r='${c - halo - arc - 1.5}' fill='none' stroke='#0f172a' stroke-width='3'/>`
     : "";
+  // % closed: a green arc on a white track, clockwise from 12 o'clock.
+  const arcRadius = c - halo - arc / 2 - 0.5;
+  const circumference = 2 * Math.PI * arcRadius;
+  const progressArc =
+    tenths >= 0
+      ? `<circle cx='${c}' cy='${c}' r='${arcRadius}' fill='none' stroke='#ffffff' stroke-opacity='0.85' stroke-width='${arc}'/>` +
+        (tenths > 0
+          ? `<circle cx='${c}' cy='${c}' r='${arcRadius}' fill='none' stroke='#16a34a' stroke-width='${arc}' stroke-dasharray='${((tenths / 10) * circumference).toFixed(1)} ${circumference.toFixed(1)}' transform='rotate(-90 ${c} ${c})'/>`
+          : "")
+      : "";
+  const bodyCircle = options.hollow
+    ? `<circle cx='${c}' cy='${c}' r='${body - 1}' fill='#ffffff' stroke='${color}' stroke-width='3.5'/>`
+    : `<circle cx='${c}' cy='${c}' r='${body}' fill='${color}' stroke='#ffffff' stroke-width='2'/>`;
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
+    `<g opacity='${options.dimmed ? 0.35 : 1}'>` +
     haloRing +
-    `<circle cx='${c}' cy='${c}' r='${body}' fill='${color}' stroke='#ffffff' stroke-width='2'/>` +
+    progressArc +
+    bodyCircle +
     ring +
-    `</svg>`;
+    `</g></svg>`;
   const icon: google.maps.Icon = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: new google.maps.Size(size, size),
@@ -107,18 +133,18 @@ function Layers({
     const seen = new Set<string>();
     for (const point of points) {
       seen.add(point.id);
+      const text = point.label ?? String(point.openCount);
       const label = {
-        text: String(point.openCount),
-        color: "#ffffff",
-        fontSize: "11px",
+        text,
+        color: point.hollow ? "#0f172a" : "#ffffff",
+        fontSize: text.length > 4 ? "10px" : "11px",
         fontWeight: "700",
       };
-      const icon = markerIcon(
-        point.color,
-        point.selected,
-        String(point.openCount).length,
-        point.highlighted,
-      );
+      const icon = markerIcon(point.color, point.selected, text.length, point.highlighted, {
+        hollow: point.hollow,
+        dimmed: point.dimmed,
+        progress: point.progress,
+      });
       const existing = markers.get(point.id);
       if (existing) {
         existing.setIcon(icon);

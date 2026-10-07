@@ -64,6 +64,8 @@ type NavItem = {
   requiresGovernQa?: boolean;
   /** Server flag canViewRepairVerification: ADMIN, TNB, main-contractor managers. */
   requiresRepairVerification?: boolean;
+  /** Server flag canViewMaintenancePackages: + any contractor Manager / Supervisor (plan §15). */
+  requiresMaintenancePackages?: boolean;
   /** Admin config surface — collapsed under the "Setup" group in the sidebar. */
   group?: "setup";
   /** Kept in code but removed from the nav (pending deletion). */
@@ -143,14 +145,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       hidden: true,
     },
     // TNB → maintenance company/team hand-off (docs/PLAN-maintenance-flow.md §12).
-    // Same audience as repair sign-off: ADMIN, TNB, and main-contractor managers
-    // (who assign within their own group); subcontractors use the workspace below.
+    // ADMIN, TNB, main-contractor managers (assign within their group) and — plan
+    // §15 — any contractor Manager (re-teams its own work) / Supervisor (view only).
     {
       href: "/maintenance-packages",
       label: "Maintenance Packages",
       icon: PackageCheck,
       section: "operations",
-      requiresRepairVerification: true,
+      requiresMaintenancePackages: true,
     },
     // Repair sign-off (verify / reject / re-open / cannot-repair). Server flag
     // decides: ADMIN, TNB, and main-contractor managers only.
@@ -265,6 +267,9 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       if (item.requiresRepairVerification) {
         return user?.canViewRepairVerification === true;
       }
+      if (item.requiresMaintenancePackages) {
+        return user?.canViewMaintenancePackages === true;
+      }
       return MANAGER_NAV_HREFS.has(item.href);
     }
 
@@ -289,6 +294,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     if (
       item.requiresRepairVerification &&
       user?.canViewRepairVerification !== true &&
+      user?.role !== "ADMIN"
+    ) {
+      return false;
+    }
+
+    if (
+      item.requiresMaintenancePackages &&
+      user?.canViewMaintenancePackages !== true &&
       user?.role !== "ADMIN"
     ) {
       return false;

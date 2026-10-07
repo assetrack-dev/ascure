@@ -8,6 +8,9 @@ import {
   AlertTriangle,
   Building2,
   CalendarClock,
+  CheckCircle2,
+  Hourglass,
+  Users,
   List,
   Map as MapIcon,
   MapPinOff,
@@ -73,9 +76,11 @@ import type {
   MaintenanceCategory,
   MaintenancePackageBoard,
   MaintenancePackageRecord,
+  PackageActorKind,
   PackageCompany,
   PackageDestination,
   PackagePencawang,
+  PackageProgress,
   PackageTeam,
   RoutingResult,
 } from "@/types/maintenance-packages";
@@ -94,27 +99,126 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 
 
-type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED";
+type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED" | "NO_TEAM" | "OVERDUE";
 type ViewMode = "LIST" | "MAP";
 
-const STATUS_OPTIONS = [
+const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "ALL", label: "All" },
   { value: "AWAITING", label: "Awaiting company" },
   { value: "ASSIGNED", label: "Assigned" },
-] as const;
+  { value: "NO_TEAM", label: "No team" },
+  { value: "OVERDUE", label: "Overdue" },
+];
+/** A company's own board has nothing "awaiting company" (plan §15). */
+const COMPANY_STATUS_OPTIONS = STATUS_OPTIONS.filter(
+  (option) => option.value !== "AWAITING" && option.value !== "ASSIGNED",
+);
 
 const VIEW_OPTIONS = [
   { value: "LIST", label: "List" },
   { value: "MAP", label: "Map" },
 ] as const;
 
-/** Marker fills — fixed hex (they paint on the satellite map, not the theme). */
-const MAP_COLORS = {
-  awaiting: "#f59e0b",
-  focus: "#2563eb",
-  assigned: "#64748b",
-  done: "#16a34a",
-} as const;
+/**
+ * Repair state of a Pencawang (plan §15, J32) — marker fill + list bar colours.
+ * Fixed hex: they paint on the satellite map, not the theme.
+ */
+type PeState = "NEEDS_COMPANY" | "NOT_STARTED" | "IN_PROGRESS" | "AWAITING" | "CLOSED";
+const STATE_COLOR: Record<PeState, string> = {
+  NEEDS_COMPANY: "#64748b",
+  NOT_STARTED: "#dc2626",
+  IN_PROGRESS: "#f59e0b",
+  AWAITING: "#2563eb",
+  CLOSED: "#16a34a",
+};
+const STATE_LABEL: Record<PeState, string> = {
+  NEEDS_COMPANY: "Needs a company",
+  NOT_STARTED: "Not started",
+  IN_PROGRESS: "In progress",
+  AWAITING: "Awaiting verification",
+  CLOSED: "All closed",
+};
+/** Stacked progress bar segments, in order. */
+const PROGRESS_PARTS: Array<{ key: keyof PackageProgress; label: string; color: string }> = [
+  { key: "closed", label: "Closed", color: STATE_COLOR.CLOSED },
+  { key: "awaiting", label: "Awaiting verification", color: STATE_COLOR.AWAITING },
+  { key: "inProgress", label: "In progress", color: STATE_COLOR.IN_PROGRESS },
+  { key: "todo", label: "To do", color: "#e2e8f0" },
+];
+
+/** Progress of a PE / lane; older APIs only had open / finished. */
+function progressOf(item: {
+  progress?: PackageProgress;
+  totals?: { open: number; finished: number };
+  open?: number;
+  finished?: number;
+}): PackageProgress {
+  if (item.progress) return item.progress;
+  const open = item.totals?.open ?? item.open ?? 0;
+  const finished = item.totals?.finished ?? item.finished ?? 0;
+  return { todo: open, inProgress: 0, awaiting: 0, closed: finished };
+}
+
+function peState(row: PackagePencawang): PeState {
+  if (row.totals.unrouted > 0) return "NEEDS_COMPANY";
+  const p = progressOf(row);
+  if (p.todo + p.inProgress + p.awaiting === 0) return "CLOSED";
+  if (p.todo + p.inProgress === 0) return "AWAITING";
+  if (p.inProgress + p.awaiting + p.closed === 0) return "NOT_STARTED";
+  return "IN_PROGRESS";
+}
+
+/** The packages that are the actor's own work (a company sees other lanes too). */
+function ownPackages(row: PackagePencawang, board: MaintenancePackageBoard) {
+  if (board.actorKind !== "COMPANY") return row.packages;
+  const own = new Set(board.companies.map((company) => company.id));
+  return row.packages.filter((pkg) => own.has(pkg.organization.id));
+}
+
+const startOfToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+};
+
+/** Earliest target date of the PE's (own) packages; overdue while work is open. */
+function dueInfo(row: PackagePencawang, board: MaintenancePackageBoard) {
+  const dates = [
+    ...new Set(ownPackages(row, board).map((pkg) => pkg.dueDate).filter(Boolean)),
+  ] as string[];
+  const earliest = dates.sort()[0] ?? null;
+  const overdue =
+    earliest !== null && row.totals.open > 0 && new Date(earliest).getTime() < startOfToday();
+  return { earliest, varies: dates.length > 1, overdue };
+}
+
+/** To do · in progress · awaiting verification · closed — one stacked bar. */
+function ProgressBar({ progress, compact = false }: { progress: PackageProgress; compact?: boolean }) {
+  const total = progress.todo + progress.inProgress + progress.awaiting + progress.closed;
+  const closedPct = total === 0 ? 0 : Math.round((progress.closed / total) * 100);
+  const done = progress.closed + progress.awaiting;
+  const title = PROGRESS_PARTS.map((part) => `${part.label}: ${progress[part.key]}`).join(" · ");
+  return (
+    <div title={title} className={compact ? "min-w-[120px]" : "min-w-[160px]"}>
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-[var(--line2)]">
+        {total > 0
+          ? PROGRESS_PARTS.map((part) =>
+              progress[part.key] > 0 ? (
+                <span
+                  key={part.key}
+                  style={{ width: `${(progress[part.key] / total) * 100}%`, background: part.color }}
+                />
+              ) : null,
+            )
+          : null}
+      </div>
+      <div className="mt-1 text-[12px] text-[var(--muted)]">
+        <span className="font-semibold text-[var(--foreground)]">{done}</span>/{total} done
+        {progress.awaiting > 0 ? ` · ${progress.awaiting} to verify` : ""}
+        {compact ? "" : ` · ${closedPct}% closed`}
+      </div>
+    </div>
+  );
+}
 
 
 function formatDate(value: string | null | undefined) {
@@ -149,7 +253,26 @@ function ownerLabel(pkg: Pick<MaintenancePackageRecord, "organization" | "team">
 }
 
 /** One line describing who owns the PE: whole company/team, split, or nobody yet. */
-function assignmentSummary(row: PackagePencawang): { text: string; tone: Tone } {
+function assignmentSummary(
+  row: PackagePencawang,
+  board?: MaintenancePackageBoard,
+): { text: string; tone: Tone } {
+  // A company: only its own work — which of its teams has it (plan §15).
+  if (board?.actorKind === "COMPANY") {
+    const own = ownPackages(row, board);
+    const teams = [...new Set(own.map((pkg) => pkg.team?.name).filter(Boolean))] as string[];
+    const ownSplits = row.poleSplits.filter((split) =>
+      board.companies.some((company) => company.id === split.organization.id),
+    );
+    const splitTeams = ownSplits.map((split) => split.team?.name).filter(Boolean) as string[];
+    const all = [...new Set([...teams, ...splitTeams])];
+    if (all.length === 0) return { text: "No team yet", tone: "warning" };
+    const missing = own.some((pkg) => !pkg.team);
+    return {
+      text: all.join(", ") + (missing ? " · part has no team" : ""),
+      tone: missing ? "warning" : "brand",
+    };
+  }
   const splitPoles = row.poleSplits.reduce((sum, split) => sum + split.poles, 0);
   const poleNote = splitPoles > 0 ? ` + ${splitPoles} pole${splitPoles === 1 ? "" : "s"} split` : "";
   if (row.packages.length === 0) {
@@ -223,6 +346,7 @@ interface AssignDialogProps {
   }) => void;
   onWithdraw: (pkg: MaintenancePackageRecord) => void;
   onSplitPoles: () => void;
+  actorKind: PackageActorKind;
 }
 
 function AssignDialog({
@@ -235,7 +359,10 @@ function AssignDialog({
   onSubmit,
   onWithdraw,
   onSplitPoles,
+  actorKind,
 }: AssignDialogProps) {
+  // A contractor Manager only re-teams its own work (plan §15, J30).
+  const isCompany = actorKind === "COMPANY";
   const lanesWithWork = row.lanes.filter((lane) => lane.total > 0);
   const assignableLanes = lanesWithWork.filter((lane) => lane.canAssign);
   const whole = row.packages.find((pkg) => pkg.category === null) ?? null;
@@ -327,7 +454,7 @@ function AssignDialog({
               {lanesWithWork.map((lane) => (
                 <option key={lane.category} value={lane.category} disabled={!lane.canAssign}>
                   {CATEGORY_LABEL[lane.category]} — {lane.open} open
-                  {lane.canAssign ? "" : " (TNB only)"}
+                  {lane.canAssign ? "" : isCompany ? " (another company)" : " (TNB only)"}
                 </option>
               ))}
             </select>
@@ -344,14 +471,15 @@ function AssignDialog({
         ) : null}
 
         <label className="block">
-          <span className={modalLabelClass}>Company or team</span>
+          <span className={modalLabelClass}>{isCompany ? "Team" : "Company or team"}</span>
           <DestinationSelect
             companies={companies}
             teams={teams}
-            value={destination}
+            value={isCompany && destination.startsWith("org:") ? "" : destination}
             onChange={setDestination}
             suggestedOrganizationId={row.suggestedOrganizationId}
             className={modalSelectClass}
+            teamsOnly={isCompany}
           />
           <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
             {decoded?.assignedTeamId
@@ -363,27 +491,39 @@ function AssignDialog({
           </span>
         </label>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className={modalLabelClass}>Target date</span>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
-              className={modalInputClass}
-            />
-          </label>
-        </div>
+        {isCompany ? (
+          <p className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-3 py-2 text-[12.5px] text-[var(--foreground-soft)]">
+            Target date {defaults?.dueDate ? formatDate(defaults.dueDate) : "— not set"}
+            {defaults?.notes ? ` · ${defaults.notes}` : ""}
+            <span className="block text-[11.5px] text-[var(--muted)]">
+              Set by TNB / the main contractor — it stays when you change the team.
+            </span>
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className={modalLabelClass}>Target date</span>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                  className={modalInputClass}
+                />
+              </label>
+            </div>
 
-        <label className="block">
-          <span className={modalLabelClass}>Notes</span>
-          <textarea
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            className={`${modalInputClass} min-h-[72px] py-2`}
-            maxLength={1000}
-          />
-        </label>
+            <label className="block">
+              <span className={modalLabelClass}>Notes</span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                className={`${modalInputClass} min-h-[72px] py-2`}
+                maxLength={1000}
+              />
+            </label>
+          </>
+        )}
 
         <div className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-dashed border-[var(--line)] px-3 py-2.5">
           <span className="text-[12.5px] text-[var(--muted)]">
@@ -407,14 +547,16 @@ function AssignDialog({
                     → {ownerLabel(pkg)}
                     {pkg.dueDate ? ` · by ${formatDate(pkg.dueDate)}` : ""}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onWithdraw(pkg)}
-                    disabled={busy}
-                    className="shrink-0 text-[12px] font-semibold text-[var(--critical-text)] hover:underline disabled:opacity-50"
-                  >
-                    Withdraw
-                  </button>
+                  {isCompany ? null : (
+                    <button
+                      type="button"
+                      onClick={() => onWithdraw(pkg)}
+                      disabled={busy}
+                      className="shrink-0 text-[12px] font-semibold text-[var(--critical-text)] hover:underline disabled:opacity-50"
+                    >
+                      Withdraw
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -443,6 +585,7 @@ function BulkAssignDialog({
   error,
   onClose,
   onSubmit,
+  actorKind,
 }: {
   rows: PackagePencawang[];
   companies: PackageCompany[];
@@ -455,8 +598,11 @@ function BulkAssignDialog({
     dueDate: string | null;
     notes: string | null;
   }) => void;
+  actorKind: PackageActorKind;
 }) {
-  const [scope, setScope] = useState<"WHOLE" | "LANE">("WHOLE");
+  const isCompany = actorKind === "COMPANY";
+  // A company's own work usually comes per work type — start there.
+  const [scope, setScope] = useState<"WHOLE" | "LANE">(isCompany ? "LANE" : "WHOLE");
   const openByLane = useMemo(
     () =>
       CATEGORY_ORDER.map((category) => ({
@@ -534,13 +680,14 @@ function BulkAssignDialog({
         ) : null}
 
         <label className="block">
-          <span className={modalLabelClass}>Company or team</span>
+          <span className={modalLabelClass}>{isCompany ? "Team" : "Company or team"}</span>
           <DestinationSelect
             companies={companies}
             teams={teams}
             value={destination}
             onChange={setDestination}
             className={modalSelectClass}
+            teamsOnly={isCompany}
           />
           <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
             {decoded?.assignedTeamId
@@ -556,27 +703,35 @@ function BulkAssignDialog({
           </span>
         </label>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className={modalLabelClass}>Target date</span>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
-              className={modalInputClass}
-            />
-          </label>
-        </div>
+        {isCompany ? (
+          <p className="text-[12px] text-[var(--muted)]">
+            Target dates set by TNB / the main contractor stay as they are.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className={modalLabelClass}>Target date</span>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                  className={modalInputClass}
+                />
+              </label>
+            </div>
 
-        <label className="block">
-          <span className={modalLabelClass}>Notes</span>
-          <textarea
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            className={`${modalInputClass} min-h-[72px] py-2`}
-            maxLength={1000}
-          />
-        </label>
+            <label className="block">
+              <span className={modalLabelClass}>Notes</span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                className={`${modalInputClass} min-h-[72px] py-2`}
+                maxLength={1000}
+              />
+            </label>
+          </>
+        )}
 
         <div className="max-h-40 overflow-y-auto rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] p-3">
           <ul className="space-y-1 text-[12.5px] text-[var(--foreground-soft)]">
@@ -735,15 +890,12 @@ function MapView({
     [board.pencawangs, selected],
   );
 
-  const pointColor = useCallback(
-    (row: PackagePencawang) => {
-      if (row.totals.open === 0) return MAP_COLORS.done;
-      if (row.totals.unrouted > 0) return MAP_COLORS.awaiting;
-      if (focusTeamId && row.packages.some((pkg) => pkg.team?.id === focusTeamId)) {
-        return MAP_COLORS.focus;
-      }
-      return MAP_COLORS.assigned;
-    },
+  const inFocus = useCallback(
+    (row: PackagePencawang) =>
+      !focusTeamId ||
+      row.packages.some((pkg) => pkg.team?.id === focusTeamId) ||
+      row.lanes.some((lane) => lane.team?.id === focusTeamId) ||
+      row.poleSplits.some((split) => split.team?.id === focusTeamId),
     [focusTeamId],
   );
 
@@ -759,19 +911,32 @@ function MapView({
 
   const points: PackageMapPoint[] = useMemo(
     () =>
-      located.map((row) => ({
-        id: row.siteVisitId,
-        latitude: row.latitude,
-        longitude: row.longitude,
-        openCount: row.totals.open,
-        color: pointColor(row),
-        selected: selected.has(row.siteVisitId),
-        highlighted: matchIds.has(row.siteVisitId),
-        title:
-          `${pencawangLabel(row)} — ${row.totals.open} open · ${assignmentSummary(row).text}` +
-          (isSelectable(row) ? "" : " (assigned outside your group)"),
-      })),
-    [located, matchIds, pointColor, selected],
+      located.map((row) => {
+        const state = peState(row);
+        const progress = progressOf(row);
+        const due = dueInfo(row, board);
+        return {
+          id: row.siteVisitId,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          openCount: row.totals.open,
+          label: `${row.totals.finished}/${row.totals.total}`,
+          color: STATE_COLOR[state],
+          hollow: state !== "NEEDS_COMPANY" && state !== "CLOSED" && (row.totals.noTeam ?? 0) > 0,
+          dimmed: !inFocus(row),
+          progress: row.totals.total > 0 ? progress.closed / row.totals.total : 0,
+          selected: selected.has(row.siteVisitId),
+          highlighted: matchIds.has(row.siteVisitId),
+          title:
+            `${pencawangLabel(row)} — ${STATE_LABEL[state]} · ${row.totals.finished}/${row.totals.total} done` +
+            (progress.awaiting > 0 ? ` (${progress.awaiting} to verify)` : "") +
+            ` · ${assignmentSummary(row, board).text}` +
+            ((row.totals.noTeam ?? 0) > 0 ? ` · ${row.totals.noTeam} without a team` : "") +
+            (due.overdue ? " · OVERDUE" : "") +
+            (isSelectable(row) ? "" : board.actorKind === "COMPANY" ? " (view only)" : " (assigned outside your group)"),
+        };
+      }),
+    [board, inFocus, located, matchIds, selected],
   );
 
   const selectableIds = useMemo(
@@ -869,11 +1034,16 @@ function MapView({
                   : `${matches.length} found, ${matches.length - focusIds.length} without a location`}
             </span>
           ) : null}
-          <div className="ml-auto flex flex-wrap gap-3">
-            <LegendDot color={MAP_COLORS.awaiting} label="Needs assigning" />
-            {focusTeamId ? <LegendDot color={MAP_COLORS.focus} label="Focus team" /> : null}
-            <LegendDot color={MAP_COLORS.assigned} label="Assigned" />
-            <LegendDot color={MAP_COLORS.done} label="All done" />
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            {(Object.keys(STATE_LABEL) as PeState[])
+              .filter((state) => board.actorKind !== "COMPANY" || state !== "NEEDS_COMPANY")
+              .map((state) => (
+                <LegendDot key={state} color={STATE_COLOR[state]} label={STATE_LABEL[state]} />
+              ))}
+            <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--muted)]">
+              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-[#dc2626] bg-white" />
+              Hollow = no team · green ring = % closed · label done/total
+            </span>
           </div>
         </div>
         <div className="h-[420px] lg:h-[620px]">
@@ -1002,7 +1172,7 @@ function MapView({
                     {pencawangLabel(row)}
                   </span>
                   <span className="block truncate text-[11.5px] text-[var(--muted)]">
-                    {row.totals.open} open · {assignmentSummary(row).text}
+                    {row.totals.finished}/{row.totals.total} done · {assignmentSummary(row, board).text}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1">
@@ -1161,6 +1331,8 @@ function MaintenancePackagesContent() {
       (board?.pencawangs ?? []).filter((row) => {
         if (statusFilter === "AWAITING" && row.packages.length > 0) return false;
         if (statusFilter === "ASSIGNED" && row.packages.length === 0) return false;
+        if (statusFilter === "NO_TEAM" && (row.totals.noTeam ?? 0) === 0) return false;
+        if (statusFilter === "OVERDUE" && board && !dueInfo(row, board).overdue) return false;
         if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
         return true;
       }),
@@ -1183,11 +1355,45 @@ function MaintenancePackagesContent() {
 
   const kpis = useMemo(() => {
     const pencawangs = board?.pencawangs ?? [];
+    const progress = pencawangs.map(progressOf).reduce(
+      (sum, p) => ({
+        todo: sum.todo + p.todo,
+        inProgress: sum.inProgress + p.inProgress,
+        awaiting: sum.awaiting + p.awaiting,
+        closed: sum.closed + p.closed,
+      }),
+      { todo: 0, inProgress: 0, awaiting: 0, closed: 0 },
+    );
+    const total = pencawangs.reduce((sum, row) => sum + row.totals.total, 0);
     return {
+      pencawangs: pencawangs.length,
       awaiting: pencawangs.filter((row) => row.packages.length === 0).length,
       assigned: pencawangs.filter((row) => row.packages.length > 0).length,
       open: pencawangs.reduce((sum, row) => sum + row.totals.open, 0),
       unrouted: pencawangs.reduce((sum, row) => sum + row.totals.unrouted, 0),
+      noTeam: pencawangs.reduce((sum, row) => sum + (row.totals.noTeam ?? 0), 0),
+      overdue: board ? pencawangs.filter((row) => dueInfo(row, board).overdue).length : 0,
+      total,
+      progress,
+      closedPct: total === 0 ? 0 : Math.round((progress.closed / total) * 100),
+      byType: CATEGORY_ORDER.map((category) => {
+        const lanes = pencawangs
+          .map((row) => row.lanes.find((lane) => lane.category === category))
+          .filter((lane): lane is NonNullable<typeof lane> => Boolean(lane));
+        return {
+          category,
+          total: lanes.reduce((sum, lane) => sum + lane.total, 0),
+          progress: lanes.map(progressOf).reduce(
+            (sum, p) => ({
+              todo: sum.todo + p.todo,
+              inProgress: sum.inProgress + p.inProgress,
+              awaiting: sum.awaiting + p.awaiting,
+              closed: sum.closed + p.closed,
+            }),
+            { todo: 0, inProgress: 0, awaiting: 0, closed: 0 },
+          ),
+        };
+      }),
     };
   }, [board]);
 
@@ -1197,9 +1403,14 @@ function MaintenancePackagesContent() {
   };
 
   const subtitle =
-    board?.actorKind === "MAIN_CONTRACTOR"
-      ? "Hand your Pencawang to your own teams or your subcontractors — whole, or split by work type. Use the Map to group nearby Pencawang for one team."
-      : "Hand each surveyed Pencawang to a maintenance company, or straight to one of its teams, once its report is complete — whole, or split by work type. Use the Map to group nearby Pencawang for one team.";
+    board?.actorKind === "COMPANY"
+      ? board.canAssign
+        ? "The Pencawang TNB or your main contractor gave your company. Give them to your teams — whole, by work type, or split by poles — and follow the repairs. Use the Map to group nearby Pencawang for one team."
+        : "The Pencawang your company is repairing, and how far each one is."
+      : board?.actorKind === "MAIN_CONTRACTOR"
+        ? "Hand your Pencawang to your own teams or your subcontractors — whole, or split by work type. Use the Map to group nearby Pencawang for one team."
+        : "Hand each surveyed Pencawang to a maintenance company, or straight to one of its teams, once its report is complete — whole, or split by work type. Use the Map to group nearby Pencawang for one team.";
+  const isCompany = board?.actorKind === "COMPANY";
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -1252,34 +1463,81 @@ function MaintenancePackagesContent() {
                   }
                 />
 
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <KpiCard
-                    label="Awaiting company"
-                    value={kpis.awaiting.toLocaleString()}
-                    icon={PackageOpen}
-                    tone={kpis.awaiting > 0 ? "high" : "neutral"}
-                    context="Report complete, no package yet"
+                    label="Closed"
+                    value={`${kpis.closedPct}%`}
+                    icon={CheckCircle2}
+                    tone={kpis.closedPct === 100 && kpis.total > 0 ? "success" : "neutral"}
+                    context={`${kpis.progress.closed.toLocaleString()} of ${kpis.total.toLocaleString()} Kejanggalan verified`}
                   />
                   <KpiCard
-                    label="Assigned"
-                    value={kpis.assigned.toLocaleString()}
-                    icon={PackageCheck}
-                    context="Pencawang with a company"
+                    label="Awaiting verification"
+                    value={kpis.progress.awaiting.toLocaleString()}
+                    icon={Hourglass}
+                    tone={kpis.progress.awaiting > 0 ? "warning" : "neutral"}
+                    context="Repaired, waiting for TNB / main contractor"
                   />
                   <KpiCard
-                    label="Open Kejanggalan"
+                    label="Still to repair"
                     value={kpis.open.toLocaleString()}
                     icon={Building2}
-                    context="Not yet repaired"
+                    context={`${kpis.progress.inProgress.toLocaleString()} in progress · ${kpis.progress.todo.toLocaleString()} not started`}
                   />
                   <KpiCard
-                    label="Without a company"
-                    value={kpis.unrouted.toLocaleString()}
-                    icon={CalendarClock}
-                    tone={kpis.unrouted > 0 ? "warning" : "neutral"}
-                    context="Open Kejanggalan not routed"
+                    label="Overdue Pencawang"
+                    value={kpis.overdue.toLocaleString()}
+                    icon={AlertTriangle}
+                    tone={kpis.overdue > 0 ? "critical" : "neutral"}
+                    context="Past the target date with work open"
                   />
+                  <KpiCard
+                    label="No team yet"
+                    value={kpis.noTeam.toLocaleString()}
+                    icon={Users}
+                    tone={kpis.noTeam > 0 ? "high" : "neutral"}
+                    context="Open Kejanggalan with a company but no crew"
+                  />
+                  {isCompany ? (
+                    <KpiCard
+                      label="Pencawang"
+                      value={kpis.pencawangs.toLocaleString()}
+                      icon={PackageCheck}
+                      context="Given to your company"
+                    />
+                  ) : (
+                    <KpiCard
+                      label="Awaiting company"
+                      value={kpis.awaiting.toLocaleString()}
+                      icon={PackageOpen}
+                      tone={kpis.awaiting > 0 ? "high" : "neutral"}
+                      context={`${kpis.unrouted.toLocaleString()} open Kejanggalan not routed · ${kpis.assigned.toLocaleString()} Pencawang assigned`}
+                    />
+                  )}
                 </div>
+
+                <Card>
+                  <Eyebrow>Progress by work type</Eyebrow>
+                  <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                    {kpis.byType.map((type) => (
+                      <div key={type.category}>
+                        <p className="mb-1.5 text-[13px] font-semibold text-[var(--foreground)]">
+                          {CATEGORY_LABEL[type.category]}
+                        </p>
+                        {type.total > 0 ? (
+                          <ProgressBar progress={type.progress} />
+                        ) : (
+                          <p className="text-[12px] text-[var(--muted)]">No Kejanggalan</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    {PROGRESS_PARTS.map((part) => (
+                      <LegendDot key={part.key} color={part.color} label={part.label} />
+                    ))}
+                  </div>
+                </Card>
 
                 <FilterBar>
                   <span className="inline-flex items-center gap-1.5">
@@ -1310,7 +1568,7 @@ function MaintenancePackagesContent() {
                   </select>
                   <Seg
                     aria-label="Assignment status"
-                    options={STATUS_OPTIONS}
+                    options={isCompany ? COMPANY_STATUS_OPTIONS : STATUS_OPTIONS}
                     value={statusFilter}
                     onChange={setStatusFilter}
                   />
@@ -1365,7 +1623,7 @@ function MaintenancePackagesContent() {
                               ) : null}
                               <th className={tableHeadCellClass}>Pencawang</th>
                               <th className={tableHeadCellClass}>Report</th>
-                              <th className={tableHeadCellClass}>Kejanggalan</th>
+                              <th className={tableHeadCellClass}>Progress</th>
                               <th className={tableHeadCellClass}>Work types</th>
                               <th className={tableHeadCellClass}>Company / team</th>
                               <th className={tableHeadCellClass}>Target</th>
@@ -1374,11 +1632,9 @@ function MaintenancePackagesContent() {
                           </thead>
                           <tbody>
                             {rows.map((row) => {
-                              const summary = assignmentSummary(row);
+                              const summary = assignmentSummary(row, board);
                               const selectable = isSelectable(row);
-                              const dueDates = [
-                                ...new Set(row.packages.map((pkg) => pkg.dueDate).filter(Boolean)),
-                              ] as string[];
+                              const due = dueInfo(row, board);
                               return (
                                 <tr key={row.siteVisitId} className={tableRowClass}>
                                   {board.canAssign ? (
@@ -1406,13 +1662,16 @@ function MaintenancePackagesContent() {
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
                                     {formatDate(row.laporanSelesaiAt)}
                                   </td>
-                                  <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    <span className="font-semibold text-[var(--foreground)]">
-                                      {row.totals.open}
-                                    </span>{" "}
-                                    open / {row.totals.total}
-                                    <div className="text-[12px] text-[var(--muted)]">
+                                  <td className={tableCellClass}>
+                                    <ProgressBar progress={progressOf(row)} compact />
+                                    <div className="text-[11.5px] text-[var(--muted)]">
                                       {row.poleCount} pole{row.poleCount === 1 ? "" : "s"}
+                                      {(row.totals.noTeam ?? 0) > 0 ? (
+                                        <span className="font-semibold text-[var(--high-text)]">
+                                          {" "}
+                                          · {row.totals.noTeam} no team
+                                        </span>
+                                      ) : null}
                                     </div>
                                   </td>
                                   <td className={tableCellClass}>
@@ -1440,11 +1699,20 @@ function MaintenancePackagesContent() {
                                     <Chip tone={summary.tone}>{summary.text}</Chip>
                                   </td>
                                   <td className={`${tableCellClass} whitespace-nowrap`}>
-                                    {dueDates.length === 0
-                                      ? "—"
-                                      : dueDates.length === 1
-                                        ? formatDate(dueDates[0])
-                                        : "Varies"}
+                                    {due.earliest ? (
+                                      <span
+                                        className={
+                                          due.overdue ? "font-semibold text-[var(--critical-text)]" : undefined
+                                        }
+                                        title={due.varies ? "Earliest of several target dates" : undefined}
+                                      >
+                                        {formatDate(due.earliest)}
+                                        {due.varies ? " +" : ""}
+                                        {due.overdue ? " · overdue" : ""}
+                                      </span>
+                                    ) : (
+                                      "—"
+                                    )}
                                   </td>
                                   <td className={`${tableCellClass} whitespace-nowrap text-right`}>
                                     <Tbtn variant="ghost" onClick={() => setPoleRow(row)} className="mr-1">
@@ -1471,7 +1739,9 @@ function MaintenancePackagesContent() {
                                         {row.packages.length === 0 ? "Assign" : "Manage"}
                                       </Tbtn>
                                     ) : board.canAssign ? (
-                                      <span className="text-[12px] text-[var(--muted)]">TNB only</span>
+                                      <span className="text-[12px] text-[var(--muted)]">
+                                        {isCompany ? "Another company" : "TNB only"}
+                                      </span>
                                     ) : null}
                                   </td>
                                 </tr>
@@ -1515,6 +1785,7 @@ function MaintenancePackagesContent() {
           error={dialogError}
           onClose={() => (isSaving ? undefined : setDialogRow(null))}
           onWithdraw={setWithdrawTarget}
+          actorKind={board.actorKind}
           onSplitPoles={() => {
             setPoleRow(dialogRow);
             setDialogRow(null);
@@ -1538,6 +1809,7 @@ function MaintenancePackagesContent() {
           rows={selectedRows}
           companies={board.companies}
           teams={board.teams}
+          actorKind={board.actorKind}
           busy={isSaving}
           error={dialogError}
           onClose={() => (isSaving ? undefined : setBulkOpen(false))}
