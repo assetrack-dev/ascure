@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  DefectLifecycleStatus,
   DefectStatus,
+  DefectTimelineEventType,
   FeederKind,
   InspectionCompletionStatus,
   InspectionItemInputType,
@@ -21,6 +23,7 @@ import { stream, Workbook, Worksheet } from 'exceljs';
 import { PassThrough } from 'stream';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { buildScopeContext } from '../common/authorization/scope-context';
+import { isCannotRepairOutcome } from '../common/authorization/maintenance-closure';
 import { siteVisitOversightWhere } from '../common/authorization/site-visit-scope';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -658,6 +661,299 @@ export class ReportsService {
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const filename = `crew-performance-${data.period.replace(/[^\dA-Za-z-]+/g, '_')}.xlsx`;
+    return { buffer: Buffer.from(arrayBuffer), filename };
+  }
+
+  /**
+   * Maintenance crew performance over a period (plan §15, J33) — credit by TEAM
+   * (the crew holding the Kejanggalan: assignedToTeamId, else assignedTeamId).
+   * Same audience + month as the survey leaderboard: ADMIN tenant-wide, a
+   * MANAGER its own company (a Main Contractor's also its subcontractors).
+   *
+   * repaired      marked done in the period (cannot-repair counted apart)
+   * closed        verified (closed) in the period
+   * sentBack      rejected at verification in the period
+   * activeDays    UTC+8 days with a repair photo or a "done" by that crew's work
+   * avgHoursToDone mean assigned → done of the period's repairs
+   * passRate      closed / (closed + sentBack), null when nothing was decided
+   * onHand        assigned / in progress right now
+   */
+  async aggregateMaintenancePerformance(
+    user: RequestUser,
+    fromInput?: string,
+    toInput?: string,
+  ) {
+    this.assertCanViewCrewPerformance(user);
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const period = { gte: start, lt: end };
+
+    let orgIds: string[] | null = null;
+    if (user.role !== UserRole.ADMIN) {
+      const ctx = await buildScopeContext(this.prisma, user);
+      orgIds = ctx.maintenanceOrgIds.length
+        ? ctx.maintenanceOrgIds
+        : user.organizationId
+          ? [user.organizationId]
+          : [];
+    }
+    const scope: Prisma.DefectWhereInput = {
+      inspectionItemResult: { inspection: { tenantId: user.tenantId } },
+      ...(orgIds === null ? {} : { maintenanceOrganizationId: { in: orgIds } }),
+      OR: [{ assignedToTeamId: { not: null } }, { assignedTeamId: { not: null } }],
+    };
+    const REJECTED_FROM = [
+      DefectLifecycleStatus.COMPLETED,
+      DefectLifecycleStatus.VERIFICATION_PENDING,
+    ];
+
+    const [defects, onHandRows] = await Promise.all([
+      this.prisma.defect.findMany({
+        where: {
+          AND: [
+            scope,
+            {
+              OR: [
+                { maintainedAt: period },
+                { closureVerifiedAt: period },
+                {
+                  timelineEntries: {
+                    some: {
+                      type: DefectTimelineEventType.STATUS_CHANGED,
+                      fromLifecycleStatus: { in: REJECTED_FROM },
+                      toLifecycleStatus: DefectLifecycleStatus.IN_PROGRESS,
+                      createdAt: period,
+                    },
+                  },
+                },
+                {
+                  evidenceImages: {
+                    some: { evidenceType: { in: ['BEFORE', 'DURING', 'AFTER'] }, createdAt: period },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        select: {
+          assignedToTeamId: true,
+          assignedTeamId: true,
+          assignedAt: true,
+          maintainedAt: true,
+          closureVerifiedAt: true,
+          resolutionOutcome: true,
+          timelineEntries: {
+            where: {
+              type: DefectTimelineEventType.STATUS_CHANGED,
+              fromLifecycleStatus: { in: REJECTED_FROM },
+              toLifecycleStatus: DefectLifecycleStatus.IN_PROGRESS,
+              createdAt: period,
+            },
+            select: { createdAt: true },
+          },
+          evidenceImages: {
+            where: { evidenceType: { in: ['BEFORE', 'DURING', 'AFTER'] }, createdAt: period },
+            select: { createdAt: true },
+          },
+        },
+      }),
+      this.prisma.defect.findMany({
+        where: {
+          AND: [
+            scope,
+            {
+              lifecycleStatus: {
+                in: [DefectLifecycleStatus.ASSIGNED, DefectLifecycleStatus.IN_PROGRESS],
+              },
+            },
+          ],
+        },
+        select: { assignedToTeamId: true, assignedTeamId: true },
+      }),
+    ]);
+
+    type Aggregate = {
+      repaired: number;
+      cannotRepair: number;
+      closed: number;
+      sentBack: number;
+      days: Set<string>;
+      hoursToDone: number[];
+      onHand: number;
+    };
+    const byTeam = new Map<string, Aggregate>();
+    const teamOf = (row: { assignedToTeamId: string | null; assignedTeamId: string | null }) =>
+      row.assignedToTeamId ?? row.assignedTeamId;
+    const aggregateOf = (teamId: string) => {
+      let aggregate = byTeam.get(teamId);
+      if (!aggregate) {
+        aggregate = {
+          repaired: 0,
+          cannotRepair: 0,
+          closed: 0,
+          sentBack: 0,
+          days: new Set(),
+          hoursToDone: [],
+          onHand: 0,
+        };
+        byTeam.set(teamId, aggregate);
+      }
+      return aggregate;
+    };
+    const inPeriod = (date: Date | null) => date !== null && date >= start && date < end;
+
+    for (const defect of defects) {
+      const teamId = teamOf(defect);
+      if (!teamId) continue;
+      const aggregate = aggregateOf(teamId);
+      if (inPeriod(defect.maintainedAt)) {
+        if (isCannotRepairOutcome(defect.resolutionOutcome)) {
+          aggregate.cannotRepair += 1;
+        } else {
+          aggregate.repaired += 1;
+          if (defect.assignedAt && defect.maintainedAt! > defect.assignedAt) {
+            aggregate.hoursToDone.push(
+              (defect.maintainedAt!.getTime() - defect.assignedAt.getTime()) / 3_600_000,
+            );
+          }
+        }
+        aggregate.days.add(this.crewPerfDateKey(defect.maintainedAt!));
+      }
+      if (inPeriod(defect.closureVerifiedAt)) {
+        aggregate.closed += 1;
+      }
+      aggregate.sentBack += defect.timelineEntries.length;
+      for (const image of defect.evidenceImages) {
+        aggregate.days.add(this.crewPerfDateKey(image.createdAt));
+      }
+    }
+    for (const row of onHandRows) {
+      const teamId = teamOf(row);
+      if (teamId) aggregateOf(teamId).onHand += 1;
+    }
+
+    const teamIds = Array.from(byTeam.keys());
+    const teams = teamIds.length
+      ? await this.prisma.team.findMany({
+          where: { id: { in: teamIds } },
+          select: { id: true, name: true, code: true, organization: { select: { name: true } } },
+        })
+      : [];
+    const teamById = new Map(teams.map((team) => [team.id, team]));
+
+    const rows = teamIds
+      .map((id) => {
+        const team = teamById.get(id);
+        const aggregate = byTeam.get(id)!;
+        const decided = aggregate.closed + aggregate.sentBack;
+        return {
+          teamId: id,
+          teamName: team?.name?.trim() || team?.code?.trim() || 'Unknown team',
+          companyName: team?.organization?.name?.trim() || null,
+          repaired: aggregate.repaired,
+          closed: aggregate.closed,
+          sentBack: aggregate.sentBack,
+          cannotRepair: aggregate.cannotRepair,
+          activeDays: aggregate.days.size,
+          avgHoursToDone: aggregate.hoursToDone.length
+            ? Math.round(
+                (aggregate.hoursToDone.reduce((sum, hours) => sum + hours, 0) /
+                  aggregate.hoursToDone.length) *
+                  10,
+              ) / 10
+            : null,
+          passRate: decided > 0 ? Math.round((aggregate.closed / decided) * 1000) / 10 : null,
+          onHand: aggregate.onHand,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.repaired - left.repaired ||
+          right.closed - left.closed ||
+          left.teamName.localeCompare(right.teamName),
+      );
+
+    const sum = (key: 'repaired' | 'closed' | 'sentBack' | 'cannotRepair' | 'onHand') =>
+      rows.reduce((total, row) => total + row[key], 0);
+    return {
+      period: label,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      totals: {
+        repaired: sum('repaired'),
+        closed: sum('closed'),
+        sentBack: sum('sentBack'),
+        cannotRepair: sum('cannotRepair'),
+        onHand: sum('onHand'),
+      },
+      teams: rows,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async buildMaintenancePerformance(
+    user: RequestUser,
+    fromInput?: string,
+    toInput?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const data = await this.aggregateMaintenancePerformance(user, fromInput, toInput);
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('MAINTENANCE PERFORMANCE');
+    sheet.addRow([`Maintenance crew performance — ${data.period}`]);
+    sheet.addRow([]);
+    const header = sheet.addRow([
+      'No',
+      'Team',
+      'Company',
+      'Repaired',
+      'Closed (verified)',
+      'Sent back',
+      'Cannot repair',
+      'Pass rate %',
+      'Avg hours assigned → done',
+      'Active days',
+      'On hand now',
+    ]);
+    header.font = { bold: true };
+
+    data.teams.forEach((row, index) => {
+      sheet.addRow([
+        index + 1,
+        row.teamName,
+        row.companyName ?? '',
+        row.repaired,
+        row.closed,
+        row.sentBack,
+        row.cannotRepair,
+        row.passRate ?? '',
+        row.avgHoursToDone ?? '',
+        row.activeDays,
+        row.onHand,
+      ]);
+    });
+
+    sheet.addRow([]);
+    const totalRow = sheet.addRow([
+      '',
+      'TOTAL',
+      '',
+      data.totals.repaired,
+      data.totals.closed,
+      data.totals.sentBack,
+      data.totals.cannotRepair,
+      '',
+      '',
+      '',
+      data.totals.onHand,
+    ]);
+    totalRow.font = { bold: true };
+
+    for (let column = 1; column <= 11; column += 1) {
+      sheet.getColumn(column).width = column === 2 || column === 3 ? 26 : column === 9 ? 24 : 14;
+    }
+
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    const filename = `maintenance-performance-${data.period.replace(/[^\dA-Za-z-]+/g, '_')}.xlsx`;
     return { buffer: Buffer.from(arrayBuffer), filename };
   }
 
