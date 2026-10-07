@@ -34,6 +34,7 @@ import {
   STAGE_LABEL,
   STATE_LABEL,
   type FindingItem,
+  type MaintenanceCategory,
   type RepairStage,
   type WorkPole,
 } from '../maintenance/types';
@@ -43,6 +44,7 @@ import { severityToMarkCategory } from '../utils';
 import { openStreetViewAt } from '../utils/streetView';
 
 const STAGES: RepairStage[] = ['BEFORE', 'DURING', 'AFTER'];
+const WORK_TYPE_ORDER: MaintenanceCategory[] = ['RENTIS', 'SELENGGARAAN', 'CAT_TIANG'];
 
 /** What the crew reports when they could not fix it (TNB then decides). */
 const CANNOT_REPAIR_OUTCOMES: Array<{ value: string; label: string }> = [
@@ -64,7 +66,7 @@ type PoleItem = OverlaidKejanggalan & { localFinding?: LocalFinding };
 export function MaintenancePoleScreen() {
   const navigation = useNavigation<RootStackScreenProps<'MaintenancePole'>['navigation']>();
   const route = useRoute<RootStackScreenProps<'MaintenancePole'>['route']>();
-  const { siteVisitId, assetId } = route.params;
+  const { siteVisitId, assetId, workType: preferredWorkType } = route.params;
   const { user } = useSession();
   const { isOffline, runQueueSync } = useSync();
   const theme = useTheme();
@@ -81,6 +83,8 @@ export function MaintenancePoleScreen() {
   const [adding, setAdding] = useState(false);
   const [findingItemId, setFindingItemId] = useState<string | null>(null);
   const [findingOption, setFindingOption] = useState<string | null>(null);
+  // Work type shown in the add form ('ALL' = every type the crew owns here).
+  const [findingType, setFindingType] = useState<MaintenanceCategory | 'ALL'>('ALL');
   const [findingNote, setFindingNote] = useState('');
   const [isAddingFinding, setIsAddingFinding] = useState(false);
 
@@ -121,6 +125,40 @@ export function MaintenancePoleScreen() {
     return (template?.items ?? []).filter((item) => surveyedPole.categories.includes(item.category));
   }, [pack, surveyedPole]);
   const chosenFinding = findingItems.find((item) => item.templateItemId === findingItemId) ?? null;
+  /** The work types this crew may add on this pole (its scope), in a fixed order. */
+  const ownedTypes = useMemo(
+    () => WORK_TYPE_ORDER.filter((type) => findingItems.some((item) => item.category === type)),
+    [findingItems],
+  );
+  const shownFindingItems = useMemo(
+    () =>
+      [...findingItems]
+        .filter((item) => findingType === 'ALL' || item.category === findingType)
+        .sort((left, right) => WORK_TYPE_ORDER.indexOf(left.category) - WORK_TYPE_ORDER.indexOf(right.category)),
+    [findingItems, findingType],
+  );
+
+  /** Show one work type; when a single item fits, pick it (and its only option). */
+  const chooseFindingType = (type: MaintenanceCategory | 'ALL') => {
+    setFindingType(type);
+    const fits = findingItems.filter((item) => type === 'ALL' || item.category === type);
+    const only = fits.length === 1 ? fits[0] : null;
+    setFindingItemId(only?.templateItemId ?? null);
+    setFindingOption(only && only.options.length === 1 ? only.options[0].value : null);
+  };
+
+  const startAdding = () => {
+    resetFinding();
+    // Open on the work type the crew filtered by, or their only one (their scope).
+    chooseFindingType(
+      preferredWorkType && ownedTypes.includes(preferredWorkType)
+        ? preferredWorkType
+        : ownedTypes.length === 1
+          ? ownedTypes[0]
+          : 'ALL',
+    );
+    setAdding(true);
+  };
 
   const kickSync = () => {
     if (!isOffline) void runQueueSync().catch(() => undefined);
@@ -429,10 +467,7 @@ export function MaintenancePoleScreen() {
           <AppButton
             label="+ Add Kejanggalan (not in survey)"
             variant="secondary"
-            onPress={() => {
-              resetFinding();
-              setAdding(true);
-            }}
+            onPress={startAdding}
           />
         </View>
       ) : null}
@@ -448,12 +483,37 @@ export function MaintenancePoleScreen() {
           <Text style={styles.muted}>
             Found after the survey (e.g. Rentis now needed). Take the BEFORE photo to add it, then repair it as usual.
           </Text>
+          {ownedTypes.length > 1 ? (
+            <View style={styles.typeRow}>
+              {(['ALL', ...ownedTypes] as Array<MaintenanceCategory | 'ALL'>).map((type) => {
+                const active = findingType === type;
+                return (
+                  <Pressable
+                    key={type}
+                    onPress={() => chooseFindingType(type)}
+                    style={[styles.typeChip, active && styles.typeChipActive]}
+                  >
+                    <Text style={[styles.typeChipText, active && styles.typeChipTextActive]}>
+                      {type === 'ALL' ? 'All' : CATEGORY_LABEL[type]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : ownedTypes.length === 1 ? (
+            <Text style={styles.hint}>Your work here: {CATEGORY_LABEL[ownedTypes[0]]}</Text>
+          ) : null}
           <Text style={styles.section}>Checklist item</Text>
-          {findingItems.map((candidate) => {
+          {shownFindingItems.map((candidate, index) => {
             const active = findingItemId === candidate.templateItemId;
+            const firstOfType =
+              findingType === 'ALL' && shownFindingItems[index - 1]?.category !== candidate.category;
             return (
+              <View key={candidate.templateItemId}>
+              {firstOfType && ownedTypes.length > 1 ? (
+                <Text style={styles.typeHeading}>{CATEGORY_LABEL[candidate.category]}</Text>
+              ) : null}
               <Pressable
-                key={candidate.templateItemId}
                 onPress={() => {
                   setFindingItemId(candidate.templateItemId);
                   setFindingOption(candidate.options.length === 1 ? candidate.options[0].value : null);
@@ -470,6 +530,7 @@ export function MaintenancePoleScreen() {
                   <Text style={styles.optionMeta}>{`  ·  ${CATEGORY_LABEL[candidate.category]}`}</Text>
                 </Text>
               </Pressable>
+              </View>
             );
           })}
           {chosenFinding && chosenFinding.options.length > 1 ? (
@@ -737,6 +798,25 @@ function createStyles(theme: Theme) {
     addRow: { marginBottom: 12 },
     optionMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textMuted },
     navButton: { flex: 1 },
+    typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+    typeChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+    },
+    typeChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+    typeChipText: { fontFamily: theme.fonts.bodySemibold, fontSize: 13, color: theme.colors.textSecondary },
+    typeChipTextActive: { color: theme.colors.textOnPrimary },
+    typeHeading: {
+      fontFamily: theme.fonts.bodySemibold,
+      fontSize: 12,
+      color: theme.colors.textMuted,
+      textTransform: 'uppercase',
+      marginTop: 8,
+      marginBottom: 2,
+    },
     sectionFirst: { fontFamily: theme.fonts.bodySemibold, fontSize: 13, color: theme.colors.textSecondary, marginBottom: 8 },
     polePhoto: { width: 120, height: 120, borderRadius: 8, backgroundColor: theme.colors.surfaceMuted },
     polePhotoLabel: { width: 120, fontFamily: theme.fonts.body, fontSize: 11, color: theme.colors.textSecondary, marginTop: 3 },

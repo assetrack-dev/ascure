@@ -84,7 +84,8 @@ export type RootStackParamList = {
   // Contractor maintenance mode (docs/PLAN-maintenance-flow.md §7.1).
   MaintenancePackages: undefined;
   MaintenancePackage: { siteVisitId: string; title: string };
-  MaintenancePole: { siteVisitId: string; assetId: string };
+  /** workType: the package screen's work-type filter — the add form opens on it. */
+  MaintenancePole: { siteVisitId: string; assetId: string; workType?: 'RENTIS' | 'CAT_TIANG' | 'SELENGGARAAN' };
   ImagePreview: ImagePreviewParams;
 };
 

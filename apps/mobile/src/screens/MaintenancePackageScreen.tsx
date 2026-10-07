@@ -223,7 +223,11 @@ export function MaintenancePackageScreen() {
   const cardRow = selected ?? nearest;
 
   const openPole = (assetId: string) =>
-    navigation.navigate('MaintenancePole', { siteVisitId, assetId });
+    navigation.navigate('MaintenancePole', {
+      siteVisitId,
+      assetId,
+      ...(workType === 'ALL' ? {} : { workType }),
+    });
 
   const openPhotos = (photos: PolePhoto[], index: number, code: string) =>
     navigation.navigate('ImagePreview', {
