@@ -101,6 +101,8 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 
 type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED" | "NO_TEAM" | "OVERDUE";
+/** "ALL" = every work type; otherwise every number on the page counts that one only. */
+type WorkTypeFilter = "ALL" | MaintenanceCategory;
 type ViewMode = "LIST" | "MAP";
 
 const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
@@ -167,6 +169,51 @@ function peState(row: PackagePencawang): PeState {
   if (p.todo + p.inProgress === 0) return "AWAITING";
   if (p.inProgress + p.awaiting + p.closed === 0) return "NOT_STARTED";
   return "IN_PROGRESS";
+}
+
+/**
+ * The PE narrowed to one work type: progress, poles, no-team and owners count
+ * that lane only — a Rentis crew sees whether ITS Rentis is done, not the
+ * whole Pencawang. null = the PE has no work of that type.
+ */
+function scopeRow(row: PackagePencawang, category: MaintenanceCategory): PackagePencawang | null {
+  const lane = row.lanes.find((candidate) => candidate.category === category);
+  if (!lane || lane.total === 0) return null;
+  return {
+    ...row,
+    poleCount: lane.poles ?? row.poleCount,
+    totals: {
+      total: lane.total,
+      open: lane.open,
+      finished: lane.finished,
+      unrouted: lane.unrouted ?? 0,
+      noTeam: lane.noTeam ?? 0,
+    },
+    progress: progressOf(lane),
+    lanes: [lane],
+    packages: row.packages.filter((pkg) => pkg.category === category || pkg.category === null),
+    poleSplits: row.poleSplits.filter(
+      (split) => split.category === category || split.category === null,
+    ),
+  };
+}
+
+/** Lane chip: done/total of that work type, green once all of it is done. */
+function laneChip(lane: PackagePencawang["lanes"][number]) {
+  const p = progressOf(lane);
+  const done = p.closed + p.awaiting;
+  const owner = lane.organization
+    ? lane.team
+      ? `${lane.organization.name} · ${lane.team.name}`
+      : lane.organization.name
+    : "No company yet";
+  return {
+    text: `${CATEGORY_LABEL[lane.category]} ${done}/${lane.total}`,
+    title: `${owner} — ${done} of ${lane.total} done${p.awaiting > 0 ? ` (${p.awaiting} to verify)` : ""}${
+      (lane.poles ?? 0) > 0 ? ` · ${lane.poles} pole${lane.poles === 1 ? "" : "s"}` : ""
+    }`,
+    tone: (done === lane.total ? "success" : lane.organization ? "neutral" : "warning") as Tone,
+  };
 }
 
 /** The packages that are the actor's own work (a company sees other lanes too). */
@@ -348,6 +395,8 @@ interface AssignDialogProps {
   onWithdraw: (pkg: MaintenancePackageRecord) => void;
   onSplitPoles: () => void;
   actorKind: PackageActorKind;
+  /** The page's work-type filter: open on that lane. */
+  initialCategory?: MaintenanceCategory | null;
 }
 
 function AssignDialog({
@@ -361,17 +410,21 @@ function AssignDialog({
   onWithdraw,
   onSplitPoles,
   actorKind,
+  initialCategory = null,
 }: AssignDialogProps) {
   // A contractor Manager only re-teams its own work (plan §15, J30).
   const isCompany = actorKind === "COMPANY";
   const lanesWithWork = row.lanes.filter((lane) => lane.total > 0);
   const assignableLanes = lanesWithWork.filter((lane) => lane.canAssign);
   const whole = row.packages.find((pkg) => pkg.category === null) ?? null;
+  const filteredLane = initialCategory
+    ? assignableLanes.find((lane) => lane.category === initialCategory)
+    : undefined;
   const [scope, setScope] = useState<"WHOLE" | "LANE">(
-    !row.canAssign || (row.packages.length > 0 && !whole) ? "LANE" : "WHOLE",
+    filteredLane || !row.canAssign || (row.packages.length > 0 && !whole) ? "LANE" : "WHOLE",
   );
   const [category, setCategory] = useState<MaintenanceCategory>(
-    (assignableLanes[0] ?? lanesWithWork[0])?.category ?? "SELENGGARAAN",
+    (filteredLane ?? assignableLanes[0] ?? lanesWithWork[0])?.category ?? "SELENGGARAAN",
   );
   const existing =
     scope === "WHOLE" ? whole : row.packages.find((pkg) => pkg.category === category) ?? null;
@@ -1251,6 +1304,7 @@ function MaintenancePackagesContent() {
   // Plan §16: repair report for one Pencawang (PDF) or a selection (ZIP).
   const [reportRows, setReportRows] = useState<PackagePencawang[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [workType, setWorkType] = useState<WorkTypeFilter>("ALL");
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<ViewMode>("LIST");
@@ -1350,9 +1404,27 @@ function MaintenancePackagesContent() {
 
   // Status + Mainhead filters. The Map view stops here: there the search box
   // flies to a Pencawang instead of hiding its neighbours.
+  // Work-type filter: each PE narrowed to that lane (PEs without it drop out).
+  const scopedRows = useMemo(() => {
+    const all = board?.pencawangs ?? [];
+    if (workType === "ALL") return all;
+    return all
+      .map((row) => scopeRow(row, workType))
+      .filter((row): row is PackagePencawang => row !== null);
+  }, [board, workType]);
+  // Dialogs always get the full PE, never the work-type slice.
+  const originalById = useMemo(
+    () => new Map((board?.pencawangs ?? []).map((row) => [row.siteVisitId, row])),
+    [board],
+  );
+  const original = useCallback(
+    (row: PackagePencawang) => originalById.get(row.siteVisitId) ?? row,
+    [originalById],
+  );
+
   const filteredRows = useMemo(
     () =>
-      (board?.pencawangs ?? []).filter((row) => {
+      scopedRows.filter((row) => {
         if (statusFilter === "AWAITING" && row.packages.length > 0) return false;
         if (statusFilter === "ASSIGNED" && row.packages.length === 0) return false;
         if (statusFilter === "NO_TEAM" && (row.totals.noTeam ?? 0) === 0) return false;
@@ -1360,7 +1432,7 @@ function MaintenancePackagesContent() {
         if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
         return true;
       }),
-    [board, mainheadFilter, statusFilter],
+    [board, mainheadFilter, scopedRows, statusFilter],
   );
 
   // The List view also narrows by the search box.
@@ -1378,7 +1450,7 @@ function MaintenancePackagesContent() {
   );
 
   const kpis = useMemo(() => {
-    const pencawangs = board?.pencawangs ?? [];
+    const pencawangs = scopedRows;
     const progress = pencawangs.map(progressOf).reduce(
       (sum, p) => ({
         todo: sum.todo + p.todo,
@@ -1400,8 +1472,9 @@ function MaintenancePackagesContent() {
       total,
       progress,
       closedPct: total === 0 ? 0 : Math.round((progress.closed / total) * 100),
+      // Always every work type (the cards double as the work-type filter).
       byType: CATEGORY_ORDER.map((category) => {
-        const lanes = pencawangs
+        const lanes = (board?.pencawangs ?? [])
           .map((row) => row.lanes.find((lane) => lane.category === category))
           .filter((lane): lane is NonNullable<typeof lane> => Boolean(lane));
         return {
@@ -1419,7 +1492,7 @@ function MaintenancePackagesContent() {
         };
       }),
     };
-  }, [board]);
+  }, [board, scopedRows]);
 
   const openBulk = () => {
     setDialogError("");
@@ -1541,20 +1614,42 @@ function MaintenancePackagesContent() {
                 </div>
 
                 <Card>
-                  <Eyebrow>Progress by work type</Eyebrow>
-                  <div className="mt-3 grid gap-4 sm:grid-cols-3">
-                    {kpis.byType.map((type) => (
-                      <div key={type.category}>
-                        <p className="mb-1.5 text-[13px] font-semibold text-[var(--foreground)]">
-                          {CATEGORY_LABEL[type.category]}
-                        </p>
-                        {type.total > 0 ? (
-                          <ProgressBar progress={type.progress} />
-                        ) : (
-                          <p className="text-[12px] text-[var(--muted)]">No Kejanggalan</p>
-                        )}
-                      </div>
-                    ))}
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <Eyebrow>Progress by work type</Eyebrow>
+                    <span className="text-[12px] text-[var(--muted)]">
+                      {workType === "ALL"
+                        ? "Pick a work type to count only that work on every row"
+                        : `Showing ${CATEGORY_LABEL[workType]} only`}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    {kpis.byType.map((type) => {
+                      const active = workType === type.category;
+                      return (
+                        <button
+                          key={type.category}
+                          type="button"
+                          aria-pressed={active}
+                          disabled={type.total === 0 && !active}
+                          onClick={() => setWorkType(active ? "ALL" : type.category)}
+                          title={active ? "Show every work type" : `Count ${CATEGORY_LABEL[type.category]} only`}
+                          className={`rounded-[var(--radius-control)] border px-3 py-2.5 text-left transition-colors disabled:cursor-default ${
+                            active
+                              ? "border-[var(--brand)] bg-[var(--brand-soft)]"
+                              : "border-[var(--line)] hover:border-[var(--line-strong)] disabled:hover:border-[var(--line)]"
+                          }`}
+                        >
+                          <p className="mb-1.5 text-[13px] font-semibold text-[var(--foreground)]">
+                            {CATEGORY_LABEL[type.category]}
+                          </p>
+                          {type.total > 0 ? (
+                            <ProgressBar progress={type.progress} />
+                          ) : (
+                            <p className="text-[12px] text-[var(--muted)]">No Kejanggalan</p>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-3">
                     {PROGRESS_PARTS.map((part) => (
@@ -1590,6 +1685,19 @@ function MaintenancePackagesContent() {
                       </option>
                     ))}
                   </select>
+                  <select
+                    aria-label="Work type"
+                    value={workType}
+                    onChange={(event) => setWorkType(event.target.value as WorkTypeFilter)}
+                    className={filterSelectClass}
+                  >
+                    <option value="ALL">All work types</option>
+                    {CATEGORY_ORDER.map((category) => (
+                      <option key={category} value={category}>
+                        {CATEGORY_LABEL[category]} only
+                      </option>
+                    ))}
+                  </select>
                   <Seg
                     aria-label="Assignment status"
                     options={isCompany ? COMPANY_STATUS_OPTIONS : STATUS_OPTIONS}
@@ -1608,8 +1716,8 @@ function MaintenancePackagesContent() {
                     onAdd={addSelected}
                     onAssign={openBulk}
                     onClear={() => setSelected(new Set())}
-                    onOpenPoles={setPoleRow}
-                    onReports={setReportRows}
+                    onOpenPoles={(row) => setPoleRow(original(row))}
+                    onReports={(picked) => setReportRows(picked.map(original))}
                   />
                 ) : (
                   <>
@@ -1704,21 +1812,14 @@ function MaintenancePackagesContent() {
                                     <div className="flex flex-wrap gap-1.5">
                                       {row.lanes
                                         .filter((lane) => lane.total > 0)
-                                        .map((lane) => (
-                                          <Chip
-                                            key={lane.category}
-                                            tone={lane.organization ? "neutral" : "warning"}
-                                            title={
-                                              lane.organization
-                                                ? lane.team
-                                                  ? `${lane.organization.name} · ${lane.team.name}`
-                                                  : lane.organization.name
-                                                : "No company yet"
-                                            }
-                                          >
-                                            {CATEGORY_LABEL[lane.category]} {lane.open}
-                                          </Chip>
-                                        ))}
+                                        .map((lane) => {
+                                          const chip = laneChip(lane);
+                                          return (
+                                            <Chip key={lane.category} tone={chip.tone} title={chip.title}>
+                                              {chip.text}
+                                            </Chip>
+                                          );
+                                        })}
                                     </div>
                                   </td>
                                   <td className={tableCellClass}>
@@ -1741,12 +1842,12 @@ function MaintenancePackagesContent() {
                                     )}
                                   </td>
                                   <td className={`${tableCellClass} whitespace-nowrap text-right`}>
-                                    <Tbtn variant="ghost" onClick={() => setPoleRow(row)} className="mr-1">
+                                    <Tbtn variant="ghost" onClick={() => setPoleRow(original(row))} className="mr-1">
                                       Poles
                                     </Tbtn>
                                     <Tbtn
                                       variant="ghost"
-                                      onClick={() => setReportRows([row])}
+                                      onClick={() => setReportRows([original(row)])}
                                       className="mr-1"
                                       title="Laporan Pembaikan Kejanggalan (PDF)"
                                     >
@@ -1755,7 +1856,7 @@ function MaintenancePackagesContent() {
                                     {board.canAssign ? (
                                       <Tbtn
                                         variant="ghost"
-                                        onClick={() => setFindingRow(row)}
+                                        onClick={() => setFindingRow(original(row))}
                                         className="mr-1"
                                         title="Add a Kejanggalan found after the survey"
                                       >
@@ -1767,7 +1868,7 @@ function MaintenancePackagesContent() {
                                         variant={row.packages.length === 0 ? "primary" : "secondary"}
                                         onClick={() => {
                                           setDialogError("");
-                                          setDialogRow(row);
+                                          setDialogRow(original(row));
                                         }}
                                       >
                                         {row.packages.length === 0 ? "Assign" : "Manage"}
@@ -1820,6 +1921,7 @@ function MaintenancePackagesContent() {
           onClose={() => (isSaving ? undefined : setDialogRow(null))}
           onWithdraw={setWithdrawTarget}
           actorKind={board.actorKind}
+          initialCategory={workType === "ALL" ? null : workType}
           onSplitPoles={() => {
             setPoleRow(dialogRow);
             setDialogRow(null);
@@ -1889,6 +1991,7 @@ function MaintenancePackagesContent() {
           token={session.token}
           rows={reportRows}
           board={board}
+          initialCategory={workType === "ALL" ? null : workType}
           onClose={() => setReportRows(null)}
           onUnauthorized={handleLogout}
         />

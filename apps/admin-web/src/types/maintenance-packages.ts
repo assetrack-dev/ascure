@@ -41,6 +41,10 @@ export interface PackageLane {
   finished: number;
   /** Routed, not finished, no team yet (absent from older APIs). */
   noTeam?: number;
+  /** Open, not routed to any company (absent from older APIs). */
+  unrouted?: number;
+  /** Distinct poles carrying this work type (absent from older APIs). */
+  poles?: number;
   progress?: PackageProgress;
   organization: PackageOrgRef | null;
   team: PackageOrgRef | null;
