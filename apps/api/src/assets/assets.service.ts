@@ -70,6 +70,24 @@ import {
   parseSavtPoleCode,
 } from '@ascure/shared-utils';
 import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
+import {
+  addToRepairSummary,
+  categoryDefectWhere,
+  emptyRepairSummary,
+  parseCategories,
+  repairDefectWhere,
+  repairStage,
+  type PoleRepairSummary,
+  type RepairScope,
+} from './map-repair.util';
+
+/** Everything a map query needs to scope the caller, resolved once per request. */
+type MapContext = {
+  ctx: ScopeContext;
+  scopeWhere: Prisma.SiteVisitWhereInput;
+  /** null = no repair view (admin, TNB, survey-only company, or no work yet). */
+  repair: RepairScope | null;
+};
 
 const ASSET_CODE_SCOPE_CONFLICT_MESSAGE =
   'An asset with this code already exists in this Pencawang.';
@@ -187,6 +205,7 @@ export class AssetsService {
     user: RequestUser,
     ctx: ScopeContext,
     scopeWhere: Prisma.SiteVisitWhereInput,
+    repair: RepairScope | null = null,
   ): Prisma.AssetWhereInput {
     if (ctx.isAdmin) {
       return {};
@@ -201,20 +220,72 @@ export class AssetsService {
       OR: [
         { inspections: { some: { siteVisit: scopeWhere } } },
         { createdDuringVisit: scopeWhere },
+        // Repair view: every pole of a Pencawang carrying the company's routed
+        // work (its own poles highlighted, the rest give route context).
+        ...(repair ? [{ substationId: { in: repair.substationIds } }] : []),
       ],
     };
+  }
+
+  private async mapContext(user: RequestUser): Promise<MapContext> {
+    const ctx = await buildScopeContext(this.prisma, user);
+    return {
+      ctx,
+      scopeWhere: siteVisitMapWhere(user, ctx),
+      repair: await this.repairScope(user, ctx),
+    };
+  }
+
+  /**
+   * A maintenance company's Manager / Supervisor follows the Kejanggalan routed
+   * to its company (a Manager: plus its subcontractors — ctx.maintenanceOrgIds,
+   * same pool as the Maintenance Packages board). null when there is none.
+   */
+  private async repairScope(user: RequestUser, ctx: ScopeContext): Promise<RepairScope | null> {
+    if (ctx.isAdmin || ctx.isClientViewer) return null;
+    if (user.role !== UserRole.MANAGER && user.role !== UserRole.SUPERVISOR) return null;
+    const orgIds = ctx.maintenanceOrgIds;
+    if (orgIds.length === 0) return null;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT DISTINCT x."id" FROM (
+        SELECT sv."substationId" AS "id"
+        FROM "MaintenancePackage" mp
+        JOIN "SiteVisit" sv ON sv."id" = mp."siteVisitId"
+        WHERE mp."tenantId" = ${user.tenantId}::uuid
+          AND mp."maintenanceOrganizationId" = ANY(${orgIds}::uuid[])
+        UNION
+        SELECT sv."substationId"
+        FROM "MaintenancePoleAssignment" mpa
+        JOIN "SiteVisit" sv ON sv."id" = mpa."siteVisitId"
+        WHERE mpa."tenantId" = ${user.tenantId}::uuid
+          AND mpa."maintenanceOrganizationId" = ANY(${orgIds}::uuid[])
+        UNION
+        SELECT a."substationId"
+        FROM "Defect" d
+        JOIN "InspectionItemResult" r ON r."id" = d."inspectionItemResultId"
+        JOIN "Inspection" i ON i."id" = r."inspectionId"
+        JOIN "Asset" a ON a."id" = i."assetId"
+        WHERE a."tenantId" = ${user.tenantId}::uuid
+          AND d."maintenanceOrganizationId" = ANY(${orgIds}::uuid[])
+          AND r."isDefect" = TRUE
+      ) x
+      WHERE x."id" IS NOT NULL
+    `;
+    if (rows.length === 0) return null;
+    return { orgIds, substationIds: rows.map((row) => row.id) };
   }
 
   private async loadMapAssets(
     user: RequestUser,
     extraWhere?: Prisma.AssetWhereInput,
     take?: number,
+    context?: MapContext,
+    repairCategories: MaintenanceCategory[] = [],
   ) {
-    const ctx = await buildScopeContext(this.prisma, user);
     // Map scope: a TECHNICIAN additionally sees (read-only) their company's other
     // teams working a MAINHEAD where their own team works, so same-area crews can
     // spot already-inspected poles. No-op for every other role (== oversight).
-    const scopeWhere = siteVisitMapWhere(user, ctx);
+    const { ctx, scopeWhere, repair } = context ?? (await this.mapContext(user));
 
     const where: Prisma.AssetWhereInput = {
       tenantId: user.tenantId,
@@ -224,7 +295,7 @@ export class AssetsService {
       // (the Mainhead-wide points view does), and a client viewer's scope is a
       // substation filter too — spreading both would let one silently replace
       // the other. See the same guard in aggregateMap.
-      AND: [this.mapScopeWhere(user, ctx, scopeWhere), extraWhere ?? {}],
+      AND: [this.mapScopeWhere(user, ctx, scopeWhere, repair), extraWhere ?? {}],
     };
 
     const assets = await this.prisma.asset.findMany({
@@ -349,6 +420,42 @@ export class AssetsService {
       }
     }
 
+    // Repair view: the caller's own routed Kejanggalan per pole, and which poles
+    // it may also reach as a surveyor (only those keep checklist editing).
+    let repairByAsset: Map<string, PoleRepairSummary> | null = null;
+    let surveyAssetIds: Set<string> | null = null;
+    if (repair && assetIds.length > 0) {
+      const [repairDefects, surveyRows] = await Promise.all([
+        this.prisma.defect.findMany({
+          where: {
+            AND: [
+              repairDefectWhere(repair.orgIds, repairCategories),
+              { inspectionItemResult: { inspection: { assetId: { in: assetIds } } } },
+            ],
+          },
+          select: {
+            lifecycleStatus: true,
+            status: true,
+            isEmergency: true,
+            maintenanceCategory: true,
+            inspectionItemResult: { select: { inspection: { select: { assetId: true } } } },
+          },
+        }),
+        this.prisma.asset.findMany({
+          where: { id: { in: assetIds }, ...this.mapScopeWhere(user, ctx, scopeWhere) },
+          select: { id: true },
+        }),
+      ]);
+      repairByAsset = new Map();
+      for (const defect of repairDefects) {
+        const assetId = defect.inspectionItemResult.inspection.assetId;
+        const summary = repairByAsset.get(assetId) ?? emptyRepairSummary();
+        addToRepairSummary(summary, defect);
+        repairByAsset.set(assetId, summary);
+      }
+      surveyAssetIds = new Set(surveyRows.map((row) => row.id));
+    }
+
     return assets.map(({ inspections, createdDuringVisit, ...asset }) => {
       const latest = inspections[0] ?? null;
       // Prefer the latest submitted inspection's visit ("inspected by"), then
@@ -377,6 +484,13 @@ export class AssetsService {
             : null,
         hasEmergencyDefect: defectSummary?.hasEmergency ?? false,
         hasActiveDefect: defectSummary?.hasActiveDefect ?? false,
+        // Repair view only (absent otherwise): null = not the caller's work.
+        ...(repairByAsset
+          ? {
+              repair: repairByAsset.get(asset.id) ?? null,
+              surveyAccess: surveyAssetIds?.has(asset.id) ?? false,
+            }
+          : {}),
       };
     });
   }
@@ -387,7 +501,10 @@ export class AssetsService {
    * shared `inspections` relation key. Returns {} when no filter is set. Applied
    * at every level, so they narrow the bubble counts and the leaf points alike.
    */
-  private mapFilterWhere(query: MapQueryDto): Prisma.AssetWhereInput {
+  private mapFilterWhere(
+    query: MapQueryDto,
+    repair: RepairScope | null = null,
+  ): Prisma.AssetWhereInput {
     const and: Prisma.AssetWhereInput[] = [];
 
     if (query.inspected === 'inspected') {
@@ -426,29 +543,24 @@ export class AssetsService {
       });
     }
 
-    const categories = splitCsv(query.categories).filter(
-      (value): value is MaintenanceCategory =>
-        (Object.values(MaintenanceCategory) as string[]).includes(value),
-    );
+    const categories = parseCategories(splitCsv(query.categories));
     if (categories.length > 0) {
       // The map buckets a null defect category as SELENGGARAAN, so match null
       // too when SELENGGARAAN is among the chosen categories.
-      const categoryMatch: Prisma.DefectWhereInput[] = [
-        { maintenanceCategory: { in: categories } },
-      ];
-      if (categories.includes(MaintenanceCategory.SELENGGARAAN)) {
-        categoryMatch.push({ maintenanceCategory: null });
-      }
+      const openOfCategory: Prisma.DefectWhereInput = {
+        AND: [{ status: { in: [...OPEN_DEFECT_STATUSES] } }, categoryDefectWhere(categories)],
+      };
       and.push({
         inspections: {
           some: {
             itemResults: {
               some: {
                 isDefect: true,
-                defect: {
-                  status: { in: [...OPEN_DEFECT_STATUSES] },
-                  OR: categoryMatch,
-                },
+                // Repair view: the company's own work of that type counts even
+                // once repaired, so a finished Rentis pole stays on its map.
+                defect: repair
+                  ? { OR: [openOfCategory, repairDefectWhere(repair.orgIds, categories)] }
+                  : openOfCategory,
               },
             },
           },
@@ -498,13 +610,12 @@ export class AssetsService {
    * are sourced elsewhere (existing endpoints / a static enum).
    */
   async mapFilterOptions(user: RequestUser) {
-    const ctx = await buildScopeContext(this.prisma, user);
-    const scopeWhere = siteVisitMapWhere(user, ctx);
+    const { ctx, scopeWhere, repair } = await this.mapContext(user);
     const where: Prisma.AssetWhereInput = {
       tenantId: user.tenantId,
       latitude: { not: null },
       longitude: { not: null },
-      ...this.mapScopeWhere(user, ctx, scopeWhere),
+      ...this.mapScopeWhere(user, ctx, scopeWhere, repair),
     };
 
     const substations = await this.prisma.substation.findMany({
@@ -531,6 +642,8 @@ export class AssetsService {
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
       pencawang,
+      // The page offers (and defaults to) the "Repairs" colour mode.
+      repairView: repair !== null,
     };
   }
 
@@ -626,17 +739,25 @@ export class AssetsService {
    * per-asset points for a single Pencawang. See docs/PLAN-hierarchical-map.md.
    */
   async listMap(user: RequestUser, query: MapQueryDto) {
+    const context = await this.mapContext(user);
     if (!query.level) {
-      return this.loadMapAssets(user);
+      return this.loadMapAssets(user, undefined, undefined, context);
     }
+    const categories = parseCategories(splitCsv(query.categories));
     if (query.level === 'points') {
       // Single-Pencawang view: every pole (no cap — a Pencawang is bounded).
       if (query.pencawangId) {
         const [poles, pencawang] = await Promise.all([
-          this.loadMapAssets(user, {
-            substationId: query.pencawangId,
-            ...this.mapFilterWhere(query),
-          }),
+          this.loadMapAssets(
+            user,
+            {
+              substationId: query.pencawangId,
+              ...this.mapFilterWhere(query, context.repair),
+            },
+            undefined,
+            context,
+            categories,
+          ),
           this.pencawangCheckIn(user, query.pencawangId),
         ]);
         return { poles, pencawang };
@@ -658,15 +779,17 @@ export class AssetsService {
                     longitude: { gte: bbox.minLng, lte: bbox.maxLng },
                   }
                 : {}),
-              ...this.mapFilterWhere(query),
+              ...this.mapFilterWhere(query, context.repair),
             },
             MAINHEAD_POINTS_CAP + 1,
+            context,
+            categories,
           ),
           // STABLE per-Pencawang anchor points: the centroid of ALL the
           // Pencawang's poles (viewport-independent), so the on-map label sits
           // still instead of drifting to the visible-poles centroid on every pan.
           // Reuses the Pencawang-bubble aggregation.
-          this.aggregateMap(user, 'pencawang', query),
+          this.aggregateMap(user, 'pencawang', query, context),
         ]);
         const truncated = rows.length > MAINHEAD_POINTS_CAP;
         return {
@@ -685,7 +808,7 @@ export class AssetsService {
         'The points level requires pencawangId (one Pencawang) or mainheadId (all poles in a Mainhead).',
       );
     }
-    return this.aggregateMap(user, query.level, query);
+    return this.aggregateMap(user, query.level, query, context);
   }
 
   /**
@@ -698,9 +821,9 @@ export class AssetsService {
     user: RequestUser,
     level: 'region' | 'mainhead' | 'pencawang',
     query: MapQueryDto,
+    context?: MapContext,
   ) {
-    const ctx = await buildScopeContext(this.prisma, user);
-    const scopeWhere = siteVisitMapWhere(user, ctx);
+    const { ctx, scopeWhere, repair } = context ?? (await this.mapContext(user));
 
     // Parent drill-down filter (a Region's mainheads, a Mainhead's pencawangs).
     const substationFilter: Prisma.SubstationWhereInput = {};
@@ -722,12 +845,12 @@ export class AssetsService {
       // scope entirely and showed a TNB user another Mainhead's poles. AND-ing
       // them keeps both constraints.
       AND: [
-        this.mapScopeWhere(user, ctx, scopeWhere),
+        this.mapScopeWhere(user, ctx, scopeWhere, repair),
         ...(Object.keys(substationFilter).length > 0
           ? [{ substation: substationFilter }]
           : []),
       ],
-      ...this.mapFilterWhere(query),
+      ...this.mapFilterWhere(query, repair),
     };
 
     // Count + centroid per Pencawang (the DB does the grouping).
@@ -792,6 +915,46 @@ export class AssetsService {
       }
     }
 
+    // Repair view: the caller's own routed Kejanggalan per Pencawang.
+    type RepairTally = { poles: Set<string>; total: number; done: number; emergency: number };
+    const repairBySub = new Map<string, RepairTally>();
+    if (repair) {
+      const repairDefects = await this.prisma.defect.findMany({
+        where: {
+          AND: [
+            repairDefectWhere(repair.orgIds, parseCategories(splitCsv(query.categories))),
+            { inspectionItemResult: { inspection: { asset: where } } },
+          ],
+        },
+        select: {
+          lifecycleStatus: true,
+          status: true,
+          isEmergency: true,
+          inspectionItemResult: {
+            select: {
+              inspection: { select: { assetId: true, asset: { select: { substationId: true } } } },
+            },
+          },
+        },
+      });
+      for (const defect of repairDefects) {
+        const { assetId, asset } = defect.inspectionItemResult.inspection;
+        if (!asset.substationId) continue;
+        const tally = repairBySub.get(asset.substationId) ?? {
+          poles: new Set<string>(),
+          total: 0,
+          done: 0,
+          emergency: 0,
+        };
+        const stage = repairStage(defect);
+        tally.poles.add(assetId);
+        tally.total += 1;
+        if (stage === 'closed' || stage === 'awaiting') tally.done += 1;
+        else if (defect.isEmergency) tally.emergency += 1;
+        repairBySub.set(asset.substationId, tally);
+      }
+    }
+
     // Pencawang metadata (name + its mainhead + region) for the roll-up keys.
     const substationIds = grouped.map((g) => g.substationId);
     const substations = await this.prisma.substation.findMany({
@@ -823,6 +986,7 @@ export class AssetsService {
       inspected: number;
       openDefects: number;
       emergency: number;
+      repair: { poles: number; total: number; done: number; emergency: number };
     };
     const buckets = new Map<string, Bucket>();
 
@@ -855,6 +1019,7 @@ export class AssetsService {
             inspected: 0,
             openDefects: 0,
             emergency: 0,
+            repair: { poles: 0, total: 0, done: 0, emergency: 0 },
           }),
         );
       }
@@ -864,6 +1029,13 @@ export class AssetsService {
       bucket.inspected += inspectedBySub.get(g.substationId) ?? 0;
       bucket.openDefects += defectAssetsBySub.get(g.substationId)?.size ?? 0;
       bucket.emergency += emergencyAssetsBySub.get(g.substationId)?.size ?? 0;
+      const tally = repairBySub.get(g.substationId);
+      if (tally) {
+        bucket.repair.poles += tally.poles.size;
+        bucket.repair.total += tally.total;
+        bucket.repair.done += tally.done;
+        bucket.repair.emergency += tally.emergency;
+      }
     }
 
     return [...buckets.values()]
@@ -878,6 +1050,8 @@ export class AssetsService {
         notInspected: b.count - b.inspected,
         openDefects: b.openDefects,
         emergency: b.emergency,
+        // Repair view only: the caller's own Kejanggalan in this group.
+        ...(repair ? { repair: b.repair } : {}),
       }))
       .sort((a, b) =>
         a.name.localeCompare(b.name, 'en', {
@@ -1868,6 +2042,87 @@ export class AssetsService {
           }
         : null,
     };
+  }
+
+  /**
+   * The pole's routed Kejanggalan with their repair photos (Asset Map panel,
+   * repair view). A contractor sees only its own company's work (a Manager:
+   * plus its subcontractors); ADMIN every routed one; TNB those in its Mainheads.
+   */
+  async getRepairs(user: RequestUser, id: string) {
+    const ctx = await buildScopeContext(this.prisma, user);
+    const clientWhere: Prisma.AssetWhereInput =
+      ctx.isClientViewer && !ctx.isAdmin
+        ? { substation: { mainheadId: { in: ctx.clientMainheadIds } } }
+        : {};
+    const asset = await this.prisma.asset.findFirst({
+      where: { id, tenantId: user.tenantId, ...clientWhere },
+      select: { id: true },
+    });
+    if (!asset) {
+      throw new NotFoundException('Asset not found.');
+    }
+
+    const orgIds = ctx.isAdmin || ctx.isClientViewer ? null : ctx.maintenanceOrgIds;
+    if (orgIds !== null && orgIds.length === 0) {
+      return [];
+    }
+
+    const defects = await this.prisma.defect.findMany({
+      where: {
+        AND: [
+          orgIds === null
+            ? { maintenanceOrganizationId: { not: null } }
+            : repairDefectWhere(orgIds),
+          { inspectionItemResult: { isDefect: true, inspection: { assetId: asset.id } } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        severity: true,
+        status: true,
+        lifecycleStatus: true,
+        isEmergency: true,
+        maintenanceCategory: true,
+        maintenanceOrganization: { select: { id: true, name: true } },
+        assignedToTeam: { select: { id: true, name: true } },
+        inspectionItemResult: { select: { label: true, remark: true } },
+        evidenceImages: {
+          where: { evidenceType: { not: 'EMERGENCY' } },
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            evidenceType: true,
+            fileName: true,
+            storageKey: true,
+            contentType: true,
+            url: true,
+            latitude: true,
+            longitude: true,
+            timestamp: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    return defects.map((defect) => ({
+      id: defect.id,
+      label: defect.inspectionItemResult.label,
+      remark: defect.inspectionItemResult.remark,
+      severity: defect.severity,
+      isEmergency: defect.isEmergency,
+      category: defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN,
+      stage: repairStage(defect),
+      organization: defect.maintenanceOrganization,
+      team: defect.assignedToTeam,
+      photos: defect.evidenceImages.map((image) => ({
+        ...image,
+        timestamp: image.timestamp?.toISOString() ?? null,
+        createdAt: image.createdAt.toISOString(),
+      })),
+    }));
   }
 
   async getInspections(user: RequestUser, id: string) {

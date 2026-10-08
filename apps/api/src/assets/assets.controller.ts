@@ -66,6 +66,12 @@ export class AssetsController {
     return this.assetsService.getById(user, params.id);
   }
 
+  // The pole's routed Kejanggalan + repair photos (Asset Map panel, repair view).
+  @Get(':id/repairs')
+  getRepairs(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
+    return this.assetsService.getRepairs(user, params.id);
+  }
+
   @Get(':id/inspections')
   getInspections(@CurrentUser() user: RequestUser, @Param() params: AssetIdParamDto) {
     return this.assetsService.getInspections(user, params.id);
