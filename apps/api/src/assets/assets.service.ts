@@ -844,13 +844,16 @@ export class AssetsService {
       // later key silently REPLACE the earlier one — which dropped the client
       // scope entirely and showed a TNB user another Mainhead's poles. AND-ing
       // them keeps both constraints.
+      // ⚠ The filter dock's conditions are themselves an AND — spread here they
+      // REPLACED this one, so any active filter dropped the caller's scope and
+      // the drill-down (a filtered PAHANG listed every Mainhead in the country).
       AND: [
         this.mapScopeWhere(user, ctx, scopeWhere, repair),
         ...(Object.keys(substationFilter).length > 0
           ? [{ substation: substationFilter }]
           : []),
+        this.mapFilterWhere(query, repair),
       ],
-      ...this.mapFilterWhere(query, repair),
     };
 
     // Count + centroid per Pencawang (the DB does the grouping).
