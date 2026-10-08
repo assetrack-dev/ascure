@@ -314,6 +314,31 @@ describe('Authz · client (TNB) progress view', () => {
         expect(names).not.toContain('CLIENT MH OUT');
       });
 
+      // The filter dock's conditions are an AND too: spread after the scope
+      // AND, they REPLACED it — any active filter dropped both the client
+      // scope and the drill-down (2026-10-08: a drilled PAHANG listed every
+      // Mainhead in the country).
+      it('and still does with a map filter active', async () => {
+        const res = await http(app, token.client).get(
+          '/api/v1/assets/map?level=mainhead&statuses=ACTIVE',
+        );
+        expect(res.status).toBe(200);
+        const names = res.body.map((b: { name: string }) => b.name);
+        expect(names).toContain('CLIENT MH IN');
+        expect(names).not.toContain('CLIENT MH OUT');
+      });
+
+      it('and a filtered drill-down keeps its parent', async () => {
+        // Substation 1 (fixture) is in Manager A's scope but under no Mainhead,
+        // so drilling into the client Mainhead must not list it.
+        const res = await http(app, token.mgrA).get(
+          `/api/v1/assets/map?level=pencawang&mainheadId=${C.mainhead}&statuses=ACTIVE`,
+        );
+        expect(res.status).toBe(200);
+        const names = res.body.map((b: { name: string }) => b.name);
+        expect(names).not.toContain('Substation 1');
+      });
+
       it('the Mainhead-wide pole layer refuses an unassigned Mainhead', async () => {
         const res = await http(app, token.client).get(
           `/api/v1/assets/map?level=points&mainheadId=${C.otherMainhead}`,
