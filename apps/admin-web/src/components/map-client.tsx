@@ -40,7 +40,12 @@ import {
   isMapAssetInspected,
   mapAssetMarkerColor,
   mapAssetPriority,
+  mapAssetRepairPriority,
+  mapAssetRepairState,
   mapFiltersActive,
+  REPAIR_STATE_COLOR,
+  REPAIR_STATE_LABEL,
+  REPAIR_STATES,
   EMPTY_MAP_FILTERS,
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
@@ -71,6 +76,11 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 const COLOR_OPTIONS: SegOption<MapColorMode>[] = [
   { value: "inspection", label: "Inspection" },
   { value: "defect", label: "Defects" },
+];
+// A maintenance company (repair work routed to it) also gets its repair stage.
+const REPAIR_COLOR_OPTIONS: SegOption<MapColorMode>[] = [
+  ...COLOR_OPTIONS,
+  { value: "repair", label: "Repairs" },
 ];
 
 // Base-map layer toggle. "Satellite" is Google's hybrid (imagery + labels), the
@@ -350,6 +360,9 @@ function MapContent() {
   // exclusive with the pole panel — they share the right edge.
   const [checkInPanelOpen, setCheckInPanelOpen] = useState(false);
   const [colorMode, setColorMode] = useState<MapColorMode>("inspection");
+  // The caller has repair work routed to its company: offer (and open on) the
+  // Repairs view — its own poles by repair stage, the rest grey.
+  const [repairView, setRepairView] = useState(false);
   const [mapBaseType, setMapBaseType] = useState<MapBaseType>("hybrid");
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [assetTypes, setAssetTypes] = useState<{ id: string; name: string }[]>([]);
@@ -594,6 +607,8 @@ function MapContent() {
       .then((o) => {
         setMainheadOptions(o.mainheads);
         setPencawangOptions(o.pencawang);
+        setRepairView(o.repairView);
+        if (o.repairView) setColorMode("repair");
       })
       .catch(() => {});
     fetchTeams(token)
@@ -652,18 +667,37 @@ function MapContent() {
     let inspected = 0;
     let openDefects = 0;
     let emergency = 0;
+    // Repair view: the caller's own Kejanggalan (bubbles and poles alike).
+    const repair = { poles: 0, total: 0, done: 0, emergency: 0 };
+    const repairStates = Object.fromEntries(REPAIR_STATES.map((state) => [state, 0])) as Record<
+      (typeof REPAIR_STATES)[number],
+      number
+    >;
     if (mode === "bubbles") {
       for (const b of bubbles) {
         count += b.count;
         inspected += b.inspected;
         openDefects += b.openDefects;
         emergency += b.emergency;
+        if (b.repair) {
+          repair.poles += b.repair.poles;
+          repair.total += b.repair.total;
+          repair.done += b.repair.done;
+          repair.emergency += b.repair.emergency;
+        }
       }
     } else {
       for (const a of points) {
         if (isMapAssetInspected(a)) inspected += 1;
         if (a.openDefectCount > 0) openDefects += 1;
         if (a.hasEmergencyDefect) emergency += 1;
+        repairStates[mapAssetRepairState(a)] += 1;
+        if (a.repair && a.repair.total > 0) {
+          repair.poles += 1;
+          repair.total += a.repair.total;
+          repair.done += a.repair.closed + a.repair.awaiting;
+          repair.emergency += a.repair.emergency;
+        }
       }
       count = points.length;
     }
@@ -674,6 +708,12 @@ function MapContent() {
       openDefects,
       emergency,
       inspectedPct: count > 0 ? Math.round((inspected / count) * 100) : 0,
+      repair: {
+        ...repair,
+        open: repair.total - repair.done,
+        donePct: repair.total > 0 ? Math.round((repair.done / repair.total) * 100) : 0,
+        states: repairStates,
+      },
     };
   }, [mode, bubbles, points]);
 
@@ -681,10 +721,10 @@ function MapContent() {
     () => [...bubbles].sort((a, b) => b.count - a.count),
     [bubbles],
   );
-  const pointRows = useMemo(
-    () => [...points].sort((a, b) => mapAssetPriority(b) - mapAssetPriority(a)),
-    [points],
-  );
+  const pointRows = useMemo(() => {
+    const priority = colorMode === "repair" ? mapAssetRepairPriority : mapAssetPriority;
+    return [...points].sort((a, b) => priority(b) - priority(a));
+  }, [colorMode, points]);
 
   // The SAME NO TIANG RONDAAN pre-check the inspector runs before completing a
   // visit and the DC sees on the Site Visit page, re-run over the poles on the
@@ -841,11 +881,26 @@ function MapContent() {
           </div>
 
           <div className="flex items-center gap-2">
-            <KpiTile label="Poles" value={kpis.count} />
-            <KpiTile label="Inspected" value={`${kpis.inspectedPct}%`} />
-            <KpiTile label="Open defects" value={kpis.openDefects} />
-            {isClientViewer ? null : (
-              <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
+            {colorMode === "repair" ? (
+              <>
+                <KpiTile label="Your poles" value={`${kpis.repair.poles}/${kpis.count}`} />
+                <KpiTile label="Repaired" value={`${kpis.repair.donePct}%`} />
+                <KpiTile label="Open repairs" value={kpis.repair.open} />
+                <KpiTile
+                  label="Emergency"
+                  value={kpis.repair.emergency}
+                  alarm={kpis.repair.emergency > 0}
+                />
+              </>
+            ) : (
+              <>
+                <KpiTile label="Poles" value={kpis.count} />
+                <KpiTile label="Inspected" value={`${kpis.inspectedPct}%`} />
+                <KpiTile label="Open defects" value={kpis.openDefects} />
+                {isClientViewer ? null : (
+                  <KpiTile label="Emergency" value={kpis.emergency} alarm={kpis.emergency > 0} />
+                )}
+              </>
             )}
             <Tbtn
               onClick={() =>
@@ -878,7 +933,8 @@ function MapContent() {
           ) : itemCount === 0 ? (
             <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-[var(--muted)]">
               Nothing to show here yet. Poles appear once they have GPS coordinates
-              and belong to a site visit you can see.
+              and belong to a site visit you can see — or to a Pencawang whose
+              repairs were given to your company.
             </div>
           ) : showMap ? (
             <HierarchicalMap
@@ -943,7 +999,7 @@ function MapContent() {
                 </button>
               ) : null}
               <Seg
-                options={COLOR_OPTIONS}
+                options={repairView ? REPAIR_COLOR_OPTIONS : COLOR_OPTIONS}
                 value={colorMode}
                 onChange={setColorMode}
                 aria-label="Colour markers by"
@@ -973,7 +1029,9 @@ function MapContent() {
                 ? "By Pencawang"
                 : colorMode === "inspection"
                   ? "Inspection"
-                  : "Defects"}
+                  : colorMode === "repair"
+                    ? "Your repairs"
+                    : "Defects"}
             </p>
             <div className="space-y-1.5">
               {mainheadWide ? (
@@ -982,6 +1040,27 @@ function MapContent() {
                   Pencawang — an off-colour pole inside a cluster is a possible
                   overlap.
                 </p>
+              ) : colorMode === "repair" ? (
+                mode === "points" ? (
+                  REPAIR_STATES.map((state) => (
+                    <LegendRow
+                      key={state}
+                      color={REPAIR_STATE_COLOR[state]}
+                      label={REPAIR_STATE_LABEL[state]}
+                      count={kpis.repair.states[state]}
+                    />
+                  ))
+                ) : (
+                  <>
+                    <LegendRow color={REPAIR_STATE_COLOR.closed} label="Kejanggalan repaired" count={kpis.repair.done} />
+                    <LegendRow color={REPAIR_STATE_COLOR.todo} label="Kejanggalan open" count={kpis.repair.open} />
+                    <LegendRow
+                      color={REPAIR_STATE_COLOR.none}
+                      label="Poles not your work"
+                      count={Math.max(0, kpis.count - kpis.repair.poles)}
+                    />
+                  </>
+                )
               ) : colorMode === "inspection" ? (
                 <>
                   <LegendRow color={INSPECTED_MARKER_COLOR} label="Inspected" count={kpis.inspected} />
@@ -1032,13 +1111,17 @@ function MapContent() {
             <AssetMapPanel
               asset={selected}
               token={session?.token ?? null}
-              canEdit={canEditChecklist}
+              // A pole reached only through repair work keeps its survey read-only.
+              canEdit={canEditChecklist && selected.surveyAccess !== false}
+              showRepairs={repairView}
               isClientViewer={isClientViewer}
               rondaanIssues={
                 // Rondaan lint is an INTERNAL data-quality note for our own
                 // crews — never surface "bad pole-number format" to the client
-                // whose network it is.
-                isClientViewer ? [] : (rondaanIssuesByAsset.get(selected.id) ?? [])
+                // whose network it is — nor to a repair crew that never surveyed it.
+                isClientViewer || selected.surveyAccess === false
+                  ? []
+                  : (rondaanIssuesByAsset.get(selected.id) ?? [])
               }
               onAssetCodeChanged={() => {
                 if (token) void load(token, drill, filters, showAllPoles);
@@ -1222,9 +1305,23 @@ function MapContent() {
                               {b.name}
                             </span>
                             <span className="block truncate text-[11.5px] text-[var(--on-chrome-muted)]">
-                              {b.inspected}/{b.count} inspected
-                              {b.openDefects > 0 ? ` · ${b.openDefects} open` : ""}
-                              {b.emergency > 0 && !isClientViewer ? ` · ${b.emergency}⚠` : ""}
+                              {colorMode === "repair" ? (
+                                b.repair && b.repair.total > 0 ? (
+                                  <>
+                                    {b.repair.done}/{b.repair.total} repaired · {b.repair.poles} your pole
+                                    {b.repair.poles === 1 ? "" : "s"}
+                                    {b.repair.emergency > 0 ? ` · ${b.repair.emergency}⚠` : ""}
+                                  </>
+                                ) : (
+                                  "Not your work"
+                                )
+                              ) : (
+                                <>
+                                  {b.inspected}/{b.count} inspected
+                                  {b.openDefects > 0 ? ` · ${b.openDefects} open` : ""}
+                                  {b.emergency > 0 && !isClientViewer ? ` · ${b.emergency}⚠` : ""}
+                                </>
+                              )}
                             </span>
                           </span>
                           <span className="font-mono text-[13px] font-bold tabular-nums text-[var(--on-chrome)]">
@@ -1264,7 +1361,17 @@ function MapContent() {
                               {asset.substation?.name || asset.substation?.code || "—"}
                             </span>
                           </span>
-                          {asset.openDefectCount > 0 ? (
+                          {colorMode === "repair" ? (
+                            asset.repair && asset.repair.total > 0 ? (
+                              <span
+                                className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--on-chrome-muted)]"
+                                title="Your Kejanggalan repaired / total"
+                              >
+                                {asset.repair.closed + asset.repair.awaiting}/{asset.repair.total}
+                                {asset.repair.emergency > 0 ? "⚠" : ""}
+                              </span>
+                            ) : null
+                          ) : asset.openDefectCount > 0 ? (
                             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--on-chrome-muted)]">
                               {asset.openDefectCount}
                               {asset.hasEmergencyDefect && !isClientViewer ? "⚠" : ""}

@@ -25,6 +25,7 @@ import {
   buildEvidenceEntries,
   type EvidenceImageEntry,
 } from "@/components/inspection-evidence-grid";
+import { PoleRepairsSection } from "@/components/asset-map-repairs";
 import { ApiError } from "@/lib/api";
 import { fetchAssetDetail, updateAssetCode } from "@/lib/assets";
 import { isMapAssetInspected, type MapAsset } from "@/lib/map";
@@ -539,6 +540,8 @@ export interface AssetMapPanelProps {
   token: string | null;
   /** ADMIN / DC / the managing MANAGER — the API re-enforces its own scope. */
   canEdit: boolean;
+  /** Repair view (a maintenance company): show the pole's own repairs + photos. */
+  showRepairs?: boolean;
   /** A network-owner (TNB) viewer: read-only, and a blocked pole means its
    *  survey hasn't been completed yet rather than a genuine error. */
   isClientViewer?: boolean;
@@ -562,6 +565,7 @@ export function AssetMapPanel({
   asset,
   token,
   canEdit,
+  showRepairs = false,
   isClientViewer = false,
   rondaanIssues,
   onAssetCodeChanged,
@@ -997,6 +1001,10 @@ export function AssetMapPanel({
                   </button>
                 )}
               </div>
+            ) : null}
+
+            {showRepairs ? (
+              <PoleRepairsSection token={token} assetId={asset.id} onUnauthorized={onUnauthorized} />
             ) : null}
 
             {/* Photos — above the checklist so the evidence reads first, and

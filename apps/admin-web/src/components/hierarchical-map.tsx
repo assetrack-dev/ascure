@@ -11,6 +11,8 @@ import {
   OPEN_DEFECT_MARKER_COLOR,
   INSPECTED_MARKER_COLOR,
   NOT_INSPECTED_MARKER_COLOR,
+  REPAIR_STATE_COLOR,
+  mapBubbleRepairState,
   type MapAsset,
   type MapBaseType,
   type MapBubble,
@@ -90,6 +92,9 @@ function bubbleColor(
   mode: MapColorMode,
   hideEmergency?: boolean,
 ): string {
+  if (mode === "repair") {
+    return REPAIR_STATE_COLOR[mapBubbleRepairState(bubble)];
+  }
   if (mode === "defect") {
     if (bubble.emergency > 0 && !hideEmergency) {
       return EMERGENCY_DEFECT_MARKER_COLOR;
