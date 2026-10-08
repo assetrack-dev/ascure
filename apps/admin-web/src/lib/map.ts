@@ -34,10 +34,73 @@ export interface MapAsset {
   /** True when a non-monitoring open defect exists (OPEN/IN_PROGRESS). Poles
    *  with open defects but no active one render as "monitoring". */
   hasActiveDefect: boolean;
+  /**
+   * Repair view only (a maintenance company): the caller's own routed
+   * Kejanggalan on this pole. null = not its work; undefined = no repair view.
+   */
+  repair?: MapPoleRepair | null;
+  /** Repair view only: false = reached through repair work alone (survey read-only). */
+  surveyAccess?: boolean;
 }
 
-/** How to colour the map markers. */
-export type MapColorMode = "inspection" | "defect";
+/** A maintenance company's own Kejanggalan on one pole, by repair stage. */
+export interface MapPoleRepair {
+  total: number;
+  todo: number;
+  inProgress: number;
+  awaiting: number;
+  closed: number;
+  /** Open emergencies. */
+  emergency: number;
+  categories: MaintenanceCategory[];
+}
+
+/** How to colour the map markers. "repair" = a maintenance company's repair stage. */
+export type MapColorMode = "inspection" | "defect" | "repair";
+
+/**
+ * Repair stage of a pole / group — the same buckets and colours as the
+ * Maintenance Packages page, so the two read identically. "none" = not the
+ * caller's work (route context, grey).
+ */
+export type MapRepairState = "todo" | "inProgress" | "awaiting" | "closed" | "none";
+export const REPAIR_STATE_COLOR: Record<MapRepairState, string> = {
+  todo: "#dc2626",
+  inProgress: "#f59e0b",
+  awaiting: "#2563eb",
+  closed: "#16a34a",
+  none: "#94a3b8",
+};
+export const REPAIR_STATE_LABEL: Record<MapRepairState, string> = {
+  todo: "Not started",
+  inProgress: "In progress",
+  awaiting: "Awaiting verification",
+  closed: "All closed",
+  none: "Not your work",
+};
+export const REPAIR_STATES: MapRepairState[] = ["todo", "inProgress", "awaiting", "closed", "none"];
+
+export function mapAssetRepairState(asset: Pick<MapAsset, "repair">): MapRepairState {
+  const repair = asset.repair;
+  if (!repair || repair.total === 0) return "none";
+  if (repair.todo + repair.inProgress === 0) return repair.awaiting > 0 ? "awaiting" : "closed";
+  if (repair.inProgress + repair.awaiting + repair.closed === 0) return "todo";
+  return "inProgress";
+}
+
+/** Repair-mode list order: work still to start first, other companies' poles last. */
+const REPAIR_STATE_PRIORITY: Record<MapRepairState, number> = {
+  todo: 5,
+  inProgress: 4,
+  awaiting: 3,
+  closed: 2,
+  none: 1,
+};
+
+export function mapAssetRepairPriority(asset: MapAsset): number {
+  const open = (asset.repair?.todo ?? 0) + (asset.repair?.inProgress ?? 0);
+  return REPAIR_STATE_PRIORITY[mapAssetRepairState(asset)] * 1000 + Math.min(open, 999);
+}
 
 /** How to render the marker layer. */
 export type MapViewMode = "pins" | "clusters" | "heat";
@@ -136,6 +199,9 @@ export function mapAssetMarkerColor(
       ? INSPECTED_MARKER_COLOR
       : NOT_INSPECTED_MARKER_COLOR;
   }
+  if (mode === "repair") {
+    return REPAIR_STATE_COLOR[mapAssetRepairState(asset)];
+  }
 
   switch (mapAssetDefectState(asset)) {
     case "emergency":
@@ -203,6 +269,20 @@ function normalizeSeverity(raw: unknown): DefectSeverity | null {
   return (DEFECT_SEVERITIES as readonly string[]).includes(normalized)
     ? (normalized as DefectSeverity)
     : null;
+}
+
+function normalizePoleRepair(raw: unknown): MapPoleRepair | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  return {
+    total: toFiniteNumber(record.total) ?? 0,
+    todo: toFiniteNumber(record.todo) ?? 0,
+    inProgress: toFiniteNumber(record.inProgress) ?? 0,
+    awaiting: toFiniteNumber(record.awaiting) ?? 0,
+    closed: toFiniteNumber(record.closed) ?? 0,
+    emergency: toFiniteNumber(record.emergency) ?? 0,
+    categories: normalizeDefectCategories(record.categories),
+  };
 }
 
 function normalizeMapAsset(raw: unknown): MapAsset | null {
@@ -283,6 +363,12 @@ function normalizeMapAsset(raw: unknown): MapAsset | null {
     maxDefectSeverity: normalizeSeverity(record.maxDefectSeverity),
     hasEmergencyDefect: record.hasEmergencyDefect === true,
     hasActiveDefect: record.hasActiveDefect === true,
+    ...("repair" in record
+      ? {
+          repair: normalizePoleRepair(record.repair),
+          surveyAccess: record.surveyAccess === true,
+        }
+      : {}),
   };
 }
 
@@ -324,6 +410,28 @@ export interface MapBubble {
   notInspected: number;
   openDefects: number;
   emergency: number;
+  /** Repair view only: the caller's own Kejanggalan in this group. */
+  repair?: MapBubbleRepair;
+}
+
+export interface MapBubbleRepair {
+  /** Poles carrying the caller's work. */
+  poles: number;
+  /** Kejanggalan routed to the caller… */
+  total: number;
+  /** …of which repaired (awaiting verification or closed). */
+  done: number;
+  /** Open emergencies. */
+  emergency: number;
+}
+
+/** Repair stage of a group: grey = none of the caller's work. */
+export function mapBubbleRepairState(bubble: Pick<MapBubble, "repair">): MapRepairState {
+  const repair = bubble.repair;
+  if (!repair || repair.total === 0) return "none";
+  if (repair.done >= repair.total) return "closed";
+  if (repair.done === 0) return "todo";
+  return "inProgress";
 }
 
 function normalizeMapBubble(raw: unknown): MapBubble | null {
@@ -352,6 +460,16 @@ function normalizeMapBubble(raw: unknown): MapBubble | null {
     notInspected: toFiniteNumber(record.notInspected) ?? 0,
     openDefects: toFiniteNumber(record.openDefects) ?? 0,
     emergency: toFiniteNumber(record.emergency) ?? 0,
+    ...(record.repair && typeof record.repair === "object"
+      ? {
+          repair: {
+            poles: toFiniteNumber((record.repair as Record<string, unknown>).poles) ?? 0,
+            total: toFiniteNumber((record.repair as Record<string, unknown>).total) ?? 0,
+            done: toFiniteNumber((record.repair as Record<string, unknown>).done) ?? 0,
+            emergency: toFiniteNumber((record.repair as Record<string, unknown>).emergency) ?? 0,
+          },
+        }
+      : {}),
   };
 }
 
@@ -422,6 +540,8 @@ function appendFilters(params: URLSearchParams, filters?: MapFilters): void {
 export interface MapFilterOptions {
   mainheads: { id: string; name: string }[];
   pencawang: { id: string; name: string; mainheadId: string | null }[];
+  /** The caller has repair work (a maintenance company): offer the Repairs view. */
+  repairView: boolean;
 }
 
 export async function fetchMapFilterOptions(
@@ -447,7 +567,88 @@ export async function fetchMapFilterOptions(
       name: name(r),
       mainheadId: typeof r.mainheadId === "string" ? r.mainheadId : null,
     })),
+    repairView: source.repairView === true,
   };
+}
+
+/** One of the caller's routed Kejanggalan on a pole, with its repair photos. */
+export interface PoleRepairItem {
+  id: string;
+  label: string;
+  remark: string | null;
+  severity: string;
+  isEmergency: boolean;
+  category: MaintenanceCategory;
+  stage: Exclude<MapRepairState, "none">;
+  organization: { id: string; name: string } | null;
+  team: { id: string; name: string } | null;
+  photos: PoleRepairPhoto[];
+}
+
+export interface PoleRepairPhoto {
+  id: string;
+  /** BEFORE / DURING / AFTER / FINDING (older app builds: none). */
+  evidenceType: string | null;
+  filename: string | null;
+  url: string | null;
+  path: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  timestamp: string | null;
+  createdAt: string | null;
+}
+
+const REPAIR_STAGES = ["todo", "inProgress", "awaiting", "closed"] as const;
+
+/** The pole's routed Kejanggalan the caller may see (own company for contractors). */
+export async function fetchAssetRepairs(token: string, assetId: string): Promise<PoleRepairItem[]> {
+  const payload = await apiRequest<unknown>(`/assets/${encodeURIComponent(assetId)}/repairs`, {
+    token,
+  });
+  if (!Array.isArray(payload)) return [];
+  const text = (value: unknown) => (typeof value === "string" && value ? value : null);
+  return payload.flatMap((raw): PoleRepairItem[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const record = raw as Record<string, unknown>;
+    const id = text(record.id);
+    if (!id) return [];
+    const stage = (REPAIR_STAGES as readonly string[]).includes(String(record.stage))
+      ? (record.stage as PoleRepairItem["stage"])
+      : "todo";
+    const photos = Array.isArray(record.photos) ? record.photos : [];
+    return [
+      {
+        id,
+        label: text(record.label) ?? "Kejanggalan",
+        remark: text(record.remark),
+        severity: text(record.severity) ?? "MEDIUM",
+        isEmergency: record.isEmergency === true,
+        category: normalizeCategory(record.category) ?? "SELENGGARAAN",
+        stage,
+        organization: parseIdName(record.organization),
+        team: parseIdName(record.team),
+        photos: photos.flatMap((photo): PoleRepairPhoto[] => {
+          if (!photo || typeof photo !== "object") return [];
+          const image = photo as Record<string, unknown>;
+          const photoId = text(image.id);
+          if (!photoId) return [];
+          return [
+            {
+              id: photoId,
+              evidenceType: text(image.evidenceType),
+              filename: text(image.fileName),
+              url: text(image.url),
+              path: text(image.storageKey),
+              latitude: toFiniteNumber(image.latitude),
+              longitude: toFiniteNumber(image.longitude),
+              timestamp: text(image.timestamp),
+              createdAt: text(image.createdAt),
+            },
+          ];
+        }),
+      },
+    ];
+  });
 }
 
 /** Fetch the count bubbles for one drill-down level. */
