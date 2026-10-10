@@ -31,7 +31,14 @@ import { applyPackageRouting } from './package-routing.util';
  * declareEmergency pattern). The survey's own answers are never touched, and
  * survey outputs filter the flag out. Its Defect opens VERIFIED (released) and
  * is routed by the same package rules as every other Kejanggalan.
+ *
+ * Free text (TNB feedback #2, 2026-10-10): work the checklist does not list is
+ * added the same way with the crew's own words as its label, no checklist item,
+ * and the work type the crew picked — kept on the pole's record for later.
  */
+
+/** Plain severity for a free-text finding (the office can change it later). */
+const CUSTOM_FINDING_SEVERITY = DefectSeverity.MEDIUM;
 
 /** A finding needs the PE's survey report to be final — same gate as packages. */
 const FINDING_VISIT_STATUSES: SurveyLifecycleStatus[] = [
@@ -118,13 +125,37 @@ export type CreateFindingInput = {
   tenantId: string;
   siteVisitId: string;
   assetId: string;
-  templateItemId: string;
+  /** A checklist item … */
+  templateItemId?: string | null;
   optionValue?: string | null;
+  /** … or free text with its work type. */
+  customLabel?: string | null;
+  category?: MaintenanceCategory | null;
   note?: string | null;
   clientRef?: string | null;
   actorUserId: string;
   now: Date;
 };
+
+/** Validate the either/or shape; returns the free-text label when it is one. */
+export function resolveFindingKind(input: {
+  templateItemId?: string | null;
+  customLabel?: string | null;
+  category?: MaintenanceCategory | null;
+}): { kind: 'ITEM'; templateItemId: string } | { kind: 'CUSTOM'; label: string; category: MaintenanceCategory } {
+  const label = input.customLabel?.replace(/\s+/g, ' ').trim() || null;
+  if (input.templateItemId && label) {
+    throw new BadRequestException('Pick a checklist item or type the Kejanggalan — not both.');
+  }
+  if (input.templateItemId) return { kind: 'ITEM', templateItemId: input.templateItemId };
+  if (!label) {
+    throw new BadRequestException('Pick a checklist item, or type what you found.');
+  }
+  if (!input.category) {
+    throw new BadRequestException('Pick the work type for this Kejanggalan.');
+  }
+  return { kind: 'CUSTOM', label, category: input.category };
+}
 
 export type CreatedFinding = {
   defectId: string;
@@ -192,8 +223,13 @@ export async function createMaintenanceFinding(
     throw new BadRequestException('This pole has no submitted survey in this Pencawang package.');
   }
 
+  const kind = resolveFindingKind(input);
+  if (kind.kind === 'CUSTOM') {
+    return createCustomFinding(tx, input, { visitId: visit.id, inspectionId: inspection.id, clientRef }, kind);
+  }
+
   const templateItem = await tx.inspectionTemplateItem.findFirst({
-    where: { id: input.templateItemId, templateId: inspection.templateId },
+    where: { id: kind.templateItemId, templateId: inspection.templateId },
     select: {
       id: true,
       label: true,
@@ -286,6 +322,83 @@ export async function createMaintenanceFinding(
   });
 
   await applyPackageRouting(tx, visit.id, {
+    actorUserId: input.actorUserId,
+    now: input.now,
+    reason: 'New finding added during maintenance',
+  });
+
+  return { defectId: defect.id, inspectionItemResultId: itemResult.id, created: true };
+}
+
+/** A free-text finding (no checklist item): same storage, routing and release. */
+async function createCustomFinding(
+  tx: Prisma.TransactionClient,
+  input: CreateFindingInput,
+  context: { visitId: string; inspectionId: string; clientRef: string | null },
+  kind: { label: string; category: MaintenanceCategory },
+): Promise<CreatedFinding> {
+  // One open Kejanggalan per pole + wording (case-insensitive).
+  const duplicate = await tx.defect.findFirst({
+    where: {
+      status: { notIn: [DefectStatus.CLOSED, DefectStatus.RESOLVED] },
+      OR: [{ lifecycleStatus: null }, { lifecycleStatus: { notIn: NOT_OPEN_LIFECYCLES } }],
+      inspectionItemResult: {
+        isDefect: true,
+        checklistItemId: null,
+        source: InspectionItemResultSource.MAINTENANCE_FINDING,
+        label: { equals: kind.label, mode: 'insensitive' },
+        inspection: { tenantId: input.tenantId, assetId: input.assetId },
+      },
+    },
+    select: { id: true },
+  });
+  if (duplicate) {
+    throw new ConflictException({
+      message: 'This pole already has an open Kejanggalan with that wording — use it.',
+      defectId: duplicate.id,
+    });
+  }
+
+  const remark = input.note?.trim() || null;
+  const itemResult = await tx.inspectionItemResult.create({
+    data: {
+      inspectionId: context.inspectionId,
+      checklistItemId: null,
+      label: kind.label,
+      result: InspectionItemResultValue.FAIL,
+      remark,
+      isDefect: true,
+      isEmergency: false,
+      severity: CUSTOM_FINDING_SEVERITY,
+      maintenanceCategory: kind.category,
+      source: InspectionItemResultSource.MAINTENANCE_FINDING,
+      createdByUserId: input.actorUserId,
+      clientRef: context.clientRef,
+    },
+    select: { id: true, severity: true, isEmergency: true, maintenanceCategory: true },
+  });
+
+  const defect = await tx.defect.create({
+    data: {
+      ...buildInitialDefectData(itemResult, input.now),
+      lifecycleStatus: DefectLifecycleStatus.VERIFIED,
+      verifiedAt: input.now,
+    },
+    select: { id: true },
+  });
+  await tx.defectTimelineEntry.create({
+    data: {
+      defectId: defect.id,
+      type: DefectTimelineEventType.CREATED,
+      toStatus: DefectStatus.OPEN,
+      toLifecycleStatus: DefectLifecycleStatus.VERIFIED,
+      comment: `New finding (not in the checklist — Lain-lain): ${kind.label}${remark ? ` — ${remark}` : ''}`,
+      createdByUserId: input.actorUserId,
+      createdAt: input.now,
+    },
+  });
+
+  await applyPackageRouting(tx, context.visitId, {
     actorUserId: input.actorUserId,
     now: input.now,
     reason: 'New finding added during maintenance',

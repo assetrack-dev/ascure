@@ -31,7 +31,11 @@ import {
 } from '../common/uploads.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
-import { createMaintenanceFinding, loadVisitFindingItems } from './maintenance-finding.util';
+import {
+  createMaintenanceFinding,
+  loadVisitFindingItems,
+  resolveFindingKind,
+} from './maintenance-finding.util';
 import {
   AssignEmergencyDto,
   AssignMaintenancePackageDto,
@@ -1636,14 +1640,20 @@ export class MaintenancePackagesService {
       throw new BadRequestException('Attach a photo of the condition.');
     }
 
-    const templateItem = await this.prisma.inspectionTemplateItem.findUnique({
-      where: { id: dto.templateItemId },
-      select: { maintenanceCategory: true },
-    });
-    if (!templateItem) {
-      throw new BadRequestException('That checklist item does not exist.');
+    const kind = resolveFindingKind(dto);
+    let category: MaintenanceCategory;
+    if (kind.kind === 'CUSTOM') {
+      category = kind.category;
+    } else {
+      const templateItem = await this.prisma.inspectionTemplateItem.findUnique({
+        where: { id: kind.templateItemId },
+        select: { maintenanceCategory: true },
+      });
+      if (!templateItem) {
+        throw new BadRequestException('That checklist item does not exist.');
+      }
+      category = templateItem.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
     }
-    const category = templateItem.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN;
     if (!this.mayChangePole(actor, visit, dto.assetId, category)) {
       throw new ForbiddenException(
         'That work type on this pole belongs to a company outside your group.',
@@ -1665,6 +1675,8 @@ export class MaintenancePackagesService {
           assetId: dto.assetId,
           templateItemId: dto.templateItemId,
           optionValue: dto.optionValue,
+          customLabel: dto.customLabel,
+          category: dto.category,
           note: dto.note,
           clientRef: dto.clientRef,
           actorUserId: user.id,
