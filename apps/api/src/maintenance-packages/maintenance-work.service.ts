@@ -502,6 +502,8 @@ export class MaintenanceWorkService {
         assetId: dto.assetId,
         templateItemId: dto.templateItemId,
         optionValue: dto.optionValue,
+        customLabel: dto.customLabel,
+        category: dto.category,
         note: dto.note,
         clientRef: dto.clientRef,
         actorUserId: user.id,

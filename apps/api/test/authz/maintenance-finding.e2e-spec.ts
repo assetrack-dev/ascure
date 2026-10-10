@@ -316,6 +316,72 @@ describe('Authz · maintenance new finding (§13)', () => {
     expect(rows[0].count).toBe(1);
   });
 
+  // TNB feedback #2 (2026-10-10): work the checklist does not list.
+  describe('free text ("Lain-lain")', () => {
+    it('a crew adds its own wording with a work type — kept on the pole, routed, ready to work', async () => {
+      const res = await add('techA', {
+        assetId: F.asset[0],
+        customLabel: '  Talian servis   tergantung rendah  ',
+        category: 'SELENGGARAAN',
+        note: 'Depan rumah no. 12',
+        clientRef: 'finding-custom-1',
+      }).expect(201);
+      createdDefects.push(res.body.defectId);
+      const defect = await prisma.defect.findUniqueOrThrow({
+        where: { id: res.body.defectId },
+        include: { inspectionItemResult: true },
+      });
+      expect(defect).toMatchObject({
+        severity: 'MEDIUM',
+        maintenanceCategory: 'SELENGGARAAN',
+        maintenanceOrganizationId: IDS.org.a,
+        assignedToTeamId: IDS.team.a,
+        lifecycleStatus: 'ASSIGNED',
+      });
+      expect(defect.inspectionItemResult).toMatchObject({
+        inspectionId: F.inspection[0],
+        checklistItemId: null,
+        label: 'Talian servis tergantung rendah',
+        remark: 'Depan rumah no. 12',
+        source: 'MAINTENANCE_FINDING',
+      });
+      expect(findingOn(await pack('techA'), res.body.defectId)).toMatchObject({ isNewFinding: true, state: 'TODO' });
+    });
+
+    it('the same wording on the same pole is a duplicate (case-insensitive)', async () => {
+      const dup = await add('techA', {
+        assetId: F.asset[0],
+        customLabel: 'TALIAN SERVIS TERGANTUNG RENDAH',
+        category: 'SELENGGARAAN',
+        clientRef: 'finding-custom-dup',
+      }).expect(409);
+      expect(dup.body.defectId).toBe(createdDefects[createdDefects.length - 1]);
+    });
+
+    it('needs a work type, and is either an item or free text — not both, not neither', async () => {
+      await add('techA', { assetId: F.asset[0], customLabel: 'Something else' }).expect(400);
+      await add('techA', {
+        assetId: F.asset[0],
+        templateItemId: F.rentisItem,
+        optionValue: 'PERLU',
+        customLabel: 'Both',
+        category: 'RENTIS',
+      }).expect(400);
+      await add('techA', { assetId: F.asset[0] }).expect(400);
+      await add('techA', { assetId: F.asset[0], customLabel: 'X', category: 'RENTIS' }).expect(400);
+    });
+
+    it('another company cannot add free text either', async () => {
+      await add('mgrB', {
+        assetId: F.asset[0],
+        customLabel: 'Kotak fius rosak',
+        category: 'SELENGGARAAN',
+        clientRef: 'finding-custom-other',
+      }).expect(403);
+      expect(await prisma.inspectionItemResult.count({ where: { clientRef: 'finding-custom-other' } })).toBe(0);
+    });
+  });
+
   describe('office (web)', () => {
     it('admin sees the surveyed poles and items', async () => {
       const res = await http(app, token.adminT1)
