@@ -529,7 +529,7 @@ function AssignDialog({
           <DestinationSelect
             companies={companies}
             teams={teams}
-            value={isCompany && destination.startsWith("org:") ? "" : destination}
+            value={destination}
             onChange={setDestination}
             suggestedOrganizationId={row.suggestedOrganizationId}
             className={modalSelectClass}
@@ -538,7 +538,11 @@ function AssignDialog({
           <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
             {decoded?.assignedTeamId
               ? "The team sees this work in the app straight away."
-              : "The company's Manager picks the team (Maintenance page)."}
+              : existing?.team
+                ? `${existing.team.name} comes off this work — it waits for a team. Work the crew already started stays with them.`
+                : isCompany
+                  ? "No team yet — pick one of your teams to start the work."
+                  : "The company's Manager picks the team (Maintenance page)."}
             {changesOwner
               ? " Kejanggalan the current crew has already photographed stay with them; the rest move."
               : ""}
@@ -2047,9 +2051,10 @@ function bulkMessage(result: BulkAssignResult, pencawangs: PackagePencawang[]) {
         moved: sum.moved + row.routing.moved,
         kept: sum.kept + row.routing.kept,
         teamAssigned: sum.teamAssigned + row.routing.teamAssigned,
+        teamCleared: (sum.teamCleared ?? 0) + (row.routing.teamCleared ?? 0),
       };
     },
-    { routed: 0, moved: 0, kept: 0, teamAssigned: 0 },
+    { routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 },
   );
   const parts = routingParts(totals);
   let message = `Assigned ${result.assigned} Pencawang${parts.length ? ` — ${parts.join(", ")}` : ""}.`;
