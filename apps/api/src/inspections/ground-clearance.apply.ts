@@ -14,8 +14,14 @@ import { buildInitialDefectData } from '../defects/defect-materialization.util';
 import { DEFAULT_OPERATIONAL_SCOPE, inferOperationalScopeFromAssetTypeCode } from '../common/operational-scope';
 import { MAINTENANCE_LOCKED_DEFECT_STATUSES } from '../common/authorization/defect-governance';
 import { applyPackageRouting } from '../maintenance-packages/package-routing.util';
+import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import { deriveEditedChecklistVerdict } from './checklist-verdict.util';
-import { GC_ITEM_LABEL, gradeGroundClearance, type GcPoleResult } from './ground-clearance.util';
+import {
+  GC_ITEM_LABEL,
+  gradeGroundClearance,
+  isRoadOrLowFailure,
+  type GcPoleResult,
+} from './ground-clearance.util';
 
 /**
  * Auto "TIDAK PATUH GROUND CLEARANCE" on stored surveys (TNB feedback #3).
@@ -25,6 +31,11 @@ import { GC_ITEM_LABEL, gradeGroundClearance, type GcPoleResult } from './ground
  *
  * Evaluation unit = one Pencawang: its latest exportable SAVR inspection per
  * pole, in the checklist export's order — the very rows the QR AUTO receives.
+ *
+ * The item is a Yes/No (SS / GRK / KLT / KLB: YES) or, on KUANTAN, an A/B grade
+ * dropdown: owner rule 2026-10-11 = A (Super Critical) when a failing span is
+ * over MELINTASI JALAN RAYA or marked LO, otherwise B (Critical); the option's
+ * own severity applies.
  *
  * Writing only ever ADDS the flag (QR AUTO behaviour: a surveyor's own flag
  * without a failing span is reported, never removed). The flag is written like
@@ -92,8 +103,10 @@ export interface GcPoleReport {
   code: string;
   /** The template has the TIDAK PATUH GROUND CLEARANCE item. */
   hasItem: boolean;
-  /** The item is a Yes/No item (the only shape auto-set writes). */
+  /** The item can be written: a Yes/No item, or a dropdown with A/B defect grades. */
   writable: boolean;
+  /** Dropdown items only: the grade the rule picks (A / B). */
+  grade: string | null;
   computedFail: boolean;
   /** Already YES (surveyor or an earlier auto-set). */
   alreadyFlagged: boolean;
@@ -116,6 +129,22 @@ export interface GcPencawangReport {
   toWithdraw: GcPoleReport[];
   /** An office user set the item by hand — left alone. */
   overridden: number;
+}
+
+/** The answer the auto flag writes for this item, or null when it can't. */
+function autoAnswer(
+  item: Pick<TemplateItem, 'inputType' | 'optionsJson'>,
+  roadOrLow: boolean,
+): { kind: 'BOOLEAN' } | { kind: 'SELECT'; value: string; severity: TemplateItem['severity'] | null } | null {
+  if (item.inputType === InspectionItemInputType.BOOLEAN) return { kind: 'BOOLEAN' };
+  if (item.inputType !== InspectionItemInputType.SELECT) return null;
+  const defectOptions = (normalizeTemplateSelectOptions(item.optionsJson) ?? []).filter((option) => option.isDefect);
+  const wanted = roadOrLow ? 'A' : 'B';
+  const option =
+    defectOptions.find((candidate) => candidate.value.trim().toUpperCase() === wanted) ??
+    // A template without that grade falls back to its nearest defect option.
+    (roadOrLow ? defectOptions[0] : defectOptions[1] ?? defectOptions[0]);
+  return option ? { kind: 'SELECT', value: option.value, severity: option.severity ?? null } : null;
 }
 
 /** Text value the checklist export would show for a non-Yes/No cell. */
@@ -282,18 +311,20 @@ export async function evaluatePencawangGroundClearance(
     const gcItem = itemsByTemplate.get(inspection.templateId)?.get(norm(GC_ITEM_LABEL));
     const alreadyFlagged = flaggedInspections.has(inspection.id);
     const computedFail = grade?.fail ?? false;
+    const failing = (grade?.spans ?? []).filter((span) => span.grade?.status === 'TAK PATUH');
+    const roadOrLow = failing.some((span) => isRoadOrLowFailure(span.grade!));
+    const answer = gcItem ? autoAnswer(gcItem, roadOrLow) : null;
     const pole: GcPoleReport = {
       inspectionId: inspection.id,
       assetId: inspection.assetId,
       siteVisitId: inspection.siteVisitId,
       code: inspection.asset.assetCode,
       hasItem: Boolean(gcItem),
-      writable: gcItem?.inputType === InspectionItemInputType.BOOLEAN,
+      writable: answer !== null,
+      grade: answer?.kind === 'SELECT' ? answer.value : null,
       computedFail,
       alreadyFlagged,
-      reasons: (grade?.spans ?? [])
-        .filter((span) => span.grade?.status === 'TAK PATUH')
-        .map((span) => span.grade!.detail ?? `slot ${span.slot}: TAK PATUH`),
+      reasons: failing.map((span) => span.grade!.detail ?? `slot ${span.slot}: TAK PATUH`),
     };
     if (overridden.has(inspection.id)) report.overridden += 1;
     else if (computedFail && alreadyFlagged) report.agreed += 1;
@@ -356,12 +387,19 @@ export async function applyPencawangGroundClearance(
       const item = inspection.template.sections
         .flatMap((section) => section.items)
         .find((candidate) => norm(candidate.label) === norm(GC_ITEM_LABEL));
-      if (!item || item.inputType !== InspectionItemInputType.BOOLEAN) continue;
+      if (!item) continue;
+      const answer =
+        item.inputType === InspectionItemInputType.BOOLEAN
+          ? ({ kind: 'BOOLEAN' } as const)
+          : pole.grade
+            ? autoAnswer(item, pole.grade.trim().toUpperCase() === 'A')
+            : null;
+      if (!answer) continue;
 
       const edited = {
-        valueText: null,
+        valueText: answer.kind === 'SELECT' ? answer.value : null,
         valueNumber: null,
-        valueBoolean: true,
+        valueBoolean: answer.kind === 'BOOLEAN' ? true : null,
         valueDate: null,
         valueDateTime: null,
         valueJson: null,
@@ -378,8 +416,20 @@ export async function applyPencawangGroundClearance(
       }
       await tx.inspectionResult.upsert({
         where: { inspectionId_templateItemId: { inspectionId: inspection.id, templateItemId: item.id } },
-        create: { inspectionId: inspection.id, templateItemId: item.id, valueBoolean: true },
-        update: { valueText: null, valueNumber: null, valueBoolean: true, valueDate: null, valueDateTime: null, valueJson: Prisma.DbNull },
+        create: {
+          inspectionId: inspection.id,
+          templateItemId: item.id,
+          valueText: edited.valueText,
+          valueBoolean: edited.valueBoolean,
+        },
+        update: {
+          valueText: edited.valueText,
+          valueNumber: null,
+          valueBoolean: edited.valueBoolean,
+          valueDate: null,
+          valueDateTime: null,
+          valueJson: Prisma.DbNull,
+        },
       });
 
       const labelKey = item.label.trim().toLowerCase();
@@ -391,7 +441,8 @@ export async function applyPencawangGroundClearance(
             !(row.isEmergency && row.checklistItemId === null) &&
             row.label.trim().toLowerCase() === labelKey,
         );
-      const severity = isDefect ? item.severity : null;
+      // A dropdown grade carries its own severity (A → CRITICAL, B → HIGH).
+      const severity = isDefect ? (answer.kind === 'SELECT' ? answer.severity : null) ?? item.severity : null;
       const itemResultData = {
         checklistItemId: item.id,
         result,
@@ -491,9 +542,16 @@ export async function applyPencawangGroundClearance(
         where: { id: itemResult.id },
         data: { result: InspectionItemResultValue.PASS, isDefect: false, isEmergency: false, severity: null, remark: null },
       });
+      // Yes/No → NO; a grade dropdown has no "no" option, so its answer is cleared.
+      const stored = await tx.inspectionResult.findUnique({
+        where: {
+          inspectionId_templateItemId: { inspectionId: pole.inspectionId, templateItemId: itemResult.checklistItemId },
+        },
+        select: { valueBoolean: true },
+      });
       await tx.inspectionResult.updateMany({
         where: { inspectionId: pole.inspectionId, templateItemId: itemResult.checklistItemId },
-        data: { valueBoolean: false },
+        data: stored?.valueBoolean != null ? { valueBoolean: false } : { valueText: null },
       });
       if (options.actorUserId) {
         await tx.inspection.update({

@@ -209,11 +209,57 @@ describe('Auto TIDAK PATUH GROUND CLEARANCE (QR AUTO rule in ASCURE)', () => {
     expect(report.toSet).toHaveLength(0);
   });
 
+  // KUANTAN: the item is an A/B grade dropdown (owner rule 2026-10-11): A on a
+  // road crossing or an LO mark, else B — each with its option's severity.
+  it('a grade dropdown gets A on a road crossing / LO and B otherwise', async () => {
+    await prisma.inspectionTemplateItem.update({
+      where: { id: P.item.gc },
+      data: {
+        inputType: 'SELECT',
+        optionsJson: {
+          options: [
+            { label: 'A - Super Critical', value: 'A', isDefect: true, severity: 'CRITICAL' },
+            { label: 'B - Critical', value: 'B', isDefect: true, severity: 'HIGH' },
+          ],
+        },
+      },
+    });
+    // Reset pole 2's office override + flag so the rule may write it again.
+    await prisma.inspectionItemResult.deleteMany({ where: { inspectionId: P.inspection[1], checklistItemId: P.item.gc } });
+    await prisma.inspectionResult.deleteMany({ where: { inspectionId: P.inspection[1], templateItemId: P.item.gc } });
+    // Pole 2: 4.0 over a road shoulder → B. Pole 3: LO over a road → A.
+    await prisma.inspectionResult.updateMany({
+      where: { inspectionId: P.inspection[1], templateItemId: P.item.terrain },
+      data: { valueText: 'BAHU JALAN' },
+    });
+    await editReading(2, 'LO');
+
+    const answer = async (index: number) => {
+      const [result, itemResult] = await Promise.all([
+        prisma.inspectionResult.findUnique({
+          where: { inspectionId_templateItemId: { inspectionId: P.inspection[index], templateItemId: P.item.gc } },
+          select: { valueText: true },
+        }),
+        prisma.inspectionItemResult.findFirst({
+          where: { inspectionId: P.inspection[index], checklistItemId: P.item.gc },
+          select: { result: true, severity: true, defect: { select: { severity: true } } },
+        }),
+      ]);
+      return { value: result?.valueText ?? null, ...itemResult };
+    };
+    expect(await answer(1)).toMatchObject({ value: 'B', result: 'FAIL', severity: 'HIGH', defect: { severity: 'HIGH' } });
+    expect(await answer(2)).toMatchObject({ value: 'A', result: 'FAIL', severity: 'CRITICAL', defect: { severity: 'CRITICAL' } });
+
+    // Pole 3's reading corrected → its auto A comes off (a dropdown has no "no": cleared).
+    await editReading(2, '6.2');
+    expect(await answer(2)).toMatchObject({ value: null, result: 'PASS', defect: null });
+  });
+
   it('a support pole (UMBANG TERBANG) is never graded', async () => {
     await prisma.inspectionResult.create({
       data: { inspectionId: P.inspection[2], templateItemId: P.item.umbang, valueText: '1 - UMBANG TERBANG' },
     });
     await editReading(2, '3.0');
-    expect(await gcState(2)).toMatchObject({ value: false, isDefect: false });
+    expect(await gcState(2)).toMatchObject({ isDefect: false, defect: null });
   });
 });

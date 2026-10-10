@@ -116,7 +116,12 @@ async function main() {
   const total = (pick: (report: GcPencawangReport) => number) => rows.reduce((sum, row) => sum + pick(row.report), 0);
 
   console.log('');
-  console.log(['PENCAWANG', 'MAINHEAD', 'SAVR POLES', 'NEW FLAGS', 'ALREADY', 'SURVEYOR ONLY', 'WITHDRAW', 'NO ITEM', 'MAINTENANCE COMPANY'].join('\t'));
+  const grades = (report: GcPencawangReport) => {
+    const a = report.toSet.filter((pole) => pole.grade === 'A').length;
+    const b = report.toSet.filter((pole) => pole.grade === 'B').length;
+    return a + b > 0 ? `A ${a} / B ${b}` : '';
+  };
+  console.log(['PENCAWANG', 'MAINHEAD', 'SAVR POLES', 'NEW FLAGS', 'KTN GRADE', 'ALREADY', 'SURVEYOR ONLY', 'WITHDRAW', 'NO ITEM', 'MAINTENANCE COMPANY'].join('\t'));
   for (const row of changed) {
     console.log(
       [
@@ -124,6 +129,7 @@ async function main() {
         row.mainhead,
         row.report.poles,
         row.report.toSet.length,
+        grades(row.report),
         row.report.agreed,
         row.report.surveyorOnly,
         row.report.toWithdraw.length,
@@ -135,9 +141,10 @@ async function main() {
   console.log('');
   console.log(
     `TOTAL: ${rows.length} Pencawang checked · ${changed.length} with changes · ` +
-      `${total((r) => r.poles)} SAVR poles · NEW flags ${total((r) => r.toSet.length)} · ` +
+      `${total((r) => r.poles)} SAVR poles · NEW flags ${total((r) => r.toSet.length)} ` +
+      `(Kuantan A ${total((r) => r.toSet.filter((p) => p.grade === 'A').length)} / B ${total((r) => r.toSet.filter((p) => p.grade === 'B').length)}) · ` +
       `already flagged & agreed ${total((r) => r.agreed)} · surveyor-only (kept) ${total((r) => r.surveyorOnly)} · ` +
-      `withdraw ${total((r) => r.toWithdraw.length)} · failing but template has no Yes/No item ${total((r) => r.unwritable.length)} · ` +
+      `withdraw ${total((r) => r.toWithdraw.length)} · failing but no writable item ${total((r) => r.unwritable.length)} · ` +
       `office overrides ${total((r) => r.overridden)}`,
   );
 
@@ -149,7 +156,7 @@ async function main() {
         pencawang: row.name,
         mainhead: row.mainhead,
         maintenanceCompany: row.owners,
-        newFlags: row.report.toSet.map((pole) => ({ pole: pole.code, why: pole.reasons })),
+        newFlags: row.report.toSet.map((pole) => ({ pole: pole.code, grade: pole.grade, why: pole.reasons })),
         withdraw: row.report.toWithdraw.map((pole) => pole.code),
         noItem: row.report.unwritable.map((pole) => ({ pole: pole.code, why: pole.reasons })),
       })),

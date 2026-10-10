@@ -45,6 +45,11 @@ describe('classifySlot (QR classify_slot)', () => {
     ['25', ROAD, '#ERROR'],
     ['1.2.3', ROAD, '#ERROR'],
     ['', '', 'EMPTY'],
+    // Sungai Siput QR AUTO additions.
+    ['4.5', 'TIDAK DIMASUKI KENDERAAN', 'TAK PATUH'],
+    ['4.6', 'tidak dimasuki  kenderaan', 'PATUH'],
+    ['NO CABLE', ROAD, 'NO CABLE'],
+    ['no-cable', ROAD, 'NO CABLE'],
   ])('%s on %s → %s', (reading, terrain, status) => {
     expect(classifySlot(reading, terrain, 1).status).toBe(status);
   });
