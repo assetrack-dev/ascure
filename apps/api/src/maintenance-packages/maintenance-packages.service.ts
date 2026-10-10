@@ -847,6 +847,12 @@ export class MaintenancePackagesService {
           where: { siteVisitId: visit.id },
         });
         const whole = existing.find((pkg) => pkg.category === null) ?? null;
+        // The team(s) on the rows this write replaces — they lose the work if
+        // the new owner names no team (TNB feedback #4).
+        const replacedTeams =
+          category === null
+            ? existing.map((pkg) => pkg.assignedTeamId)
+            : [(existing.find((pkg) => pkg.category === category) ?? whole)?.assignedTeamId];
         // A company only re-teams its own work: TNB's / the MC's target date,
         // notes and "assigned by" stay as they were (plan §15, J30).
         const kept =
@@ -926,6 +932,7 @@ export class MaintenancePackagesService {
           actorUserId: user.id,
           now,
           reason: 'Pencawang package assigned',
+          removedTeamIds: replacedTeams.filter((id) => id !== (destination.team?.id ?? null)),
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -1393,6 +1400,21 @@ export class MaintenancePackagesService {
         const existing = await tx.maintenancePoleAssignment.findMany({
           where: { siteVisitId: visit.id, assetId: { in: assetIds } },
         });
+        // Teams that held these poles' work before (pole rows, else the PE's
+        // package) — they lose it if the new owner names no team.
+        const replacedTeams: Array<string | null> = [];
+        for (const assetId of assetIds) {
+          const rows = existing.filter((row) => row.assetId === assetId);
+          const cats = category ? [category] : [...present.get(assetId)!];
+          for (const cat of cats) {
+            const row =
+              rows.find((candidate) => candidate.category === cat) ??
+              rows.find((candidate) => candidate.category === null);
+            replacedTeams.push(
+              row ? row.assignedTeamId : resolvePackageTarget(visit.maintenancePackages, cat).teamId,
+            );
+          }
+        }
         for (const assetId of assetIds) {
           const rows = existing.filter((row) => row.assetId === assetId);
           const whole = rows.find((row) => row.category === null) ?? null;
@@ -1443,6 +1465,7 @@ export class MaintenancePackagesService {
           actorUserId: user.id,
           now,
           reason: 'Poles split off the Pencawang',
+          removedTeamIds: replacedTeams.filter((id) => id !== (destination.team?.id ?? null)),
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -1464,7 +1487,11 @@ export class MaintenancePackagesService {
         (category === null || row.category === category || row.category === null),
     );
     if (rows.length === 0) {
-      return { siteVisitId: visit.id, poles: 0, routing: { routed: 0, moved: 0, kept: 0, teamAssigned: 0 } };
+      return {
+        siteVisitId: visit.id,
+        poles: 0,
+        routing: { routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 },
+      };
     }
     const present = await this.presentCategoriesByPole(
       visit.id,
@@ -1532,6 +1559,8 @@ export class MaintenancePackagesService {
           actorUserId: user.id,
           now,
           reason: 'Poles returned to the Pencawang owner',
+          // A returned pole's team comes off it when the PE owner names none.
+          removedTeamIds: rows.map((row) => row.assignedTeamId),
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

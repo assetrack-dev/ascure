@@ -31,6 +31,12 @@ import {
  *  - Plan §12.6: a pole split (MaintenancePoleAssignment) wins over the PE's
  *    packages for that pole — pole + work type, then whole pole, then the PE
  *    work-type package, then the whole-PE package.
+ *  - Removing a team (2026-10-10, TNB feedback #4): when the caller names the
+ *    team(s) its change took away (`removedTeamIds`) and a Kejanggalan's owner
+ *    now has NO team, that Kejanggalan comes off the removed team (ASSIGNED →
+ *    VERIFIED) unless the crew already started (in progress / evidenced /
+ *    finished). A team the company's Manager picked per Kejanggalan is never
+ *    named, so it is never touched.
  */
 
 type PackageShape = {
@@ -155,6 +161,8 @@ export interface RoutingResult {
   kept: number;
   /** Handed to the package's team (VERIFIED → ASSIGNED). */
   teamAssigned: number;
+  /** Taken off a removed team, back to "no team yet" (ASSIGNED → VERIFIED). */
+  teamCleared: number;
 }
 
 /**
@@ -170,8 +178,13 @@ export async function applyPackageRouting(
     now: Date;
     /** Timeline wording, e.g. "Pencawang package assigned by TNB". */
     reason: string;
+    /** Teams this change took off a package / pole split (see header). */
+    removedTeamIds?: Array<string | null | undefined>;
   },
 ): Promise<RoutingResult> {
+  const removedTeams = new Set(
+    (options.removedTeamIds ?? []).filter((id): id is string => typeof id === 'string'),
+  );
   const [packages, poles] = await Promise.all([
     tx.maintenancePackage.findMany({
       where: { siteVisitId },
@@ -201,6 +214,7 @@ export async function applyPackageRouting(
       lifecycleStatus: true,
       status: true,
       assignedToTeamId: true,
+      assignedTeamId: true,
       inspectionItemResult: { select: { inspection: { select: { assetId: true } } } },
       _count: { select: { evidenceImages: { where: REPAIR_EVIDENCE_WHERE } } },
     },
@@ -227,7 +241,10 @@ export async function applyPackageRouting(
     ).map((org) => [org.id, org.name]),
   );
   const teamIds = [
-    ...new Set(owners.map((owner) => owner.assignedTeamId).filter((id): id is string => !!id)),
+    ...new Set([
+      ...owners.map((owner) => owner.assignedTeamId).filter((id): id is string => !!id),
+      ...removedTeams,
+    ]),
   ];
   const teamNames = new Map(
     teamIds.length === 0
@@ -240,7 +257,9 @@ export async function applyPackageRouting(
         ).map((team) => [team.id, team.name]),
   );
 
-  const result: RoutingResult = { routed: 0, moved: 0, kept: 0, teamAssigned: 0 };
+  const result: RoutingResult = { routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 };
+  // Kejanggalan coming off a removed team.
+  const teamClearIds: string[] = [];
   const timeline: Prisma.DefectTimelineEntryCreateManyInput[] = [];
   // Batched writes, keyed by target org ('' = withdrawn → null).
   const stampIds = new Map<string, string[]>();
@@ -301,6 +320,33 @@ export async function applyPackageRouting(
           defect.assignedToTeamId !== targetTeam
         ) {
           queueTeam(defect.id, targetTeam, defect.lifecycleStatus);
+        }
+        const heldTeam = defect.assignedToTeamId ?? defect.assignedTeamId;
+        if (
+          !targetTeam &&
+          current === target &&
+          heldTeam &&
+          removedTeams.has(heldTeam) &&
+          !finished &&
+          !evidenced &&
+          defect.lifecycleStatus !== DefectLifecycleStatus.IN_PROGRESS
+        ) {
+          teamClearIds.push(defect.id);
+          result.teamCleared += 1;
+          const toLifecycle =
+            defect.lifecycleStatus === DefectLifecycleStatus.ASSIGNED
+              ? DefectLifecycleStatus.VERIFIED
+              : defect.lifecycleStatus;
+          timeline.push({
+            id: randomUUID(),
+            defectId: defect.id,
+            type: DefectTimelineEventType.ASSIGNMENT_CHANGED,
+            fromLifecycleStatus: defect.lifecycleStatus,
+            toLifecycleStatus: toLifecycle,
+            comment: `${options.reason}: taken off ${teamNames.get(heldTeam) ?? 'the team'} — no team yet.`,
+            createdByUserId: options.actorUserId,
+            createdAt: options.now,
+          });
         }
         continue;
       }
@@ -402,6 +448,23 @@ export async function applyPackageRouting(
         data: reset,
       });
     }
+  }
+
+  if (teamClearIds.length > 0) {
+    await tx.defect.updateMany({
+      where: { id: { in: teamClearIds } },
+      data: {
+        assignedToTeamId: null,
+        assignedTeamId: null,
+        assignedToUserId: null,
+        assignedUserId: null,
+        assignedAt: null,
+      },
+    });
+    await tx.defect.updateMany({
+      where: { id: { in: teamClearIds }, lifecycleStatus: DefectLifecycleStatus.ASSIGNED },
+      data: { lifecycleStatus: DefectLifecycleStatus.VERIFIED },
+    });
   }
 
   // After the org writes: the moves above reset any previous crew first.

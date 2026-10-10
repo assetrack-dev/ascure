@@ -228,7 +228,7 @@ describe('Authz · maintenance packages — split a Pencawang by poles (plan §1
       .post(base)
       .send({ assetIds: [POLE3, POLE4], assignedTeamId: IDS.team.b })
       .expect(201);
-    expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 0, teamAssigned: 2 });
+    expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 0, teamAssigned: 2, teamCleared: 0 });
     for (const id of [P.defect.p3sel, P.defect.p4sel]) {
       expect(await owner(id)).toEqual({ maintenanceOrganizationId: IDS.org.b, assignedToTeamId: IDS.team.b, lifecycleStatus: 'ASSIGNED' });
     }
@@ -239,6 +239,23 @@ describe('Authz · maintenance packages — split a Pencawang by poles (plan §1
     expect(row.poleSplits).toEqual([
       { category: null, organization: { id: IDS.org.b, name: 'Company B' }, team: { id: IDS.team.b, name: 'Team B' }, poles: 2 },
     ]);
+  });
+
+  // TNB feedback #4 (2026-10-10): a wrong team comes off split poles too.
+  it('taking Team B off poles 3–4 leaves them with Company B, no team', async () => {
+    const res = await http(app, token.foreman)
+      .post(base)
+      .send({ assetIds: [POLE3, POLE4], maintenanceOrganizationId: IDS.org.b })
+      .expect(201);
+    expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 2 });
+    for (const id of [P.defect.p3sel, P.defect.p4sel]) {
+      expect(await owner(id)).toEqual({ maintenanceOrganizationId: IDS.org.b, assignedToTeamId: null, lifecycleStatus: 'VERIFIED' });
+    }
+    // Poles 1–2 still follow the PE package and keep Team A.
+    expect(await owner(P.defect.p2sel)).toMatchObject({ assignedToTeamId: IDS.team.a });
+
+    // Back to Team B for the cases below.
+    await http(app, token.foreman).post(base).send({ assetIds: [POLE3, POLE4], assignedTeamId: IDS.team.b }).expect(201);
   });
 
   it('one work type of a pole can go elsewhere (Rentis of pole 1 → subcontractor team)', async () => {
@@ -286,7 +303,7 @@ describe('Authz · maintenance packages — split a Pencawang by poles (plan §1
       .post(base)
       .send({ assetIds: [POLE2], assignedTeamId: IDS.team.b })
       .expect(201);
-    expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 1, teamAssigned: 0 });
+    expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 1, teamAssigned: 0, teamCleared: 0 });
     expect(await owner(P.defect.p2sel)).toMatchObject({ maintenanceOrganizationId: IDS.org.maint });
   });
 

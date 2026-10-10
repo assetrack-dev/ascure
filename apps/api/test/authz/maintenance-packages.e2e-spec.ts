@@ -287,7 +287,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
           notes: 'Pakej 1',
         })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 3, moved: 0, kept: 0, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 3, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 });
       for (const id of [P.defect.rentis, P.defect.sel1, P.defect.sel2]) {
         expect(await orgOf(id)).toBe(IDS.org.maint);
       }
@@ -303,7 +303,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, maintenanceOrganizationId: IDS.org.maint, dueDate: '2026-12-31' })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 });
     });
 
     it('splitting off Rentis moves only that lane', async () => {
@@ -311,7 +311,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, category: 'RENTIS', maintenanceOrganizationId: IDS.org.b })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 0, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 0, teamAssigned: 0, teamCleared: 0 });
       expect(await orgOf(P.defect.rentis)).toBe(IDS.org.b);
       expect(await orgOf(P.defect.sel1)).toBe(IDS.org.maint);
 
@@ -342,7 +342,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visit, category: 'SELENGGARAAN', maintenanceOrganizationId: IDS.org.a })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 1, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 1, kept: 1, teamAssigned: 0, teamCleared: 0 });
 
       const moved = await prisma.defect.findUniqueOrThrow({ where: { id: P.defect.sel1 } });
       expect(moved.maintenanceOrganizationId).toBe(IDS.org.a);
@@ -379,7 +379,7 @@ describe('Authz · maintenance packages (TNB → company)', () => {
       const res = await http(app, token.foreman)
         .del(`/api/v1/maintenance-packages/${pkg.id}`)
         .expect(200);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 1, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 1, teamAssigned: 0, teamCleared: 0 });
       expect(await orgOf(P.defect.rentis)).toBeNull();
       expect(await orgOf(P.defect.sel1)).toBeNull();
       expect(await orgOf(P.defect.sel2)).toBe(IDS.org.maint);
