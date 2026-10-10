@@ -43,7 +43,8 @@ export type SlotStatus =
   | 'UT'
   | 'P2P'
   | 'NO ACCESS'
-  | 'END';
+  | 'END'
+  | 'NO CABLE';
 
 export interface SlotGrade {
   slot: number;
@@ -92,8 +93,18 @@ function isBlank(value: unknown): boolean {
   return BLANKS.has(String(value ?? '').trim().toUpperCase());
 }
 
+/** A failing span over a road crossing, or marked LO, is the worst kind. */
+export function isRoadOrLowFailure(grade: SlotGrade): boolean {
+  if (grade.status !== 'TAK PATUH') return false;
+  const reading = grade.reading.trim().toUpperCase();
+  return reading === 'LO' || reading === 'LOW' || normTerrain(grade.terrain) === 'MELINTASI JALAN RAYA';
+}
+
 function normTerrain(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().toUpperCase();
+  const key = value.replace(/\s+/g, ' ').trim().toUpperCase();
+  // Sungai Siput QR AUTO (run_savr.py Stage-1 §8): the prefix-less option is the
+  // same terrain as the grader's 'KAWASAN …' key.
+  return key === 'TIDAK DIMASUKI KENDERAAN' ? 'KAWASAN TIDAK DIMASUKI KENDERAAN' : key;
 }
 
 /** Grade one slot (QR `classify_slot`). */
@@ -116,6 +127,10 @@ export function classifySlot(readingRaw: unknown, terrainRaw: unknown, slot: num
   }
   if (rv === 'UT' || rv === 'P2P' || rv === 'NO ACCESS' || rv === 'END') {
     return { ...base, status: rv, detail: `slot ${slot}: ${rv} (from reading)` };
+  }
+  // Sungai Siput QR AUTO: no cable on the pole (e.g. an old pole) — not applicable.
+  if (['NO CABLE', 'NO CABLES', 'NOCABLE', 'TIADA KABEL'].includes(rv.replace(/[\s_-]+/g, ' '))) {
+    return { ...base, reading: '', status: 'NO CABLE', detail: `slot ${slot}: NO CABLE (clearance N/A)` };
   }
 
   const val = rv.replace(/,/g, '.');
