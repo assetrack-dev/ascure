@@ -40,7 +40,21 @@ export interface RepairReportItem {
   notes: string[];
   /** Who did / signed off the work, already worded ("Dibaiki: …", "Disahkan: …"). */
   who: string[];
+  /** Materials used (TNB list); empty when none recorded. */
+  materials: RepairReportMaterial[];
   photos: RepairReportPhoto[];
+}
+
+export interface RepairReportMaterial {
+  catalogueNo: string;
+  description: string;
+  unit: string;
+  quantity: number;
+}
+
+/** "12.5" / "2" — quantities as the claim writes them (no trailing zeros). */
+function formatQuantity(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
 }
 
 export interface RepairReportSection {
@@ -292,7 +306,18 @@ export async function renderRepairReportPdf(input: RepairReportInput): Promise<B
       const labelLines = wrapText(s(item.label), bold, TEXT_SIZE, textWidth);
       const noteLines = item.notes.flatMap((note) => wrapText(s(note), font, NOTE_SIZE, textWidth));
       const whoText = item.who.length ? wrapText(s(item.who.join('     ')), font, NOTE_SIZE, textWidth) : [];
-      const textHeight = (labelLines.length + noteLines.length + whoText.length) * LINE_HEIGHT + 4;
+      // "Bahan:" once, every material line aligned after it.
+      const materialIndent = item.materials.length > 0 ? bold.widthOfTextAtSize('Bahan:  ', NOTE_SIZE) : 0;
+      const materialLines = item.materials.flatMap((material, index) =>
+        wrapText(
+          s(`${formatQuantity(material.quantity)} ${material.unit}  ${material.description}  (${material.catalogueNo})`),
+          font,
+          NOTE_SIZE,
+          textWidth - materialIndent,
+        ).map((text, lineIndex) => ({ text, label: index === 0 && lineIndex === 0 })),
+      );
+      const textHeight =
+        (labelLines.length + noteLines.length + whoText.length + materialLines.length) * LINE_HEIGHT + 4;
       const photoRows = Math.ceil(embedded.length / PHOTOS_PER_ROW);
       const photoHeight = photoRows * (PHOTO_BOX_HEIGHT + PHOTO_CAPTION_HEIGHT + PHOTO_GAP);
       const emptyPhotoHeight = embedded.length === 0 ? LINE_HEIGHT + 4 : 0;
@@ -348,6 +373,13 @@ export async function renderRepairReportPdf(input: RepairReportInput): Promise<B
         page.drawText(line, { x: MARGIN + CARD_PAD, y: textY, size: NOTE_SIZE, font, color: INK });
         textY -= LINE_HEIGHT;
       }
+      for (const line of materialLines) {
+        if (line.label) {
+          page.drawText('Bahan:', { x: MARGIN + CARD_PAD, y: textY, size: NOTE_SIZE, font: bold, color: NAVY });
+        }
+        page.drawText(line.text, { x: MARGIN + CARD_PAD + materialIndent, y: textY, size: NOTE_SIZE, font, color: NAVY });
+        textY -= LINE_HEIGHT;
+      }
 
       // Photos.
       let rowTop = cursorY - CARD_BAND_HEIGHT - CARD_PAD - textHeight - 2;
@@ -386,6 +418,73 @@ export async function renderRepairReportPdf(input: RepairReportInput): Promise<B
 
       cursorY -= cardHeight + CARD_GAP;
     }
+  }
+
+  // Materials summary (TNB feedback #1): every material used in this report,
+  // totalled — what the contractor claims from TNB.
+  const totals = new Map<string, RepairReportMaterial>();
+  for (const section of input.sections) {
+    for (const item of section.items) {
+      for (const material of item.materials) {
+        const key = material.catalogueNo;
+        const row = totals.get(key) ?? { ...material, quantity: 0 };
+        row.quantity = Number((row.quantity + material.quantity).toFixed(3));
+        totals.set(key, row);
+      }
+    }
+  }
+  if (totals.size > 0) {
+    const rows = [...totals.values()].sort((left, right) => left.description.localeCompare(right.description));
+    const ROW_HEIGHT = 14;
+    const columns = [
+      { title: 'NO', width: 26 },
+      { title: 'NO KATALOG', width: 70 },
+      { title: 'KETERANGAN', width: CONTENT_WIDTH - 26 - 70 - 44 - 60 },
+      { title: 'UNIT', width: 44 },
+      { title: 'KUANTITI', width: 60 },
+    ];
+    const drawRow = (cells: string[], top: number, header: boolean) => {
+      if (header) {
+        page.drawRectangle({ x: MARGIN, y: top - ROW_HEIGHT, width: CONTENT_WIDTH, height: ROW_HEIGHT, color: BAND_FILL });
+      }
+      page.drawLine({
+        start: { x: MARGIN, y: top - ROW_HEIGHT },
+        end: { x: MARGIN + CONTENT_WIDTH, y: top - ROW_HEIGHT },
+        thickness: 0.5,
+        color: BORDER,
+      });
+      let x = MARGIN;
+      cells.forEach((cell, index) => {
+        const column = columns[index];
+        const size = header ? 7.5 : 8;
+        const face = header ? bold : font;
+        let text = s(cell);
+        while (text.length > 1 && face.widthOfTextAtSize(text, size) > column.width - 6) text = text.slice(0, -1);
+        const textX = index === 4 ? x + column.width - 4 - face.widthOfTextAtSize(text, size) : x + 3;
+        page.drawText(text, { x: textX, y: top - ROW_HEIGHT + 4, size, font: face, color: header ? NAVY : INK });
+        x += column.width;
+      });
+    };
+    if (cursorY - bottomLimit < 60) newPage();
+    page.drawText(s(`RINGKASAN BAHAN DIGUNAKAN (${rows.length})`), {
+      x: MARGIN,
+      y: cursorY - 10,
+      size: 10.5,
+      font: bold,
+      color: NAVY,
+    });
+    cursorY -= 18;
+    drawRow(columns.map((column) => column.title), cursorY, true);
+    cursorY -= ROW_HEIGHT;
+    rows.forEach((row, index) => {
+      if (cursorY - ROW_HEIGHT < bottomLimit) {
+        newPage();
+        drawRow(columns.map((column) => column.title), cursorY, true);
+        cursorY -= ROW_HEIGHT;
+      }
+      drawRow([String(index + 1), row.catalogueNo, row.description, row.unit, formatQuantity(row.quantity)], cursorY, false);
+      cursorY -= ROW_HEIGHT;
+    });
   }
 
   // Footer + DRAF watermark.
