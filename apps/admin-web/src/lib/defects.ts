@@ -1,3 +1,4 @@
+import { parseMaterialLines } from "@/lib/maintenance-materials";
 import { apiRequest } from "@/lib/api";
 import type {
   DefectActor,
@@ -764,6 +765,7 @@ function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
     images,
     evidenceImages,
     maintenanceProofImages,
+    materials: parseMaterialLines(record.materials),
     timeline: normalizeTimeline(record, baseDefect),
   };
 }

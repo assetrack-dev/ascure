@@ -1,3 +1,4 @@
+import type { DefectMaterialLine } from "@/lib/maintenance-materials";
 export const DEFECT_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
 export const MAINTENANCE_CATEGORIES = ["RENTIS", "CAT_TIANG", "SELENGGARAAN"] as const;
 export const DEFECT_WORKFLOW_STATUSES = [
@@ -275,6 +276,8 @@ export interface DefectDetail extends DefectListItem {
   images: DefectEvidenceImage[];
   evidenceImages?: DefectEvidenceImage[];
   maintenanceProofImages?: DefectEvidenceImage[];
+  /** TNB materials used for the repair (TNB feedback #1). */
+  materials?: DefectMaterialLine[];
   timeline: DefectTimelineEntry[];
 }
 
