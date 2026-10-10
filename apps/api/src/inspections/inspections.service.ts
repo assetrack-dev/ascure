@@ -2046,6 +2046,8 @@ export class InspectionsService {
           requiresQAQC: true,
           reportingGroup: true,
           startedAt: true,
+          // The photo stamp names the Pencawang (TNB feedback #5).
+          pencawangName: true,
           team: {
             select: {
               id: true,
@@ -2067,6 +2069,7 @@ export class InspectionsService {
           id: true,
           assetCode: true,
           name: true,
+          noTiangLama: true,
           assetType: {
             select: {
               id: true,
