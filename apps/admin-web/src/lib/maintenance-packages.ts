@@ -91,7 +91,9 @@ export async function addMaintenanceFinding(
 ) {
   const form = new FormData();
   form.append("assetId", payload.assetId);
-  form.append("templateItemId", payload.templateItemId);
+  if (payload.templateItemId) form.append("templateItemId", payload.templateItemId);
+  if (payload.customLabel) form.append("customLabel", payload.customLabel);
+  if (payload.category) form.append("category", payload.category);
   if (payload.optionValue) form.append("optionValue", payload.optionValue);
   if (payload.note?.trim()) form.append("note", payload.note.trim());
   form.append("file", photo);

@@ -234,7 +234,11 @@ export interface FindingOptionsResponse {
 
 export interface AddFindingPayload {
   assetId: string;
-  templateItemId: string;
+  /** A checklist item … */
+  templateItemId?: string;
   optionValue?: string;
+  /** … or free text ("Lain-lain") with its work type (TNB feedback #2). */
+  customLabel?: string;
+  category?: MaintenanceCategory;
   note?: string;
 }
