@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../api';
 import { setItemWithRecovery } from '../deviceStorage';
 import type {
   MaintenanceCategory,
+  MaterialLine,
   RepairStage,
   WorkKejanggalan,
   WorkPackageDetail,
@@ -22,6 +23,9 @@ import type {
  * Plus new Kejanggalan the crew added on site (plan §13) until the server pack
  * carries them: shown as normal Kejanggalan, keyed by a temp defect id that is
  * swapped for the real one when the queued add syncs.
+ *
+ * Plus the materials the crew recorded on a Kejanggalan (TNB feedback #1),
+ * shown in place of the pack's list until a fresh pack reflects the save.
  */
 
 const STORAGE_KEY = '@ascure/mobile/maintenance-local/v1';
@@ -65,13 +69,24 @@ export type LocalFinding = {
   rejectedReason?: string;
 };
 
+export type LocalMaterials = {
+  defectId: string;
+  /** The whole list as the crew last saved it (empty = cleared). */
+  lines: MaterialLine[];
+  queuedAt: string;
+  /** Set once the queued save reached the server. */
+  syncedAt?: string;
+  rejectedReason?: string;
+};
+
 export type Store = {
   photos: LocalRepairPhoto[];
   completions: LocalCompletion[];
   findings: LocalFinding[];
+  materials: LocalMaterials[];
 };
 
-const EMPTY_STORE: Store = { photos: [], completions: [], findings: [] };
+const EMPTY_STORE: Store = { photos: [], completions: [], findings: [], materials: [] };
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -93,6 +108,7 @@ async function load(): Promise<Store> {
       photos: Array.isArray(parsed.photos) ? parsed.photos : [],
       completions: Array.isArray(parsed.completions) ? parsed.completions : [],
       findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+      materials: Array.isArray(parsed.materials) ? parsed.materials : [],
     };
   } catch {
     return EMPTY_STORE;
@@ -157,6 +173,7 @@ export function markLocalFindingSynced(tempId: string, realId: string) {
   return update((store) => ({
     photos: store.photos.map((photo) => ({ ...photo, defectId: swap(photo.defectId) })),
     completions: store.completions.map((item) => ({ ...item, defectId: swap(item.defectId) })),
+    materials: store.materials.map((entry) => ({ ...entry, defectId: swap(entry.defectId) })),
     findings: store.findings.map((finding) =>
       finding.tempId === tempId ? { ...finding, realId } : finding,
     ),
@@ -183,6 +200,7 @@ export async function removeLocalFinding(tempId: string): Promise<string[]> {
     }),
     completions: store.completions.filter((item) => item.defectId !== tempId),
     findings: store.findings.filter((finding) => finding.tempId !== tempId),
+    materials: store.materials.filter((entry) => entry.defectId !== tempId),
   }));
   return files;
 }
@@ -226,6 +244,7 @@ export function pendingFindingItems(
       isNewFinding: true,
       addedBy: null,
       addedAt: finding.addedAt,
+      materials: [],
       localFinding: finding,
     }));
 }
@@ -256,6 +275,54 @@ export function markLocalCompletionRejected(defectId: string, reason: string) {
   }));
 }
 
+export function setLocalMaterials(defectId: string, lines: MaterialLine[], queuedAt: string) {
+  return update((store) => ({
+    ...store,
+    materials: [
+      ...store.materials.filter((entry) => entry.defectId !== defectId),
+      { defectId, lines, queuedAt },
+    ],
+  }));
+}
+
+/** The queued save landed — only the save made at `queuedAt` (a newer one may be waiting). */
+export function markLocalMaterialsSynced(defectId: string, queuedAt: string) {
+  return update((store) => ({
+    ...store,
+    materials: store.materials.map((entry) =>
+      entry.defectId === defectId && entry.queuedAt === queuedAt
+        ? { ...entry, syncedAt: new Date().toISOString() }
+        : entry,
+    ),
+  }));
+}
+
+export function markLocalMaterialsRejected(defectId: string, reason: string) {
+  return update((store) => ({
+    ...store,
+    materials: store.materials.map((entry) =>
+      entry.defectId === defectId ? { ...entry, rejectedReason: reason } : entry,
+    ),
+  }));
+}
+
+export function dismissLocalMaterials(defectId: string) {
+  return update((store) => ({
+    ...store,
+    materials: store.materials.filter((entry) => entry.defectId !== defectId),
+  }));
+}
+
+function sameMaterials(a: MaterialLine[], b: MaterialLine[]) {
+  if (a.length !== b.length) return false;
+  const key = (lines: MaterialLine[]) =>
+    lines
+      .map((line) => `${line.materialId}:${Number(line.quantity)}`)
+      .sort()
+      .join('|');
+  return key(a) === key(b);
+}
+
 export function dismissLocalCompletion(defectId: string) {
   return update((store) => ({
     ...store,
@@ -272,9 +339,12 @@ export async function reconcileWithPack(pack: WorkPackageDetail): Promise<string
   const serverEvidence = new Set<string>();
   const doneOnServer = new Set<string>();
   const inPack = new Set<string>();
+  const serverMaterials = new Map<string, MaterialLine[]>();
+  const packTime = Date.parse(pack.generatedAt);
   for (const pole of pack.poles) {
     for (const item of pole.kejanggalan) {
       inPack.add(item.id);
+      if (item.materials) serverMaterials.set(item.id, item.materials);
       (['BEFORE', 'DURING', 'AFTER'] as RepairStage[]).forEach((stage) =>
         item.photos[stage].forEach((photo) => serverEvidence.add(photo.id)),
       );
@@ -301,6 +371,15 @@ export async function reconcileWithPack(pack: WorkPackageDetail): Promise<string
     completions: store.completions.filter(
       (item) => !(doneOnServer.has(item.defectId) && !item.rejectedReason),
     ),
+    // A saved list the pack now carries — or any synced one the pack was built
+    // after (the office may have corrected it since) — needs no local copy.
+    materials: store.materials.filter((entry) => {
+      if (entry.rejectedReason) return true;
+      const server = serverMaterials.get(entry.defectId);
+      if (!server) return true;
+      if (sameMaterials(server, entry.lines)) return false;
+      return !(entry.syncedAt && packTime >= Date.parse(entry.syncedAt));
+    }),
   }));
   return removable;
 }
@@ -310,6 +389,10 @@ export type OverlaidKejanggalan = WorkKejanggalan & {
   allPhotos: Record<RepairStage, Array<WorkPhoto & { local?: boolean; pending?: boolean; rejectedReason?: string }>>;
   pendingCompletion: LocalCompletion | null;
   displayState: WorkState;
+  /** Materials to show: the crew's local save, else the server's. */
+  displayMaterials: MaterialLine[];
+  /** The crew's save not yet confirmed by a fresh pack (or refused). */
+  pendingMaterials: LocalMaterials | null;
 };
 
 /** One Kejanggalan as the crew should see it: server state + their local work. */
@@ -344,5 +427,9 @@ export function overlayKejanggalan(item: WorkKejanggalan, store: Store): Overlai
         ? 'IN_PROGRESS'
         : item.state;
 
-  return { ...item, allPhotos, pendingCompletion, displayState };
+  const pendingMaterials = store.materials.find((entry) => entry.defectId === item.id) ?? null;
+  const displayMaterials =
+    pendingMaterials && !pendingMaterials.rejectedReason ? pendingMaterials.lines : (item.materials ?? []);
+
+  return { ...item, allPhotos, pendingCompletion, displayState, displayMaterials, pendingMaterials };
 }

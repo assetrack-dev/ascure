@@ -2,10 +2,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { api, ApiError } from './api';
 import { readDurable, writeDurable } from './deviceStorage';
 import { removeCache, removeFromCachedArray } from './offlineCache';
+import type { WorkPackageDetail } from './maintenance/types';
 import {
+  loadMaintenanceLocal,
   markLocalCompletionRejected,
   markLocalFindingRejected,
   markLocalFindingSynced,
+  markLocalMaterialsRejected,
+  markLocalMaterialsSynced,
   markLocalPhotoRejected,
   markLocalPhotoUploaded,
 } from './maintenance/maintenanceLocal';
@@ -63,7 +67,10 @@ export type OfflineMutationType =
   | 'COMPLETE_DEFECT_MAINTENANCE'
   // Plan §13: a Kejanggalan the crew found on site (not in the survey). Mints a
   // temp defect id; its BEFORE photo and "done" dependOn it.
-  | 'CREATE_DEFECT_FINDING';
+  | 'CREATE_DEFECT_FINDING'
+  // TNB feedback #1: the whole materials list of one Kejanggalan (a newer save
+  // replaces a still-waiting older one).
+  | 'SET_DEFECT_MATERIALS';
 
 /**
  * An arrival site photo captured during an OFFLINE check-in. The file is copied
@@ -119,7 +126,15 @@ function nextLocalSuffix() {
  *  'link' = a queued shared-pole link (no new entity; the id is just the
  *  queue item's identity and maps to the linked asset on completion). */
 export function mintTempId(
-  entity: 'asset' | 'inspection' | 'visit' | 'link' | 'evidence' | 'completion' | 'defect',
+  entity:
+    | 'asset'
+    | 'inspection'
+    | 'visit'
+    | 'link'
+    | 'evidence'
+    | 'completion'
+    | 'defect'
+    | 'materials',
 ) {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
@@ -534,6 +549,140 @@ export async function enqueueRepairCompletion(input: {
   });
 }
 
+/**
+ * Queue the materials list of one Kejanggalan (TNB feedback #1). The server
+ * takes the whole list, so a still-waiting older save for the same Kejanggalan
+ * is dropped; a Kejanggalan added on site must reach the server first.
+ */
+export async function enqueueDefectMaterials(input: {
+  defectId: string;
+  items: Array<{ materialId: string; quantity: number }>;
+  queuedAt: string;
+  label: string;
+  sublabel?: string;
+  ownerUserId?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  await updateStoredQueue((queue) => {
+    const dependsOn = queue.mutations
+      .filter(
+        (mutation) =>
+          mutation.type === 'CREATE_DEFECT_FINDING' &&
+          mutation.tempId === input.defectId &&
+          !queue.tempIdMap[mutation.tempId],
+      )
+      .map((mutation) => mutation.tempId);
+    const mutation: OfflineMutation = {
+      id: `op_${nextLocalSuffix()}`,
+      type: 'SET_DEFECT_MATERIALS',
+      status: 'PENDING_SYNC',
+      payload: { defectId: input.defectId, items: input.items, queuedAt: input.queuedAt },
+      dependsOn,
+      tempId: mintTempId('materials'),
+      label: input.label,
+      sublabel: input.sublabel,
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      ownerUserId: input.ownerUserId,
+    };
+    return {
+      ...queue,
+      mutations: [
+        ...queue.mutations.filter(
+          (existing) =>
+            !(
+              existing.type === 'SET_DEFECT_MATERIALS' &&
+              existing.payload.defectId === input.defectId &&
+              existing.status !== 'SYNCING'
+            ),
+        ),
+        mutation,
+      ],
+    };
+  });
+}
+
+/**
+ * Builds up to v2.0.18 dropped a queued CREATE_DEFECT_FINDING on the next queue
+ * write (the persisted-type guard did not list it), so a Kejanggalan the crew
+ * added on site never reached the server and its BEFORE photo waited forever.
+ * The phone still holds the finding (maintenanceLocal) and the photo op, so
+ * re-queue the add, ahead of its photo. The checklist item is matched back by
+ * label on the pole's template; anything unmatched goes up as free text
+ * ("Lain-lain") so the work is never lost. Returns how many were re-queued.
+ */
+export async function recoverLostFindings(
+  pack: WorkPackageDetail,
+  currentUserId: string | null,
+): Promise<number> {
+  const local = await loadMaintenanceLocal();
+  const candidates = local.findings.filter(
+    (finding) =>
+      finding.siteVisitId === pack.siteVisitId && !finding.realId && !finding.rejectedReason,
+  );
+  if (candidates.length === 0) return 0;
+
+  let recovered = 0;
+  await updateStoredQueue((queue) => {
+    let mutations = queue.mutations;
+    for (const finding of candidates) {
+      const tempId = finding.tempId;
+      if (queue.tempIdMap[tempId]) continue;
+      if (mutations.some((m) => m.type === 'CREATE_DEFECT_FINDING' && m.tempId === tempId)) continue;
+
+      const firstDependent = mutations.findIndex((m) => m.dependsOn.includes(tempId));
+      const ownerUserId =
+        (firstDependent >= 0 ? mutations[firstDependent].ownerUserId : undefined) ??
+        currentUserId ??
+        undefined;
+
+      const templateId = pack.surveyedPoles?.find((pole) => pole.assetId === finding.assetId)?.templateId;
+      const item = pack.findingTemplates
+        ?.find((template) => template.templateId === templateId)
+        ?.items.find((candidate) => candidate.label.toUpperCase() === finding.label.toUpperCase());
+      const remark = finding.remark ?? '';
+      const option = item?.options.find(
+        (candidate) => remark === candidate.label || remark.startsWith(`${candidate.label} — `),
+      );
+      const matched = item && (item.options.length === 0 || option);
+      const note = matched && option ? remark.slice(option.label.length).replace(/^ — /, '') || null : remark || null;
+
+      const now = new Date().toISOString();
+      const create: OfflineMutation = {
+        id: `op_${nextLocalSuffix()}`,
+        type: 'CREATE_DEFECT_FINDING',
+        status: 'PENDING_SYNC',
+        payload: {
+          siteVisitId: finding.siteVisitId,
+          assetId: finding.assetId,
+          templateItemId: matched ? item.templateItemId : null,
+          optionValue: matched ? (option?.value ?? null) : null,
+          customLabel: matched ? null : finding.label,
+          category: matched ? null : finding.category,
+          note,
+          clientRef: tempId,
+        },
+        dependsOn: [],
+        tempId,
+        label: 'New Kejanggalan (recovered)',
+        sublabel: finding.remark ?? finding.label,
+        createdAt: now,
+        updatedAt: now,
+        attemptCount: 0,
+        ownerUserId,
+      };
+      mutations =
+        firstDependent >= 0
+          ? [...mutations.slice(0, firstDependent), create, ...mutations.slice(firstDependent)]
+          : [...mutations, create];
+      recovered += 1;
+    }
+    return recovered > 0 ? { ...queue, mutations } : queue;
+  });
+  return recovered;
+}
+
 async function getMutationItem(mutationId: string) {
   const queue = await loadSyncQueueSnapshot();
 
@@ -764,6 +913,17 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
         await markLocalFindingSynced(mutation.tempId, realId);
         break;
       }
+      case 'SET_DEFECT_MATERIALS': {
+        const save = payload as unknown as {
+          defectId: string;
+          items: Array<{ materialId: string; quantity: number }>;
+          queuedAt: string;
+        };
+        await api.setDefectMaterials(token, save.defectId, save.items);
+        realId = save.defectId;
+        await markLocalMaterialsSynced(save.defectId, save.queuedAt);
+        break;
+      }
       default: {
         // Exhaustiveness: a new OfflineMutationType MUST add a branch above, or
         // this fails the build (rather than silently mis-routing the create).
@@ -827,6 +987,8 @@ async function recordMaintenanceRejection(mutation: OfflineMutation, reason: str
       // Its photos / "done" are dropped with it by the cascade; the pole screen
       // shows the reason and lets the crew dismiss it.
       await markLocalFindingRejected(mutation.tempId, reason);
+    } else if (mutation.type === 'SET_DEFECT_MATERIALS') {
+      await markLocalMaterialsRejected(String(mutation.payload.defectId), reason);
     }
   } catch {
     // Best-effort UI note; the queue must keep draining regardless.
@@ -1899,6 +2061,8 @@ function isOfflineMutationType(value: unknown): value is OfflineMutationType {
     case 'LINK_VISIT_ASSET':
     case 'UPLOAD_DEFECT_EVIDENCE':
     case 'COMPLETE_DEFECT_MAINTENANCE':
+    case 'CREATE_DEFECT_FINDING':
+    case 'SET_DEFECT_MATERIALS':
       return true;
     default:
       return false;

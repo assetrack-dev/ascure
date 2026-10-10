@@ -803,6 +803,18 @@ export const api = {
     );
   },
 
+  /** TNB feedback #1: replace the materials used on one Kejanggalan (whole list). */
+  setDefectMaterials(
+    token: string,
+    defectId: string,
+    items: Array<{ materialId: string; quantity: number }>,
+  ) {
+    return request<{ defectId: string; materials: unknown[] }>(
+      `/maintenance-materials/defects/${defectId}`,
+      { method: 'PUT', token, body: { items } },
+    );
+  },
+
   completeDefectMaintenance(
     token: string,
     defectId: string,

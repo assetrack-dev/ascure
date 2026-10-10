@@ -57,7 +57,29 @@ export type WorkKejanggalan = {
   isNewFinding?: boolean;
   addedBy?: string | null;
   addedAt?: string | null;
+  /** TNB feedback #1 — materials used for the repair (absent in older packs). */
+  materials?: MaterialLine[];
 };
+
+/** One TNB material ("LIST BARANG IMBANGAN TNB — SAVR"). */
+export type MaterialCatalogItem = {
+  id: string;
+  catalogueNo: string;
+  description: string;
+  unit: string;
+};
+
+/** A material used on one Kejanggalan. */
+export type MaterialLine = {
+  materialId: string;
+  catalogueNo: string;
+  description: string;
+  unit: string;
+  quantity: number;
+};
+
+/** Countable units take whole numbers; M / KG may carry decimals (mirrors the API). */
+export const WHOLE_UNITS = new Set(['EA', 'UNT', 'SET']);
 
 export type WorkPole = {
   assetId: string;
@@ -83,6 +105,8 @@ export type WorkPackageDetail = {
   surveyedPoles?: SurveyedPole[];
   /** §13 — per checklist template, the items that can carry a Kejanggalan. */
   findingTemplates?: Array<{ templateId: string; items: FindingItem[] }>;
+  /** TNB feedback #1 — the materials list, shipped with the pack so it works offline. */
+  materialCatalog?: MaterialCatalogItem[];
   generatedAt: string;
 };
 

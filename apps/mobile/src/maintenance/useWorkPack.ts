@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { cachedFetch } from '../offlineCache';
-import { deleteRepairPhotoFile } from '../syncQueue';
+import { deleteRepairPhotoFile, recoverLostFindings } from '../syncQueue';
 import {
   loadMaintenanceLocal,
   reconcileWithPack,
@@ -18,9 +18,14 @@ export const WORK_CACHE_NAMESPACE = 'maintenance-work';
  * offline) plus the device's own not-yet-confirmed repair work.
  */
 export function useWorkPack(siteVisitId: string) {
-  const { token, handleUnauthorized } = useSession();
+  const { token, user, handleUnauthorized } = useSession();
   const [pack, setPack] = useState<WorkPackageDetail | null>(null);
-  const [local, setLocal] = useState<LocalStore>({ photos: [], completions: [], findings: [] });
+  const [local, setLocal] = useState<LocalStore>({
+    photos: [],
+    completions: [],
+    findings: [],
+    materials: [],
+  });
   const [fromCache, setFromCache] = useState(false);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -45,6 +50,8 @@ export function useWorkPack(siteVisitId: string) {
         const removable = await reconcileWithPack(result.value);
         await Promise.all(removable.map((uri) => deleteRepairPhotoFile(uri).catch(() => undefined)));
       }
+      // Re-queue on-site Kejanggalan an older build lost from the queue.
+      await recoverLostFindings(result.value, user?.id ?? null).catch(() => 0);
       await refreshLocal();
     } catch (loadError) {
       if (loadError instanceof ApiError && loadError.status === 401) {
@@ -55,7 +62,7 @@ export function useWorkPack(siteVisitId: string) {
     } finally {
       setIsLoading(false);
     }
-  }, [handleUnauthorized, refreshLocal, siteVisitId, token]);
+  }, [handleUnauthorized, refreshLocal, siteVisitId, token, user?.id]);
 
   useEffect(() => {
     void reload();

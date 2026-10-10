@@ -8,6 +8,7 @@ import { useSync } from '../context/SyncContext';
 import { useStampedPhoto } from '../camera/useStampedPhoto';
 import {
   deleteRepairPhotoFile,
+  enqueueDefectMaterials,
   enqueueMutation,
   enqueueRepairCompletion,
   isTempId,
@@ -20,21 +21,25 @@ import {
   addLocalFinding,
   addLocalPhoto,
   dismissLocalCompletion,
+  dismissLocalMaterials,
   overlayKejanggalan,
   pendingFindingItems,
   removeLocalFinding,
   removeLocalPhoto,
+  setLocalMaterials,
   type LocalFinding,
   type OverlaidKejanggalan,
 } from '../maintenance/maintenanceLocal';
 import { usePackPhotos } from '../maintenance/packPhotos';
 import { useWorkPack } from '../maintenance/useWorkPack';
+import { RepairMaterials } from '../components/RepairMaterials';
 import {
   CATEGORY_LABEL,
   STAGE_LABEL,
   STATE_LABEL,
   type FindingItem,
   type MaintenanceCategory,
+  type MaterialLine,
   type RepairStage,
   type WorkPole,
 } from '../maintenance/types';
@@ -273,6 +278,21 @@ export function MaintenancePoleScreen() {
     });
     setCompleting(null);
     setNotes('');
+    kickSync();
+  };
+
+  /** TNB feedback #1 — save the whole materials list; it queues like photos. */
+  const saveMaterials = async (item: OverlaidKejanggalan, lines: MaterialLine[]) => {
+    const queuedAt = new Date().toISOString();
+    await setLocalMaterials(item.id, lines, queuedAt);
+    await enqueueDefectMaterials({
+      defectId: item.id,
+      items: lines.map((line) => ({ materialId: line.materialId, quantity: line.quantity })),
+      queuedAt,
+      label: `Bahan digunakan · ${poleCode}`,
+      sublabel: item.remark || item.label,
+      ownerUserId: user.id,
+    });
     kickSync();
   };
 
@@ -800,6 +820,15 @@ export function MaintenancePoleScreen() {
                 </View>
               );
             })}
+
+            <RepairMaterials
+              lines={item.displayMaterials}
+              pending={item.pendingMaterials}
+              catalog={pack?.materialCatalog ?? []}
+              canEdit={!item.localFinding?.rejectedReason}
+              onSave={(lines) => saveMaterials(item, lines)}
+              onDismissRejected={() => void dismissLocalMaterials(item.id)}
+            />
 
             {workable && !isThisCompleting ? (
               <View style={styles.actionRow}>
