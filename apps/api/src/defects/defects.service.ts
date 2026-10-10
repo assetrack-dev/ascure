@@ -3012,6 +3012,8 @@ export class DefectsService {
                   id: true,
                   assetCode: true,
                   name: true,
+                  // The photo stamp shows NO TIANG LAMA (TNB feedback #5).
+                  noTiangLama: true,
                   latitude: true,
                   longitude: true,
                   substation: {
@@ -4031,6 +4033,7 @@ export class DefectsService {
         id: inspection.asset.id,
         assetCode: inspection.asset.assetCode,
         name: inspection.asset.name,
+        noTiangLama: inspection.asset.noTiangLama,
         latitude: inspection.asset.latitude,
         longitude: inspection.asset.longitude,
         assetType: {
