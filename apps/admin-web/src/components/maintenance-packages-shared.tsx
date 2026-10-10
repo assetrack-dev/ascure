@@ -32,6 +32,7 @@ export function routingParts(result: RoutingResult) {
   if (result.routed) parts.push(`${result.routed} routed`);
   if (result.moved) parts.push(`${result.moved} moved`);
   if (result.teamAssigned) parts.push(`${result.teamAssigned} handed to the team`);
+  if (result.teamCleared) parts.push(`${result.teamCleared} taken off the team (no team yet)`);
   if (result.kept) parts.push(`${result.kept} kept with the previous crew (work already started)`);
   return parts;
 }
@@ -96,12 +97,14 @@ export function DestinationSelect({
       <option value="">{teamsOnly ? "Choose a team…" : "Choose a company or team…"}</option>
       {companies.map((company) => (
         <optgroup key={company.id} label={companyLabel(company)}>
-          {teamsOnly ? null : (
-            <option value={`org:${company.id}`}>
-              {company.name} — company picks the team
-              {company.id === suggestedOrganizationId ? " (Mainhead default)" : ""}
-            </option>
-          )}
+          {/* "org:" = the company with NO team: a Manager uses it to take a
+              wrongly assigned team off the work (TNB feedback #4). */}
+          <option value={`org:${company.id}`}>
+            {teamsOnly
+              ? "No team — unassigned"
+              : `${company.name} — no team yet (company picks)`}
+            {!teamsOnly && company.id === suggestedOrganizationId ? " (Mainhead default)" : ""}
+          </option>
           {teams
             .filter((team) => team.organizationId === company.id)
             .map((team) => (

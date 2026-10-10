@@ -183,6 +183,8 @@ export interface RoutingResult {
   moved: number;
   kept: number;
   teamAssigned: number;
+  /** Taken off a removed team (absent from older APIs). */
+  teamCleared?: number;
 }
 
 export type BulkAssignRow =
