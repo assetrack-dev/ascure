@@ -24,6 +24,7 @@ import {
   EvidenceImageGrid,
   buildEvidenceEntries,
 } from "@/components/inspection-evidence-grid";
+import { DefectMaterialsCard } from "@/components/defect-materials-card";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession, refreshStoredSessionUser } from "@/lib/auth";
 import {
@@ -1319,6 +1320,21 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                     </div>
                   </div>
                 </section>
+
+                <DefectMaterialsCard
+                  token={session?.token ?? null}
+                  defectId={defect.id}
+                  materials={defect.materials ?? []}
+                  // The crew records materials in the app; the contractor office
+                  // and admins correct them here (the API checks the company).
+                  canEdit={
+                    session?.user?.role === "ADMIN" ||
+                    canManageMaintenance ||
+                    (Boolean(session?.user?.canViewMaintenancePackages) && !session?.user?.isClientViewer)
+                  }
+                  onSaved={(materials) => setDefect((current) => (current ? { ...current, materials } : current))}
+                  onUnauthorized={handleLogout}
+                />
 
                 <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">

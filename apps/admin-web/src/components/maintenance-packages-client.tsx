@@ -9,6 +9,7 @@ import {
   Building2,
   CalendarClock,
   CheckCircle2,
+  FileSpreadsheet,
   Hourglass,
   Users,
   List,
@@ -27,6 +28,7 @@ import type { PackageMapPoint } from "@/components/maintenance-packages-map";
 import { AddFindingDialog } from "@/components/maintenance-add-finding-dialog";
 import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
 import { RepairReportDialog } from "@/components/maintenance-repair-report-dialog";
+import { MaterialsSummaryDialog } from "@/components/materials-summary-dialog";
 import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
@@ -1307,6 +1309,7 @@ function MaintenancePackagesContent() {
   const [findingRow, setFindingRow] = useState<PackagePencawang | null>(null);
   // Plan §16: repair report for one Pencawang (PDF) or a selection (ZIP).
   const [reportRows, setReportRows] = useState<PackagePencawang[] | null>(null);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [workType, setWorkType] = useState<WorkTypeFilter>("ALL");
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
@@ -1529,13 +1532,24 @@ function MaintenancePackagesContent() {
               ) : null
             }
             actions={
-              <Tbtn
-                onClick={() => (session?.token ? loadBoard(session.token) : undefined)}
-                disabled={isLoading || !session?.token}
-              >
-                <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                Refresh
-              </Tbtn>
+              <div className="flex items-center gap-2">
+                <Tbtn
+                  variant="secondary"
+                  onClick={() => setMaterialsOpen(true)}
+                  disabled={!board || !session?.token}
+                  title="Materials used, for the TNB claim (Excel)"
+                >
+                  <FileSpreadsheet size={16} />
+                  Materials summary
+                </Tbtn>
+                <Tbtn
+                  onClick={() => (session?.token ? loadBoard(session.token) : undefined)}
+                  disabled={isLoading || !session?.token}
+                >
+                  <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                  Refresh
+                </Tbtn>
+              </div>
             }
           />
 
@@ -1997,6 +2011,16 @@ function MaintenancePackagesContent() {
           board={board}
           initialCategory={workType === "ALL" ? null : workType}
           onClose={() => setReportRows(null)}
+          onUnauthorized={handleLogout}
+        />
+      ) : null}
+
+      {materialsOpen && board && session?.token ? (
+        <MaterialsSummaryDialog
+          token={session.token}
+          companies={board.companies}
+          fixedCompany={board.actorKind === "COMPANY"}
+          onClose={() => setMaterialsOpen(false)}
           onUnauthorized={handleLogout}
         />
       ) : null}
