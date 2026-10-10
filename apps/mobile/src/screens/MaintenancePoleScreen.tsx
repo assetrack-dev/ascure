@@ -732,7 +732,13 @@ export function MaintenancePoleScreen() {
             <Text style={styles.title}>{item.remark || item.label}</Text>
             {item.remark ? <Text style={styles.muted}>{item.label}</Text> : null}
             <Text style={styles.muted}>
-              {[item.team ? `Team ${item.team.name}` : 'Not assigned to a team yet', item.dueDate ? `Target ${formatDate(item.dueDate)}` : null]
+              {[
+                item.team
+                  ? `Team ${item.team.name}`
+                  : item.localFinding
+                    ? 'Team set when it syncs'
+                    : 'Not assigned to a team yet',
+                item.dueDate ? `Target ${formatDate(item.dueDate)}` : null]
                 .filter(Boolean)
                 .join(' · ')}
             </Text>

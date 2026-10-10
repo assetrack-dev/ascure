@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { cachedFetch } from '../offlineCache';
@@ -69,6 +69,25 @@ export function useWorkPack(siteVisitId: string) {
   }, [reload]);
 
   useEffect(() => subscribeMaintenanceLocal(() => void refreshLocal()), [refreshLocal]);
+
+  // A Kejanggalan added on site just synced: fetch the pack once so it shows
+  // the server's copy (its team, state) instead of the phone's placeholder.
+  const refetchedFor = useRef(new Set<string>());
+  useEffect(() => {
+    if (!pack || isLoading) return;
+    const inPack = new Set(pack.poles.flatMap((pole) => pole.kejanggalan.map((item) => item.id)));
+    const synced = local.findings.filter(
+      (finding) =>
+        finding.siteVisitId === siteVisitId &&
+        finding.realId &&
+        !finding.rejectedReason &&
+        !inPack.has(finding.realId) &&
+        !refetchedFor.current.has(finding.realId),
+    );
+    if (synced.length === 0) return;
+    synced.forEach((finding) => refetchedFor.current.add(finding.realId as string));
+    void reload();
+  }, [isLoading, local, pack, reload, siteVisitId]);
 
   return { pack, local, fromCache, cachedAt, isLoading, error, reload };
 }
