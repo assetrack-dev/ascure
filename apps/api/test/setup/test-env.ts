@@ -32,6 +32,9 @@ export function loadTestEnv(): void {
   if (!process.env.JWT_SECRET) {
     process.env.JWT_SECRET = 'test-jwt-secret-not-for-production';
   }
+  // Auto ground clearance hooks are opt-in per environment (prod switches them
+  // on after the one-time backfill); the suite exercises them.
+  process.env.AUTO_GROUND_CLEARANCE = process.env.AUTO_GROUND_CLEARANCE || 'true';
 }
 
 loadTestEnv();

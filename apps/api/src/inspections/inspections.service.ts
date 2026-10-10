@@ -70,6 +70,12 @@ import {
   SaveInspectionResultsDto,
 } from './dto/save-inspection-results.dto';
 import { UploadInspectionImageDto } from './dto/upload-inspection-image.dto';
+import {
+  GC_OFFICE_OVERRIDE_REMARK,
+  applyPencawangGroundClearance,
+  isGroundClearanceInputLabel,
+  isGroundClearanceItemLabel,
+} from './ground-clearance.apply';
 
 type UploadedInspectionImageFile = {
   originalname: string;
@@ -789,6 +795,7 @@ export class InspectionsService {
       `BACAAN KELEGAAN 1 corrected on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}"`,
     );
 
+    await this.refreshGroundClearance(user.tenantId, inspection.id, user.id);
     return { ok: true, value: newValue };
   }
 
@@ -926,6 +933,9 @@ export class InspectionsService {
       isEmergency: isDefect ? (existingItemResult?.isEmergency ?? false) : false,
       severity,
       maintenanceCategory: item.maintenanceCategory ?? null,
+      // Hand-setting TIDAK PATUH GROUND CLEARANCE overrides the auto rule for
+      // this pole (else the next re-grade would undo the office's answer).
+      ...(isGroundClearanceItemLabel(item.label) ? { remark: GC_OFFICE_OVERRIDE_REMARK } : {}),
     };
     // Emergency-flagged defects are CRITICAL regardless of template severity —
     // mirrors buildInitialDefectData so the synced Defect row can't disagree.
@@ -1023,6 +1033,10 @@ export class InspectionsService {
     this.logger.warn(
       `Checklist item "${item.label}" edited on inspection ${inspection.id} by ${user.email} (${user.role}): "${oldValue ?? ''}" -> "${newValue ?? ''}" (verdict ${result}${isDefect ? `, defect ${severity ?? ''}`.trimEnd() : ''})`,
     );
+
+    if (isGroundClearanceInputLabel(item.label)) {
+      await this.refreshGroundClearance(user.tenantId, inspection.id, user.id);
+    }
 
     return { ok: true, value: newValue, result, isDefect, severity };
   }
@@ -1436,7 +1450,9 @@ export class InspectionsService {
     }
 
     if (defectCreateData.length === 0) {
-      return submitInspection;
+      const submitted = await submitInspection;
+      await this.refreshGroundClearance(user.tenantId, inspection.id, null);
+      return submitted;
     }
 
     const [submittedInspection] = await this.prisma.$transaction([
@@ -1470,7 +1486,49 @@ export class InspectionsService {
       }
     }
 
+    await this.refreshGroundClearance(user.tenantId, inspection.id, null);
     return submittedInspection;
+  }
+
+  /**
+   * Re-grade the pole's Pencawang for auto "TIDAK PATUH GROUND CLEARANCE"
+   * (TNB feedback #3). The rule spans neighbouring poles, so it always runs on
+   * the whole Pencawang. Best-effort: a failure is logged, never fails the
+   * caller (the backfill script can re-run any Pencawang).
+   *
+   * Switched on per environment with AUTO_GROUND_CLEARANCE=true (repo .env):
+   * prod enables it only after the one-time backfill has been reviewed and run
+   * (prisma/scripts/backfill-ground-clearance.ts), so a deploy alone never
+   * starts writing flags.
+   */
+  private async refreshGroundClearance(
+    tenantId: string,
+    inspectionId: string,
+    actorUserId: string | null,
+  ) {
+    if (process.env.AUTO_GROUND_CLEARANCE !== 'true') return;
+    try {
+      const row = await this.prisma.inspection.findUnique({
+        where: { id: inspectionId },
+        select: { asset: { select: { substationId: true } } },
+      });
+      const substationId = row?.asset.substationId;
+      if (!substationId) return;
+      const { set, withdrawn } = await applyPencawangGroundClearance(this.prisma, tenantId, substationId, {
+        actorUserId,
+      });
+      if (set > 0 || withdrawn > 0) {
+        this.logger.log(
+          `Auto ground clearance on Pencawang ${substationId}: ${set} set, ${withdrawn} withdrawn`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Auto ground clearance failed after inspection ${inspectionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   /**

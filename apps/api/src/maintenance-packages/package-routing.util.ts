@@ -174,7 +174,8 @@ export async function applyPackageRouting(
   tx: Prisma.TransactionClient,
   siteVisitId: string,
   options: {
-    actorUserId: string;
+    /** null = a system run (e.g. auto ground clearance backfill). */
+    actorUserId: string | null;
     now: Date;
     /** Timeline wording, e.g. "Pencawang package assigned by TNB". */
     reason: string;
