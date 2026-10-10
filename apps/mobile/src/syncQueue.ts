@@ -737,7 +737,9 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
         const finding = payload as unknown as {
           siteVisitId: string;
           assetId: string;
-          templateItemId: string;
+          templateItemId?: string | null;
+          customLabel?: string | null;
+          category?: string | null;
           optionValue?: string | null;
           note?: string | null;
           clientRef: string;

@@ -775,8 +775,12 @@ export const api = {
     siteVisitId: string,
     input: {
       assetId: string;
-      templateItemId: string;
+      /** A checklist item … */
+      templateItemId?: string | null;
       optionValue?: string | null;
+      /** … or free text ("Lain-lain") with its work type. */
+      customLabel?: string | null;
+      category?: string | null;
       note?: string | null;
       clientRef: string;
     },
@@ -788,7 +792,9 @@ export const api = {
         token,
         body: {
           assetId: input.assetId,
-          templateItemId: input.templateItemId,
+          ...(input.templateItemId ? { templateItemId: input.templateItemId } : {}),
+          ...(input.customLabel ? { customLabel: input.customLabel } : {}),
+          ...(input.category ? { category: input.category } : {}),
           ...(input.optionValue ? { optionValue: input.optionValue } : {}),
           ...(input.note ? { note: input.note } : {}),
           clientRef: input.clientRef,

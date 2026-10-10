@@ -57,6 +57,10 @@ type Completing = { defectId: string; kind: 'DONE' | 'CANNOT' } | null;
 
 type PoleItem = OverlaidKejanggalan & { localFinding?: LocalFinding };
 
+/** The "Lain-lain" pick in the add form: work the checklist does not list. */
+const CUSTOM_FINDING = '__custom__';
+const CUSTOM_FINDING_SEVERITY = 'MEDIUM';
+
 /**
  * One pole in maintenance mode (docs/PLAN-maintenance-flow.md §7.1 / §6): its
  * Kejanggalan with the survey photo, stamped BEFORE / DURING / AFTER photos, and
@@ -87,6 +91,9 @@ export function MaintenancePoleScreen() {
   const [findingType, setFindingType] = useState<MaintenanceCategory | 'ALL'>('ALL');
   const [findingNote, setFindingNote] = useState('');
   const [isAddingFinding, setIsAddingFinding] = useState(false);
+  // TNB feedback #2 — free text ("Lain-lain") when the checklist has no item for it.
+  const [customLabel, setCustomLabel] = useState('');
+  const [customType, setCustomType] = useState<MaintenanceCategory | null>(null);
 
   const surveyedPole = pack?.surveyedPoles?.find((candidate) => candidate.assetId === assetId) ?? null;
   // A pole with no Kejanggalan yet is still openable to add one.
@@ -125,6 +132,13 @@ export function MaintenancePoleScreen() {
     return (template?.items ?? []).filter((item) => surveyedPole.categories.includes(item.category));
   }, [pack, surveyedPole]);
   const chosenFinding = findingItems.find((item) => item.templateItemId === findingItemId) ?? null;
+  const isCustom = findingItemId === CUSTOM_FINDING;
+  /** Work types the crew may give a free-text Kejanggalan here (its scope). */
+  const customTypes = useMemo(
+    () => WORK_TYPE_ORDER.filter((type) => surveyedPole?.categories.includes(type)),
+    [surveyedPole],
+  );
+  const canAddFinding = Boolean(surveyedPole && surveyedPole.categories.length > 0);
   /** The work types this crew may add on this pole (its scope), in a fixed order. */
   const ownedTypes = useMemo(
     () => WORK_TYPE_ORDER.filter((type) => findingItems.some((item) => item.category === type)),
@@ -265,6 +279,20 @@ export function MaintenancePoleScreen() {
     setFindingItemId(null);
     setFindingOption(null);
     setFindingNote('');
+    setCustomLabel('');
+    setCustomType(null);
+  };
+
+  const chooseCustom = () => {
+    setFindingItemId(CUSTOM_FINDING);
+    setFindingOption(null);
+    setCustomType(
+      findingType !== 'ALL' && customTypes.includes(findingType)
+        ? findingType
+        : customTypes.length === 1
+          ? customTypes[0]
+          : null,
+    );
   };
 
   /**
@@ -273,15 +301,26 @@ export function MaintenancePoleScreen() {
    * Works offline — the add and the photo sync in order.
    */
   const addFinding = async () => {
-    if (!pole || !pack || !chosenFinding) return;
-    const option = chosenFinding.options.find((candidate) => candidate.value === findingOption) ?? null;
-    if (chosenFinding.options.length > 0 && !option) {
+    if (!pole || !pack || (!chosenFinding && !isCustom)) return;
+    const custom = isCustom ? customLabel.replace(/\s+/g, ' ').trim() : null;
+    if (isCustom && (!custom || custom.length < 3)) {
+      setActionError('Type what you found (at least 3 letters).');
+      return;
+    }
+    if (isCustom && !customType) {
+      setActionError('Pick the work type.');
+      return;
+    }
+    const option = chosenFinding?.options.find((candidate) => candidate.value === findingOption) ?? null;
+    if (chosenFinding && chosenFinding.options.length > 0 && !option) {
       setActionError('Pick which defect it is.');
       return;
     }
+    const label = custom ?? chosenFinding!.label;
+    const category = (isCustom ? customType : chosenFinding!.category) as MaintenanceCategory;
     const alreadyOpen = items.some(
       (item) =>
-        item.label === chosenFinding.label &&
+        item.label.toUpperCase() === label.toUpperCase() &&
         item.displayState !== 'CLOSED' &&
         !item.localFinding?.rejectedReason,
     );
@@ -292,7 +331,7 @@ export function MaintenancePoleScreen() {
     setActionError(null);
     setIsAddingFinding(true);
     try {
-      const severity = option?.severity ?? chosenFinding.severity;
+      const severity = isCustom ? CUSTOM_FINDING_SEVERITY : option?.severity ?? chosenFinding!.severity;
       const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(severity) });
       if (!photo) return;
 
@@ -306,10 +345,10 @@ export function MaintenancePoleScreen() {
         tempId,
         siteVisitId,
         assetId: pole.assetId,
-        label: chosenFinding.label,
+        label,
         remark,
         severity,
-        category: chosenFinding.category,
+        category,
         addedAt: new Date().toISOString(),
       });
       await enqueueMutation({
@@ -318,13 +357,15 @@ export function MaintenancePoleScreen() {
         payload: {
           siteVisitId,
           assetId: pole.assetId,
-          templateItemId: chosenFinding.templateItemId,
+          templateItemId: isCustom ? null : chosenFinding!.templateItemId,
           optionValue: option?.value ?? null,
+          customLabel: custom,
+          category: isCustom ? category : null,
           note,
           clientRef: tempId,
         },
         label: `New Kejanggalan · ${poleCode}`,
-        sublabel: remark ?? chosenFinding.label,
+        sublabel: remark ?? label,
         ownerUserId: user.id,
       });
       await addLocalPhoto({
@@ -350,7 +391,7 @@ export function MaintenancePoleScreen() {
           timestamp: photo.takenAt,
         },
         label: `Before photo · ${poleCode}`,
-        sublabel: remark ?? chosenFinding.label,
+        sublabel: remark ?? label,
         ownerUserId: user.id,
       });
       if (photo.mocked) {
@@ -462,7 +503,7 @@ export function MaintenancePoleScreen() {
         </Card>
       ) : null}
 
-      {pole && findingItems.length > 0 && !adding ? (
+      {pole && canAddFinding && !adding ? (
         <View style={styles.addRow}>
           <AppButton
             label="+ Add Kejanggalan (not in survey)"
@@ -539,6 +580,56 @@ export function MaintenancePoleScreen() {
               </View>
             );
           })}
+          {/* TNB feedback #2: work the checklist does not list. */}
+          {customTypes.length > 0 ? (
+            <Pressable onPress={chooseCustom} style={[styles.option, isCustom && styles.optionActive]}>
+              <Feather
+                name={isCustom ? 'check-circle' : 'edit-3'}
+                size={16}
+                color={isCustom ? theme.colors.primary : theme.colors.textMuted}
+              />
+              <Text style={styles.optionText}>
+                Lain-lain — tulis sendiri
+                <Text style={styles.optionMeta}>{'  ·  not in the checklist'}</Text>
+              </Text>
+            </Pressable>
+          ) : null}
+          {isCustom ? (
+            <>
+              <Text style={styles.section}>Kejanggalan</Text>
+              <TextInput
+                value={customLabel}
+                onChangeText={setCustomLabel}
+                placeholder="e.g. Talian servis tergantung rendah"
+                placeholderTextColor={theme.colors.textMuted}
+                maxLength={200}
+                style={styles.input}
+              />
+              {customTypes.length > 1 ? (
+                <>
+                  <Text style={styles.section}>Work type</Text>
+                  <View style={styles.typeRow}>
+                    {customTypes.map((type) => {
+                      const active = customType === type;
+                      return (
+                        <Pressable
+                          key={type}
+                          onPress={() => setCustomType(type)}
+                          style={[styles.typeChip, active && styles.typeChipActive]}
+                        >
+                          <Text style={[styles.typeChipText, active && styles.typeChipTextActive]}>
+                            {CATEGORY_LABEL[type]}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.hint}>Work type: {customTypes.map((type) => CATEGORY_LABEL[type]).join(', ')}</Text>
+              )}
+            </>
+          ) : null}
           {chosenFinding && chosenFinding.options.length > 1 ? (
             <>
               <Text style={styles.section}>Which defect</Text>
@@ -582,8 +673,9 @@ export function MaintenancePoleScreen() {
                 label={isAddingFinding || isStamping ? 'Saving…' : 'Take BEFORE photo & add'}
                 onPress={() => void addFinding()}
                 disabled={
-                  !chosenFinding ||
-                  (chosenFinding.options.length > 0 && !findingOption) ||
+                  (isCustom
+                    ? customLabel.trim().length < 3 || !customType
+                    : !chosenFinding || (chosenFinding.options.length > 0 && !findingOption)) ||
                   isAddingFinding ||
                   isStamping
                 }
