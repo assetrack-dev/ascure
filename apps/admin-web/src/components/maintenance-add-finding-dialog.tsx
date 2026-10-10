@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CATEGORY_LABEL,
+  CATEGORY_ORDER,
   DialogFrame,
   ErrorBanner,
   modalInputClass,
@@ -13,7 +14,14 @@ import {
 import { Tbtn } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { addMaintenanceFinding, fetchFindingOptions } from "@/lib/maintenance-packages";
-import type { FindingOptionsResponse, FindingPole } from "@/types/maintenance-packages";
+import type {
+  FindingOptionsResponse,
+  FindingPole,
+  MaintenanceCategory,
+} from "@/types/maintenance-packages";
+
+/** The "Lain-lain" pick: work the checklist does not list (TNB feedback #2). */
+const CUSTOM_FINDING = "__custom__";
 
 /**
  * Add a Kejanggalan that was not in the survey (docs/PLAN-maintenance-flow.md
@@ -54,6 +62,9 @@ export function AddFindingDialog({
   const [templateItemId, setTemplateItemId] = useState("");
   const [optionValue, setOptionValue] = useState("");
   const [note, setNote] = useState("");
+  // TNB feedback #2 — free text ("Lain-lain") for work the checklist does not list.
+  const [customLabel, setCustomLabel] = useState("");
+  const [customCategory, setCustomCategory] = useState<MaintenanceCategory | "">("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   // Latest callback without re-running the load when the parent re-renders.
@@ -107,10 +118,15 @@ export function AddFindingDialog({
     [options, pole],
   );
   const item = items.find((candidate) => candidate.templateItemId === templateItemId) ?? null;
+  const isCustom = templateItemId === CUSTOM_FINDING;
 
   // A pole change can drop the chosen item (another template).
   useEffect(() => {
-    if (templateItemId && !items.some((candidate) => candidate.templateItemId === templateItemId)) {
+    if (
+      templateItemId &&
+      templateItemId !== CUSTOM_FINDING &&
+      !items.some((candidate) => candidate.templateItemId === templateItemId)
+    ) {
       setTemplateItemId("");
       setOptionValue("");
     }
@@ -125,27 +141,41 @@ export function AddFindingDialog({
     return [...grouped.entries()];
   }, [items]);
 
+  const customText = customLabel.replace(/\s+/g, " ").trim();
   const ready =
-    Boolean(pole && item && photo) && (item?.options.length === 0 || Boolean(optionValue)) && !isSaving;
+    Boolean(pole && photo) &&
+    (isCustom
+      ? customText.length >= 3 && Boolean(customCategory)
+      : Boolean(item) && (item?.options.length === 0 || Boolean(optionValue))) &&
+    !isSaving;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!pole || !item || !photo) return;
+    if (!pole || !photo || (!item && !isCustom)) return;
     setIsSaving(true);
     setError("");
     try {
       await addMaintenanceFinding(
         token,
         siteVisitId,
-        {
-          assetId: pole.assetId,
-          templateItemId: item.templateItemId,
-          optionValue: item.options.length > 0 ? optionValue : undefined,
-          note,
-        },
+        isCustom
+          ? {
+              assetId: pole.assetId,
+              customLabel: customText,
+              category: customCategory || undefined,
+              note,
+            }
+          : {
+              assetId: pole.assetId,
+              templateItemId: item!.templateItemId,
+              optionValue: item!.options.length > 0 ? optionValue : undefined,
+              note,
+            },
         photo,
       );
-      onAdded(`Kejanggalan added on ${poleLabel(pole)} — ${item.label}. It is now in the crew's work.`);
+      onAdded(
+        `Kejanggalan added on ${poleLabel(pole)} — ${isCustom ? customText : item!.label}. It is now in the crew's work.`,
+      );
       onClose();
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
@@ -230,8 +260,49 @@ export function AddFindingDialog({
                     ))}
                   </optgroup>
                 ))}
+                <optgroup label="Not in the checklist">
+                  <option value={CUSTOM_FINDING}>Lain-lain — type it yourself</option>
+                </optgroup>
               </select>
             </div>
+
+            {isCustom ? (
+              <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+                <div>
+                  <label className={modalLabelClass} htmlFor="finding-custom">
+                    Kejanggalan
+                  </label>
+                  <input
+                    id="finding-custom"
+                    className={modalInputClass}
+                    placeholder="e.g. Talian servis tergantung rendah"
+                    value={customLabel}
+                    maxLength={200}
+                    onChange={(event) => setCustomLabel(event.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className={modalLabelClass} htmlFor="finding-custom-type">
+                    Work type
+                  </label>
+                  <select
+                    id="finding-custom-type"
+                    className={modalSelectClass}
+                    value={customCategory}
+                    onChange={(event) => setCustomCategory(event.target.value as MaintenanceCategory | "")}
+                    required
+                  >
+                    <option value="">Choose…</option>
+                    {CATEGORY_ORDER.map((category) => (
+                      <option key={category} value={category}>
+                        {CATEGORY_LABEL[category]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : null}
 
             {item && item.options.length > 0 ? (
               <div>
