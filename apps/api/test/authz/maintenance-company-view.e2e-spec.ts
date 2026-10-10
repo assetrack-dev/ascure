@@ -222,6 +222,29 @@ describe('Authz · maintenance packages — contractor company view + progress (
       expect(pe(await board('subMgr'))?.totals.noTeam).toBe(0);
     });
 
+    // TNB feedback #4 (2026-10-10): a wrongly assigned team can be taken off.
+    it('takes a wrongly assigned team off its lane — back to no team', async () => {
+      const res = await http(app, token.subMgr)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visit, category: 'RENTIS', maintenanceOrganizationId: IDS.sub.org })
+        .expect(201);
+      expect(res.body.routing).toMatchObject({ teamCleared: 1, moved: 0 });
+      expect(await pkgOf('RENTIS')).toMatchObject({ maintenanceOrganizationId: IDS.sub.org, assignedTeamId: null, notes: 'TNB note' });
+      expect(
+        await prisma.defect.findUniqueOrThrow({
+          where: { id: P.defect.rentis },
+          select: { maintenanceOrganizationId: true, assignedToTeamId: true, assignedTeamId: true, lifecycleStatus: true },
+        }),
+      ).toEqual({ maintenanceOrganizationId: IDS.sub.org, assignedToTeamId: null, assignedTeamId: null, lifecycleStatus: 'VERIFIED' });
+      expect(pe(await board('subMgr'))?.totals.noTeam).toBe(1);
+
+      // Put the team back for the cases below.
+      await http(app, token.subMgr)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visit, category: 'RENTIS', assignedTeamId: IDS.sub.team })
+        .expect(201);
+    });
+
     it('cannot touch another company lane, the whole PE, another company, or withdraw', async () => {
       await http(app, token.subMgr)
         .post('/api/v1/maintenance-packages')

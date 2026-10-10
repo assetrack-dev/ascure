@@ -221,7 +221,7 @@ describe('Authz · maintenance packages — teams + Main Contractor (plan §12)'
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visitTnb, assignedTeamId: IDS.team.a })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 2, moved: 0, kept: 0, teamAssigned: 2 });
+      expect(res.body.routing).toEqual({ routed: 2, moved: 0, kept: 0, teamAssigned: 2, teamCleared: 0 });
 
       const [pkg] = await packagesOf(P.visitTnb);
       expect(pkg).toMatchObject({ category: null, maintenanceOrganizationId: IDS.org.a, assignedTeamId: IDS.team.a });
@@ -240,7 +240,7 @@ describe('Authz · maintenance packages — teams + Main Contractor (plan §12)'
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visitTnb, assignedTeamId: IDS.team.a })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 0 });
     });
 
     it('the board shows the team and the PE location', async () => {
@@ -299,7 +299,7 @@ describe('Authz · maintenance packages — teams + Main Contractor (plan §12)'
         .post('/api/v1/maintenance-packages')
         .send({ siteVisitId: P.visitTnb, assignedTeamId: IDS.sub.team })
         .expect(201);
-      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 0, teamAssigned: 2 });
+      expect(res.body.routing).toEqual({ routed: 0, moved: 2, kept: 0, teamAssigned: 2, teamCleared: 0 });
       expect(await defect(P.defect.sel)).toMatchObject({
         maintenanceOrganizationId: IDS.sub.org,
         assignedToTeamId: IDS.sub.team,
@@ -366,6 +366,54 @@ describe('Authz · maintenance packages — teams + Main Contractor (plan §12)'
       expect(await defect(P.defect.mc)).toMatchObject({ assignedToTeamId: P.teamA2 });
       const [pkg] = await packagesOf(P.visitMc);
       expect(pkg.assignedTeamId).toBe(P.teamA2);
+    });
+
+    // TNB feedback #4 (2026-10-10): taking a wrongly assigned team off.
+    it('taking the team off (company, no team) returns the work to "no team yet"', async () => {
+      const res = await http(app, token.mgrA)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visitMc, maintenanceOrganizationId: IDS.org.a })
+        .expect(201);
+      expect(res.body.routing).toEqual({ routed: 0, moved: 0, kept: 0, teamAssigned: 0, teamCleared: 1 });
+      const [pkg] = await packagesOf(P.visitMc);
+      expect(pkg).toMatchObject({ maintenanceOrganizationId: IDS.org.a, assignedTeamId: null });
+      expect(await defect(P.defect.mc)).toEqual({
+        maintenanceOrganizationId: IDS.org.a,
+        assignedToTeamId: null,
+        assignedTeamId: null,
+        lifecycleStatus: 'VERIFIED',
+      });
+      const timeline = await prisma.defectTimelineEntry.findFirst({
+        where: { defectId: P.defect.mc },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(timeline?.comment).toMatch(/taken off Team A2/);
+    });
+
+    it('…but work the crew already started stays with it', async () => {
+      await http(app, token.mgrA)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visitMc, assignedTeamId: IDS.team.a })
+        .expect(201);
+      await prisma.defect.update({ where: { id: P.defect.mc }, data: { lifecycleStatus: 'IN_PROGRESS' } });
+      const res = await http(app, token.mgrA)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visitMc, maintenanceOrganizationId: IDS.org.a })
+        .expect(201);
+      expect(res.body.routing.teamCleared).toBe(0);
+      expect(await defect(P.defect.mc)).toMatchObject({ assignedToTeamId: IDS.team.a, lifecycleStatus: 'IN_PROGRESS' });
+      await prisma.defect.update({ where: { id: P.defect.mc }, data: { lifecycleStatus: 'ASSIGNED' } });
+    });
+
+    it('re-saving a no-team package touches no team it did not take away', async () => {
+      // The defect still carries Team A from the case above; the package has no
+      // team already, so re-saving it names no removed team.
+      const res = await http(app, token.mgrA)
+        .post('/api/v1/maintenance-packages')
+        .send({ siteVisitId: P.visitMc, maintenanceOrganizationId: IDS.org.a })
+        .expect(201);
+      expect(res.body.routing.teamCleared).toBe(0);
+      expect(await defect(P.defect.mc)).toMatchObject({ assignedToTeamId: IDS.team.a });
     });
 
     it('withdraws its own package on its Mainhead, not one TNB routed elsewhere', async () => {
