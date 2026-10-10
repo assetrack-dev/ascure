@@ -468,6 +468,7 @@ model User {
   maintainedDefects         Defect[]                      @relation("DefectMaintainedByUser")
   closureVerifiedDefects    Defect[]                      @relation("DefectClosureVerifiedByUser")
   defectEvidenceImages      DefectEvidenceImage[]         @relation("DefectEvidenceCreatedBy")
+  defectMaterialsUpdated    DefectMaterial[]              @relation("DefectMaterialUpdatedBy")
   addedFindings             InspectionItemResult[]        @relation("InspectionItemResultCreatedBy")
   organizationMemberships   OrganizationMembership[]
   projectMemberships        ProjectMembership[]
@@ -1592,6 +1593,7 @@ model Defect {
   maintenanceOrganization   Organization?          @relation("DefectMaintenanceOrg", fields: [maintenanceOrganizationId], references: [id], onDelete: SetNull)
   evidenceImages            DefectEvidenceImage[]
   timelineEntries           DefectTimelineEntry[]
+  materials                 DefectMaterial[]
 
   @@index([assignedUserId])
   @@index([assignedTeamId])
@@ -1633,6 +1635,46 @@ model DefectEvidenceImage {
   @@index([createdByUserId])
   @@index([evidenceType])
   @@index([createdAt])
+}
+
+// TNB's material list for repairs ("LIST BARANG IMBANGAN TNB — SAVR", TNB
+// feedback #1, 2026-10-11): one catalogue for every work type, seeded by the
+// migration from prisma/seeds/tnb-materials-savr.csv. The TNB claim lists each
+// material by catalogue number + unit.
+model MaterialCatalogItem {
+  id          String           @id @default(uuid()) @db.Uuid
+  catalogueNo String           @unique
+  description String
+  /**
+   * EA / UNT / SET / M / KG.
+   */
+  unit        String
+  sortOrder   Int              @default(0)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  usages      DefectMaterial[]
+
+  @@index([isActive, sortOrder])
+}
+
+// Material used to repair one Kejanggalan (optional; the crew or the office may
+// set or correct it at any time). One row per material per Kejanggalan.
+model DefectMaterial {
+  id              String              @id @default(uuid()) @db.Uuid
+  defectId        String              @db.Uuid
+  materialId      String              @db.Uuid
+  quantity        Decimal             @db.Decimal(12, 3)
+  updatedByUserId String?             @db.Uuid
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  defect          Defect              @relation(fields: [defectId], references: [id], onDelete: Cascade)
+  material        MaterialCatalogItem @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  updatedBy       User?               @relation("DefectMaterialUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([defectId, materialId])
+  @@index([materialId])
+  @@index([updatedByUserId])
 }
 
 model DefectTimelineEntry {

@@ -13,6 +13,7 @@ import {
   MaintenanceCategory,
   ResolutionOutcome,
 } from '@prisma/client';
+import { MATERIAL_SELECT, serializeMaterials } from './maintenance-materials.util';
 import archiver from 'archiver';
 import { randomUUID } from 'crypto';
 import { createWriteStream, existsSync } from 'fs';
@@ -153,6 +154,8 @@ export class RepairReportService {
           },
           assignedToTeam: { select: { name: true } },
           assignedTeam: { select: { name: true } },
+          // TNB feedback #1: materials used, per Kejanggalan + a total.
+          materials: { select: MATERIAL_SELECT },
           evidenceImages: {
             where: { evidenceType: { in: ['BEFORE', 'DURING', 'AFTER'] } },
             orderBy: { createdAt: 'asc' },
@@ -271,6 +274,7 @@ export class RepairReportService {
         label: item.label,
         notes,
         who: this.whoLines(status, team, defect, verifier),
+        materials: serializeMaterials(defect.materials),
         photos: await this.loadPhotos(defect.evidenceImages),
       };
 

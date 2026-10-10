@@ -15,6 +15,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddMaintenanceFindingDto } from './dto/maintenance-finding.dto';
 import { createMaintenanceFinding, loadVisitFindingItems } from './maintenance-finding.util';
+import { MATERIAL_SELECT, loadMaterialCatalog, serializeMaterials } from './maintenance-materials.util';
 import { resolveRoutingTarget } from './package-routing.util';
 import { pickPolePhotos, type PolePhoto } from './pole-photos.util';
 
@@ -125,6 +126,17 @@ export class MaintenanceWorkService {
         ],
       },
     };
+  }
+
+  /** Is this routed Kejanggalan part of the user's maintenance work? */
+  async isInWorkScope(user: RequestUser, defectId: string): Promise<boolean> {
+    if (!user.organizationId) return false;
+    const scope = await this.workScope(user);
+    const found = await this.prisma.defect.findFirst({
+      where: { AND: [scope.where, { id: defectId }] },
+      select: { id: true },
+    });
+    return Boolean(found);
   }
 
   /** The user's Pencawang packages with progress counts. */
@@ -268,6 +280,8 @@ export class MaintenanceWorkService {
           orderBy: { createdAt: 'asc' },
           select: { id: true, evidenceType: true, url: true, sizeBytes: true, timestamp: true, createdAt: true },
         },
+        // TNB feedback #1: materials used for the repair.
+        materials: { select: MATERIAL_SELECT },
         inspectionItemResult: {
           select: {
             label: true,
@@ -305,7 +319,7 @@ export class MaintenanceWorkService {
       throw new NotFoundException('No maintenance work for you on this Pencawang.');
     }
 
-    const [visit, packages, visitPoles, findingTemplates] = await Promise.all([
+    const [visit, packages, visitPoles, findingTemplates, materialCatalog] = await Promise.all([
       this.prisma.siteVisit.findUniqueOrThrow({
         where: { id: siteVisitId },
         select: {
@@ -340,6 +354,7 @@ export class MaintenanceWorkService {
         },
       }),
       loadVisitFindingItems(this.prisma, siteVisitId),
+      loadMaterialCatalog(this.prisma),
     ]);
     const poleOwners = await this.prisma.maintenancePoleAssignment.findMany({
       where: { siteVisitId },
@@ -441,6 +456,7 @@ export class MaintenanceWorkService {
         surveyedAt: item.inspection.submittedAt?.toISOString() ?? null,
         surveyPhotos: surveyPhotos.map((image) => ({ id: image.id, url: image.url, sizeBytes: image.sizeBytes })),
         photos: { BEFORE: stage('BEFORE'), DURING: stage('DURING'), AFTER: stage('AFTER') },
+        materials: serializeMaterials(defect.materials),
       });
     }
 
@@ -480,6 +496,9 @@ export class MaintenanceWorkService {
         .filter((pole) => pole.categories.length > 0)
         .sort((left, right) => left.assetCode.localeCompare(right.assetCode, undefined, { numeric: true })),
       findingTemplates,
+      // TNB feedback #1 — the TNB material list, shipped with the pack so the
+      // crew can record materials offline.
+      materialCatalog,
       generatedAt: new Date().toISOString(),
     };
   }

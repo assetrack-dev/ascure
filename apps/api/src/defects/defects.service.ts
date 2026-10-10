@@ -20,6 +20,7 @@ import {
   ResolutionOutcome as DefectResolutionOutcome,
   UserRole,
 } from '@prisma/client';
+import { MATERIAL_SELECT, serializeMaterials } from '../maintenance-packages/maintenance-materials.util';
 import {
   deriveDisplayStatus,
   DISPLAY_STATUS_LABEL,
@@ -2910,6 +2911,8 @@ export class DefectsService {
           role: true,
         },
       },
+      // TNB feedback #1: materials used for the repair.
+      materials: { select: MATERIAL_SELECT },
       evidenceImages: {
         orderBy: {
           createdAt: 'asc' as const,
@@ -4085,6 +4088,7 @@ export class DefectsService {
         timestamp: image.timestamp?.toISOString() ?? null,
         createdAt: image.createdAt.toISOString(),
       })),
+      materials: serializeMaterials(defect.materials),
       evidenceImages: defect.evidenceImages.map((image) =>
         this.serializeDefectEvidenceImage(image),
       ),
