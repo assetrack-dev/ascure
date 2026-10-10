@@ -6,7 +6,8 @@ import {
   type MarkCategory,
 } from '../camera/captureWithCamera';
 import { MarkOverlay, MARK_CATEGORY_COLORS } from '../camera/MarkOverlay';
-import { TimestampStamp } from '../camera/TimestampStamp';
+import { TimestampStamp, type StampContext } from '../camera/TimestampStamp';
+import { getNoTiangLama } from '../assetDisplay';
 import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
@@ -87,6 +88,7 @@ import {
 } from '../ocr';
 import { READING_SENTINEL_LO, isReadingSentinel } from '@ascure/shared-utils';
 import {
+  Asset,
   DraftValues,
   InspectionFormResponse,
   InspectionImageUploadInput,
@@ -211,6 +213,13 @@ export function InspectionFormScreen() {
   }
 
   const [form, setForm] = useState<InspectionFormResponse | null>(null);
+  // TNB feedback #5: every survey photo names the Pencawang and NO TIANG LAMA.
+  const photoStamp: StampContext | undefined = form
+    ? {
+        pencawang: form.inspection.siteVisit.pencawangName ?? form.inspection.asset.substation?.name ?? null,
+        noTiangLama: getNoTiangLama(form.inspection.asset as unknown as Asset),
+      }
+    : undefined;
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [emergencySheetVisible, setEmergencySheetVisible] = useState(false);
   const [isDeclaringEmergency, setIsDeclaringEmergency] = useState(false);
@@ -682,6 +691,7 @@ export function InspectionFormScreen() {
     const capturedAsset = await captureWithCamera({
       mode: 'photo',
       guide: options?.guide,
+      stamp: photoStamp,
       allowMark: options?.guide !== 'reading',
       ...(options?.defectMarkCategory
         ? {
@@ -1437,6 +1447,8 @@ export function InspectionFormScreen() {
                     date={new Date(pendingOverlayPhoto.timestamp)}
                     latitude={pendingOverlayPhoto.latitude ?? null}
                     longitude={pendingOverlayPhoto.longitude ?? null}
+                    pencawang={photoStamp?.pencawang}
+                    noTiangLama={photoStamp?.noTiangLama}
                   />
                 </View>
               </View>

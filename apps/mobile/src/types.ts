@@ -494,10 +494,14 @@ export interface InspectionFormResponse {
       requiresQAQC?: boolean | null;
       reportingGroup?: string | null;
       startedAt: string;
+      /** The visit's Pencawang name (photo stamp; absent from older caches). */
+      pencawangName?: string | null;
       team: Pick<Team, 'id' | 'code' | 'name'>;
       substation: Pick<Substation, 'id' | 'code' | 'name'>;
     };
     asset: Pick<Asset, 'id' | 'assetCode' | 'name'> & {
+      /** NO TIANG LAMA (photo stamp; older data keeps it in `name`). */
+      noTiangLama?: string | null;
       assetType: AssetType;
       substation: Pick<Substation, 'id' | 'code' | 'name'>;
     };
@@ -805,6 +809,9 @@ export type DefectDetail = {
   images: InspectionImage[];
   evidenceImages?: DefectEvidenceImage[];
   maintenanceProofImages?: DefectEvidenceImage[];
+  /** The pole's Pencawang + pole numbers (photo stamp). */
+  substation?: { name?: string | null } | null;
+  asset?: { name?: string | null; noTiangLama?: string | null } | null;
 };
 
 /** A dispatch target (team / technician / subcontractor) for a routed defect. */

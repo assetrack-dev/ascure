@@ -5,7 +5,7 @@ import { captureRef } from 'react-native-view-shot';
 import { captureWithCamera, type DefectMark, type MarkCategory } from './captureWithCamera';
 import { MarkOverlay } from './MarkOverlay';
 import { TiltOverlay } from './TiltOverlay';
-import { TimestampStamp } from './TimestampStamp';
+import { TimestampStamp, type StampContext } from './TimestampStamp';
 import { getPositionWithTimeout } from '../location';
 
 /**
@@ -38,6 +38,7 @@ type Pending = {
   captureHeight: number;
   layoutWidth: number;
   layoutHeight: number;
+  stamp: StampContext | null;
 };
 
 const IMAGE_LOAD_TIMEOUT_MS = 8000;
@@ -90,7 +91,7 @@ export function useStampedPhoto() {
   }, [pending]);
 
   const takeStampedPhoto = useCallback(
-    async (options?: { markCategory?: MarkCategory }): Promise<StampedPhoto | null> => {
+    async (options?: { markCategory?: MarkCategory; stamp?: StampContext }): Promise<StampedPhoto | null> => {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
         throw new Error('Location permission is required to stamp GPS on the photo.');
@@ -99,6 +100,7 @@ export function useStampedPhoto() {
       const shot = await captureWithCamera({
         mode: 'photo',
         allowMark: true,
+        stamp: options?.stamp,
         ...(options?.markCategory
           ? { initialMarkCategory: options.markCategory, lockMarkCategory: true }
           : {}),
@@ -125,6 +127,7 @@ export function useStampedPhoto() {
           longitude: position.coords.longitude,
           tiltLineAngle: shot.tiltLineAngle ?? null,
           mark: shot.mark ?? null,
+          stamp: options?.stamp ?? null,
           ...size,
         });
       });
@@ -165,6 +168,8 @@ export function useStampedPhoto() {
             date={new Date(pending.timestamp)}
             latitude={pending.latitude}
             longitude={pending.longitude}
+            pencawang={pending.stamp?.pencawang}
+            noTiangLama={pending.stamp?.noTiangLama}
           />
         </View>
       </View>

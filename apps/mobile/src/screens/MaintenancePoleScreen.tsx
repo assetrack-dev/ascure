@@ -124,6 +124,8 @@ export function MaintenancePoleScreen() {
     return [...server, ...added];
   }, [local, pack, pole]);
   const poleCode = pole ? pole.refCode || pole.assetCode : 'Pole';
+  // TNB feedback #5: every repair photo names the Pencawang and NO TIANG LAMA.
+  const stamp = { pencawang: pack?.pencawangName ?? null, noTiangLama: pole?.noTiangLama ?? null };
 
   /** Checklist items the crew may raise on this pole (its template, its work types). */
   const findingItems: FindingItem[] = useMemo(() => {
@@ -182,7 +184,7 @@ export function MaintenancePoleScreen() {
     setActionError(null);
     setBusyStage(`${item.id}:${stage}`);
     try {
-      const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(item.severity) });
+      const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(item.severity), stamp });
       if (!photo) return;
       const localId = `repair_${item.id}_${Date.now().toString(36)}`;
       const durableUri = await persistRepairPhoto(photo.uri, localId);
@@ -332,7 +334,7 @@ export function MaintenancePoleScreen() {
     setIsAddingFinding(true);
     try {
       const severity = isCustom ? CUSTOM_FINDING_SEVERITY : option?.severity ?? chosenFinding!.severity;
-      const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(severity) });
+      const photo = await takeStampedPhoto({ markCategory: severityToMarkCategory(severity), stamp });
       if (!photo) return;
 
       const tempId = mintTempId('defect');

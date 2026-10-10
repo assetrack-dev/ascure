@@ -660,6 +660,8 @@ export function CameraCaptureHost() {
                   latitude={fix?.latitude ?? null}
                   longitude={fix?.longitude ?? null}
                   accuracy={fix?.accuracy}
+                  pencawang={request?.stamp?.pencawang}
+                  noTiangLama={request?.stamp?.noTiangLama}
                 />
               </View>
             </View>

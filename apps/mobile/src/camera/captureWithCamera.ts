@@ -19,6 +19,8 @@
 // `reject(error)` == a hard failure (permission denied, capture error) that the
 // call site surfaces exactly like it surfaced the old thrown errors.
 
+import type { StampContext } from './TimestampStamp';
+
 export type CaptureMode = 'photo' | 'video';
 
 /**
@@ -76,6 +78,8 @@ export type CaptureRequest = {
    * report relies on, so the crew must not repaint it.
    */
   lockMarkCategory?: boolean;
+  /** Pencawang + NO TIANG LAMA for the live stamp (same as the burned one). */
+  stamp?: StampContext;
   resolve: (result: CaptureResult | null) => void;
   reject: (error: Error) => void;
 };
@@ -113,6 +117,7 @@ export function captureWithCamera(options: {
   initialMarkCategory?: MarkCategory;
   defaultMarkEnabled?: boolean;
   lockMarkCategory?: boolean;
+  stamp?: StampContext;
 }): Promise<CaptureResult | null> {
   if (pending) {
     return Promise.reject(
@@ -134,6 +139,7 @@ export function captureWithCamera(options: {
       initialMarkCategory: options.initialMarkCategory,
       defaultMarkEnabled: options.defaultMarkEnabled,
       lockMarkCategory: options.lockMarkCategory,
+      stamp: options.stamp,
       resolve: (result) => {
         settle();
         resolve(result);

@@ -4,7 +4,7 @@ import {
   type DefectMark,
 } from '../camera/captureWithCamera';
 import { MarkOverlay } from '../camera/MarkOverlay';
-import { TimestampStamp } from '../camera/TimestampStamp';
+import { TimestampStamp, type StampContext } from '../camera/TimestampStamp';
 import { TiltOverlay } from '../camera/TiltOverlay';
 import * as Location from 'expo-location';
 import { captureRef } from 'react-native-view-shot';
@@ -79,6 +79,13 @@ export function DefectDetailScreen() {
   const { defectId } = route.params;
   const { token, user, handleUnauthorized } = useSession();
   const [defect, setDefect] = useState<DefectDetail | null>(null);
+  // TNB feedback #5: every repair photo names the Pencawang and NO TIANG LAMA.
+  const photoStamp: StampContext | undefined = defect
+    ? {
+        pencawang: defect.substation?.name ?? null,
+        noTiangLama: defect.asset?.noTiangLama || defect.asset?.name || null,
+      }
+    : undefined;
   const [actionRemark, setActionRemark] = useState('');
   const [maintenanceNote, setMaintenanceNote] = useState('');
   const [closureNote, setClosureNote] = useState('');
@@ -404,6 +411,7 @@ export function DefectDetailScreen() {
         mode: 'photo',
         allowMark: true,
         initialMarkCategory: severityToMarkCategory(defect?.severity),
+        stamp: photoStamp,
       });
 
       if (!capturedAsset) {
@@ -1090,6 +1098,8 @@ export function DefectDetailScreen() {
                       date={new Date(pendingOverlayPhoto.timestamp)}
                       latitude={pendingOverlayPhoto.latitude ?? null}
                       longitude={pendingOverlayPhoto.longitude ?? null}
+                      pencawang={photoStamp?.pencawang}
+                      noTiangLama={photoStamp?.noTiangLama}
                     />
                   </View>
                 </View>
