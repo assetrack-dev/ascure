@@ -1,6 +1,7 @@
 import {
   OperationalDomain,
   OrganizationType,
+  OrganizationWorkMode,
   ProjectStatus,
   WorkPackageStatus,
 } from '@prisma/client';
@@ -45,6 +46,11 @@ export class CreateOrganizationDto {
   @IsEnum(OrganizationType)
   type!: OrganizationType;
 
+  // Plan §17 (L38): which web view this company's managers get. Null = full console.
+  @IsOptional()
+  @IsEnum(OrganizationWorkMode)
+  workMode?: OrganizationWorkMode | null;
+
   @IsOptional()
   @IsUUID()
   parentOrganizationId?: string | null;
@@ -82,6 +88,10 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsEnum(OrganizationType)
   type?: OrganizationType;
+
+  @IsOptional()
+  @IsEnum(OrganizationWorkMode)
+  workMode?: OrganizationWorkMode | null;
 
   @IsOptional()
   @IsUUID()

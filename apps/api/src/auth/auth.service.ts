@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { OrganizationType, UserRole } from '@prisma/client';
+import { OrganizationType, OrganizationWorkMode, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
@@ -26,6 +26,26 @@ const PASSWORD_SALT_ROUNDS = 10;
 // module-default 8h.
 const MOBILE_TOKEN_TTL = '30d';
 
+/**
+ * Plan §17 (L38): the web view this user's company asked for. Only an active
+ * contractor company (MAIN_CONTRACTOR / SUBCONTRACTOR) carries one, and ADMIN
+ * always keeps the full console. Null = unchanged full console. Navigation only —
+ * every endpoint keeps its own scope checks.
+ */
+function resolveWorkMode(
+  role: UserRole,
+  organization: { type: OrganizationType; isActive: boolean; workMode: OrganizationWorkMode | null } | null,
+): OrganizationWorkMode | null {
+  if (role === UserRole.ADMIN || !organization?.isActive) return null;
+  if (
+    organization.type !== OrganizationType.MAIN_CONTRACTOR &&
+    organization.type !== OrganizationType.SUBCONTRACTOR
+  ) {
+    return null;
+  }
+  return organization.workMode ?? null;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -48,7 +68,7 @@ export class AuthService {
         mustChangePassword: true,
         passwordHash: true,
         clientRank: true,
-        organization: { select: { name: true, type: true, isActive: true } },
+        organization: { select: { name: true, type: true, isActive: true, workMode: true } },
       },
     });
 
@@ -147,6 +167,7 @@ export class AuthService {
         canActOnMaintenanceAsClient,
         canViewRepairVerification,
         canViewMaintenancePackages,
+        workMode: resolveWorkMode(user.role, user.organization),
       },
     };
   }
@@ -323,7 +344,7 @@ export class AuthService {
         clientRank: true,
         createdAt: true,
         updatedAt: true,
-        organization: { select: { name: true, type: true, isActive: true } },
+        organization: { select: { name: true, type: true, isActive: true, workMode: true } },
       },
     });
 
@@ -371,6 +392,7 @@ export class AuthService {
       canActOnMaintenanceAsClient,
       canViewRepairVerification,
       canViewMaintenancePackages,
+      workMode: resolveWorkMode(currentUser.role, organization),
     };
   }
 
