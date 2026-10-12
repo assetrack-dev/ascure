@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -34,7 +34,10 @@ import {
   pencawangLabel,
   progressTotal,
   summarize,
+  teamStats,
   type BoardPencawang,
+  type CompanyStats,
+  type TeamStats,
   type BoardProgress,
   type LaneInfo,
   type MaintenanceBoard,
@@ -51,7 +54,7 @@ import {
 
 type StatusFilter = 'ALL' | PeStatus | 'OVERDUE' | 'NO_TEAM';
 type WorkTypeFilter = 'ALL' | MaintenanceCategory;
-type ViewMode = 'LIST' | 'MAP';
+type ViewMode = 'LIST' | 'MAP' | 'TEAMS';
 
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -259,6 +262,24 @@ export function MaintenanceProgressScreen() {
     </ScrollView>
   );
 
+  // Teams tab: per team (and per company for a Main Contractor), over the shown
+  // work types; status chips + search do not apply here.
+  const teams = useMemo(() => (board ? teamStats(summaries, board) : null), [board, summaries]);
+  const showTeamWork = (key: string) => {
+    if (key === 'nocompany') {
+      setOwner('ALL');
+      setStatusFilter('NO_COMPANY');
+    } else if (key.startsWith('noteam:')) {
+      setOwner(isMainContractor ? `org:${key.slice(7)}` : 'ALL');
+      setStatusFilter('NO_TEAM');
+    } else {
+      setOwner(key);
+      setStatusFilter('ALL');
+    }
+    setSearch('');
+    setMode('LIST');
+  };
+
   const openPencawang = (summary: PeSummary) =>
     summary.lanes.some((lane) => lane.ownerTone !== 'noCompany')
       ? () =>
@@ -379,7 +400,7 @@ export function MaintenanceProgressScreen() {
       actions={
         board ? (
           <View style={styles.segment}>
-            {(['LIST', 'MAP'] as ViewMode[]).map((option) => (
+            {(['LIST', 'MAP', 'TEAMS'] as ViewMode[]).map((option) => (
               <Pressable
                 key={option}
                 onPress={() => setMode(option)}
@@ -388,7 +409,7 @@ export function MaintenanceProgressScreen() {
                 accessibilityState={{ selected: mode === option }}
               >
                 <Text style={[styles.segmentText, mode === option && styles.segmentTextActive]}>
-                  {option === 'LIST' ? 'List' : 'Map'}
+                  {option === 'LIST' ? 'List' : option === 'MAP' ? 'Map' : isMainContractor ? 'Companies' : 'Teams'}
                 </Text>
               </Pressable>
             ))}
@@ -432,6 +453,17 @@ export function MaintenanceProgressScreen() {
             )}
           />
         </View>
+      ) : null}
+
+      {board && teams && mode === 'TEAMS' ? (
+        <TeamsView
+          teams={teams}
+          isMainContractor={isMainContractor}
+          workType={workType}
+          onClearWorkType={() => setWorkType('ALL')}
+          onPick={showTeamWork}
+          styles={styles}
+        />
       ) : null}
 
       {board && mode === 'LIST' ? (
@@ -483,6 +515,184 @@ export function MaintenanceProgressScreen() {
         />
       ) : null}
     </Screen>
+  );
+}
+
+function TeamsView({
+  teams,
+  isMainContractor,
+  workType,
+  onClearWorkType,
+  onPick,
+  styles,
+}: {
+  teams: { companies: CompanyStats[]; notGivenOut: TeamStats | null };
+  isMainContractor: boolean;
+  workType: WorkTypeFilter;
+  onClearWorkType: () => void;
+  onPick: (key: string) => void;
+  styles: Styles;
+}) {
+  // A Main Contractor's own company opens expanded; subcontractors start folded.
+  const [open, setOpen] = useState<Set<string>>(
+    () => new Set(teams.companies.slice(0, 1).map((company) => company.companyId)),
+  );
+  const toggle = (id: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <ScrollView contentContainerStyle={styles.teamsContent}>
+      {workType !== 'ALL' ? (
+        <Pressable
+          onPress={onClearWorkType}
+          style={[styles.filterChip, styles.filterChipActive, styles.selfStart]}
+          accessibilityRole="button"
+          accessibilityLabel="Show every work type"
+        >
+          <Text style={[styles.filterChipText, styles.filterChipTextActive]}>{CATEGORY_LABEL[workType]} only ✕</Text>
+        </Pressable>
+      ) : null}
+
+      {isMainContractor ? (
+        <>
+          {teams.notGivenOut ? (
+            <Card>
+              <StatsRow stats={teams.notGivenOut} onPress={() => onPick('nocompany')} styles={styles} warn />
+            </Card>
+          ) : null}
+          {teams.companies.map((company) => {
+            const expanded = open.has(company.companyId);
+            return (
+              <Card key={company.companyId}>
+                <StatsRow
+                  stats={company}
+                  onPress={() => onPick(company.key)}
+                  styles={styles}
+                  heading
+                  trailing={
+                    company.teams.length > 0 ? (
+                      <Pressable
+                        onPress={() => toggle(company.companyId)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={expanded ? 'Hide teams' : 'Show teams'}
+                      >
+                        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={20} style={styles.closeIcon} />
+                      </Pressable>
+                    ) : null
+                  }
+                />
+                {expanded
+                  ? company.teams.map((team) => (
+                      <View key={team.key} style={styles.teamIndent}>
+                        <StatsRow
+                          stats={team}
+                          onPress={() => onPick(team.key)}
+                          styles={styles}
+                          warn={team.key.startsWith('noteam:')}
+                        />
+                      </View>
+                    ))
+                  : null}
+              </Card>
+            );
+          })}
+        </>
+      ) : (
+        <Card>
+          {teams.companies.flatMap((company) => company.teams).length === 0 ? (
+            <EmptyState icon="users" title="No teams yet" description="Create teams on the web, then give them work here." />
+          ) : (
+            teams.companies
+              .flatMap((company) => company.teams)
+              .map((team, index) => (
+                <View key={team.key} style={index > 0 ? styles.teamDivider : undefined}>
+                  <StatsRow
+                    stats={team}
+                    onPress={() => onPick(team.key)}
+                    styles={styles}
+                    warn={team.key.startsWith('noteam:')}
+                  />
+                </View>
+              ))
+          )}
+        </Card>
+      )}
+
+      <Text style={styles.footnote}>
+        Tap a row to see its Pencawang. Each work type counts for the team that holds it; poles split off
+        to another team are counted under the work type&apos;s team.
+      </Text>
+    </ScrollView>
+  );
+}
+
+function StatsRow({
+  stats,
+  onPress,
+  styles,
+  heading = false,
+  warn = false,
+  trailing,
+}: {
+  stats: TeamStats;
+  onPress: () => void;
+  styles: Styles;
+  heading?: boolean;
+  warn?: boolean;
+  trailing?: ReactNode;
+}) {
+  const toRepair = stats.progress.todo + stats.progress.inProgress;
+  const pct = stats.total === 0 ? 0 : Math.round((stats.progress.closed / stats.total) * 100);
+  const idle = stats.total === 0;
+  return (
+    <View style={styles.statsRow}>
+      <Pressable
+        onPress={onPress}
+        disabled={idle && stats.splitOnly === 0}
+        style={({ pressed }) => [styles.statsMain, pressed && styles.lanePressed]}
+        accessibilityRole="button"
+        accessibilityLabel={`${stats.label}: ${stats.pencawang} Pencawang, ${toRepair} to repair, ${stats.progress.awaiting} waiting TNB, ${stats.progress.closed} closed`}
+      >
+        <View style={styles.statsTop}>
+          <Text
+            style={[heading ? styles.statsHeading : styles.statsName, warn && styles.laneOwnerWarn]}
+            numberOfLines={1}
+          >
+            {warn ? '⚠ ' : ''}
+            {stats.label}
+          </Text>
+          <Text style={[styles.statsPct, pct === 100 && !idle && { color: STATUS_COLOR.DONE }]}>
+            {idle ? '—' : `${pct}%`}
+          </Text>
+        </View>
+        {idle ? (
+          <Text style={styles.statsLine}>
+            {stats.splitOnly > 0
+              ? `Split poles on ${stats.splitOnly} Pencawang`
+              : 'No work right now'}
+          </Text>
+        ) : (
+          <>
+            <View style={styles.tileBar}>
+              <ProgressBar progress={stats.progress} styles={styles} />
+            </View>
+            <Text style={styles.statsLine}>
+              {stats.pencawang} Pencawang · <Text style={styles.strong}>{toRepair}</Text> to repair
+              {stats.progress.awaiting > 0 ? ` · ${stats.progress.awaiting} waiting TNB` : ''} ·{' '}
+              {stats.progress.closed}/{stats.total} closed
+              {stats.splitOnly > 0 ? ` · + split poles on ${stats.splitOnly}` : ''}
+            </Text>
+          </>
+        )}
+      </Pressable>
+      {trailing}
+    </View>
   );
 }
 
@@ -663,6 +873,29 @@ function createStyles(theme: Theme) {
     mapStack: { flex: 1, gap: 10 },
     chipScroll: { flexGrow: 0 },
     closeIcon: { color: theme.colors.textMuted },
+    teamsContent: { paddingTop: 4, paddingBottom: 32, gap: 12 },
+    selfStart: { alignSelf: 'flex-start' },
+    teamIndent: {
+      marginTop: 8,
+      paddingTop: 8,
+      paddingLeft: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    teamDivider: {
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    statsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    statsMain: { flex: 1, borderRadius: 8 },
+    statsTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    statsHeading: { flex: 1, fontFamily: theme.fonts.display, fontSize: 16, color: theme.colors.textPrimary },
+    statsName: { flex: 1, fontFamily: theme.fonts.bodySemibold, fontSize: 14, color: theme.colors.textPrimary },
+    statsPct: { fontFamily: theme.fonts.bodySemibold, fontSize: 14, color: theme.colors.textPrimary },
+    statsLine: { marginTop: 4, fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.textSecondary },
+    footnote: { fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.textMuted },
     headerStack: { gap: 12, paddingTop: 12, paddingBottom: 4 },
     kpiRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     kpiMain: { flex: 1 },

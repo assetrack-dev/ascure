@@ -350,3 +350,95 @@ export function keptPackageFields(row: BoardPencawang, category: MaintenanceCate
       .sort()[0] ?? null;
   return { dueDate: earliest, notes: null };
 }
+
+// ── Teams tab (plan §18, M47) ───────────────────────────────────────────────
+
+export type TeamStats = {
+  /** 'team:<id>' | 'noteam:<orgId>' | 'org:<id>' | 'nocompany' — also the list filter. */
+  key: string;
+  label: string;
+  /** Distinct Pencawang where this owner holds shown work. */
+  pencawang: number;
+  progress: BoardProgress;
+  total: number;
+  /** Pencawang where the team only has poles split off another team's lane. */
+  splitOnly: number;
+};
+
+export type CompanyStats = TeamStats & { companyId: string; teams: TeamStats[] };
+
+function emptyStats(key: string, label: string): TeamStats & { ids: Set<string>; splitIds: Set<string> } {
+  return { key, label, pencawang: 0, progress: { ...EMPTY }, total: 0, splitOnly: 0, ids: new Set(), splitIds: new Set() };
+}
+
+/**
+ * Work per team, grouped by company, over the shown work types. Each work type
+ * of a Pencawang counts for the team that holds that work type; poles split to
+ * another team are counted under the work type's team (the board has no
+ * per-split counts) — those teams show "split poles" instead.
+ */
+export function teamStats(summaries: PeSummary[], board: MaintenanceBoard) {
+  const byKey = new Map<string, ReturnType<typeof emptyStats>>();
+  const bucket = (key: string, label: string) => {
+    let stats = byKey.get(key);
+    if (!stats) {
+      stats = emptyStats(key, label);
+      byKey.set(key, stats);
+    }
+    return stats;
+  };
+  const add = (key: string, label: string, siteVisitId: string, progress: BoardProgress) => {
+    const stats = bucket(key, label);
+    stats.ids.add(siteVisitId);
+    stats.progress = addProgress(stats.progress, progress);
+    stats.total += progressTotal(progress);
+  };
+
+  for (const summary of summaries) {
+    const { row } = summary;
+    const shown = new Set(summary.lanes.map((lane) => lane.category));
+    for (const lane of row.lanes) {
+      if (!shown.has(lane.category) || lane.total === 0) continue;
+      const progress = progressOf(lane);
+      if (!lane.organization) {
+        add('nocompany', 'Not given out', row.siteVisitId, progress);
+      } else if (lane.team) {
+        add(`team:${lane.team.id}`, lane.team.name, row.siteVisitId, progress);
+        add(`org:${lane.organization.id}`, lane.organization.name, row.siteVisitId, progress);
+      } else {
+        add(`noteam:${lane.organization.id}`, 'No team yet', row.siteVisitId, progress);
+        add(`org:${lane.organization.id}`, lane.organization.name, row.siteVisitId, progress);
+      }
+    }
+    for (const split of row.poleSplits) {
+      if (split.category !== null && !shown.has(split.category)) continue;
+      if (!split.team) continue;
+      bucket(`team:${split.team.id}`, split.team.name).splitIds.add(row.siteVisitId);
+    }
+  }
+
+  const finish = (stats: ReturnType<typeof emptyStats>): TeamStats => ({
+    key: stats.key,
+    label: stats.label,
+    pencawang: stats.ids.size,
+    progress: stats.progress,
+    total: stats.total,
+    splitOnly: [...stats.splitIds].filter((id) => !stats.ids.has(id)).length,
+  });
+  const take = (key: string, label: string) => finish(byKey.get(key) ?? emptyStats(key, label));
+
+  const companies: CompanyStats[] = board.companies.map((company) => {
+    const teams = board.teams
+      .filter((team) => team.organizationId === company.id)
+      .map((team) => take(`team:${team.id}`, team.name))
+      .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
+    const noTeam = byKey.get(`noteam:${company.id}`);
+    return {
+      ...take(`org:${company.id}`, company.name),
+      companyId: company.id,
+      teams: noTeam ? [...teams, finish(noTeam)] : teams,
+    };
+  });
+  const notGivenOut = byKey.has('nocompany') ? finish(byKey.get('nocompany')!) : null;
+  return { companies, notGivenOut };
+}
