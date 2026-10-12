@@ -1,5 +1,7 @@
 import type { AppRole } from "@/lib/roles";
 
+export type OrganizationWorkMode = "SURVEY" | "MAINTENANCE" | "BOTH";
+
 export interface ApiUser {
   id: string;
   tenantId: string;
@@ -36,6 +38,8 @@ export interface ApiUser {
   canViewRepairVerification?: boolean;
   /** Maintenance Packages page: + a contractor Manager / Supervisor (own company, plan §15). */
   canViewMaintenancePackages?: boolean;
+  /** The company's web view (plan §17); null = full console. Navigation only. */
+  workMode?: OrganizationWorkMode | null;
 }
 
 export interface AuthUser {
@@ -127,6 +131,8 @@ export interface AuthUser {
   canViewRepairVerification?: boolean;
   /** Maintenance Packages page: + a contractor Manager / Supervisor (own company, plan §15). */
   canViewMaintenancePackages?: boolean;
+  /** The company's web view (plan §17); null = full console. Navigation only. */
+  workMode?: OrganizationWorkMode | null;
 }
 
 export interface AuthSession {
