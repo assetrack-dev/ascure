@@ -300,3 +300,53 @@ export function formatDate(value: string) {
 }
 
 export const BOARD_CACHE_NAMESPACE = 'maintenance-board';
+
+// ── Assign (plan §18, M45) ──────────────────────────────────────────────────
+
+export type AssignPackageBody = {
+  siteVisitId: string;
+  /** null = the whole Pencawang. */
+  category: MaintenanceCategory | null;
+  maintenanceOrganizationId: string;
+  assignedTeamId: string | null;
+  dueDate: string | null;
+  notes: string | null;
+};
+
+export type AssignRouting = {
+  routed: number;
+  moved: number;
+  kept: number;
+  teamAssigned: number;
+  teamCleared?: number;
+};
+
+/** "Saved — 3 handed to the team." (same wording as the web). */
+export function routingMessage(result: AssignRouting) {
+  const parts: string[] = [];
+  if (result.routed) parts.push(`${result.routed} routed`);
+  if (result.moved) parts.push(`${result.moved} moved`);
+  if (result.teamAssigned) parts.push(`${result.teamAssigned} handed to the team`);
+  if (result.teamCleared) parts.push(`${result.teamCleared} taken off the team`);
+  if (result.kept) parts.push(`${result.kept} kept with the previous crew (work already started)`);
+  return parts.length > 0 ? `Saved — ${parts.join(', ')}.` : 'Saved — no Kejanggalan changed hands.';
+}
+
+/**
+ * The target date + notes to send back unchanged: the work type's own package,
+ * else the whole-PE one; for the whole PE, its package or the earliest lane date.
+ */
+export function keptPackageFields(row: BoardPencawang, category: MaintenanceCategory | null) {
+  if (category) {
+    const pkg = lanePackage(row, category);
+    return { dueDate: pkg?.dueDate ?? null, notes: pkg?.notes ?? null };
+  }
+  const whole = row.packages.find((pkg) => pkg.category === null);
+  if (whole) return { dueDate: whole.dueDate, notes: whole.notes };
+  const earliest =
+    row.packages
+      .map((pkg) => pkg.dueDate)
+      .filter((date): date is string => Boolean(date))
+      .sort()[0] ?? null;
+  return { dueDate: earliest, notes: null };
+}

@@ -5,6 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { cachedFetch } from '../offlineCache';
+import { AssignLaneSheet } from '../components/AssignLaneSheet';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
@@ -14,6 +15,7 @@ import {
   ErrorBanner,
   SkeletonCard,
   StatusChip,
+  SuccessBanner,
   WarningBanner,
   Screen,
   type DropdownOption,
@@ -31,6 +33,7 @@ import {
   pencawangLabel,
   progressTotal,
   summarize,
+  type BoardPencawang,
   type BoardProgress,
   type LaneInfo,
   type MaintenanceBoard,
@@ -83,6 +86,9 @@ export function MaintenanceProgressScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [owner, setOwner] = useState('ALL');
   const [search, setSearch] = useState('');
+  // Plan §18 step 2: the work type tapped on a tile → assign sheet.
+  const [assignTarget, setAssignTarget] = useState<{ row: BoardPencawang; category: MaintenanceCategory | null } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const loadedRef = useRef(false);
 
   const load = useCallback(
@@ -209,6 +215,7 @@ export function MaintenanceProgressScreen() {
     <View style={styles.headerStack}>
       {fromCache ? <WarningBanner message={`Offline — showing the list saved ${formatDate(fromCache)}.`} /> : null}
       <ErrorBanner message={error} />
+      <SuccessBanner message={notice} />
 
       <Card>
         <View style={styles.kpiRow}>
@@ -352,6 +359,14 @@ export function MaintenanceProgressScreen() {
             <PencawangTile
               summary={item}
               styles={styles}
+              onAssign={
+                board.canAssign
+                  ? (category) => {
+                      setNotice(null);
+                      setAssignTarget({ row: item.row, category });
+                    }
+                  : undefined
+              }
               onOpen={
                 item.lanes.some((lane) => lane.ownerTone !== 'noCompany')
                   ? () =>
@@ -376,6 +391,22 @@ export function MaintenanceProgressScreen() {
               />
             </Card>
           }
+        />
+      ) : null}
+
+      {board ? (
+        <AssignLaneSheet
+          board={board}
+          row={assignTarget?.row ?? null}
+          initialCategory={assignTarget?.category ?? null}
+          token={token}
+          onClose={() => setAssignTarget(null)}
+          onUnauthorized={handleUnauthorized}
+          onSaved={(message) => {
+            setAssignTarget(null);
+            setNotice(message);
+            void load(false);
+          }}
         />
       ) : null}
     </Screen>
@@ -435,10 +466,13 @@ function PencawangTile({
   summary,
   styles,
   onOpen,
+  onAssign,
 }: {
   summary: PeSummary;
   styles: Styles;
   onOpen?: () => void;
+  /** Managers only: tap a work-type line to give it to a team. */
+  onAssign?: (category: MaintenanceCategory) => void;
 }) {
   const { row, progress } = summary;
   return (
@@ -472,7 +506,12 @@ function PencawangTile({
 
         <View style={styles.lanes}>
           {summary.lanes.map((lane) => (
-            <LaneRow key={lane.category} lane={lane} styles={styles} />
+            <LaneRow
+              key={lane.category}
+              lane={lane}
+              styles={styles}
+              onAssign={onAssign && lane.canAssign ? () => onAssign(lane.category) : undefined}
+            />
           ))}
         </View>
 
@@ -487,10 +526,10 @@ function PencawangTile({
   );
 }
 
-function LaneRow({ lane, styles }: { lane: LaneInfo; styles: Styles }) {
+function LaneRow({ lane, styles, onAssign }: { lane: LaneInfo; styles: Styles; onAssign?: () => void }) {
   const done = lane.progress.closed === lane.total;
-  return (
-    <View style={styles.lane}>
+  const content = (
+    <>
       <Text style={styles.laneType} numberOfLines={1}>
         {CATEGORY_LABEL[lane.category]}
       </Text>
@@ -509,7 +548,20 @@ function LaneRow({ lane, styles }: { lane: LaneInfo; styles: Styles }) {
       <Text style={[styles.laneCount, done && { color: STATUS_COLOR.DONE }, lane.overdue && styles.laneOverdue]}>
         {lane.progress.closed}/{lane.total}
       </Text>
-    </View>
+      {onAssign ? <Feather name="edit-2" size={13} style={styles.laneEdit} /> : null}
+    </>
+  );
+  if (!onAssign) return <View style={styles.lane}>{content}</View>;
+  return (
+    <Pressable
+      onPress={onAssign}
+      hitSlop={{ top: 4, bottom: 4 }}
+      style={({ pressed }) => [styles.lane, styles.laneTappable, pressed && styles.lanePressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${CATEGORY_LABEL[lane.category]}: ${lane.owner}. Change team`}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -609,6 +661,9 @@ function createStyles(theme: Theme) {
     laneOwnerMuted: { color: theme.colors.textMuted },
     laneCount: { fontFamily: theme.fonts.bodySemibold, fontSize: 12.5, color: theme.colors.textPrimary },
     laneOverdue: { color: theme.colors.dangerText },
+    laneTappable: { marginHorizontal: -6, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8 },
+    lanePressed: { backgroundColor: theme.colors.surfacePressed },
+    laneEdit: { color: theme.colors.primary },
     tileDue: { marginTop: 6, fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textMuted },
     tileDueOverdue: { fontFamily: theme.fonts.bodySemibold, color: theme.colors.dangerText },
     chevron: { alignSelf: 'center', marginRight: 8, color: theme.colors.textMuted },

@@ -1,5 +1,5 @@
 import type { WorkPackageDetail, WorkPackageList } from './maintenance/types';
-import type { MaintenanceBoard } from './maintenance/board';
+import type { AssignPackageBody, AssignRouting, MaintenanceBoard } from './maintenance/board';
 import * as FileSystem from 'expo-file-system/legacy';
 import { isForceOffline, isNetworkOffline } from './networkStatus';
 import {
@@ -773,6 +773,19 @@ export const api = {
   /** Plan §18 — the manager's progress board (same as the web's Maintenance Packages). */
   getMaintenanceBoard(token: string) {
     return request<MaintenanceBoard>('/maintenance-packages/board', { token });
+  },
+
+  /**
+   * Plan §18 — give a Pencawang (or one work type of it) to a company / team.
+   * Same body as the web. Send the existing dueDate + notes: the API clears them
+   * on a Main Contractor assign that leaves them out.
+   */
+  assignMaintenancePackage(token: string, body: AssignPackageBody) {
+    return request<{ siteVisitId: string; routing: AssignRouting }>('/maintenance-packages', {
+      method: 'POST',
+      token,
+      body,
+    });
   },
 
   /** Plan §13 — a Kejanggalan found during maintenance (not in the survey). */
