@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Hourglass,
+  LayoutGrid,
   Users,
   List,
   Map as MapIcon,
@@ -30,9 +31,22 @@ import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
 import { RepairReportDialog } from "@/components/maintenance-repair-report-dialog";
 import { MaterialsSummaryDialog } from "@/components/materials-summary-dialog";
 import {
+  MaintenanceGrid,
+  WorkTypeCell,
+  downloadGridCsv,
+  laneCell,
+} from "@/components/maintenance-packages-grid";
+import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
   DestinationSelect,
+  PROGRESS_PARTS,
+  STATE_COLOR,
+  type PeState,
+  formatDate,
+  pencawangLabel,
+  progressOf,
+  startOfToday,
   DialogFrame,
   ErrorBanner,
   LegendDot,
@@ -102,10 +116,12 @@ const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 
 
-type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED" | "NO_TEAM" | "OVERDUE";
+type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED" | "NO_TEAM" | "OVERDUE" | "OPEN" | "CLOSED";
 /** "ALL" = every work type; otherwise every number on the page counts that one only. */
 type WorkTypeFilter = "ALL" | MaintenanceCategory;
-type ViewMode = "LIST" | "MAP";
+type ViewMode = "LIST" | "MAP" | "GRID";
+/** Plan §17.2: sort for List + Grid ("DEFAULT" = the board's own order). */
+type SortMode = "DEFAULT" | "NAME" | "LEAST_CLOSED" | "OVERDUE";
 
 const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "ALL", label: "All" },
@@ -113,6 +129,8 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "ASSIGNED", label: "Assigned" },
   { value: "NO_TEAM", label: "No team" },
   { value: "OVERDUE", label: "Overdue" },
+  { value: "OPEN", label: "Still open" },
+  { value: "CLOSED", label: "All closed" },
 ];
 /** A company's own board has nothing "awaiting company" (plan §15). */
 const COMPANY_STATUS_OPTIONS = STATUS_OPTIONS.filter(
@@ -122,20 +140,39 @@ const COMPANY_STATUS_OPTIONS = STATUS_OPTIONS.filter(
 const VIEW_OPTIONS = [
   { value: "LIST", label: "List" },
   { value: "MAP", label: "Map" },
+  { value: "GRID", label: "Grid" },
 ] as const;
+
+/** ?view=list|map|grid → the tab (plan §17.1 links straight to a view). */
+function viewFromUrl(): ViewMode | null {
+  if (typeof window === "undefined") return null;
+  const param = new URLSearchParams(window.location.search).get("view")?.toUpperCase();
+  return param === "LIST" || param === "MAP" || param === "GRID" ? param : null;
+}
+
+/** Every Kejanggalan of the (scoped) PE is closed. */
+function isAllClosed(row: PackagePencawang) {
+  const p = progressOf(row);
+  return row.totals.total > 0 && p.todo + p.inProgress + p.awaiting === 0;
+}
+
+function closedShare(row: PackagePencawang) {
+  return row.totals.total === 0 ? 1 : progressOf(row).closed / row.totals.total;
+}
+
+/** The team holds any of the (scoped) PE's work: a lane, a package or split poles. */
+function hasTeam(row: PackagePencawang, teamId: string) {
+  return (
+    row.lanes.some((lane) => lane.team?.id === teamId) ||
+    row.packages.some((pkg) => pkg.team?.id === teamId) ||
+    row.poleSplits.some((split) => split.team?.id === teamId)
+  );
+}
 
 /**
  * Repair state of a Pencawang (plan §15, J32) — marker fill + list bar colours.
  * Fixed hex: they paint on the satellite map, not the theme.
  */
-type PeState = "NEEDS_COMPANY" | "NOT_STARTED" | "IN_PROGRESS" | "AWAITING" | "CLOSED";
-const STATE_COLOR: Record<PeState, string> = {
-  NEEDS_COMPANY: "#64748b",
-  NOT_STARTED: "#dc2626",
-  IN_PROGRESS: "#f59e0b",
-  AWAITING: "#2563eb",
-  CLOSED: "#16a34a",
-};
 const STATE_LABEL: Record<PeState, string> = {
   NEEDS_COMPANY: "Needs a company",
   NOT_STARTED: "Not started",
@@ -143,27 +180,6 @@ const STATE_LABEL: Record<PeState, string> = {
   AWAITING: "Awaiting verification",
   CLOSED: "All closed",
 };
-/** Stacked progress bar segments, in order. */
-const PROGRESS_PARTS: Array<{ key: keyof PackageProgress; label: string; color: string }> = [
-  { key: "closed", label: "Closed", color: STATE_COLOR.CLOSED },
-  { key: "awaiting", label: "Awaiting verification", color: STATE_COLOR.AWAITING },
-  { key: "inProgress", label: "In progress", color: STATE_COLOR.IN_PROGRESS },
-  { key: "todo", label: "To do", color: "#e2e8f0" },
-];
-
-/** Progress of a PE / lane; older APIs only had open / finished. */
-function progressOf(item: {
-  progress?: PackageProgress;
-  totals?: { open: number; finished: number };
-  open?: number;
-  finished?: number;
-}): PackageProgress {
-  if (item.progress) return item.progress;
-  const open = item.totals?.open ?? item.open ?? 0;
-  const finished = item.totals?.finished ?? item.finished ?? 0;
-  return { todo: open, inProgress: 0, awaiting: 0, closed: finished };
-}
-
 function peState(row: PackagePencawang): PeState {
   if (row.totals.unrouted > 0) return "NEEDS_COMPANY";
   const p = progressOf(row);
@@ -225,11 +241,6 @@ function ownPackages(row: PackagePencawang, board: MaintenancePackageBoard) {
   return row.packages.filter((pkg) => own.has(pkg.organization.id));
 }
 
-const startOfToday = () => {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-};
-
 /** Earliest target date of the PE's (own) packages; overdue while work is open. */
 function dueInfo(row: PackagePencawang, board: MaintenancePackageBoard) {
   const dates = [
@@ -270,25 +281,6 @@ function ProgressBar({ progress, compact = false }: { progress: PackageProgress;
   );
 }
 
-
-function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "—";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(parsed);
-}
-
-function pencawangLabel(row: { pencawangName: string | null; pencawangCode: string | null }) {
-  return row.pencawangName || row.pencawangCode || "Unnamed Pencawang";
-}
 
 function severityTone(severity: string): Tone {
   const normalized = severity.toUpperCase();
@@ -931,6 +923,7 @@ function MapView({
   onClear,
   onOpenPoles,
   onReports,
+  onAssignLane,
 }: {
   board: MaintenancePackageBoard;
   rows: PackagePencawang[];
@@ -943,8 +936,17 @@ function MapView({
   onClear: () => void;
   onOpenPoles: (row: PackagePencawang) => void;
   onReports: (rows: PackagePencawang[]) => void;
+  /** Plan §17.1: give one work type of the clicked Pencawang to a team. */
+  onAssignLane: (row: PackagePencawang, category: MaintenanceCategory) => void;
 }) {
   const [boxMode, setBoxMode] = useState(false);
+  // The last Pencawang clicked — its work types show in the side panel, even
+  // for a view-only Supervisor who cannot select.
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const activeRow = useMemo(
+    () => (activeId ? board.pencawangs.find((row) => row.siteVisitId === activeId) ?? null : null),
+    [activeId, board.pencawangs],
+  );
   const [mapError, setMapError] = useState(false);
   const [focusTeamId, setFocusTeamId] = useState("");
   const [radiusKm, setRadiusKm] = useState("3");
@@ -1120,6 +1122,7 @@ function MapView({
               points={points}
               boxMode={boxMode}
               onToggle={(id) => {
+                setActiveId(id);
                 if (selectableIds.has(id)) onToggle(id);
               }}
               onBoxSelect={(ids) => onAdd(ids.filter((id) => selectableIds.has(id)))}
@@ -1168,6 +1171,44 @@ function MapView({
       </Card>
 
       <Card className="flex flex-col gap-4">
+        {activeRow ? (
+          <div className="rounded-[var(--radius-control)] border border-[var(--line)] p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <Eyebrow>Pencawang</Eyebrow>
+                <p className="mt-0.5 truncate text-[14px] font-bold text-[var(--foreground)]">
+                  {pencawangLabel(activeRow)}
+                </p>
+                <p className="text-[11.5px] text-[var(--muted)]">
+                  {activeRow.mainhead?.name ?? "No Mainhead"} · {activeRow.poleCount} poles
+                </p>
+              </div>
+              <IconBtn onClick={() => setActiveId(null)} aria-label="Close Pencawang details">
+                <X size={14} />
+              </IconBtn>
+            </div>
+            <div className="mt-2 space-y-1">
+              {CATEGORY_ORDER.map((category) => laneCell(activeRow, category, board))
+                .filter((info) => info !== null)
+                .map((info) => (
+                  <WorkTypeCell
+                    key={info.category}
+                    info={info}
+                    showLabel
+                    onAssign={(category) => onAssignLane(activeRow, category)}
+                  />
+                ))}
+            </div>
+            <div className="mt-2 flex gap-1">
+              <Tbtn variant="ghost" onClick={() => onOpenPoles(activeRow)}>
+                Poles
+              </Tbtn>
+              <Tbtn variant="ghost" onClick={() => onReports([activeRow])}>
+                Report
+              </Tbtn>
+            </div>
+          </div>
+        ) : null}
         <div>
           <Eyebrow>Selection</Eyebrow>
           <p
@@ -1315,7 +1356,11 @@ function MaintenancePackagesContent() {
   const [mainheadFilter, setMainheadFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<ViewMode>("LIST");
+  const [teamFilter, setTeamFilter] = useState("ALL");
+  const [sortMode, setSortMode] = useState<SortMode>("DEFAULT");
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  // A grid / map cell opens the dialog on its work type (plan §17.2).
+  const [dialogCategory, setDialogCategory] = useState<MaintenanceCategory | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1348,10 +1393,26 @@ function MaintenancePackagesContent() {
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
+    // ?view= wins; otherwise a maintenance company opens on the Grid (L42).
+    const mode = storedSession?.user?.workMode;
+    setView(viewFromUrl() ?? (mode === "MAINTENANCE" || mode === "BOTH" ? "GRID" : "LIST"));
     if (storedSession?.token) {
       void loadBoard(storedSession.token);
     }
   }, [loadBoard]);
+
+  const changeView = useCallback((next: ViewMode) => {
+    setView(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", next.toLowerCase());
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
+  const openLaneDialog = useCallback((row: PackagePencawang, category: MaintenanceCategory | null) => {
+    setDialogError("");
+    setDialogCategory(category);
+    setDialogRow(row);
+  }, []);
 
   /** Runs a write, then reloads the board; errors land in the dialog when open. */
   const runWrite = useCallback(
@@ -1436,21 +1497,56 @@ function MaintenancePackagesContent() {
         if (statusFilter === "ASSIGNED" && row.packages.length === 0) return false;
         if (statusFilter === "NO_TEAM" && (row.totals.noTeam ?? 0) === 0) return false;
         if (statusFilter === "OVERDUE" && board && !dueInfo(row, board).overdue) return false;
+        if (statusFilter === "OPEN" && isAllClosed(row)) return false;
+        if (statusFilter === "CLOSED" && !isAllClosed(row)) return false;
         if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
+        if (teamFilter !== "ALL" && !hasTeam(row, teamFilter)) return false;
         return true;
       }),
-    [board, mainheadFilter, scopedRows, statusFilter],
+    [board, mainheadFilter, scopedRows, statusFilter, teamFilter],
   );
 
-  // The List view also narrows by the search box.
-  const rows = useMemo(
-    () => filteredRows.filter((row) => matchesSearch(row, search)),
-    [filteredRows, search],
+  // List + Grid also narrow by the search box, then sort.
+  const rows = useMemo(() => {
+    const matched = filteredRows.filter((row) => matchesSearch(row, search));
+    if (sortMode === "DEFAULT" || !board) return matched;
+    const byName = (left: PackagePencawang, right: PackagePencawang) =>
+      pencawangLabel(left).localeCompare(pencawangLabel(right));
+    return [...matched].sort((left, right) => {
+      if (sortMode === "LEAST_CLOSED") return closedShare(left) - closedShare(right) || byName(left, right);
+      if (sortMode === "OVERDUE") {
+        const l = dueInfo(left, board);
+        const r = dueInfo(right, board);
+        if (l.overdue !== r.overdue) return l.overdue ? -1 : 1;
+        if (l.earliest !== r.earliest) {
+          if (!l.earliest) return 1;
+          if (!r.earliest) return -1;
+          return l.earliest.localeCompare(r.earliest);
+        }
+      }
+      return byName(left, right);
+    });
+  }, [board, filteredRows, search, sortMode]);
+
+  /** Grid columns: every work type, or the one picked in the filter. */
+  const gridCategories = useMemo(
+    () => (workType === "ALL" ? CATEGORY_ORDER : [workType]),
+    [workType],
   );
 
   const selectableRows = useMemo(() => rows.filter(isSelectable), [rows]);
   const allVisibleSelected =
     selectableRows.length > 0 && selectableRows.every((row) => selected.has(row.siteVisitId));
+  const toggleAllVisible = useCallback(() => {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const row of selectableRows) {
+        if (allVisibleSelected) next.delete(row.siteVisitId);
+        else next.add(row.siteVisitId);
+      }
+      return next;
+    });
+  }, [allVisibleSelected, selectableRows]);
   const selectedRows = useMemo(
     () => (board?.pencawangs ?? []).filter((row) => selected.has(row.siteVisitId)),
     [board, selected],
@@ -1680,10 +1776,12 @@ function MaintenancePackagesContent() {
                   <span className="inline-flex items-center gap-1.5">
                     {view === "LIST" ? (
                       <List size={16} className="text-[var(--muted)]" />
+                    ) : view === "GRID" ? (
+                      <LayoutGrid size={16} className="text-[var(--muted)]" />
                     ) : (
                       <MapIcon size={16} className="text-[var(--muted)]" />
                     )}
-                    <Seg aria-label="View" options={VIEW_OPTIONS} value={view} onChange={setView} />
+                    <Seg aria-label="View" options={VIEW_OPTIONS} value={view} onChange={changeView} />
                   </span>
                   <SearchField
                     placeholder="Search Pencawang or Mainhead"
@@ -1716,12 +1814,51 @@ function MaintenancePackagesContent() {
                       </option>
                     ))}
                   </select>
+                  <select
+                    aria-label="Team"
+                    value={teamFilter}
+                    onChange={(event) => setTeamFilter(event.target.value)}
+                    className={filterSelectClass}
+                  >
+                    <option value="ALL">All teams</option>
+                    {board.teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {isCompany
+                          ? team.name
+                          : `${team.name} · ${board.companies.find((c) => c.id === team.organizationId)?.name ?? ""}`}
+                      </option>
+                    ))}
+                  </select>
+                  {view !== "MAP" ? (
+                    <select
+                      aria-label="Sort"
+                      value={sortMode}
+                      onChange={(event) => setSortMode(event.target.value as SortMode)}
+                      className={filterSelectClass}
+                    >
+                      <option value="DEFAULT">Default order</option>
+                      <option value="NAME">Name A–Z</option>
+                      <option value="LEAST_CLOSED">Least closed first</option>
+                      <option value="OVERDUE">Overdue first</option>
+                    </select>
+                  ) : null}
                   <Seg
                     aria-label="Assignment status"
                     options={isCompany ? COMPANY_STATUS_OPTIONS : STATUS_OPTIONS}
                     value={statusFilter}
                     onChange={setStatusFilter}
                   />
+                  {view === "GRID" ? (
+                    <Tbtn
+                      variant="secondary"
+                      onClick={() => downloadGridCsv(board, rows.map(original), gridCategories)}
+                      disabled={rows.length === 0}
+                      title="The grid as a spreadsheet (CSV, opens in Excel)"
+                    >
+                      <FileSpreadsheet size={16} />
+                      Export
+                    </Tbtn>
+                  ) : null}
                 </FilterBar>
 
                 {view === "MAP" ? (
@@ -1736,7 +1873,32 @@ function MaintenancePackagesContent() {
                     onClear={() => setSelected(new Set())}
                     onOpenPoles={(row) => setPoleRow(original(row))}
                     onReports={(picked) => setReportRows(picked.map(original))}
+                    onAssignLane={(row, category) => openLaneDialog(original(row), category)}
                   />
+                ) : view === "GRID" ? (
+                  <>
+                    {board.canAssign ? (
+                      <SelectionBar
+                        count={selected.size}
+                        onAssign={openBulk}
+                        onClear={() => setSelected(new Set())}
+                        onReports={() => setReportRows(selectedRows)}
+                      />
+                    ) : null}
+                    <Card padded={false}>
+                      <MaintenanceGrid
+                        board={board}
+                        rows={rows.map(original)}
+                        categories={gridCategories}
+                        selected={selected}
+                        onToggle={toggleSelected}
+                        onToggleAll={toggleAllVisible}
+                        onAssignLane={openLaneDialog}
+                        onOpenPoles={(row) => setPoleRow(row)}
+                        onReport={(row) => setReportRows([row])}
+                      />
+                    </Card>
+                  </>
                 ) : (
                   <>
                     {board.canAssign ? (
@@ -1760,16 +1922,7 @@ function MaintenancePackagesContent() {
                                     className={checkboxClass}
                                     checked={allVisibleSelected}
                                     disabled={selectableRows.length === 0}
-                                    onChange={() =>
-                                      setSelected((current) => {
-                                        const next = new Set(current);
-                                        for (const row of selectableRows) {
-                                          if (allVisibleSelected) next.delete(row.siteVisitId);
-                                          else next.add(row.siteVisitId);
-                                        }
-                                        return next;
-                                      })
-                                    }
+                                    onChange={toggleAllVisible}
                                   />
                                 </th>
                               ) : null}
@@ -1884,10 +2037,7 @@ function MaintenancePackagesContent() {
                                     {board.canAssign && selectable ? (
                                       <Tbtn
                                         variant={row.packages.length === 0 ? "primary" : "secondary"}
-                                        onClick={() => {
-                                          setDialogError("");
-                                          setDialogRow(original(row));
-                                        }}
+                                        onClick={() => openLaneDialog(original(row), null)}
                                       >
                                         {row.packages.length === 0 ? "Assign" : "Manage"}
                                       </Tbtn>
@@ -1939,7 +2089,7 @@ function MaintenancePackagesContent() {
           onClose={() => (isSaving ? undefined : setDialogRow(null))}
           onWithdraw={setWithdrawTarget}
           actorKind={board.actorKind}
-          initialCategory={workType === "ALL" ? null : workType}
+          initialCategory={dialogCategory ?? (workType === "ALL" ? null : workType)}
           onSplitPoles={() => {
             setPoleRow(dialogRow);
             setDialogRow(null);

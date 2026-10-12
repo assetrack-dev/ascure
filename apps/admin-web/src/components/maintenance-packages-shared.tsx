@@ -7,6 +7,7 @@ import type {
   MaintenanceCategory,
   PackageCompany,
   PackageDestination,
+  PackageProgress,
   PackageTeam,
   RoutingResult,
 } from "@/types/maintenance-packages";
@@ -26,6 +27,66 @@ export const modalSelectClass = `${filterSelectClass} mt-1.5 w-full`;
 export const modalLabelClass = "text-[12.5px] font-semibold text-[var(--foreground-soft)]";
 export const checkboxClass =
   "h-4 w-4 cursor-pointer rounded border-[var(--line-strong)] accent-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-40";
+
+// ── Progress helpers (plan §15 J32; shared with the §17 grid) ──────────────
+
+/**
+ * Repair state of a Pencawang — marker fill + bar colours.
+ * Fixed hex: they paint on the satellite map, not the theme.
+ */
+export type PeState = "NEEDS_COMPANY" | "NOT_STARTED" | "IN_PROGRESS" | "AWAITING" | "CLOSED";
+export const STATE_COLOR: Record<PeState, string> = {
+  NEEDS_COMPANY: "#64748b",
+  NOT_STARTED: "#dc2626",
+  IN_PROGRESS: "#f59e0b",
+  AWAITING: "#2563eb",
+  CLOSED: "#16a34a",
+};
+
+/** Stacked progress bar segments, in order. */
+export const PROGRESS_PARTS: Array<{ key: keyof PackageProgress; label: string; color: string }> = [
+  { key: "closed", label: "Closed", color: STATE_COLOR.CLOSED },
+  { key: "awaiting", label: "Awaiting verification", color: STATE_COLOR.AWAITING },
+  { key: "inProgress", label: "In progress", color: STATE_COLOR.IN_PROGRESS },
+  { key: "todo", label: "To do", color: "#e2e8f0" },
+];
+
+/** Progress of a PE / lane; older APIs only had open / finished. */
+export function progressOf(item: {
+  progress?: PackageProgress;
+  totals?: { open: number; finished: number };
+  open?: number;
+  finished?: number;
+}): PackageProgress {
+  if (item.progress) return item.progress;
+  const open = item.totals?.open ?? item.open ?? 0;
+  const finished = item.totals?.finished ?? item.finished ?? 0;
+  return { todo: open, inProgress: 0, awaiting: 0, closed: finished };
+}
+
+export function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+export function pencawangLabel(row: { pencawangName: string | null; pencawangCode: string | null }) {
+  return row.pencawangName || row.pencawangCode || "Unnamed Pencawang";
+}
+
+export const startOfToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+};
 
 export function routingParts(result: RoutingResult) {
   const parts = [];
