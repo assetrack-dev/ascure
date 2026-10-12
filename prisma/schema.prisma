@@ -218,6 +218,14 @@ enum OrganizationType {
   CLIENT
 }
 
+// Which web view a contractor company's managers get (plan §17, L38). Null =
+// the full console (unchanged); BOTH = Survey | Maintenance switch (Main Contractor).
+enum OrganizationWorkMode {
+  SURVEY
+  MAINTENANCE
+  BOTH
+}
+
 enum OperationalDomain {
   SURVEY
   INSPECTION
@@ -528,6 +536,7 @@ model Organization {
   name                   String
   code                   String?                            @unique
   type                   OrganizationType
+  workMode               OrganizationWorkMode?
   tenantId               String?                            @db.Uuid
   parentOrganizationId   String?                            @db.Uuid
   isActive               Boolean                            @default(true)

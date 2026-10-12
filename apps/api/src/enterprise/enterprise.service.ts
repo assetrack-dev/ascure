@@ -565,6 +565,7 @@ export class EnterpriseService {
             name: this.normalizeRequiredString(dto.name, 'Organization name'),
             code: this.normalizeOptionalString(dto.code),
             type: dto.type,
+            workMode: dto.workMode ?? null,
             parentOrganizationId:
               this.normalizeOptionalString(dto.parentOrganizationId) ?? null,
             isActive: dto.isActive ?? true,
@@ -637,6 +638,10 @@ export class EnterpriseService {
 
         if (dto.type !== undefined) {
           data.type = dto.type;
+        }
+
+        if (dto.workMode !== undefined) {
+          data.workMode = dto.workMode;
         }
 
         if (dto.parentOrganizationId !== undefined) {

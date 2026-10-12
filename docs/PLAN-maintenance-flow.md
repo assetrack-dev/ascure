@@ -404,3 +404,70 @@ Data exists (Defect.maintainedAt/maintainedByUserId, assignedToTeamId, closureVe
 | Q7 | Contractor **Manager / Supervisor** (own company), Main Contractor (own group), TNB, Admin — not Technicians. |
 
 Layout: pdf-lib, Kad Kerja style (ASCURE + TNB logos, navy title, identity + company/teams/scope/target, status summary strip); one card per Kejanggalan: pole + GPS + work type + A/B/C + status, Kejanggalan text, repaired by team/date, verified by name/date, photo row. API + web, no migration, no APK.
+
+## 17. Maintenance mode for contractor Managers (owner, 2026-10-11)
+
+Subcontractors do **either** survey **or** maintenance, so a maintenance company's Manager / Supervisor gets a web view built only for repair work. Most of the data already exists (§12, §15, §16). This section **rearranges** it and adds three new pieces: the **grid**, the **overview** and **reports by date**.
+
+| # | Decision |
+|---|---|
+| L38 | **Each company has an explicit work mode**, set by Admin on the Organization form: `SURVEY` · `MAINTENANCE` · `BOTH`. Empty = today's full view, so nothing changes until Admin sets it. It does **not** reuse the capability tags. |
+| L39 | **Main Contractors get `BOTH` → a Survey \| Maintenance switch** at the top of the sidebar, remembered per browser. SUB companies get a single mode with no switch. |
+| L40 | **Progress = one bar with two parts:** *done, waiting for TNB* (awaiting) and *closed* (verified). **Only closed counts toward 100%.** |
+| L41 | **"Reports by date" = Kejanggalan repaired or closed in the date range** (maintainedAt OR closureVerifiedAt in [from, to]), i.e. a claim period. |
+| L42 | **TNB + Admin are unchanged.** Maintenance Packages / Repair Verification stay as they are for them. The new **Grid** tab is added to Maintenance Packages for everyone (additive), but it only becomes the *default* tab in maintenance mode. |
+
+### 17.1 Sidebar in maintenance mode (contractor MANAGER / SUPERVISOR)
+
+| Item | Page | New? |
+|---|---|---|
+| **Overview** (home, `/` redirects here) | `/maintenance` | **new** |
+| **Pencawang** | `/maintenance-packages?view=grid` (List / Map / **Grid** tabs) | grid new |
+| **Map** | `/maintenance-packages?view=map` | exists (side panel gains the 3 work-type cells) |
+| **Reports** | `/maintenance-reports` (By Pencawang · By date) | **new page** |
+| **Teams** | `/crew-performance?tab=maintenance` | exists |
+| **Users** | `/users` | exists (Manager only) |
+
+Hidden in maintenance mode: Dashboard, Site Visits, Assets, Defects, Network, Surveys, Reports (survey), Maintenance workspace. **This is navigation only:** a typed URL still works, and the data is still server-scoped. Supervisors see the same pages with no assign / re-team buttons (J31). The Survey-mode sidebar is today's minus the maintenance items. It gets its own redesign later.
+
+### 17.2 Grid: which PE → which team, per work type (needs #4 + #6)
+
+- One row per PE (the company's routed PEs, same scope as the §15 COMPANY board). Columns are **Rentis · Selenggaraan · Cat Tiang**, then Total, Target date and Report.
+- Cell = **team chip** (or "No team", amber) + **two-part bar** (L40) + `closed/total` + overdue flag. "—" = no Kejanggalan of that type. Pole splits (§12.6) show as "Split: Team A 8 · Team B 4".
+- Click a cell to assign / re-team that lane (own teams only, J30). Tick rows for bulk assign of one work type.
+- Filters: team, work type, overdue, no team, fully closed, search PE. Sort by % closed, overdue, name. Excel export of the grid.
+- Built from the existing **board** payload (lanes already carry team + `progress`). No new endpoint unless the payload proves too heavy at prod scale. Check with the largest company first.
+
+### 17.3 Overview (need #1)
+
+New `GET /maintenance-packages/overview` (board actors; COMPANY = own company, MC = own group, Admin/TNB optional `organizationId`):
+- **KPIs:** Kejanggalan assigned · done-waiting-for-TNB · closed · sent back · cannot repair · overdue PEs · lanes with no team.
+- **By work type:** three two-part bars (L40).
+- **Team table:** team, PEs on hand, Kejanggalan on hand, done this week, closed this week, sent back, overdue. Click a team to open the Grid filtered to it. Reuses the `maintenance-performance` query from §15 J33.
+- **Last 30 days:** repaired per day vs closed per day (line chart, same style as the dashboard).
+
+### 17.4 Reports (need #5)
+
+- **By Pencawang:** pick PEs from a searchable list (+ optional work type) → one PDF, or a ZIP when several. Reuses M4 (K34–K37) unchanged.
+- **By date:** from / to (+ optional work type, team) → background ZIP job:
+  - every PE with ≥1 of the company's Kejanggalan repaired or closed in the range (L41)
+  - one repair PDF per PE listing **only the Kejanggalan in the range**, header line `Tempoh: dd/mm/yyyy – dd/mm/yyyy`; DRAF watermark if any listed item isn't Closed
+  - plus `ringkasan.xlsx`: one row per Kejanggalan (PE, pole, work type, A/B/C, team, repaired date, closed date, status, materials from Deploy 206)
+- API: `RepairReportZipDto` gains optional `from`, `to`, `teamId`. When dates are given, `siteVisitIds` becomes optional and is resolved server-side. `repair-report.service` filters items by the range.
+
+### 17.5 Data / API
+
+- Migration (additive): `enum OrganizationWorkMode { SURVEY MAINTENANCE BOTH }` + `Organization.workMode OrganizationWorkMode?` (nullable, no default).
+- Organizations update DTO: `workMode` (ADMIN only). Login + `/auth/me` return the user's company `workMode`.
+- Overview endpoint (17.3); date-range report jobs (17.4).
+- No mobile change, no APK.
+
+### 17.6 Build order
+
+1. API: migration + `workMode` on org + `/auth/me`; Admin org form field. *(e2e: ADMIN-only set; me returns it)*
+2. Web: **Grid** tab on Maintenance Packages (+ Map side panel work-type cells).
+3. API + web: **Overview** endpoint + `/maintenance` page. *(e2e: COMPANY / MC / ADMIN scope)*
+4. API + web: **Reports** page + date-range ZIP + `ringkasan.xlsx`. *(e2e: range picks repaired-or-closed only; company scope)*
+5. Web: sidebar by mode + MC switch + home redirect.
+
+Each step can ship on its own. One additive migration (step 1) → prod `migrate deploy`. Deploy = API + admin picks, no APK. Before the switch-over (step 5), Admin sets `workMode` on every contractor company in prod.
