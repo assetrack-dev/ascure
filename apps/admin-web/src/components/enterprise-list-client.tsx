@@ -59,6 +59,8 @@ interface EnterpriseFormState {
   name: string;
   code: string;
   type: string;
+  /** Organizations only (plan §17): "" = full console, SURVEY / MAINTENANCE / BOTH. */
+  workMode: string;
   status: string;
   isActive: boolean;
   organizationId: string;
@@ -200,6 +202,7 @@ const DEFAULT_ENTERPRISE_FORM: EnterpriseFormState = {
   name: "",
   code: "",
   type: "SUBCONTRACTOR",
+  workMode: "",
   status: "ACTIVE",
   isActive: true,
   organizationId: "",
@@ -402,6 +405,7 @@ function createFormFromRow(
     name: row.name,
     code: row.code ?? "",
     type: readRawString(row, "type") || "SUBCONTRACTOR",
+    workMode: readRawString(row, "workMode"),
     status: readRawString(row, "status") || (row.isActive === false ? "ARCHIVED" : "ACTIVE"),
     isActive: readRawBoolean(row, "isActive") ?? row.isActive !== false,
     organizationId:
@@ -443,6 +447,10 @@ function createFormFromRow(
   };
 }
 
+function isContractorType(type: string) {
+  return type === "MAIN_CONTRACTOR" || type === "SUBCONTRACTOR";
+}
+
 function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseFormState) {
   const payload: Record<string, unknown> = {
     name: form.name.trim(),
@@ -458,6 +466,8 @@ function buildEnterprisePayload(kind: EnterpriseEntityKind, form: EnterpriseForm
     // The contractor hierarchy link: a SUBCONTRACTOR's parent is its
     // MAIN_CONTRACTOR (or any higher org). Null = a top-level organization.
     payload.parentOrganizationId = form.parentOrganizationId || null;
+    // Only contractor companies carry a web view (plan §17); others are cleared.
+    payload.workMode = isContractorType(payload.type as string) ? form.workMode || null : null;
     payload.capabilityIds = form.capabilityIds;
     payload.mainheadIds = form.mainheadIds;
   }
@@ -828,6 +838,26 @@ function EnterpriseFormModal({
                   Active
                 </label>
               </div>
+              {isContractorType(values.type) ? (
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Web view</span>
+                  <select
+                    value={values.workMode}
+                    onChange={(event) => onChange("workMode", event.target.value)}
+                    className={`${inputClassName} mt-1.5`}
+                  >
+                    <option value="">Full console (not set)</option>
+                    <option value="SURVEY">Survey</option>
+                    <option value="MAINTENANCE">Maintenance</option>
+                    <option value="BOTH">Survey + Maintenance (switch)</option>
+                  </select>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    What this company&apos;s managers and supervisors see in the web console.
+                    Maintenance = repair work only; Survey + Maintenance gives a switch
+                    (usually a main contractor). Menu only — data access is unchanged.
+                  </span>
+                </label>
+              ) : null}
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">
                   Parent Organization

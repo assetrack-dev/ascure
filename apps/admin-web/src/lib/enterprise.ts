@@ -279,6 +279,15 @@ function capabilityLabels(record: ApiRecord | null) {
   return Array.from(capabilitiesByLabel.values());
 }
 
+/** Plan §17 (L38): only contractor companies carry a web view; empty = full console. */
+function workModeLabel(type: string | null, workMode: string | null) {
+  if (type !== "MAIN_CONTRACTOR" && type !== "SUBCONTRACTOR") return null;
+  if (workMode === "SURVEY") return "Survey";
+  if (workMode === "MAINTENANCE") return "Maintenance";
+  if (workMode === "BOTH") return "Survey + Maintenance (switch)";
+  return "Full console (not set)";
+}
+
 function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | null {
   const record = asRecord(rawOrganization);
 
@@ -317,6 +326,7 @@ function normalizeOrganization(rawOrganization: unknown): EnterpriseDetail | nul
     { label: "Status", value: activeState.label },
     { label: "Capabilities", value: capabilityDisplay || null },
     { label: "Parent Organization", value: parentOrganization ? parentLabel : null },
+    { label: "Web view", value: workModeLabel(type, readString(record, "workMode")) },
   ];
 
   return withSearchText({
