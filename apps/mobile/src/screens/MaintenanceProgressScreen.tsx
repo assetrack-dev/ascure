@@ -6,6 +6,7 @@ import { api, ApiError } from '../api';
 import { useSession } from '../context/AuthContext';
 import { cachedFetch } from '../offlineCache';
 import { AssignLaneSheet } from '../components/AssignLaneSheet';
+import { PencawangProgressMap } from '../components/PencawangProgressMap';
 import type { RootStackScreenProps } from '../navigation/types';
 import {
   AppButton,
@@ -50,6 +51,7 @@ import {
 
 type StatusFilter = 'ALL' | PeStatus | 'OVERDUE' | 'NO_TEAM';
 type WorkTypeFilter = 'ALL' | MaintenanceCategory;
+type ViewMode = 'LIST' | 'MAP';
 
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -89,6 +91,7 @@ export function MaintenanceProgressScreen() {
   // Plan §18 step 2: the work type tapped on a tile → assign sheet.
   const [assignTarget, setAssignTarget] = useState<{ row: BoardPencawang; category: MaintenanceCategory | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewMode>('LIST');
   const loadedRef = useRef(false);
 
   const load = useCallback(
@@ -211,6 +214,67 @@ export function MaintenanceProgressScreen() {
 
   const statusFilters = STATUS_FILTERS.filter((option) => option.value !== 'NO_COMPANY' || isMainContractor);
 
+  // Shared by List and Map (the map shows the same Pencawang as the list).
+  const statusChips = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.chipRow}
+      style={styles.chipScroll}
+    >
+      {workType !== 'ALL' && mode === 'MAP' ? (
+        <Pressable
+          onPress={() => setWorkType('ALL')}
+          style={[styles.filterChip, styles.filterChipActive]}
+          accessibilityRole="button"
+          accessibilityLabel="Show every work type"
+        >
+          <Text style={[styles.filterChipText, styles.filterChipTextActive]}>{CATEGORY_LABEL[workType]} ✕</Text>
+        </Pressable>
+      ) : null}
+      {search.trim() && mode === 'MAP' ? (
+        <Pressable
+          onPress={() => setSearch('')}
+          style={[styles.filterChip, styles.filterChipActive]}
+          accessibilityRole="button"
+          accessibilityLabel="Clear the search"
+        >
+          <Text style={[styles.filterChipText, styles.filterChipTextActive]}>“{search.trim()}” ✕</Text>
+        </Pressable>
+      ) : null}
+      {statusFilters.map((option) => {
+        const active = statusFilter === option.value;
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => setStatusFilter(option.value)}
+            style={[styles.filterChip, active && styles.filterChipActive]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+
+  const openPencawang = (summary: PeSummary) =>
+    summary.lanes.some((lane) => lane.ownerTone !== 'noCompany')
+      ? () =>
+          navigation.navigate('MaintenancePackage', {
+            siteVisitId: summary.row.siteVisitId,
+            title: pencawangLabel(summary.row),
+          })
+      : undefined;
+  const assignFor = (summary: PeSummary) =>
+    board?.canAssign
+      ? (category: MaintenanceCategory) => {
+          setNotice(null);
+          setAssignTarget({ row: summary.row, category });
+        }
+      : undefined;
+
   const header = board ? (
     <View style={styles.headerStack}>
       {fromCache ? <WarningBanner message={`Offline — showing the list saved ${formatDate(fromCache)}.`} /> : null}
@@ -277,22 +341,7 @@ export function MaintenanceProgressScreen() {
         </Text>
       </Card>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-        {statusFilters.map((option) => {
-          const active = statusFilter === option.value;
-          return (
-            <Pressable
-              key={option.value}
-              onPress={() => setStatusFilter(option.value)}
-              style={[styles.filterChip, active && styles.filterChipActive]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-            >
-              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{option.label}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {statusChips}
 
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
@@ -327,6 +376,25 @@ export function MaintenanceProgressScreen() {
     <Screen
       title="Pencawang progress"
       scroll={false}
+      actions={
+        board ? (
+          <View style={styles.segment}>
+            {(['LIST', 'MAP'] as ViewMode[]).map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => setMode(option)}
+                style={[styles.segmentItem, mode === option && styles.segmentItemActive]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: mode === option }}
+              >
+                <Text style={[styles.segmentText, mode === option && styles.segmentTextActive]}>
+                  {option === 'LIST' ? 'List' : 'Map'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : undefined
+      }
       leftAction={{ icon: 'back', onPress: () => navigation.goBack(), accessibilityLabel: 'Back' }}
       rightAction={{ icon: 'refresh', onPress: () => void load(true), accessibilityLabel: 'Refresh', disabled: isLoading }}
     >
@@ -346,7 +414,27 @@ export function MaintenanceProgressScreen() {
         </View>
       ) : null}
 
-      {board ? (
+      {board && mode === 'MAP' ? (
+        <View style={styles.mapStack}>
+          <SuccessBanner message={notice} />
+          {statusChips}
+          <PencawangProgressMap
+            rows={rows}
+            showNoCompany={isMainContractor}
+            renderCard={(summary, onClose) => (
+              <PencawangTile
+                summary={summary}
+                styles={styles}
+                onOpen={openPencawang(summary)}
+                onAssign={assignFor(summary)}
+                onClose={onClose}
+              />
+            )}
+          />
+        </View>
+      ) : null}
+
+      {board && mode === 'LIST' ? (
         <FlatList
           data={rows}
           keyExtractor={(summary) => summary.row.siteVisitId}
@@ -359,23 +447,8 @@ export function MaintenanceProgressScreen() {
             <PencawangTile
               summary={item}
               styles={styles}
-              onAssign={
-                board.canAssign
-                  ? (category) => {
-                      setNotice(null);
-                      setAssignTarget({ row: item.row, category });
-                    }
-                  : undefined
-              }
-              onOpen={
-                item.lanes.some((lane) => lane.ownerTone !== 'noCompany')
-                  ? () =>
-                      navigation.navigate('MaintenancePackage', {
-                        siteVisitId: item.row.siteVisitId,
-                        title: pencawangLabel(item.row),
-                      })
-                  : undefined
-              }
+              onAssign={assignFor(item)}
+              onOpen={openPencawang(item)}
             />
           )}
           ListEmptyComponent={
@@ -467,12 +540,15 @@ function PencawangTile({
   styles,
   onOpen,
   onAssign,
+  onClose,
 }: {
   summary: PeSummary;
   styles: Styles;
   onOpen?: () => void;
   /** Managers only: tap a work-type line to give it to a team. */
   onAssign?: (category: MaintenanceCategory) => void;
+  /** Map card: close it. */
+  onClose?: () => void;
 }) {
   const { row, progress } = summary;
   return (
@@ -490,6 +566,11 @@ function PencawangTile({
             {pencawangLabel(row)}
           </Text>
           <StatusChip label={STATUS_LABEL[summary.status]} tone={STATUS_TONE[summary.status]} />
+          {onClose ? (
+            <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close">
+              <Feather name="x" size={18} style={styles.closeIcon} />
+            </Pressable>
+          ) : null}
         </View>
         <Text style={styles.tileMeta} numberOfLines={1}>
           {row.mainhead?.name ?? 'No Mainhead'} · {row.poleCount} pole{row.poleCount === 1 ? '' : 's'}
@@ -567,7 +648,21 @@ function LaneRow({ lane, styles, onAssign }: { lane: LaneInfo; styles: Styles; o
 
 function createStyles(theme: Theme) {
   return StyleSheet.create({
-    listContent: { paddingHorizontal: 16, paddingBottom: 32, gap: 10 },
+    listContent: { paddingBottom: 32, gap: 10 },
+    segment: {
+      flexDirection: 'row',
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.surfaceMuted,
+      borderRadius: theme.radius.chip,
+      padding: 3,
+    },
+    segmentItem: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6 },
+    segmentItemActive: { backgroundColor: theme.colors.primary },
+    segmentText: { fontFamily: theme.fonts.bodySemibold, fontSize: 13, color: theme.colors.textSecondary },
+    segmentTextActive: { color: theme.colors.textOnPrimary },
+    mapStack: { flex: 1, gap: 10 },
+    chipScroll: { flexGrow: 0 },
+    closeIcon: { color: theme.colors.textMuted },
     headerStack: { gap: 12, paddingTop: 12, paddingBottom: 4 },
     kpiRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     kpiMain: { flex: 1 },
