@@ -505,6 +505,9 @@ export function HomeScreen() {
       {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
         <MaintenanceWorkspaceView
           userId={user.id}
+          // Managers / Supervisors follow the work in Pencawang progress; the
+          // old task list keeps only emergencies for them (plan §18).
+          emergenciesOnly={user.role === 'MANAGER' || user.role === 'SUPERVISOR'}
           onOpenDefect={(defectId) =>
             navigation.navigate('DefectDetail', { defectId })
           }
@@ -766,9 +769,11 @@ const GROUP_RENDER_LIMIT = 30;
 function MaintenanceWorkspaceView({
   userId,
   onOpenDefect,
+  emergenciesOnly = false,
 }: {
   userId: string;
   onOpenDefect: (defectId: string) => void;
+  emergenciesOnly?: boolean;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -849,6 +854,8 @@ function MaintenanceWorkspaceView({
   );
 
   if (isLoading) {
+    // Emergencies-only (Managers): no skeleton for a usually empty section.
+    if (emergenciesOnly) return null;
     return (
       <>
         <SkeletonCard />
@@ -857,9 +864,17 @@ function MaintenanceWorkspaceView({
     );
   }
 
-  const hasAnyTask = MAINTENANCE_GROUPS.some(
+  const shownGroups = emergenciesOnly
+    ? MAINTENANCE_GROUPS.filter((group) => group.key === 'EMERGENCY')
+    : MAINTENANCE_GROUPS;
+  const hasAnyTask = shownGroups.some(
     (group) => grouped[group.key].length > 0,
   );
+
+  // Managers / Supervisors: nothing to show unless there is an emergency.
+  if (emergenciesOnly && !hasAnyTask) {
+    return <ErrorBanner message={error} />;
+  }
 
   return (
     <>
@@ -869,11 +884,11 @@ function MaintenanceWorkspaceView({
           <EmptyState
             icon="tool"
             title="No maintenance tasks"
-            description="Verified defects in your scope will appear here to claim and repair."
+            description="Your team's Pencawang work is in My Pencawang packages. Emergencies and work you take on appear here."
           />
         </Card>
       ) : (
-        MAINTENANCE_GROUPS.map((group) => {
+        shownGroups.map((group) => {
           const items = grouped[group.key];
 
           if (items.length === 0) {
@@ -1028,7 +1043,9 @@ function groupMaintenanceDefects(
   return groups;
 }
 
-// A defect can be claimed when it's verified and nobody owns it yet.
+// A defect can be claimed when it's verified and nobody owns it yet — and it
+// is not Pencawang-package work, which the Manager / TNB gives to a team
+// (plan §18; the API refuses that claim too).
 function isClaimableDefect(item: DefectListItem) {
   const lifecycle = (item.lifecycleStatus ?? '').toUpperCase();
   const hasAssignee = Boolean(
@@ -1038,7 +1055,12 @@ function isClaimableDefect(item: DefectListItem) {
       item.assignedTeamId,
   );
 
-  return lifecycle === 'VERIFIED' && !hasAssignee && item.status !== 'CLOSED';
+  return (
+    lifecycle === 'VERIFIED' &&
+    !hasAssignee &&
+    !item.maintenanceOrganizationId &&
+    item.status !== 'CLOSED'
+  );
 }
 
 function getMaintenanceGroup(
@@ -1082,7 +1104,8 @@ function getMaintenanceGroup(
     return 'ACTIVE';
   }
 
-  if (lifecycle === 'VERIFIED' && !hasAssignee) {
+  // Package work (routed to a company) waits for a team instead (plan §18).
+  if (lifecycle === 'VERIFIED' && !hasAssignee && !item.maintenanceOrganizationId) {
     return 'READY';
   }
 

@@ -1314,7 +1314,7 @@ function LifecycleTimeline({ defect }: { defect: DefectDetail }) {
       state: stepState(rank('VERIFIED'), rank('VERIFIED')),
     },
     {
-      title: defect.assignedTo ? 'Assigned to maintenance' : 'Ready to claim',
+      title: defect.assignedTo ? 'Assigned to maintenance' : 'Waiting for a team',
       meta: defect.assignedTo
         ? [defect.assignedTo, formatDateTime(defect.assignedAt)].filter(Boolean).join(' · ')
         : 'Unassigned · awaiting maintenance',

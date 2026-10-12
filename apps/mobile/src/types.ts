@@ -757,6 +757,8 @@ export type DefectListItem = {
   lifecycleStatus?: DefectLifecycleStatus | null;
   severity?: DefectSeverity | null;
   isEmergency?: boolean;
+  /** Routed to a maintenance company (Pencawang package): never self-claimed — plan §18. */
+  maintenanceOrganizationId?: string | null;
   resolutionOutcome?: DefectResolutionOutcome | null;
   actionRemark?: string | null;
   verificationNotes?: string | null;
