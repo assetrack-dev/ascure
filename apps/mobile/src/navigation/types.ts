@@ -83,6 +83,8 @@ export type RootStackParamList = {
   DefectDetail: { defectId: string };
   // Contractor maintenance mode (docs/PLAN-maintenance-flow.md §7.1).
   MaintenancePackages: undefined;
+  /** Plan §18 — Manager / Supervisor progress of every Pencawang given to them. */
+  MaintenanceProgress: undefined;
   MaintenancePackage: { siteVisitId: string; title: string };
   /** workType: the package screen's work-type filter — the add form opens on it. */
   MaintenancePole: { siteVisitId: string; assetId: string; workType?: 'RENTIS' | 'CAT_TIANG' | 'SELENGGARAAN' };

@@ -1,4 +1,5 @@
 import type { WorkPackageDetail, WorkPackageList } from './maintenance/types';
+import type { MaintenanceBoard } from './maintenance/board';
 import * as FileSystem from 'expo-file-system/legacy';
 import { isForceOffline, isNetworkOffline } from './networkStatus';
 import {
@@ -767,6 +768,11 @@ export const api = {
 
   getMaintenanceWorkPackage(token: string, siteVisitId: string) {
     return request<WorkPackageDetail>(`/maintenance-work/${siteVisitId}`, { token });
+  },
+
+  /** Plan §18 — the manager's progress board (same as the web's Maintenance Packages). */
+  getMaintenanceBoard(token: string) {
+    return request<MaintenanceBoard>('/maintenance-packages/board', { token });
   },
 
   /** Plan §13 — a Kejanggalan found during maintenance (not in the survey). */

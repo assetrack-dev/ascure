@@ -471,3 +471,37 @@ New `GET /maintenance-packages/overview` (board actors; COMPANY = own company, M
 5. Web: sidebar by mode + MC switch + home redirect.
 
 Each step can ship on its own. One additive migration (step 1) → prod `migrate deploy`. Deploy = API + admin picks, no APK. Before the switch-over (step 5), Admin sets `workMode` on every contractor company in prod.
+
+## 18. Manager progress view in the mobile app (owner, 2026-10-12)
+
+Today a contractor Manager on the phone only gets the crew's "My Pencawang packages" list: a "N to repair" chip per PE, no teams, no progress bar, no work-type breakdown, no filters. To see who is doing what, they have to open every Pencawang.
+
+| # | Decision |
+|---|---|
+| M43 | **Who:** contractor **MANAGER / SUPERVISOR** get a new **Pencawang progress** screen. Technicians keep "My Pencawang packages" unchanged. **Subcontractor** = its own teams. **Main Contractor** Manager = its own teams **and its subcontractors** (grouped by company → team). Supervisors view only. |
+| M44 | **Data = the web's board** (`GET /maintenance-packages/board`). Same scope rules as the web (§12, §15), so no new authorization. Cached for offline viewing; **assigning is online-only** ("Connect to assign"). |
+| M45 | **Assign from the phone:** tap a work-type row on a tile (or on the map card) → pick a team (SUB) or a subcontractor / team (MC); plus "Whole Pencawang → one team". ⚠ The app sends the **existing target date + notes unchanged** (the API clears them on an MC assign without them). Split by poles and bulk assign stay on the web for now. |
+| M46 | **Map of all assigned Pencawang:** clustered circle layer (never MarkerViews, see the mobile cluster lesson) coloured like the web (red not started · amber in progress · blue waiting TNB · green all closed; hollow = no team), label closed/total, locate-me. Tap → bottom card = the tile + Open + Assign. Filters are shared with the list. |
+| M47 | **By team tab** (SUB) / **By company tab** (MC, expands to teams): Pencawang on hand, still to repair, waiting TNB, closed, no team. Tap → the list filtered to it. Counts come from the board only (no "done this week", which would need another endpoint). |
+| M48 | **Ships as an APK only (v2.0.20):** the prod board already carries team + progress per work type (Deploy 201), so **no API deploy** is needed. Before release, check the board payload size for the largest prod Main Contractor (offline cache chunks rows >2 MB since v2.0.16). |
+
+### 18.1 Screen: Pencawang progress (tabs List · Map · Teams)
+
+- **Summary card:** % closed, waiting TNB, still to repair, overdue PEs, no team. Three work-type bars; tapping one filters every tab to that work type.
+- **Filter chips:** All · In progress · Not started · Waiting TNB · Done · Overdue · No team; team (or company) picker; search.
+- **Tile per PE:** name + status word; bar + `closed/total` + waiting TNB; one row per work type `Rentis · Team A · 5/8` (MC: `SubCo · Team A`); target date (red when overdue); pole count. Tap the tile → the existing Pencawang screen (poles, photos). Tap a work-type row → assign sheet (Managers only).
+- **Entry:** Home maintenance tile → this screen for Managers / Supervisors; the crew list stays one tap away ("My crew work").
+
+### 18.2 Mobile pieces
+
+- `src/maintenance/board.ts`: board types + helpers (port of the web's `laneCell` / state / progress).
+- `MaintenanceProgressScreen` (List / Map / Teams), `AssignLaneSheet` (bottom sheet: work type → destination, online-only).
+- `api.getMaintenanceBoard`, `api.assignMaintenancePackage` (POST `/maintenance-packages`, same body as the web).
+
+### 18.3 Build order
+
+1. Board types/helpers + List tab (summary, filters, tiles) + Home entry.
+2. Assign sheet (lane + whole PE), refresh after save.
+3. Map tab.
+4. Teams / companies tab.
+5. Trial APK (LAN) → owner device test as a SUB manager and an MC manager → official **v2.0.20** + release notes BM + EN.

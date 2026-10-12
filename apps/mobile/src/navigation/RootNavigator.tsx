@@ -13,6 +13,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { MaintenancePackageScreen } from '../screens/MaintenancePackageScreen';
 import { MaintenancePackagesScreen } from '../screens/MaintenancePackagesScreen';
 import { MaintenancePoleScreen } from '../screens/MaintenancePoleScreen';
+import { MaintenanceProgressScreen } from '../screens/MaintenanceProgressScreen';
 import { MapScreen } from '../screens/MapScreen';
 import { OperationalSessionDetailScreen } from '../screens/OperationalSessionDetailScreen';
 import { OperationalSessionsScreen } from '../screens/OperationalSessionsScreen';
@@ -55,6 +56,7 @@ export function RootNavigator() {
           />
           <Stack.Screen name="DefectDetail" component={DefectDetailScreen} />
           <Stack.Screen name="MaintenancePackages" component={MaintenancePackagesScreen} />
+          <Stack.Screen name="MaintenanceProgress" component={MaintenanceProgressScreen} />
           <Stack.Screen name="MaintenancePackage" component={MaintenancePackageScreen} />
           <Stack.Screen name="MaintenancePole" component={MaintenancePoleScreen} />
           <Stack.Screen

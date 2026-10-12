@@ -477,6 +477,19 @@ export function HomeScreen() {
         />
       ) : null}
 
+      {!isLoading &&
+      selectedWorkspaceId === 'MAINTENANCE' &&
+      (user.role === 'MANAGER' || user.role === 'SUPERVISOR') ? (
+        // Manager / Supervisor: every Pencawang given to the company, with each
+        // team's progress per work type (docs/PLAN-maintenance-flow.md §18).
+        <StatusSpineTile
+          code="Pencawang progress"
+          spine="green"
+          secondary="Every Pencawang, which team has each work type and how far it is"
+          onPress={() => navigation.navigate('MaintenanceProgress')}
+        />
+      ) : null}
+
       {!isLoading && selectedWorkspaceId === 'MAINTENANCE' ? (
         // TNB-assigned Pencawang packages (docs/PLAN-maintenance-flow.md §7.1):
         // the offline-capable repair flow. The task list below keeps serving
