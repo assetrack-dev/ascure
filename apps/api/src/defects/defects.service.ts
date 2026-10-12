@@ -2170,6 +2170,15 @@ export class DefectsService {
       );
     }
 
+    // Pencawang-package work goes to a crew through its team (the Manager / TNB
+    // assigns it); nobody self-claims it — plan §18. Unrouted work keeps the
+    // legacy claim.
+    if (defect.maintenanceOrganizationId) {
+      throw new ConflictException(
+        'This Kejanggalan is part of a Pencawang package — your manager gives it to a team.',
+      );
+    }
+
     // Only a verified, maintenance-ready defect can be claimed.
     if (currentLifecycleStatus !== DefectLifecycleStatus.VERIFIED) {
       throw new BadRequestException(
@@ -3804,6 +3813,7 @@ export class DefectsService {
     status: DefectStatus;
     severity: DefectSeverity;
     maintenanceCategory: MaintenanceCategory | null;
+    maintenanceOrganizationId: string | null;
     isEmergency: boolean;
     lifecycleStatus: DefectLifecycleStatus | null;
     resolutionOutcome: DefectResolutionOutcome | null;
@@ -3935,6 +3945,9 @@ export class DefectsService {
       status: defect.status,
       severity: defect.severity,
       maintenanceCategory: defect.maintenanceCategory,
+      // Routed to a maintenance company (Pencawang package) — the app keeps it
+      // out of the self-claim pool (plan §18).
+      maintenanceOrganizationId: defect.maintenanceOrganizationId,
       isEmergency: defect.isEmergency,
       lifecycleStatus: defect.lifecycleStatus,
       resolutionOutcome: defect.resolutionOutcome,
