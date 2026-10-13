@@ -456,7 +456,7 @@ export class ReportsService {
             email: true,
             role: true,
             team: { select: { name: true, code: true } },
-            organization: { select: { name: true } },
+            organization: { select: { id: true, name: true } },
           },
         })
       : [];
@@ -474,6 +474,7 @@ export class ReportsService {
           teamName:
             record?.team?.name?.trim() || record?.team?.code?.trim() || null,
           companyName: record?.organization?.name?.trim() || null,
+          companyId: record?.organization?.id ?? null,
           assetsInspected: aggregate.assets.size,
           submittedInspections: aggregate.inspections,
           visits: aggregate.visits.size,
@@ -687,15 +688,7 @@ export class ReportsService {
     const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
     const period = { gte: start, lt: end };
 
-    let orgIds: string[] | null = null;
-    if (user.role !== UserRole.ADMIN) {
-      const ctx = await buildScopeContext(this.prisma, user);
-      orgIds = ctx.maintenanceOrgIds.length
-        ? ctx.maintenanceOrgIds
-        : user.organizationId
-          ? [user.organizationId]
-          : [];
-    }
+    const orgIds = await this.maintenancePerformanceOrgIds(user);
     const scope: Prisma.DefectWhereInput = {
       inspectionItemResult: { inspection: { tenantId: user.tenantId } },
       ...(orgIds === null ? {} : { maintenanceOrganizationId: { in: orgIds } }),
@@ -835,7 +828,12 @@ export class ReportsService {
     const teams = teamIds.length
       ? await this.prisma.team.findMany({
           where: { id: { in: teamIds } },
-          select: { id: true, name: true, code: true, organization: { select: { name: true } } },
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            organization: { select: { id: true, name: true } },
+          },
         })
       : [];
     const teamById = new Map(teams.map((team) => [team.id, team]));
@@ -849,6 +847,7 @@ export class ReportsService {
           teamId: id,
           teamName: team?.name?.trim() || team?.code?.trim() || 'Unknown team',
           companyName: team?.organization?.name?.trim() || null,
+          companyId: team?.organization?.id ?? null,
           repaired: aggregate.repaired,
           closed: aggregate.closed,
           sentBack: aggregate.sentBack,
@@ -887,6 +886,363 @@ export class ReportsService {
       },
       teams: rows,
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Companies whose maintenance work the viewer may see (null = ADMIN, all). */
+  private async maintenancePerformanceOrgIds(user: RequestUser): Promise<string[] | null> {
+    if (user.role === UserRole.ADMIN) return null;
+    const ctx = await buildScopeContext(this.prisma, user);
+    return ctx.maintenanceOrgIds.length
+      ? ctx.maintenanceOrgIds
+      : user.organizationId
+        ? [user.organizationId]
+        : [];
+  }
+
+  /**
+   * Survey output day by day for every crew member in scope (plan §19, N58):
+   * one row per UTC+8 day per person — distinct poles and inspections. Same
+   * scope and day bucketing as {@link aggregateCrewPerformance}.
+   */
+  async aggregateCrewPerformanceByDay(user: RequestUser, fromInput?: string, toInput?: string) {
+    this.assertCanViewCrewPerformance(user);
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const ctx = await buildScopeContext(this.prisma, user);
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId: user.tenantId,
+        completionStatus: InspectionCompletionStatus.SUBMITTED,
+        submittedAt: { gte: start, lt: end },
+        siteVisit: siteVisitOversightWhere(user, ctx),
+      },
+      select: { assetId: true, createdByUserId: true, submittedAt: true },
+    });
+
+    const byKey = new Map<string, { date: string; userId: string; assets: Set<string>; inspections: number }>();
+    for (const row of inspections) {
+      if (!row.submittedAt) continue;
+      const date = this.crewPerfDateKey(row.submittedAt);
+      const key = `${date}|${row.createdByUserId}`;
+      let entry = byKey.get(key);
+      if (!entry) {
+        entry = { date, userId: row.createdByUserId, assets: new Set(), inspections: 0 };
+        byKey.set(key, entry);
+      }
+      entry.assets.add(row.assetId);
+      entry.inspections += 1;
+    }
+
+    const userIds = [...new Set([...byKey.values()].map((entry) => entry.userId))];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            team: { select: { name: true, code: true } },
+            organization: { select: { id: true, name: true } },
+          },
+        })
+      : [];
+    const userById = new Map(users.map((row) => [row.id, row]));
+
+    const rows = [...byKey.values()]
+      .map((entry) => {
+        const record = userById.get(entry.userId);
+        return {
+          date: entry.date,
+          userId: entry.userId,
+          name: record?.name?.trim() || record?.email || 'Unknown user',
+          teamName: record?.team?.name?.trim() || record?.team?.code?.trim() || null,
+          companyName: record?.organization?.name?.trim() || null,
+          companyId: record?.organization?.id ?? null,
+          assetsInspected: entry.assets.size,
+          submittedInspections: entry.inspections,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.date.localeCompare(left.date) ||
+          right.assetsInspected - left.assetsInspected ||
+          left.name.localeCompare(right.name),
+      );
+    return { period: label, from: start.toISOString(), to: end.toISOString(), rows };
+  }
+
+  /**
+   * Maintenance output day by day per team (plan §19, N58): repaired (marked
+   * done, cannot-repair apart) and verified on each UTC+8 day. Same scope and
+   * team credit as {@link aggregateMaintenancePerformance}.
+   */
+  async aggregateMaintenancePerformanceByDay(user: RequestUser, fromInput?: string, toInput?: string) {
+    this.assertCanViewCrewPerformance(user);
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const period = { gte: start, lt: end };
+    const orgIds = await this.maintenancePerformanceOrgIds(user);
+    const defects = await this.prisma.defect.findMany({
+      where: {
+        inspectionItemResult: { inspection: { tenantId: user.tenantId } },
+        ...(orgIds === null ? {} : { maintenanceOrganizationId: { in: orgIds } }),
+        AND: [
+          { OR: [{ assignedToTeamId: { not: null } }, { assignedTeamId: { not: null } }] },
+          { OR: [{ maintainedAt: period }, { closureVerifiedAt: period }] },
+        ],
+      },
+      select: {
+        assignedToTeamId: true,
+        assignedTeamId: true,
+        maintainedAt: true,
+        closureVerifiedAt: true,
+        resolutionOutcome: true,
+      },
+    });
+    const inPeriod = (date: Date | null): date is Date => date !== null && date >= start && date < end;
+
+    const byKey = new Map<string, { date: string; teamId: string; repaired: number; cannotRepair: number; closed: number }>();
+    const entry = (date: string, teamId: string) => {
+      const key = `${date}|${teamId}`;
+      let value = byKey.get(key);
+      if (!value) {
+        value = { date, teamId, repaired: 0, cannotRepair: 0, closed: 0 };
+        byKey.set(key, value);
+      }
+      return value;
+    };
+    for (const defect of defects) {
+      const teamId = defect.assignedToTeamId ?? defect.assignedTeamId;
+      if (!teamId) continue;
+      if (inPeriod(defect.maintainedAt)) {
+        const day = entry(this.crewPerfDateKey(defect.maintainedAt), teamId);
+        if (isCannotRepairOutcome(defect.resolutionOutcome)) day.cannotRepair += 1;
+        else day.repaired += 1;
+      }
+      if (inPeriod(defect.closureVerifiedAt)) {
+        entry(this.crewPerfDateKey(defect.closureVerifiedAt), teamId).closed += 1;
+      }
+    }
+
+    const teamIds = [...new Set([...byKey.values()].map((value) => value.teamId))];
+    const teams = teamIds.length
+      ? await this.prisma.team.findMany({
+          where: { id: { in: teamIds } },
+          select: { id: true, name: true, code: true, organization: { select: { id: true, name: true } } },
+        })
+      : [];
+    const teamById = new Map(teams.map((team) => [team.id, team]));
+    const rows = [...byKey.values()]
+      .map((value) => {
+        const team = teamById.get(value.teamId);
+        return {
+          ...value,
+          teamName: team?.name?.trim() || team?.code?.trim() || 'Unknown team',
+          companyName: team?.organization?.name?.trim() || null,
+          companyId: team?.organization?.id ?? null,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.date.localeCompare(left.date) ||
+          right.repaired - left.repaired ||
+          left.teamName.localeCompare(right.teamName),
+      );
+    return { period: label, from: start.toISOString(), to: end.toISOString(), rows };
+  }
+
+  /**
+   * One company's survey progress by scope (plan §19): SAVR / SAVT / … with
+   * each team inside — distinct poles, inspections and surveyors in the period.
+   * Credit follows the surveyor's company + team, like the leaderboard.
+   */
+  async aggregateSurveyScopes(
+    user: RequestUser,
+    organizationId: string,
+    fromInput?: string,
+    toInput?: string,
+  ) {
+    this.assertCanViewCrewPerformance(user);
+    if (!organizationId) throw new BadRequestException('organizationId is required.');
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const ctx = await buildScopeContext(this.prisma, user);
+    // Credit follows the surveyor's company: that company's users first.
+    const [company, members] = await Promise.all([
+      this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true, name: true } }),
+      this.prisma.user.findMany({
+        where: { tenantId: user.tenantId, organizationId },
+        select: { id: true, team: { select: { name: true, code: true } } },
+      }),
+    ]);
+    const teamOfUser = new Map(
+      members.map((member) => [
+        member.id,
+        member.team?.name?.trim() || member.team?.code?.trim() || 'No team',
+      ]),
+    );
+    const inspections = members.length
+      ? await this.prisma.inspection.findMany({
+          where: {
+            tenantId: user.tenantId,
+            completionStatus: InspectionCompletionStatus.SUBMITTED,
+            submittedAt: { gte: start, lt: end },
+            siteVisit: siteVisitOversightWhere(user, ctx),
+            createdByUserId: { in: members.map((member) => member.id) },
+          },
+          select: {
+            assetId: true,
+            createdByUserId: true,
+            operationalScope: true,
+            siteVisit: { select: { operationalScope: true } },
+          },
+        })
+      : [];
+
+    type Totals = { assets: Set<string>; inspections: number; surveyors: Set<string> };
+    const empty = (): Totals => ({ assets: new Set(), inspections: 0, surveyors: new Set() });
+    const byScope = new Map<string, { totals: Totals; teams: Map<string, Totals> }>();
+    for (const row of inspections) {
+      const scope = row.operationalScope ?? row.siteVisit?.operationalScope ?? 'OTHER';
+      const team = teamOfUser.get(row.createdByUserId) ?? 'No team';
+      let bucket = byScope.get(scope);
+      if (!bucket) {
+        bucket = { totals: empty(), teams: new Map() };
+        byScope.set(scope, bucket);
+      }
+      let teamTotals = bucket.teams.get(team);
+      if (!teamTotals) {
+        teamTotals = empty();
+        bucket.teams.set(team, teamTotals);
+      }
+      for (const totals of [bucket.totals, teamTotals]) {
+        totals.assets.add(row.assetId);
+        totals.inspections += 1;
+        totals.surveyors.add(row.createdByUserId);
+      }
+    }
+    const view = (totals: Totals) => ({
+      assetsInspected: totals.assets.size,
+      submittedInspections: totals.inspections,
+      surveyors: totals.surveyors.size,
+    });
+    return {
+      period: label,
+      company,
+      scopes: [...byScope.entries()]
+        .map(([scope, bucket]) => ({
+          scope,
+          ...view(bucket.totals),
+          teams: [...bucket.teams.entries()]
+            .map(([teamName, totals]) => ({ teamName, ...view(totals) }))
+            .sort((left, right) => right.assetsInspected - left.assetsInspected),
+        }))
+        .sort((left, right) => right.assetsInspected - left.assetsInspected),
+    };
+  }
+
+  /**
+   * One company's maintenance progress by work type (plan §19): Rentis /
+   * Cat tiang / Selenggaraan with each team inside. Status right now (to do,
+   * in progress, waiting verification, closed — "Mark done" alone is NOT
+   * closed) plus what was repaired / verified in the period.
+   */
+  async aggregateMaintenanceScopes(
+    user: RequestUser,
+    organizationId: string,
+    fromInput?: string,
+    toInput?: string,
+  ) {
+    this.assertCanViewCrewPerformance(user);
+    if (!organizationId) throw new BadRequestException('organizationId is required.');
+    const orgIds = await this.maintenancePerformanceOrgIds(user);
+    if (orgIds !== null && !orgIds.includes(organizationId)) {
+      throw new ForbiddenException('That company is outside your view.');
+    }
+    const { start, end, label } = this.resolvePerformancePeriod(fromInput, toInput);
+    const [company, defects] = await Promise.all([
+      this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true, name: true } }),
+      this.prisma.defect.findMany({
+        where: {
+          maintenanceOrganizationId: organizationId,
+          inspectionItemResult: { inspection: { tenantId: user.tenantId } },
+          OR: [
+            { lifecycleStatus: null },
+            {
+              lifecycleStatus: {
+                notIn: [DefectLifecycleStatus.DETECTED, DefectLifecycleStatus.REJECTED],
+              },
+            },
+          ],
+        },
+        select: {
+          maintenanceCategory: true,
+          lifecycleStatus: true,
+          status: true,
+          maintainedAt: true,
+          closureVerifiedAt: true,
+          resolutionOutcome: true,
+          assignedToTeam: { select: { name: true, code: true } },
+          assignedTeam: { select: { name: true, code: true } },
+        },
+      }),
+    ]);
+
+    type Totals = {
+      total: number;
+      todo: number;
+      inProgress: number;
+      awaiting: number;
+      closed: number;
+      repaired: number;
+      verified: number;
+    };
+    const empty = (): Totals => ({ total: 0, todo: 0, inProgress: 0, awaiting: 0, closed: 0, repaired: 0, verified: 0 });
+    const inPeriod = (date: Date | null) => date !== null && date >= start && date < end;
+    const SUBMITTED: DefectLifecycleStatus[] = [
+      DefectLifecycleStatus.COMPLETED,
+      DefectLifecycleStatus.VERIFICATION_PENDING,
+    ];
+    const byCategory = new Map<string, { totals: Totals; teams: Map<string, Totals> }>();
+    for (const defect of defects) {
+      const category = defect.maintenanceCategory ?? 'SELENGGARAAN';
+      const team = defect.assignedToTeam ?? defect.assignedTeam;
+      const teamName = team?.name?.trim() || team?.code?.trim() || 'No team yet';
+      let bucket = byCategory.get(category);
+      if (!bucket) {
+        bucket = { totals: empty(), teams: new Map() };
+        byCategory.set(category, bucket);
+      }
+      let teamTotals = bucket.teams.get(teamName);
+      if (!teamTotals) {
+        teamTotals = empty();
+        bucket.teams.set(teamName, teamTotals);
+      }
+      const submitted = defect.lifecycleStatus !== null && SUBMITTED.includes(defect.lifecycleStatus);
+      const closed =
+        defect.lifecycleStatus === DefectLifecycleStatus.CLOSED ||
+        (!submitted && (defect.status === 'RESOLVED' || defect.status === 'CLOSED'));
+      for (const totals of [bucket.totals, teamTotals]) {
+        totals.total += 1;
+        if (closed) totals.closed += 1;
+        else if (submitted) totals.awaiting += 1;
+        else if (defect.lifecycleStatus === DefectLifecycleStatus.IN_PROGRESS) totals.inProgress += 1;
+        else totals.todo += 1;
+        if (inPeriod(defect.maintainedAt) && !isCannotRepairOutcome(defect.resolutionOutcome)) totals.repaired += 1;
+        if (inPeriod(defect.closureVerifiedAt)) totals.verified += 1;
+      }
+    }
+    const ORDER = ['RENTIS', 'CAT_TIANG', 'SELENGGARAAN'];
+    return {
+      period: label,
+      company,
+      scopes: [...byCategory.entries()]
+        .map(([scope, bucket]) => ({
+          scope,
+          ...bucket.totals,
+          teams: [...bucket.teams.entries()]
+            .map(([teamName, totals]) => ({ teamName, ...totals }))
+            .sort((left, right) => right.total - left.total),
+        }))
+        .sort((left, right) => ORDER.indexOf(left.scope) - ORDER.indexOf(right.scope)),
     };
   }
 
