@@ -417,6 +417,8 @@ export class ReportsService {
         siteVisitId: true,
         createdByUserId: true,
         submittedAt: true,
+        operationalScope: true,
+        siteVisit: { select: { operationalScope: true } },
       },
     });
 
@@ -487,10 +489,75 @@ export class ReportsService {
           left.name.localeCompare(right.name),
       );
 
+    // Plan §19: Company → survey scope → team (credit = the surveyor's company
+    // + team, like the leaderboard).
+    type Node = { assets: Set<string>; inspections: number; surveyors: Set<string>; days: Set<string> };
+    const node = (): Node => ({ assets: new Set(), inspections: 0, surveyors: new Set(), days: new Set() });
+    const companiesTree = new Map<
+      string,
+      { id: string | null; name: string; total: Node; scopes: Map<string, { total: Node; teams: Map<string, Node> }> }
+    >();
+    for (const row of inspections) {
+      const record = userById.get(row.createdByUserId);
+      const companyKey = record?.organization?.id ?? 'none';
+      let company = companiesTree.get(companyKey);
+      if (!company) {
+        company = {
+          id: record?.organization?.id ?? null,
+          name: record?.organization?.name?.trim() || 'No company',
+          total: node(),
+          scopes: new Map(),
+        };
+        companiesTree.set(companyKey, company);
+      }
+      const scopeKey = row.operationalScope ?? row.siteVisit?.operationalScope ?? 'OTHER';
+      let scope = company.scopes.get(scopeKey);
+      if (!scope) {
+        scope = { total: node(), teams: new Map() };
+        company.scopes.set(scopeKey, scope);
+      }
+      const teamName = record?.team?.name?.trim() || record?.team?.code?.trim() || 'No team';
+      let team = scope.teams.get(teamName);
+      if (!team) {
+        team = node();
+        scope.teams.set(teamName, team);
+      }
+      for (const target of [company.total, scope.total, team]) {
+        target.assets.add(row.assetId);
+        target.inspections += 1;
+        target.surveyors.add(row.createdByUserId);
+        if (row.submittedAt) target.days.add(this.crewPerfDateKey(row.submittedAt));
+      }
+    }
+    const view = (value: Node) => ({
+      assetsInspected: value.assets.size,
+      submittedInspections: value.inspections,
+      surveyors: value.surveyors.size,
+      activeDays: value.days.size,
+    });
+    const byPoles = (left: { assetsInspected: number; name: string }, right: { assetsInspected: number; name: string }) =>
+      right.assetsInspected - left.assetsInspected || left.name.localeCompare(right.name);
+    const tree = [...companiesTree.values()]
+      .map((company) => ({
+        companyId: company.id,
+        name: company.name,
+        ...view(company.total),
+        scopes: [...company.scopes.entries()]
+          .map(([scope, value]) => ({
+            scope,
+            name: scope,
+            ...view(value.total),
+            teams: [...value.teams.entries()].map(([name, team]) => ({ name, ...view(team) })).sort(byPoles),
+          }))
+          .sort(byPoles),
+      }))
+      .sort(byPoles);
+
     return {
       period: label,
       from: start.toISOString(),
       to: end.toISOString(),
+      tree,
       totalAssetsInspected: rows.reduce(
         (total, row) => total + row.assetsInspected,
         0,
@@ -730,6 +797,7 @@ export class ReportsService {
         select: {
           assignedToTeamId: true,
           assignedTeamId: true,
+          maintenanceCategory: true,
           assignedAt: true,
           maintainedAt: true,
           closureVerifiedAt: true,
@@ -760,7 +828,7 @@ export class ReportsService {
             },
           ],
         },
-        select: { assignedToTeamId: true, assignedTeamId: true },
+        select: { assignedToTeamId: true, assignedTeamId: true, maintenanceCategory: true },
       }),
     ]);
 
@@ -793,35 +861,51 @@ export class ReportsService {
       return aggregate;
     };
     const inPeriod = (date: Date | null) => date !== null && date >= start && date < end;
+    // Plan §19: the same numbers per team + work type, for the Company → work
+    // type → team drill-down (keys "teamId|CATEGORY").
+    const byTeamCategory = new Map<string, Aggregate>();
+    const categoryOf = (row: { maintenanceCategory: string | null }) => row.maintenanceCategory ?? 'SELENGGARAAN';
+    const categoryAggregateOf = (teamId: string, category: string) => {
+      const key = `${teamId}|${category}`;
+      let aggregate = byTeamCategory.get(key);
+      if (!aggregate) {
+        aggregate = { repaired: 0, cannotRepair: 0, closed: 0, sentBack: 0, days: new Set(), hoursToDone: [], onHand: 0 };
+        byTeamCategory.set(key, aggregate);
+      }
+      return aggregate;
+    };
 
     for (const defect of defects) {
       const teamId = teamOf(defect);
       if (!teamId) continue;
-      const aggregate = aggregateOf(teamId);
-      if (inPeriod(defect.maintainedAt)) {
-        if (isCannotRepairOutcome(defect.resolutionOutcome)) {
-          aggregate.cannotRepair += 1;
-        } else {
-          aggregate.repaired += 1;
-          if (defect.assignedAt && defect.maintainedAt! > defect.assignedAt) {
-            aggregate.hoursToDone.push(
-              (defect.maintainedAt!.getTime() - defect.assignedAt.getTime()) / 3_600_000,
-            );
+      for (const aggregate of [aggregateOf(teamId), categoryAggregateOf(teamId, categoryOf(defect))]) {
+        if (inPeriod(defect.maintainedAt)) {
+          if (isCannotRepairOutcome(defect.resolutionOutcome)) {
+            aggregate.cannotRepair += 1;
+          } else {
+            aggregate.repaired += 1;
+            if (defect.assignedAt && defect.maintainedAt! > defect.assignedAt) {
+              aggregate.hoursToDone.push(
+                (defect.maintainedAt!.getTime() - defect.assignedAt.getTime()) / 3_600_000,
+              );
+            }
           }
+          aggregate.days.add(this.crewPerfDateKey(defect.maintainedAt!));
         }
-        aggregate.days.add(this.crewPerfDateKey(defect.maintainedAt!));
-      }
-      if (inPeriod(defect.closureVerifiedAt)) {
-        aggregate.closed += 1;
-      }
-      aggregate.sentBack += defect.timelineEntries.length;
-      for (const image of defect.evidenceImages) {
-        aggregate.days.add(this.crewPerfDateKey(image.createdAt));
+        if (inPeriod(defect.closureVerifiedAt)) {
+          aggregate.closed += 1;
+        }
+        aggregate.sentBack += defect.timelineEntries.length;
+        for (const image of defect.evidenceImages) {
+          aggregate.days.add(this.crewPerfDateKey(image.createdAt));
+        }
       }
     }
     for (const row of onHandRows) {
       const teamId = teamOf(row);
-      if (teamId) aggregateOf(teamId).onHand += 1;
+      if (!teamId) continue;
+      aggregateOf(teamId).onHand += 1;
+      categoryAggregateOf(teamId, categoryOf(row)).onHand += 1;
     }
 
     const teamIds = Array.from(byTeam.keys());
@@ -873,6 +957,85 @@ export class ReportsService {
 
     const sum = (key: 'repaired' | 'closed' | 'sentBack' | 'cannotRepair' | 'onHand') =>
       rows.reduce((total, row) => total + row[key], 0);
+
+    // Plan §19: Company → work type → team, each level with the same numbers.
+    const merge = (parts: Aggregate[]): Aggregate => ({
+      repaired: parts.reduce((total, part) => total + part.repaired, 0),
+      cannotRepair: parts.reduce((total, part) => total + part.cannotRepair, 0),
+      closed: parts.reduce((total, part) => total + part.closed, 0),
+      sentBack: parts.reduce((total, part) => total + part.sentBack, 0),
+      days: new Set(parts.flatMap((part) => [...part.days])),
+      hoursToDone: parts.flatMap((part) => part.hoursToDone),
+      onHand: parts.reduce((total, part) => total + part.onHand, 0),
+    });
+    const metrics = (aggregate: Aggregate) => {
+      const decided = aggregate.closed + aggregate.sentBack;
+      return {
+        repaired: aggregate.repaired,
+        closed: aggregate.closed,
+        sentBack: aggregate.sentBack,
+        cannotRepair: aggregate.cannotRepair,
+        activeDays: aggregate.days.size,
+        avgHoursToDone: aggregate.hoursToDone.length
+          ? Math.round(
+              (aggregate.hoursToDone.reduce((total, hours) => total + hours, 0) / aggregate.hoursToDone.length) * 10,
+            ) / 10
+          : null,
+        passRate: decided > 0 ? Math.round((aggregate.closed / decided) * 1000) / 10 : null,
+        onHand: aggregate.onHand,
+      };
+    };
+    const companies = new Map<
+      string,
+      { id: string | null; name: string; byCategory: Map<string, Array<{ teamId: string; aggregate: Aggregate }>> }
+    >();
+    for (const [key, aggregate] of byTeamCategory) {
+      const [teamId, category] = key.split('|');
+      const organization = teamById.get(teamId)?.organization ?? null;
+      const companyKey = organization?.id ?? 'none';
+      let company = companies.get(companyKey);
+      if (!company) {
+        company = {
+          id: organization?.id ?? null,
+          name: organization?.name?.trim() || 'No company',
+          byCategory: new Map(),
+        };
+        companies.set(companyKey, company);
+      }
+      const list = company.byCategory.get(category) ?? [];
+      list.push({ teamId, aggregate });
+      company.byCategory.set(category, list);
+    }
+    const CATEGORY_ORDER = ['RENTIS', 'CAT_TIANG', 'SELENGGARAAN'];
+    const byRepaired = (left: { repaired: number; closed: number; name: string }, right: { repaired: number; closed: number; name: string }) =>
+      right.repaired - left.repaired || right.closed - left.closed || left.name.localeCompare(right.name);
+    const tree = [...companies.values()]
+      .map((company) => {
+        const categories = [...company.byCategory.entries()]
+          .map(([category, teams]) => ({
+            category,
+            ...metrics(merge(teams.map((team) => team.aggregate))),
+            teams: teams
+              .map((team) => {
+                const record = teamById.get(team.teamId);
+                return {
+                  teamId: team.teamId,
+                  name: record?.name?.trim() || record?.code?.trim() || 'Unknown team',
+                  ...metrics(team.aggregate),
+                };
+              })
+              .sort(byRepaired),
+          }))
+          .sort((left, right) => CATEGORY_ORDER.indexOf(left.category) - CATEGORY_ORDER.indexOf(right.category));
+        return {
+          companyId: company.id,
+          name: company.name,
+          ...metrics(merge([...company.byCategory.values()].flat().map((team) => team.aggregate))),
+          categories,
+        };
+      })
+      .sort(byRepaired);
+
     return {
       period: label,
       from: start.toISOString(),
@@ -885,6 +1048,7 @@ export class ReportsService {
         onHand: sum('onHand'),
       },
       teams: rows,
+      tree,
       generatedAt: new Date().toISOString(),
     };
   }
