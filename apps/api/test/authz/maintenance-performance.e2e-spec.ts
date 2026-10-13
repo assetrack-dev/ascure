@@ -254,4 +254,24 @@ describe('Authz · reports — maintenance crew performance (plan §15)', () => 
       .expect(403);
     await http(app, token.admin).get('/api/v1/reports/crew-performance/by-day').expect(200);
   });
+
+  it('tree: company → work type → team, every level adding up (plan §19)', async () => {
+    const res = await http(app, token.mgrA).get(`/api/v1/reports/maintenance-performance?${PERIOD}`).expect(200);
+    type Node = { repaired: number; closed: number; sentBack: number; cannotRepair: number; onHand: number };
+    type Company = Node & { companyId: string; categories: Array<Node & { category: string; teams: Array<Node & { teamId: string }> }> };
+    const tree = res.body.tree as Company[];
+    const companyA = tree.find((company) => company.companyId === IDS.org.a);
+    expect(companyA).toMatchObject({ repaired: 1, closed: 1, sentBack: 1, onHand: 1 });
+    // Uncategorised Kejanggalan count as Selenggaraan.
+    const sel = companyA?.categories.find((category) => category.category === 'SELENGGARAAN');
+    expect(sel?.teams.find((team) => team.teamId === IDS.team.a)).toMatchObject({ repaired: 1, closed: 1, sentBack: 1 });
+    expect(tree.find((company) => company.companyId === IDS.sub.org)).toMatchObject({ cannotRepair: 1 });
+    // Another company's team never appears for a Main Contractor.
+    expect(tree.some((company) => company.companyId === IDS.org.b)).toBe(false);
+    // Each company equals the sum of its work types.
+    for (const company of tree) {
+      const sum = company.categories.reduce((total, category) => total + category.repaired, 0);
+      expect(company.repaired).toBe(sum);
+    }
+  });
 });
