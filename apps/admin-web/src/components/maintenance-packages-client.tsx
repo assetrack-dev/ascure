@@ -5,21 +5,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
-  AlertTriangle,
-  Building2,
   CalendarClock,
-  CheckCircle2,
   FileSpreadsheet,
   FileText,
-  Hourglass,
   LayoutGrid,
-  Users,
   List,
   Map as MapIcon,
   MapPinOff,
   MapPinned,
-  PackageCheck,
-  PackageOpen,
   Plus,
   RefreshCw,
   SquareDashedMousePointer,
@@ -72,7 +65,6 @@ import {
   Eyebrow,
   FilterBar,
   IconBtn,
-  KpiCard,
   PageHeader,
   SearchField,
   Seg,
@@ -362,6 +354,72 @@ function ownSplitPoles(row: PackagePencawang, board: MaintenancePackageBoard) {
   return row.poleSplits
     .filter((split) => own.has(split.organization.id))
     .reduce((sum, split) => sum + split.poles, 0);
+}
+
+/**
+ * Target date + notes of a work type, sent back unchanged on a quick in-cell
+ * assign (the API clears them on a TNB / Main Contractor assign without them).
+ */
+function keptPackageFields(row: PackagePencawang, category: MaintenanceCategory) {
+  const pkg =
+    row.packages.find((candidate) => candidate.category === category) ??
+    row.packages.find((candidate) => candidate.category === null) ??
+    null;
+  return { dueDate: pkg?.dueDate?.slice(0, 10) ?? null, notes: pkg?.notes ?? null };
+}
+
+const PAGE_SIZE = 50;
+const SUMMARY_KEY = "ascure:maintenance-packages:hide-summary";
+
+/** Remembered per browser; storage can be blocked (private mode) — never fatal. */
+function readHideSummary() {
+  try {
+    return window.localStorage.getItem(SUMMARY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeHideSummary(hidden: boolean) {
+  try {
+    window.localStorage.setItem(SUMMARY_KEY, hidden ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
+/** "1–50 of 312" + Previous / Next (plan §19, N52). */
+function Pager({
+  page,
+  total,
+  onPage,
+}: {
+  page: number;
+  total: number;
+  onPage: (page: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (total <= PAGE_SIZE) return null;
+  const from = page * PAGE_SIZE + 1;
+  const to = Math.min(total, (page + 1) * PAGE_SIZE);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line2)] px-4 py-3 text-[12.5px] text-[var(--muted)]">
+      <span>
+        {from}–{to} of {total.toLocaleString()} Pencawang
+      </span>
+      <div className="flex items-center gap-2">
+        <Tbtn onClick={() => onPage(page - 1)} disabled={page === 0}>
+          Previous
+        </Tbtn>
+        <span>
+          Page {page + 1} of {pages}
+        </span>
+        <Tbtn onClick={() => onPage(page + 1)} disabled={page >= pages - 1}>
+          Next
+        </Tbtn>
+      </div>
+    </div>
+  );
 }
 
 /** Can the actor act on this PE at all (whole, or at least one lane with work)? */
@@ -1383,6 +1441,14 @@ function MaintenancePackagesContent() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   // A grid / map cell opens the dialog on its work type (plan §17.2).
   const [dialogCategory, setDialogCategory] = useState<MaintenanceCategory | null>(null);
+  // Quick in-cell assign: what Undo puts back (plan §19, N53).
+  const [undo, setUndo] = useState<{
+    row: PackagePencawang;
+    category: MaintenanceCategory;
+    destination: string;
+  } | null>(null);
+  const [page, setPage] = useState(0);
+  const [hideSummary, setHideSummary] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1416,6 +1482,7 @@ function MaintenancePackagesContent() {
     const storedSession = readStoredSession();
     setSession(storedSession);
     // ?view= wins; otherwise a maintenance company opens on the Grid (L42).
+    setHideSummary(readHideSummary());
     const mode = storedSession?.user?.workMode;
     setView(viewFromUrl() ?? (mode === "MAINTENANCE" || mode === "BOTH" ? "GRID" : "LIST"));
     if (storedSession?.token) {
@@ -1436,6 +1503,8 @@ function MaintenancePackagesContent() {
     setDialogRow(row);
   }, []);
 
+
+
   /** Runs a write, then reloads the board; errors land in the dialog when open. */
   const runWrite = useCallback(
     async (write: (token: string) => Promise<string>) => {
@@ -1446,6 +1515,7 @@ function MaintenancePackagesContent() {
       setIsSaving(true);
       setDialogError("");
       setError("");
+      setUndo(null);
       try {
         setNotice(await write(token));
         await loadBoard(token);
@@ -1467,6 +1537,30 @@ function MaintenancePackagesContent() {
       }
     },
     [bulkOpen, dialogRow, handleLogout, loadBoard, session?.token],
+  );
+
+  /** Grid cell team pick: saved at once, target date + notes unchanged, with Undo. */
+  const quickAssign = useCallback(
+    (row: PackagePencawang, category: MaintenanceCategory, value: string, isUndo = false) => {
+      if (!board) return;
+      const destination = decodeDestination(value, board.teams);
+      if (!destination) return;
+      const lane = row.lanes.find((candidate) => candidate.category === category);
+      const previous = encodeDestination(lane?.organization?.id, lane?.team?.id);
+      void runWrite(async (token) => {
+        const result = await assignMaintenancePackage(token, {
+          siteVisitId: row.siteVisitId,
+          category,
+          ...destination,
+          ...keptPackageFields(row, category),
+        });
+        return `${pencawangLabel(row)} · ${CATEGORY_LABEL[category]}: ${routingMessage(result.routing)}`;
+      }).then((ok) => {
+        // Undo puts the previous owner back (not offered when nobody had it).
+        if (ok && !isUndo && previous) setUndo({ row, category, destination: previous });
+      });
+    },
+    [board, runWrite],
   );
 
   const toggleSelected = useCallback((id: string) => {
@@ -1549,6 +1643,11 @@ function MaintenancePackagesContent() {
       return byName(left, right);
     });
   }, [board, filteredRows, search, sortMode]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, workType, mainheadFilter, teamFilter, search, sortMode, view]);
+  const pageRows = useMemo(() => rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [rows, page]);
 
   /** Grid columns: every work type, or the one picked in the filter. */
   const gridCategories = useMemo(
@@ -1673,8 +1772,16 @@ function MaintenancePackagesContent() {
 
           <div className="mt-6 space-y-6">
             {notice ? (
-              <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-4 py-3 text-[13px] text-[var(--foreground-soft)]">
-                {notice}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-4 py-3 text-[13px] text-[var(--foreground-soft)]">
+                <span>{notice}</span>
+                {undo ? (
+                  <Tbtn
+                    onClick={() => quickAssign(undo.row, undo.category, undo.destination, true)}
+                    disabled={isSaving}
+                  >
+                    Undo
+                  </Tbtn>
+                ) : null}
               </div>
             ) : null}
             {error ? (
@@ -1696,69 +1803,84 @@ function MaintenancePackagesContent() {
                   }
                 />
 
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  <KpiCard
-                    label="Closed"
-                    value={`${kpis.closedPct}%`}
-                    icon={CheckCircle2}
-                    tone={kpis.closedPct === 100 && kpis.total > 0 ? "success" : "neutral"}
-                    context={`${kpis.progress.closed.toLocaleString()} of ${kpis.total.toLocaleString()} Kejanggalan verified`}
-                  />
-                  <KpiCard
-                    label="Awaiting verification"
-                    value={kpis.progress.awaiting.toLocaleString()}
-                    icon={Hourglass}
-                    tone={kpis.progress.awaiting > 0 ? "warning" : "neutral"}
-                    context="Repaired, waiting for TNB / main contractor"
-                  />
-                  <KpiCard
-                    label="Still to repair"
-                    value={kpis.open.toLocaleString()}
-                    icon={Building2}
-                    context={`${kpis.progress.inProgress.toLocaleString()} in progress · ${kpis.progress.todo.toLocaleString()} not started`}
-                  />
-                  <KpiCard
-                    label="Overdue Pencawang"
-                    value={kpis.overdue.toLocaleString()}
-                    icon={AlertTriangle}
-                    tone={kpis.overdue > 0 ? "critical" : "neutral"}
-                    context="Past the target date with work open"
-                  />
-                  <KpiCard
-                    label="No team yet"
-                    value={kpis.noTeam.toLocaleString()}
-                    icon={Users}
-                    tone={kpis.noTeam > 0 ? "high" : "neutral"}
-                    context="Open Kejanggalan with a company but no crew"
-                  />
-                  {isCompany ? (
-                    <KpiCard
-                      label="Pencawang"
-                      value={kpis.pencawangs.toLocaleString()}
-                      icon={PackageCheck}
-                      context="Given to your company"
-                    />
-                  ) : (
-                    <KpiCard
-                      label="Awaiting company"
-                      value={kpis.awaiting.toLocaleString()}
-                      icon={PackageOpen}
-                      tone={kpis.awaiting > 0 ? "high" : "neutral"}
-                      context={`${kpis.unrouted.toLocaleString()} open Kejanggalan not routed · ${kpis.assigned.toLocaleString()} Pencawang assigned`}
-                    />
-                  )}
-                </div>
-
                 <Card>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <Eyebrow>Progress by work type</Eyebrow>
-                    <span className="text-[12px] text-[var(--muted)]">
-                      {workType === "ALL"
-                        ? "Pick a work type to count only that work on every row"
-                        : `Showing ${CATEGORY_LABEL[workType]} only`}
-                    </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Eyebrow>Summary</Eyebrow>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !hideSummary;
+                        setHideSummary(next);
+                        writeHideSummary(next);
+                      }}
+                      className="text-[12.5px] font-semibold text-[var(--brand)] hover:underline"
+                    >
+                      {hideSummary ? "Show summary" : "Hide summary"}
+                    </button>
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
+                    {[
+                      {
+                        label: "Closed",
+                        value: `${kpis.closedPct}%`,
+                        hint: `${kpis.progress.closed.toLocaleString()} of ${kpis.total.toLocaleString()}`,
+                        tone: kpis.closedPct === 100 && kpis.total > 0 ? "text-[#16a34a]" : "",
+                      },
+                      {
+                        label: "Waiting TNB",
+                        value: kpis.progress.awaiting.toLocaleString(),
+                        hint: "repaired, to verify",
+                        tone: kpis.progress.awaiting > 0 ? "text-[#2563eb]" : "",
+                      },
+                      {
+                        label: "Still to repair",
+                        value: kpis.open.toLocaleString(),
+                        hint: `${kpis.progress.inProgress.toLocaleString()} in progress`,
+                        tone: "",
+                      },
+                      {
+                        label: "Overdue",
+                        value: kpis.overdue.toLocaleString(),
+                        hint: "Pencawang past target",
+                        tone: kpis.overdue > 0 ? "text-[var(--critical-text)]" : "",
+                      },
+                      {
+                        label: "No team",
+                        value: kpis.noTeam.toLocaleString(),
+                        hint: "open Kejanggalan",
+                        tone: kpis.noTeam > 0 ? "text-[var(--high-text)]" : "",
+                      },
+                      isCompany
+                        ? {
+                            label: "Pencawang",
+                            value: kpis.pencawangs.toLocaleString(),
+                            hint: "given to your company",
+                            tone: "",
+                          }
+                        : {
+                            label: "Awaiting company",
+                            value: kpis.awaiting.toLocaleString(),
+                            hint: `${kpis.assigned.toLocaleString()} assigned`,
+                            tone: kpis.awaiting > 0 ? "text-[var(--high-text)]" : "",
+                          },
+                    ].map((stat) => (
+                      <div key={stat.label} className="min-w-0">
+                        <p className="text-[11.5px] font-semibold uppercase tracking-[0.04em] text-[var(--muted)]">
+                          {stat.label}
+                        </p>
+                        <p
+                          className={`text-[20px] font-bold leading-tight text-[var(--foreground)] ${stat.tone}`}
+                          style={{ fontFamily: "var(--font-display)" }}
+                        >
+                          {stat.value}
+                        </p>
+                        <p className="truncate text-[11.5px] text-[var(--muted)]">{stat.hint}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {hideSummary ? null : (
+                    <>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
                     {kpis.byType.map((type) => {
                       const active = workType === type.category;
                       return (
@@ -1786,12 +1908,19 @@ function MaintenancePackagesContent() {
                         </button>
                       );
                     })}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    {PROGRESS_PARTS.map((part) => (
-                      <LegendDot key={part.key} color={part.color} label={part.label} />
-                    ))}
-                  </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        {PROGRESS_PARTS.map((part) => (
+                          <LegendDot key={part.key} color={part.color} label={part.label} />
+                        ))}
+                        <span className="text-[12px] text-[var(--muted)]">
+                          {workType === "ALL"
+                            ? "Tap a work type to count only that work on every row"
+                            : `Showing ${CATEGORY_LABEL[workType]} only`}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </Card>
 
                 <FilterBar>
@@ -1910,7 +2039,9 @@ function MaintenancePackagesContent() {
                     <Card padded={false}>
                       <MaintenanceGrid
                         board={board}
-                        rows={rows.map(original)}
+                        rows={pageRows.map(original)}
+                        busy={isSaving}
+                        onQuickAssign={(row, category, value) => quickAssign(row, category, value)}
                         categories={gridCategories}
                         selected={selected}
                         onToggle={toggleSelected}
@@ -1919,6 +2050,7 @@ function MaintenancePackagesContent() {
                         onOpenPoles={(row) => setPoleRow(row)}
                         onReport={(row) => setReportRows([row])}
                       />
+                      <Pager page={page} total={rows.length} onPage={setPage} />
                     </Card>
                   </>
                 ) : (
@@ -1958,7 +2090,7 @@ function MaintenancePackagesContent() {
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((row) => {
+                            {pageRows.map((row) => {
                               const summary = assignmentSummary(row, board);
                               const selectable = isSelectable(row);
                               const due = dueInfo(row, board);
@@ -2103,6 +2235,7 @@ function MaintenancePackagesContent() {
                           </tbody>
                         </table>
                       </div>
+                      <Pager page={page} total={rows.length} onPage={setPage} />
                     </Card>
                   </>
                 )}

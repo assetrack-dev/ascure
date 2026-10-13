@@ -1,9 +1,11 @@
 "use client";
 
-import { CheckCircle2, FileText, MapPinned } from "lucide-react";
+import { CheckCircle2, FileText, MapPinned, SlidersHorizontal } from "lucide-react";
 import {
   CATEGORY_LABEL,
+  DestinationSelect,
   PROGRESS_PARTS,
+  encodeDestination,
   checkboxClass,
   formatDate,
   pencawangLabel,
@@ -41,6 +43,8 @@ export interface LaneCellInfo {
   /** Poles of this work type handed to other crews (§12.6). */
   splits: Array<{ label: string; poles: number }>;
   canAssign: boolean;
+  /** Current owner as a DestinationSelect value (org:<id> / team:<id>; "" = nobody). */
+  destination: string;
 }
 
 /** The work-type cell of a Pencawang, or null when it has no work of that type. */
@@ -114,8 +118,16 @@ export function laneCell(
         poles: split.poles,
       })),
     canAssign: board.canAssign && lane.canAssign,
+    destination: foreignLane ? "" : encodeDestination(lane.organization?.id, lane.team?.id),
   };
 }
+
+/** Quick in-cell team pick (plan §19, N53) — the old Maintenance page's lane dropdown. */
+export type QuickAssign = {
+  board: MaintenancePackageBoard;
+  busy: boolean;
+  onPick: (category: MaintenanceCategory, destination: string) => void;
+};
 
 /** Closed · waiting for TNB · in progress · to do — thin bar, closed counts to 100% (L40). */
 function LaneBar({ progress }: { progress: PackageProgress }) {
@@ -149,10 +161,13 @@ const OWNER_CLASS: Record<LaneCellInfo["ownerTone"], string> = {
 export function WorkTypeCell({
   info,
   onAssign,
+  quick,
   showLabel = false,
 }: {
   info: LaneCellInfo | null;
   onAssign?: (category: MaintenanceCategory) => void;
+  /** Grid: pick the team right in the cell; onAssign becomes "More options". */
+  quick?: QuickAssign;
   /** Prefix the work-type name (map side panel; the grid has column headers). */
   showLabel?: boolean;
 }) {
@@ -160,9 +175,40 @@ export function WorkTypeCell({
     return <span className="text-[12px] text-[var(--muted)]">—</span>;
   }
   const done = info.closed === info.total;
+  const quickPick = info.canAssign && quick;
   const body = (
     <>
-      <div className="flex items-center gap-1.5">
+      {quickPick ? (
+        <div className="flex items-center gap-1">
+          <DestinationSelect
+            ariaLabel={`Team for ${CATEGORY_LABEL[info.category]}`}
+            companies={quick.board.companies}
+            teams={quick.board.teams}
+            teamsOnly={quick.board.actorKind === "COMPANY"}
+            value={info.destination}
+            onChange={(value) => {
+              if (value && value !== info.destination) quick.onPick(info.category, value);
+            }}
+            className={`h-8 min-w-0 flex-1 rounded-[8px] border bg-[var(--panel)] px-2 text-[12.5px] font-semibold disabled:opacity-60 ${
+              info.ownerTone === "noTeam"
+                ? "border-[var(--high-border)] text-[var(--high-text)]"
+                : "border-[var(--line)] text-[var(--foreground)]"
+            }`}
+          />
+          {onAssign ? (
+            <button
+              type="button"
+              onClick={() => onAssign(info.category)}
+              title="More options — target date, whole Pencawang, split by poles"
+              aria-label={`More options for ${CATEGORY_LABEL[info.category]}`}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-muted)] hover:text-[var(--foreground)]"
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className={quickPick ? "hidden" : "flex items-center gap-1.5"}>
         {done ? <CheckCircle2 size={13} className="shrink-0 text-[#16a34a]" /> : null}
         <span className={`truncate text-[12.5px] font-semibold ${OWNER_CLASS[info.ownerTone]}`}>
           {showLabel ? `${CATEGORY_LABEL[info.category]} · ` : ""}
@@ -197,6 +243,13 @@ export function WorkTypeCell({
     </>
   );
 
+  if (quickPick) {
+    return (
+      <div className={`min-w-0 px-2 py-1.5 ${quick.busy ? "pointer-events-none opacity-60" : ""}`}>
+        {body}
+      </div>
+    );
+  }
   if (info.canAssign && onAssign) {
     return (
       <button
@@ -230,6 +283,8 @@ export function MaintenanceGrid({
   onAssignLane,
   onOpenPoles,
   onReport,
+  onQuickAssign,
+  busy = false,
 }: {
   board: MaintenancePackageBoard;
   /** Full Pencawang rows (never the work-type slice). */
@@ -241,6 +296,9 @@ export function MaintenanceGrid({
   onAssignLane: (row: PackagePencawang, category: MaintenanceCategory) => void;
   onOpenPoles: (row: PackagePencawang) => void;
   onReport: (row: PackagePencawang) => void;
+  /** In-cell team pick, saved at once (plan §19, N53). */
+  onQuickAssign?: (row: PackagePencawang, category: MaintenanceCategory, destination: string) => void;
+  busy?: boolean;
 }) {
   const selectable = (row: PackagePencawang) =>
     row.canAssign || row.lanes.some((lane) => lane.canAssign && lane.total > 0);
@@ -303,6 +361,15 @@ export function MaintenanceGrid({
                     <WorkTypeCell
                       info={laneCell(row, category, board)}
                       onAssign={(picked) => onAssignLane(row, picked)}
+                      quick={
+                        onQuickAssign
+                          ? {
+                              board,
+                              busy,
+                              onPick: (picked, destination) => onQuickAssign(row, picked, destination),
+                            }
+                          : undefined
+                      }
                     />
                   </td>
                 ))}
