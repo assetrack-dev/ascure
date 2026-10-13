@@ -505,3 +505,31 @@ Today a contractor Manager on the phone only gets the crew's "My Pencawang packa
 3. Map tab.
 4. Teams / companies tab.
 5. Trial APK (LAN) → owner device test as a SUB manager and an MC manager → official **v2.0.20** + release notes BM + EN.
+
+## 19. Maintenance web usability, TNB Supervisor, notifications, activity log, daily crew performance (owner, 2026-10-12/13)
+
+**Context that shapes everything:** TNB opens the console **on their phones**; `admin.ascure.com.my` is blocked on TNB laptops (worth asking TNB IT to whitelist it, outside our code). So every page touched here must work at phone width, not just shrink.
+
+| # | Decision |
+|---|---|
+| N49 | **Phone width first.** Every page in this section works at 375 px: wide tables become cards below 768 px, buttons are thumb-sized, filters fold into a sheet. |
+| N50 | **Buttons look like buttons.** Owner didn't know Poles / Report were clickable (ghost buttons read as text). Action column **pinned to the right edge**; Manage = solid; Poles / Report = outlined + icon; "+ Kejanggalan" → "⋯" menu. Same pass over Grid, Map panel, Repair Verification. |
+| N51 | **Emergency folds** into one red bar "⚠ N emergencies waiting for a company · Show" (hidden when none). Assign stays inside it on Maintenance Packages; the Maintenance page shows the same fold. |
+| N52 | **Maintenance Packages shorter:** KPIs + work-type bars in one compact strip with "Hide summary" (remembered); filters + table header stay pinned; **50 Pencawang per page**. "Another company" is relabelled to what it really is: **"Your poles: N (split) · Manage poles"** or **"Started by your crew: N"**, and own work shows own team. |
+| N53 | **Quick team assign in the Grid:** the old Maintenance page's per-work-type "Assign…" dropdown (owner: easier for subcontractors) goes **into each Grid cell**: pick a team → saved at once, "Saved · Undo". The old Maintenance page stays (cards folded into rows) until the owner OKs retiring it. |
+| N54 | **Repair Verification grouped:** one folded row per **Pencawang + company** ("PE BKT SEKILAU · Other Co · 12 waiting"); filters company / Pencawang / work type / submitted date; 20 groups per page with server paging (replaces the 200-item cap). Phone: one group at a time, swipe photos, big Verify / Send back. |
+| N55 | **TNB Supervisor rank** (Option 1 = rank order only, below Technician; no per-person link): new `ClientRank.SUPERVISOR` + table `ClientCompanyAccess` (user ↔ contractor company). Set by **Admin, TNB Technician, TNB Foreman** (user form + a Supervisors panel). **Their companies decide everything they see**: maintenance (Packages, Verification, Map) **and** surveys (Progress / Surveys / Asset Map = those companies' surveys). They may **verify, send back, re-open, decide cannot-repair**, and **assign / change Pencawang work only to or from their own companies** (or unassigned work on their Mainheads), never another company's. |
+| N56 | **Notifications:** 🔔 in the console (count + list) **and Web Push** on the phone (Add to Home screen + Allow; Android Chrome; iPhone iOS 16.4+ from the home screen), no app, no outside account (VAPID keys on the VPS). v1 event: **repairs submitted** → that company's TNB Supervisors (none set → the Mainhead's Foreman / Technician), **grouped per Pencawang + company** within 15 min ("Other Co submitted 12 repairs at PE BKT SEKILAU"). Tap → Repair Verification filtered to it. |
+| N57 | **Activity log (Admin only)**, for accountability, disputes and security audit. **Phase 1:** one feed from what is already recorded (Kejanggalan history, survey status changes, deletions): time · who · what · where, filters person / company / Pencawang / action / date, Excel export. **Phase 2:** new append-only `AuditEvent`: package assign / change / withdraw, pole splits, supervisor company access, user / company / rank changes, **logins (success + failed, device / browser)**. Never edited. **Retention:** work actions forever; logins 2 years (nightly prune). |
+| N58 | **Crew Performance by day:** period = **calendar from–to** + presets (Today, Yesterday, This week, Last 7 days, This month, Last month), both Survey and Maintenance tabs; a **By day** view (one row per day per person / team); the Maintenance tab gets the per-team daily drill the Survey tab already has. The API already takes any from / to. |
+
+### 19.1 Build order (each ships on its own)
+
+1. **N50 + N51 + N52 relabel**: web only.
+2. **N49 phone layouts + N53 + N54**: web + API paging for verification.
+3. **N58**: web + a small API addition (maintenance daily per team).
+4. **N55 Supervisor**: migration (enum value + table), scope rules across board / verification / client views, user form. Biggest.
+5. **N56 🔔 + Web Push**: migration (notifications + push subscriptions), service worker, VAPID env on the VPS.
+6. **N57 activity log**: Phase 1, then Phase 2 (migration).
+
+⚠ §17 steps 1–2 (company work mode + Grid, with 1 additive migration) are still dev-only: they ship with the first deploy of this batch.

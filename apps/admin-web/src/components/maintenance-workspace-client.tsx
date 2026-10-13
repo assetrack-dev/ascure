@@ -16,7 +16,9 @@ import {
   UserPlus,
   Wrench,
 } from "lucide-react";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { EmergencyBar } from "@/components/emergency-bar";
 import { AuthGuard } from "@/components/auth-guard";
 import { Card, Chip, KpiCard, PageHeader, Tbtn, type Tone } from "@/components/ui";
 import { ApiError } from "@/lib/api";
@@ -150,73 +152,52 @@ function oldestEmergency(emergencies: WorkspaceEmergency[]): WorkspaceEmergency 
 }
 
 function EmergencyLane({ workspace }: { workspace: MaintenanceWorkspace }) {
-  // Rows are open by default: the previous page always showed them, and an
-  // emergency is not something to hide behind a disclosure.
-  const [isOpen, setIsOpen] = useState(true);
-
   if (workspace.emergencyCount === 0 || workspace.emergencies.length === 0) {
     return null;
   }
 
   const oldest = oldestEmergency(workspace.emergencies);
+  const count = workspace.emergencyCount;
 
+  // Folded like on Maintenance Packages (plan §19, N51) — emergencies are
+  // assigned there, so this page links to it.
   return (
-    <section className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--critical-border)] bg-gradient-to-r from-[var(--danger-tint)] to-[var(--panel)] shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-center gap-4 p-[18px]">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-[var(--critical-border)] bg-[var(--panel)] text-[var(--critical)] shadow-[var(--shadow-soft)]">
-          <AlertTriangle size={18} />
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <h2
-            className="text-[14.5px] font-semibold leading-tight text-[var(--critical-text)]"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            {workspace.emergencyCount} emergenc{workspace.emergencyCount === 1 ? "y" : "ies"} —
-            respond now
-          </h2>
-          <p className="mt-1 truncate text-[12px] text-[var(--muted)]">
-            {oldest ? (
-              <>
-                Oldest: <span className="font-mono">{oldest.assetCode}</span> ·{" "}
-                {oldest.substationName} · {formatDate(oldest.createdAt)}
-              </>
-            ) : (
-              "Across all Pencawang"
-            )}
-          </p>
-        </div>
-
-        <Tbtn
-          variant="danger"
-          aria-expanded={isOpen}
-          onClick={() => setIsOpen((current) => !current)}
+    <EmergencyBar
+      count={count}
+      title={`${count} emergenc${count === 1 ? "y" : "ies"} — respond now`}
+      detail={
+        oldest ? (
+          <>
+            Oldest: <span className="font-mono">{oldest.assetCode}</span> · {oldest.substationName} ·{" "}
+            {formatDate(oldest.createdAt)}
+          </>
+        ) : (
+          "Across all Pencawang"
+        )
+      }
+      action={
+        <Link
+          href="/maintenance-packages"
+          className="text-[12.5px] font-semibold text-[var(--critical-text)] underline-offset-2 hover:underline"
         >
-          <ChevronDown size={15} className={isOpen ? "rotate-180 transition-transform" : "transition-transform"} />
-          {isOpen ? "Hide details" : `Review ${workspace.emergencyCount}`}
-        </Tbtn>
-      </div>
-
-      {isOpen ? (
-        <div className="border-t border-[var(--critical-border)] bg-[var(--panel)]">
-          {workspace.emergencies.map((emergency) => (
-            <div
-              key={emergency.id}
-              className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line2)] px-[18px] py-2.5 last:border-b-0"
-            >
-              <div className="min-w-0 text-[13px]">
-                <span className="font-mono font-semibold text-[var(--foreground)]">
-                  {emergency.assetCode}
-                </span>
-                <span className="text-[var(--foreground-soft)]"> · {emergency.label}</span>
-                <span className="text-[var(--muted)]"> · {emergency.substationName}</span>
-              </div>
-              <Chip tone={severityTone(emergency.severity)}>{emergency.severity}</Chip>
-            </div>
-          ))}
+          Assign in Maintenance Packages →
+        </Link>
+      }
+    >
+      {workspace.emergencies.map((emergency) => (
+        <div
+          key={emergency.id}
+          className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line2)] px-4 py-2.5 last:border-b-0"
+        >
+          <div className="min-w-0 text-[13px]">
+            <span className="font-mono font-semibold text-[var(--foreground)]">{emergency.assetCode}</span>
+            <span className="text-[var(--foreground-soft)]"> · {emergency.label}</span>
+            <span className="text-[var(--muted)]"> · {emergency.substationName}</span>
+          </div>
+          <Chip tone={severityTone(emergency.severity)}>{emergency.severity}</Chip>
         </div>
-      ) : null}
-    </section>
+      ))}
+    </EmergencyBar>
   );
 }
 

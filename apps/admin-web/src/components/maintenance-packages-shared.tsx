@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { MoreHorizontal, X } from "lucide-react";
 import { Eyebrow, IconBtn, filterControlClass, filterSelectClass } from "@/components/ui";
 import type {
   MaintenanceCategory,
@@ -230,5 +230,103 @@ export function LegendDot({ color, label }: { color: string; label: string }) {
       <span className="h-3 w-3 rounded-full border border-white" style={{ background: color }} />
       {label}
     </span>
+  );
+}
+
+// ── Row actions (plan §19, N50) ────────────────────────────────────────────
+
+/**
+ * The action column stays pinned to the right edge while a wide table scrolls,
+ * so Manage / Assign is always on screen. The row needs `group`.
+ */
+export const pinnedHeadClass =
+  "sticky right-0 z-[1] bg-[var(--panel-muted)] shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.28)]";
+export const pinnedCellClass =
+  "sticky right-0 z-[1] bg-[var(--panel)] shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.28)] transition group-hover:bg-[var(--panel-muted)]";
+
+export type RowMenuItem = { label: string; icon?: ReactNode; onClick: () => void; title?: string };
+
+/**
+ * "⋯" menu for the less-used row actions. Positioned against the viewport so a
+ * scrolling table (overflow-x) cannot clip it; closes on outside click, Esc,
+ * scroll or resize.
+ */
+export function RowMenu({ items, label = "More actions" }: { items: RowMenuItem[]; label?: string }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (!position) return;
+    const close = () => setPosition(null);
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !buttonRef.current?.contains(target)) close();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [position]);
+
+  if (items.length === 0) return null;
+
+  const toggle = () => {
+    if (position) {
+      setPosition(null);
+      return;
+    }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) setPosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+  };
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={position !== null}
+        onClick={toggle}
+        className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] text-[var(--foreground-soft)] shadow-[var(--shadow-soft)] transition hover:bg-[var(--panel-muted)]"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {position ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          style={{ position: "fixed", top: position.top, right: position.right }}
+          className="z-50 min-w-[200px] overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] py-1 shadow-[var(--shadow-card)]"
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              title={item.title}
+              onClick={() => {
+                setPosition(null);
+                item.onClick();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
