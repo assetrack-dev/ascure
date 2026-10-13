@@ -15,6 +15,7 @@ import {
   MapPinned,
   Plus,
   RefreshCw,
+  SlidersHorizontal,
   SquareDashedMousePointer,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import { MaterialsSummaryDialog } from "@/components/materials-summary-dialog";
 import { EmergencyBar } from "@/components/emergency-bar";
 import {
   MaintenanceGrid,
+  PencawangCards,
   WorkTypeCell,
   downloadGridCsv,
   laneCell,
@@ -1449,6 +1451,7 @@ function MaintenancePackagesContent() {
   } | null>(null);
   const [page, setPage] = useState(0);
   const [hideSummary, setHideSummary] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -1647,6 +1650,13 @@ function MaintenancePackagesContent() {
   useEffect(() => {
     setPage(0);
   }, [statusFilter, workType, mainheadFilter, teamFilter, search, sortMode, view]);
+  const activeFilterCount = [
+    mainheadFilter !== "ALL",
+    workType !== "ALL",
+    teamFilter !== "ALL",
+    sortMode !== "DEFAULT",
+    statusFilter !== "ALL",
+  ].filter(Boolean).length;
   const pageRows = useMemo(() => rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [rows, page]);
 
   /** Grid columns: every work type, or the one picked in the filter. */
@@ -1717,6 +1727,67 @@ function MaintenancePackagesContent() {
       }),
     };
   }, [board, scopedRows]);
+
+  /** Row actions — the List's pinned column and the phone cards (plan §19, N49/N50). */
+  const rowActions = (row: PackagePencawang, layout: "row" | "card" = "row") => {
+    if (!board) return null;
+    const selectable = isSelectable(row);
+    return (
+      <div
+        className={
+          layout === "card" ? "flex flex-wrap items-center gap-1.5" : "flex items-center justify-end gap-1.5"
+        }
+      >
+        <Tbtn onClick={() => setPoleRow(original(row))} title="Poles of this Pencawang">
+          <MapPinned size={15} />
+          Poles
+        </Tbtn>
+        <Tbtn
+          onClick={() => setReportRows([original(row)])}
+          title="Laporan Pembaikan Kejanggalan (PDF)"
+        >
+          <FileText size={15} />
+          Report
+        </Tbtn>
+        {board.canAssign ? (
+          <RowMenu
+            items={[
+              {
+                label: "Add Kejanggalan",
+                icon: <Plus size={15} />,
+                title: "Add a Kejanggalan found after the survey",
+                onClick: () => setFindingRow(original(row)),
+              },
+            ]}
+          />
+        ) : null}
+        {board.canAssign && selectable ? (
+          <Tbtn variant="primary" onClick={() => openLaneDialog(original(row), null)}>
+            {row.packages.length === 0 ? "Assign" : "Manage"}
+          </Tbtn>
+        ) : board.canAssign && isCompany ? (
+          ownSplitPoles(row, board) > 0 ? (
+            <Tbtn
+              variant="primary"
+              onClick={() => setPoleRow(original(row))}
+              title="TNB or your main contractor gave your company some poles of this Pencawang — choose which of your teams does them"
+            >
+              Your poles: {ownSplitPoles(row, board)} · Manage
+            </Tbtn>
+          ) : (
+            <span
+              className="text-[12px] text-[var(--muted)]"
+              title="Your crew had already started this work before it was moved to another company, so it stays with them."
+            >
+              Started by your crew
+            </span>
+          )
+        ) : board.canAssign ? (
+          <span className="text-[12px] text-[var(--muted)]">TNB only</span>
+        ) : null}
+      </div>
+    );
+  };
 
   const openBulk = () => {
     setDialogError("");
@@ -1939,6 +2010,20 @@ function MaintenancePackagesContent() {
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                    aria-expanded={filtersOpen}
+                    className={`${filterControlClass} inline-flex items-center gap-1.5 font-semibold md:hidden`}
+                  >
+                    <SlidersHorizontal size={15} />
+                    Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+                  </button>
+                  {/* Phones: the filters fold behind the button above (plan §19, N49);
+                      md+: `contents` keeps them in the bar exactly as before. */}
+                  <div
+                    className={`${filtersOpen ? "flex" : "hidden"} w-full flex-wrap items-center gap-2.5 md:contents`}
+                  >
                   <select
                     aria-label="Mainhead"
                     value={mainheadFilter}
@@ -2010,6 +2095,7 @@ function MaintenancePackagesContent() {
                       Export
                     </Tbtn>
                   ) : null}
+                  </div>
                 </FilterBar>
 
                 {view === "MAP" ? (
@@ -2036,7 +2122,21 @@ function MaintenancePackagesContent() {
                         onReports={() => setReportRows(selectedRows)}
                       />
                     ) : null}
-                    <Card padded={false}>
+                    <div className="md:hidden">
+                      <PencawangCards
+                        board={board}
+                        rows={pageRows.map(original)}
+                        categories={gridCategories}
+                        selected={selected}
+                        onToggle={toggleSelected}
+                        busy={isSaving}
+                        onAssignLane={openLaneDialog}
+                        onQuickAssign={(row, category, value) => quickAssign(row, category, value)}
+                        actions={(row) => rowActions(row, "card")}
+                      />
+                      <Pager page={page} total={rows.length} onPage={setPage} />
+                    </div>
+                    <Card padded={false} className="hidden md:block">
                       <MaintenanceGrid
                         board={board}
                         rows={pageRows.map(original)}
@@ -2063,7 +2163,21 @@ function MaintenancePackagesContent() {
                         onReports={() => setReportRows(selectedRows)}
                       />
                     ) : null}
-                    <Card padded={false}>
+                    <div className="md:hidden">
+                      <PencawangCards
+                        board={board}
+                        rows={pageRows.map(original)}
+                        categories={gridCategories}
+                        selected={selected}
+                        onToggle={toggleSelected}
+                        busy={isSaving}
+                        onAssignLane={openLaneDialog}
+                        onQuickAssign={(row, category, value) => quickAssign(row, category, value)}
+                        actions={(row) => rowActions(row, "card")}
+                      />
+                      <Pager page={page} total={rows.length} onPage={setPage} />
+                    </div>
+                    <Card padded={false} className="hidden md:block">
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[900px] border-collapse">
                           <thead className={tableHeadClass}>
@@ -2167,55 +2281,7 @@ function MaintenancePackagesContent() {
                                     )}
                                   </td>
                                   <td className={`${tableCellClass} ${pinnedCellClass} whitespace-nowrap`}>
-                                    <div className="flex items-center justify-end gap-1.5">
-                                      <Tbtn onClick={() => setPoleRow(original(row))} title="Poles of this Pencawang">
-                                        <MapPinned size={15} />
-                                        Poles
-                                      </Tbtn>
-                                      <Tbtn
-                                        onClick={() => setReportRows([original(row)])}
-                                        title="Laporan Pembaikan Kejanggalan (PDF)"
-                                      >
-                                        <FileText size={15} />
-                                        Report
-                                      </Tbtn>
-                                      {board.canAssign ? (
-                                        <RowMenu
-                                          items={[
-                                            {
-                                              label: "Add Kejanggalan",
-                                              icon: <Plus size={15} />,
-                                              title: "Add a Kejanggalan found after the survey",
-                                              onClick: () => setFindingRow(original(row)),
-                                            },
-                                          ]}
-                                        />
-                                      ) : null}
-                                      {board.canAssign && selectable ? (
-                                        <Tbtn variant="primary" onClick={() => openLaneDialog(original(row), null)}>
-                                          {row.packages.length === 0 ? "Assign" : "Manage"}
-                                        </Tbtn>
-                                      ) : board.canAssign && isCompany ? (
-                                        ownSplitPoles(row, board) > 0 ? (
-                                          <Tbtn
-                                            variant="primary"
-                                            onClick={() => setPoleRow(original(row))}
-                                            title="TNB or your main contractor gave your company some poles of this Pencawang — choose which of your teams does them"
-                                          >
-                                            Your poles: {ownSplitPoles(row, board)} · Manage
-                                          </Tbtn>
-                                        ) : (
-                                          <span
-                                            className="text-[12px] text-[var(--muted)]"
-                                            title="Your crew had already started this work before it was moved to another company, so it stays with them."
-                                          >
-                                            Started by your crew
-                                          </span>
-                                        )
-                                      ) : board.canAssign ? (
-                                        <span className="text-[12px] text-[var(--muted)]">TNB only</span>
-                                      ) : null}
-                                    </div>
+                                    {rowActions(row)}
                                   </td>
                                 </tr>
                               );

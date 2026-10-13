@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { CheckCircle2, FileText, MapPinned, SlidersHorizontal } from "lucide-react";
 import {
   CATEGORY_LABEL,
@@ -178,6 +179,11 @@ export function WorkTypeCell({
   const quickPick = info.canAssign && quick;
   const body = (
     <>
+      {quickPick && showLabel ? (
+        <p className="mb-1 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-[var(--muted)]">
+          {CATEGORY_LABEL[info.category]}
+        </p>
+      ) : null}
       {quickPick ? (
         <div className="flex items-center gap-1">
           <DestinationSelect
@@ -416,6 +422,111 @@ export function MaintenanceGrid({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Phone layout (below 768 px) of the List and the Grid (plan §19, N49): one card
+ * per Pencawang — work types stacked, each with its in-cell team pick — and the
+ * same row actions as the table.
+ */
+export function PencawangCards({
+  board,
+  rows,
+  categories,
+  selected,
+  onToggle,
+  busy,
+  onAssignLane,
+  onQuickAssign,
+  actions,
+}: {
+  board: MaintenancePackageBoard;
+  rows: PackagePencawang[];
+  categories: MaintenanceCategory[];
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  busy: boolean;
+  onAssignLane: (row: PackagePencawang, category: MaintenanceCategory) => void;
+  onQuickAssign: (row: PackagePencawang, category: MaintenanceCategory, destination: string) => void;
+  actions: (row: PackagePencawang) => ReactNode;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] px-4 py-10 text-center text-[13px] text-[var(--muted)]">
+        {board.pencawangs.length === 0
+          ? "No Pencawang has a completed survey report with Kejanggalan yet."
+          : "No Pencawang match these filters."}
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {rows.map((row) => {
+        const total = rowProgress(row, categories, board);
+        const cells = categories
+          .map((category) => laneCell(row, category, board))
+          .filter((cell): cell is LaneCellInfo => cell !== null);
+        const selectable = row.canAssign || row.lanes.some((lane) => lane.canAssign && lane.total > 0);
+        return (
+          <li
+            key={row.siteVisitId}
+            className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] p-3 shadow-[var(--shadow-soft)]"
+          >
+            <div className="flex items-start gap-2.5">
+              {board.canAssign ? (
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${pencawangLabel(row)}`}
+                  className={`${checkboxClass} mt-1`}
+                  checked={selected.has(row.siteVisitId)}
+                  disabled={!selectable}
+                  onChange={() => onToggle(row.siteVisitId)}
+                />
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-semibold text-[var(--foreground)]">{pencawangLabel(row)}</p>
+                <p className="text-[12px] text-[var(--muted)]">
+                  {row.mainhead?.name ?? "No Mainhead"} · {row.poleCount} pole{row.poleCount === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p
+                  className={`text-[16px] font-bold ${
+                    total.total > 0 && total.pct === 100 ? "text-[#16a34a]" : "text-[var(--foreground)]"
+                  }`}
+                >
+                  {total.pct}%
+                </p>
+                <p className="text-[11px] text-[var(--muted)]">
+                  {total.closed}/{total.total} closed
+                </p>
+              </div>
+            </div>
+            <div className="mt-2 space-y-1.5 border-t border-[var(--line2)] pt-2">
+              {cells.length === 0 ? (
+                <p className="px-2 text-[12px] text-[var(--muted)]">No work of this type.</p>
+              ) : (
+                cells.map((cell) => (
+                  <WorkTypeCell
+                    key={cell.category}
+                    info={cell}
+                    showLabel
+                    onAssign={(picked) => onAssignLane(row, picked)}
+                    quick={{
+                      board,
+                      busy,
+                      onPick: (picked, destination) => onQuickAssign(row, picked, destination),
+                    }}
+                  />
+                ))
+              )}
+            </div>
+            <div className="mt-2 border-t border-[var(--line2)] pt-2">{actions(row)}</div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
