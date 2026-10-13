@@ -27,6 +27,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   ReassignCannotRepairDto,
   RepairReasonDto,
+  VerificationGroupsQueryDto,
+  VerificationQueueQueryDto,
   VerificationTab,
   VerifyRepairDto,
 } from './dto/maintenance-closure.dto';
@@ -39,6 +41,16 @@ const SUBMITTED_LIFECYCLES: DefectLifecycleStatus[] = [
 ];
 
 const QUEUE_LIMIT = 200;
+const GROUPS_PAGE_SIZE = 20;
+
+/** Start of a Malaysia (UTC+8) day / start of the next one, for yyyy-mm-dd bounds. */
+function dayStart(value: string) {
+  return new Date(`${value.slice(0, 10)}T00:00:00+08:00`);
+}
+function nextDayStart(value: string) {
+  const start = dayStart(value);
+  return new Date(start.getTime() + 24 * 60 * 60 * 1000);
+}
 
 type ClosureActor =
   | { kind: 'ADMIN' }
@@ -87,6 +99,173 @@ export class MaintenanceClosureService {
     );
   }
 
+  /**
+   * The queue grouped by Pencawang + company (plan §19, N54): light rows — no
+   * photos — 20 per page; the page opens one group through getQueue. Same scope
+   * and tab rules as getQueue (SQL mirror of scopeWhere + tabWhere).
+   */
+  async getGroups(user: RequestUser, query: VerificationGroupsQueryDto) {
+    const actor = await this.resolveActor(user);
+    const tab: VerificationTab = query.tab ?? 'PENDING';
+    const page = query.page ?? 0;
+    const cannotRepair = [...CANNOT_REPAIR_OUTCOMES].map((outcome) => outcome as string);
+
+    const scopeSql =
+      actor.kind === 'TNB'
+        ? Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[])`
+        : actor.kind === 'MAIN_CONTRACTOR'
+          ? Prisma.sql`AND d."maintenanceOrganizationId" = ANY(${actor.organizationIds}::uuid[])`
+          : Prisma.empty;
+    const tabSql =
+      tab === 'CLOSED'
+        ? Prisma.sql`AND d."lifecycleStatus" = 'CLOSED'`
+        : tab === 'CANNOT_REPAIR'
+          ? Prisma.sql`AND d."lifecycleStatus" IN ('COMPLETED', 'VERIFICATION_PENDING')
+              AND d."resolutionOutcome"::text = ANY(${cannotRepair}::text[])`
+          : Prisma.sql`AND d."lifecycleStatus" IN ('COMPLETED', 'VERIFICATION_PENDING')
+              AND (d."resolutionOutcome" IS NULL OR NOT (d."resolutionOutcome"::text = ANY(${cannotRepair}::text[])))`;
+    const dateColumn = tab === 'CLOSED' ? Prisma.sql`d."closedAt"` : Prisma.sql`d."maintainedAt"`;
+    const filterSql = Prisma.join(
+      [
+        Prisma.sql`TRUE`,
+        query.organizationId
+          ? Prisma.sql`d."maintenanceOrganizationId" = ${query.organizationId}::uuid`
+          : Prisma.sql`TRUE`,
+        query.category
+          ? Prisma.sql`d."maintenanceCategory"::text = ${query.category}`
+          : Prisma.sql`TRUE`,
+        query.from ? Prisma.sql`${dateColumn} >= ${dayStart(query.from)}` : Prisma.sql`TRUE`,
+        query.to ? Prisma.sql`${dateColumn} < ${nextDayStart(query.to)}` : Prisma.sql`TRUE`,
+        query.search
+          ? Prisma.sql`(COALESCE(sv."pencawangName", st."name", '') ILIKE ${`%${query.search}%`}
+              OR COALESCE(sv."pencawangCode", st."code", '') ILIKE ${`%${query.search}%`})`
+          : Prisma.sql`TRUE`,
+      ],
+      ' AND ',
+    );
+    const fromSql = Prisma.sql`
+      FROM "Defect" d
+      JOIN "InspectionItemResult" r ON r."id" = d."inspectionItemResultId"
+      JOIN "Inspection" i ON i."id" = r."inspectionId"
+      JOIN "SiteVisit" sv ON sv."id" = i."siteVisitId"
+      JOIN "Organization" o ON o."id" = d."maintenanceOrganizationId"
+      LEFT JOIN "Mainhead" mh ON mh."id" = sv."mainheadId"
+      -- The visit's name / code snapshot may be empty: fall back to the Pencawang.
+      LEFT JOIN "Substation" st ON st."id" = sv."substationId"
+      WHERE sv."tenantId" = ${user.tenantId}::uuid
+        AND d."maintenanceOrganizationId" IS NOT NULL
+        ${scopeSql}
+        ${tabSql}
+        AND ${filterSql}
+    `;
+    const order =
+      tab === 'CLOSED' ? Prisma.sql`MAX(${dateColumn}) DESC NULLS LAST` : Prisma.sql`MIN(${dateColumn}) ASC NULLS LAST`;
+
+    const [rows, companies] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{
+          siteVisitId: string;
+          pencawangName: string | null;
+          pencawangCode: string | null;
+          mainheadName: string | null;
+          organizationId: string;
+          organizationName: string;
+          count: number;
+          emergencies: number;
+          categories: string[] | null;
+          oldest: Date | null;
+          latest: Date | null;
+          total: number;
+        }>
+      >`
+        SELECT
+          sv."id" AS "siteVisitId",
+          COALESCE(sv."pencawangName", st."name") AS "pencawangName",
+          COALESCE(sv."pencawangCode", st."code") AS "pencawangCode",
+          mh."name" AS "mainheadName",
+          o."id" AS "organizationId",
+          o."name" AS "organizationName",
+          COUNT(*)::int AS "count",
+          COUNT(*) FILTER (WHERE d."isEmergency")::int AS "emergencies",
+          ARRAY_AGG(DISTINCT COALESCE(d."maintenanceCategory"::text, 'SELENGGARAAN')) AS "categories",
+          MIN(${dateColumn}) AS "oldest",
+          MAX(${dateColumn}) AS "latest",
+          (COUNT(*) OVER ())::int AS "total"
+        ${fromSql}
+        GROUP BY sv."id", sv."pencawangName", sv."pencawangCode", st."name", st."code", mh."name", o."id", o."name"
+        ORDER BY ${order}, COALESCE(sv."pencawangName", st."name") ASC
+        LIMIT ${GROUPS_PAGE_SIZE} OFFSET ${page * GROUPS_PAGE_SIZE}
+      `,
+      // Companies with work on this tab (the company filter's options).
+      this.prisma.$queryRaw<Array<{ id: string; name: string }>>`
+        SELECT DISTINCT o."id" AS "id", o."name" AS "name"
+        FROM "Defect" d
+        JOIN "InspectionItemResult" r ON r."id" = d."inspectionItemResultId"
+        JOIN "Inspection" i ON i."id" = r."inspectionId"
+        JOIN "SiteVisit" sv ON sv."id" = i."siteVisitId"
+        JOIN "Organization" o ON o."id" = d."maintenanceOrganizationId"
+        WHERE sv."tenantId" = ${user.tenantId}::uuid
+          AND d."maintenanceOrganizationId" IS NOT NULL
+          ${scopeSql}
+          ${tabSql}
+        ORDER BY o."name" ASC
+      `,
+    ]);
+
+    // Tab badges + what the viewer may do (the page no longer loads the whole
+    // queue just for these).
+    const scope = this.scopeWhere(user, actor);
+    const [pending, cannotRepairCount] = await Promise.all([
+      this.prisma.defect.count({
+        where: {
+          AND: [
+            scope,
+            {
+              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
+              OR: [
+                { resolutionOutcome: null },
+                { resolutionOutcome: { notIn: [...CANNOT_REPAIR_OUTCOMES] } },
+              ],
+            },
+          ],
+        },
+      }),
+      this.prisma.defect.count({
+        where: {
+          AND: [
+            scope,
+            {
+              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
+              resolutionOutcome: { in: [...CANNOT_REPAIR_OUTCOMES] },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    return {
+      actor: { kind: actor.kind, ...this.permissions(actor) },
+      counts: { pending, cannotRepair: cannotRepairCount },
+      tab,
+      page,
+      pageSize: GROUPS_PAGE_SIZE,
+      totalGroups: rows[0]?.total ?? 0,
+      companies,
+      groups: rows.map((row) => ({
+        siteVisitId: row.siteVisitId,
+        pencawangName: row.pencawangName,
+        pencawangCode: row.pencawangCode,
+        mainhead: row.mainheadName,
+        company: { id: row.organizationId, name: row.organizationName },
+        count: row.count,
+        emergencies: row.emergencies,
+        categories: (row.categories ?? []).sort(),
+        oldestAt: row.oldest?.toISOString() ?? null,
+        latestAt: row.latest?.toISOString() ?? null,
+      })),
+    };
+  }
+
   private permissions(actor: ClosureActor) {
     const tnbOrAdmin =
       actor.kind === 'ADMIN' || (actor.kind === 'TNB' && actor.canAct);
@@ -121,7 +300,36 @@ export class MaintenanceClosureService {
     return tenant;
   }
 
-  async getQueue(user: RequestUser, tab: VerificationTab = 'PENDING') {
+  /** Plan §19 (N54): the optional narrowing shared by the queue and the groups. */
+  private filterWhere(
+    tab: VerificationTab,
+    filters: Pick<VerificationQueueQueryDto, 'siteVisitId' | 'organizationId' | 'category' | 'from' | 'to'>,
+  ): Prisma.DefectWhereInput[] {
+    const where: Prisma.DefectWhereInput[] = [];
+    if (filters.siteVisitId) {
+      where.push({ inspectionItemResult: { inspection: { siteVisitId: filters.siteVisitId } } });
+    }
+    if (filters.organizationId) {
+      where.push({ maintenanceOrganizationId: filters.organizationId });
+    }
+    if (filters.category) {
+      where.push({ maintenanceCategory: filters.category });
+    }
+    if (filters.from || filters.to) {
+      const range = {
+        ...(filters.from ? { gte: dayStart(filters.from) } : {}),
+        ...(filters.to ? { lt: nextDayStart(filters.to) } : {}),
+      };
+      where.push(tab === 'CLOSED' ? { closedAt: range } : { maintainedAt: range });
+    }
+    return where;
+  }
+
+  async getQueue(
+    user: RequestUser,
+    tab: VerificationTab = 'PENDING',
+    filters: Pick<VerificationQueueQueryDto, 'siteVisitId' | 'organizationId' | 'category' | 'from' | 'to'> = {},
+  ) {
     const actor = await this.resolveActor(user);
     const cannotRepair = [...CANNOT_REPAIR_OUTCOMES];
 
@@ -142,7 +350,7 @@ export class MaintenanceClosureService {
             };
 
     const where: Prisma.DefectWhereInput = {
-      AND: [this.scopeWhere(user, actor), tabWhere],
+      AND: [this.scopeWhere(user, actor), tabWhere, ...this.filterWhere(tab, filters)],
     };
 
     const [items, pending, cannotRepairCount] = await Promise.all([
