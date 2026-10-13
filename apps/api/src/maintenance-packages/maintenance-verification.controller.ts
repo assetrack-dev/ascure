@@ -14,6 +14,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   ReassignCannotRepairDto,
   RepairReasonDto,
+  VerificationGroupsQueryDto,
   VerificationQueueQueryDto,
   VerifyRepairDto,
 } from './dto/maintenance-closure.dto';
@@ -31,7 +32,13 @@ export class MaintenanceVerificationController {
 
   @Get()
   getQueue(@CurrentUser() user: RequestUser, @Query() query: VerificationQueueQueryDto) {
-    return this.closure.getQueue(user, query.tab);
+    return this.closure.getQueue(user, query.tab, query);
+  }
+
+  /** Plan §19 (N54): the queue grouped by Pencawang + company, paged. */
+  @Get('groups')
+  getGroups(@CurrentUser() user: RequestUser, @Query() query: VerificationGroupsQueryDto) {
+    return this.closure.getGroups(user, query);
   }
 
   @Post(':defectId/verify')

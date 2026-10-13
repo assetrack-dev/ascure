@@ -1,6 +1,11 @@
-import { Transform } from 'class-transformer';
+import { MaintenanceCategory } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsDateString,
+  IsEnum,
   IsIn,
+  IsInt,
+  Min,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -18,6 +23,44 @@ export class VerificationQueueQueryDto {
   @IsOptional()
   @IsIn(VERIFICATION_TABS)
   tab?: VerificationTab;
+
+  // Plan §19 (N54): narrow the queue — one Pencawang group, a company, a work
+  // type, a submitted (closed, on the Closed tab) date range.
+  @IsOptional()
+  @IsUUID()
+  siteVisitId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsEnum(MaintenanceCategory)
+  category?: MaintenanceCategory;
+
+  /** yyyy-mm-dd, inclusive (Malaysia day). */
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
+/** The grouped view: one row per Pencawang + company, 20 per page. */
+export class VerificationGroupsQueryDto extends VerificationQueueQueryDto {
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  page?: number;
 }
 
 export class VerifyRepairDto {

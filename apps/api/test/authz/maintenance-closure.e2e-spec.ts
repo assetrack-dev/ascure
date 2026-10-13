@@ -199,6 +199,53 @@ describe('Authz · maintenance closure (verify / reject / re-open / cannot-repai
       expect(res.body.items).toHaveLength(2);
     });
 
+    // Plan §19 (N54): the grouped view + queue filters.
+    type Group = { siteVisitId: string; company: { id: string }; count: number; categories: string[] };
+
+    it('groups: one row per Pencawang + company, light (no photos)', async () => {
+      const res = await http(app, token.foreman).get(`${base}/groups`).expect(200);
+      expect(res.body.totalGroups).toBe(2);
+      const groups = res.body.groups as Group[];
+      expect(groups.every((group) => group.siteVisitId === C.visit)).toBe(true);
+      const byCompany = Object.fromEntries(groups.map((group) => [group.company.id, group.count]));
+      expect(byCompany).toEqual({ [IDS.org.a]: 2, [IDS.sub.org]: 1 });
+      expect(res.body.companies.map((company: { id: string }) => company.id)).toEqual(
+        expect.arrayContaining([IDS.org.a, IDS.sub.org]),
+      );
+    });
+
+    it('queue narrowed to one group returns just its repairs', async () => {
+      const res = await http(app, token.foreman)
+        .get(`${base}?siteVisitId=${C.visit}&organizationId=${IDS.org.a}`)
+        .expect(200);
+      const ids = res.body.items.map((item: { id: string }) => item.id).sort();
+      expect(ids).toEqual([defectId('legacy'), defectId('reject')].sort());
+    });
+
+    it('groups follow the actor scope (Main Contractor manager)', async () => {
+      const res = await http(app, token.mgrA).get(`${base}/groups`).expect(200);
+      const groups = res.body.groups as Group[];
+      expect(groups.find((group) => group.company.id === IDS.org.a)?.count).toBe(2);
+    });
+
+    it('search and date filters narrow the groups', async () => {
+      const none = await http(app, token.foreman).get(`${base}/groups?search=NO-SUCH-PE`).expect(200);
+      expect(none.body.totalGroups).toBe(0);
+      expect(none.body.groups).toEqual([]);
+      const old = await http(app, token.foreman)
+        .get(`${base}/groups?from=2000-01-01&to=2000-01-02`)
+        .expect(200);
+      expect(old.body.totalGroups).toBe(0);
+      const hit = await http(app, token.foreman).get(`${base}/groups?search=CL-9`).expect(200);
+      expect(hit.body.totalGroups).toBe(2);
+    });
+
+    it('cannot-repair tab groups only those items', async () => {
+      const res = await http(app, token.foreman).get(`${base}/groups?tab=CANNOT_REPAIR`).expect(200);
+      expect(res.body.totalGroups).toBe(1);
+      expect((res.body.groups as Group[])[0]).toMatchObject({ company: { id: IDS.org.a }, count: 2 });
+    });
+
     it('the main contractor sees its own + subcontractor work; can verify, not decide', async () => {
       const res = await http(app, token.mgrA).get(base).expect(200);
       expect(res.body.actor).toMatchObject({
