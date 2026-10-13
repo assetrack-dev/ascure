@@ -304,7 +304,12 @@ describe('Authz · maintenance packages — contractor company view + progress (
   describe('progress', () => {
     it('counts in progress / awaiting verification / closed', async () => {
       await prisma.defect.update({ where: { id: P.defect.sel }, data: { lifecycleStatus: 'IN_PROGRESS' } });
-      await prisma.defect.update({ where: { id: P.defect.cat }, data: { lifecycleStatus: 'COMPLETED' } });
+      // A crew's "Mark done" leaves COMPLETED + status RESOLVED: still awaiting
+      // verification, not closed (plan §19 fix).
+      await prisma.defect.update({
+        where: { id: P.defect.cat },
+        data: { lifecycleStatus: 'COMPLETED', status: 'RESOLVED' },
+      });
       await prisma.defect.update({ where: { id: P.defect.rentis }, data: { lifecycleStatus: 'CLOSED', status: 'CLOSED' } });
       try {
         const row = pe(await board('admin'));

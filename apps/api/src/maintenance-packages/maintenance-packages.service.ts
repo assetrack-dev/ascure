@@ -149,8 +149,19 @@ function laneProgress(row: LaneRow | undefined): Progress {
   };
 }
 
-/** Closed for good (verified, or resolved/closed outside the maintenance flow). */
-const CLOSED_SQL = Prisma.sql`(d."lifecycleStatus" = 'CLOSED' OR d."status" IN ('RESOLVED', 'CLOSED'))`;
+/**
+ * Closed for good (verified, or resolved/closed outside the maintenance flow).
+ * A crew's "Mark done" sets status RESOLVED too, but leaves the lifecycle at
+ * COMPLETED / VERIFICATION_PENDING — that is still awaiting verification, not
+ * closed (plan §19 fix: every unverified repair used to show as Closed).
+ */
+const CLOSED_SQL = Prisma.sql`(
+  d."lifecycleStatus" = 'CLOSED'
+  OR (
+    d."status" IN ('RESOLVED', 'CLOSED')
+    AND (d."lifecycleStatus" IS NULL OR d."lifecycleStatus" NOT IN ('COMPLETED', 'VERIFICATION_PENDING'))
+  )
+)`;
 
 /** JS twin of FINISHED_SQL. */
 function isFinishedDefect(defect: {
