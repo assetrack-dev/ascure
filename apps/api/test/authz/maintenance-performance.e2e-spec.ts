@@ -200,4 +200,58 @@ describe('Authz · reports — maintenance crew performance (plan §15)', () => 
     expect(res.headers['content-type']).toContain('spreadsheetml');
     expect(res.headers['content-disposition']).toContain('maintenance-performance-2026-03-01_to_2026-03-31.xlsx');
   });
+
+  // ── Plan §19 (N58): by day + progress by scope ──────────────────────────────
+  type DayRow = { date: string; teamId: string; repaired: number; cannotRepair: number; closed: number };
+
+  it("by day: each team's repaired / cannot-repair / verified lands on its UTC+8 day", async () => {
+    const res = await http(app, token.admin)
+      .get(`/api/v1/reports/maintenance-performance/by-day?${PERIOD}`)
+      .expect(200);
+    const rows = res.body.rows as DayRow[];
+    const find = (date: string, teamId: string) => rows.find((row) => row.date === date && row.teamId === teamId);
+    expect(find('2026-03-03', IDS.team.a)).toMatchObject({ repaired: 1, closed: 0 });
+    expect(find('2026-03-05', IDS.team.a)).toMatchObject({ repaired: 0, closed: 1 });
+    expect(find('2026-03-04', IDS.sub.team)).toMatchObject({ cannotRepair: 1, repaired: 0 });
+    expect(find('2026-03-06', IDS.team.b)).toMatchObject({ repaired: 1 });
+
+    const mc = await http(app, token.mgrA)
+      .get(`/api/v1/reports/maintenance-performance/by-day?${PERIOD}`)
+      .expect(200);
+    expect((mc.body.rows as DayRow[]).some((row) => row.teamId === IDS.team.b)).toBe(false);
+  });
+
+  it('progress by work type: one company, per team; "done" alone is not closed', async () => {
+    const res = await http(app, token.mgrA)
+      .get(`/api/v1/reports/maintenance-performance/scopes?organizationId=${IDS.org.a}&${PERIOD}`)
+      .expect(200);
+    expect(res.body.company).toMatchObject({ id: IDS.org.a });
+    const sel = (res.body.scopes as Array<{ scope: string; teams: Array<Record<string, unknown>> }>).find(
+      (scope) => scope.scope === 'SELENGGARAAN',
+    );
+    const teamA = sel?.teams.find((team) => team.teamName === 'Team A');
+    expect(teamA).toMatchObject({ closed: 1, repaired: 1, verified: 1 });
+    expect(teamA?.total).toBeGreaterThanOrEqual(2); // + the one still on hand
+  });
+
+  it('progress by work type: a company outside the viewer is refused', () =>
+    http(app, token.mgrB)
+      .get(`/api/v1/reports/maintenance-performance/scopes?organizationId=${IDS.org.a}&${PERIOD}`)
+      .expect(403));
+
+  it('survey progress by scope: company + scopes per team; technicians refused', async () => {
+    const res = await http(app, token.admin)
+      .get(`/api/v1/reports/crew-performance/scopes?organizationId=${IDS.org.a}`)
+      .expect(200);
+    expect(res.body.company).toMatchObject({ id: IDS.org.a });
+    expect(Array.isArray(res.body.scopes)).toBe(true);
+    for (const scope of res.body.scopes as Array<{ assetsInspected: number; teams: unknown[] }>) {
+      expect(scope.assetsInspected).toBeGreaterThan(0);
+      expect(scope.teams.length).toBeGreaterThan(0);
+    }
+    await http(app, token.techA)
+      .get(`/api/v1/reports/crew-performance/scopes?organizationId=${IDS.org.a}`)
+      .expect(403);
+    await http(app, token.admin).get('/api/v1/reports/crew-performance/by-day').expect(200);
+  });
 });

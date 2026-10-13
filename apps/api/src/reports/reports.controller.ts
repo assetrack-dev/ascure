@@ -136,6 +136,47 @@ export class ReportsController {
     );
   }
 
+  // Plan §19 (N58): every crew member's output day by day.
+  @Get('crew-performance/by-day')
+  getCrewPerformanceByDay(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateCrewPerformanceByDay(user, from, to);
+  }
+
+  // Plan §19: one company's survey progress by scope (SAVR / SAVT / …), per team.
+  @Get('crew-performance/scopes')
+  getSurveyScopes(
+    @CurrentUser() user: RequestUser,
+    @Query('organizationId') organizationId: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateSurveyScopes(user, organizationId ?? '', from, to);
+  }
+
+  @Get('maintenance-performance/by-day')
+  getMaintenancePerformanceByDay(
+    @CurrentUser() user: RequestUser,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateMaintenancePerformanceByDay(user, from, to);
+  }
+
+  // Plan §19: one company's maintenance progress by work type, per team.
+  @Get('maintenance-performance/scopes')
+  getMaintenanceScopes(
+    @CurrentUser() user: RequestUser,
+    @Query('organizationId') organizationId: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+  ) {
+    return this.reportsService.aggregateMaintenanceScopes(user, organizationId ?? '', from, to);
+  }
+
   // Maintenance crews — credit by team (docs/PLAN-maintenance-flow.md §15, J33).
   @Get('maintenance-performance')
   getMaintenancePerformance(
