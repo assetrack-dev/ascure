@@ -27,6 +27,9 @@ enum ClientRank {
   ENGINEER
   TECHNICIAN
   FOREMAN
+  // Plan §19 (N55): below Technician; acts only for the contractor companies
+  // assigned to them (ClientCompanyAccess).
+  SUPERVISOR
 }
 
 enum MainheadAccessRole {
@@ -483,6 +486,7 @@ model User {
   siteVisitParticipants     SiteVisitParticipant[]
   capabilityAssignments     UserCapability[]
   mainheadAccesses          UserMainheadAccess[]
+  clientCompanyAccesses     ClientCompanyAccess[]              @relation("ClientCompanyAccessUser")
   operationalRegionAccesses UserOperationalRegionAccess[]
   assignedQaSessions        OperationalSession[]          @relation("OperationalSessionAssignedQaUser")
   assignedSessionAssets     OperationalSessionAsset[]     @relation("OperationalSessionAssetAssignedBy")
@@ -556,6 +560,7 @@ model Organization {
   routedDefects          Defect[]                           @relation("DefectMaintenanceOrg")
   maintenancePackages    MaintenancePackage[]
   maintenancePoleAssignments MaintenancePoleAssignment[] @relation("MaintenancePoleAssignmentOrganization")
+  clientSupervisorAccesses ClientCompanyAccess[] @relation("ClientCompanyAccessOrganization")
   clientProjects         Project[]                          @relation("ProjectClientOrganization")
   workPackageAssignments WorkPackageAssignment[]
   siteVisits             SiteVisit[]
@@ -749,6 +754,21 @@ model Mainhead {
   @@index([operationalRegionId])
   @@index([maintenanceOrganizationId])
   @@index([isActive])
+}
+
+/// Plan §19 (N55): the contractor companies a TNB Supervisor handles — they see,
+/// assign and verify maintenance work of these companies only.
+model ClientCompanyAccess {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @db.Uuid
+  organizationId  String       @db.Uuid
+  createdByUserId String?      @db.Uuid
+  createdAt       DateTime     @default(now())
+  user            User         @relation("ClientCompanyAccessUser", fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization @relation("ClientCompanyAccessOrganization", fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
 }
 
 model UserMainheadAccess {

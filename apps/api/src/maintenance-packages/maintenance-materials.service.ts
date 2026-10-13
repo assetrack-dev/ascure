@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { MaintenanceCategory, Prisma, UserRole } from '@prisma/client';
 import { Workbook, type Worksheet } from 'exceljs';
 import { buildScopeContext } from '../common/authorization/scope-context';
+import { resolveClientSupervisorCompanyIds } from '../common/authorization/client-maintenance-actor';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { MaintenanceWorkService } from './maintenance-work.service';
@@ -297,9 +298,15 @@ export class MaintenanceMaterialsService {
     }
     const ctx = await buildScopeContext(this.prisma, user);
     if (ctx.isClientViewer) {
+      // A TNB Supervisor: its assigned companies only (plan §19, N55; fails closed).
+      const supervisorCompanyIds = await resolveClientSupervisorCompanyIds(this.prisma, user);
+      if (supervisorCompanyIds && organizationId && !supervisorCompanyIds.includes(organizationId)) {
+        throw new ForbiddenException('You can only download the materials of a company you supervise.');
+      }
       return {
         AND: [
           organizationId ? { maintenanceOrganizationId: organizationId } : { maintenanceOrganizationId: { not: null } },
+          ...(supervisorCompanyIds ? [{ maintenanceOrganizationId: { in: supervisorCompanyIds } }] : []),
           { inspectionItemResult: { inspection: { siteVisit: { mainheadId: { in: ctx.clientMainheadIds } } } } },
         ],
       };

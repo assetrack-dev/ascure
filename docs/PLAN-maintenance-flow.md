@@ -533,3 +533,8 @@ Today a contractor Manager on the phone only gets the crew's "My Pencawang packa
 6. **N57 activity log**: Phase 1, then Phase 2 (migration).
 
 ⚠ §17 steps 1–2 (company work mode + Grid, with 1 additive migration) are still dev-only: they ship with the first deploy of this batch.
+
+### 19.2 TNB Supervisor — build split (2026-10-14)
+
+- **4a + 4b (built):** `ClientRank.SUPERVISOR` + `ClientCompanyAccess`; `/client-supervisors` (ADMIN / TNB Foreman / Technician of the same TNB org assign companies); Maintenance Packages, Repair Verification and the materials summary narrowed to the Supervisor's companies **within its TNB org's Mainheads** (+ untouched PEs there it may hand out); destinations / reassign targets limited to its companies; fails closed (no company → nothing).
+- **4c (later):** the survey views (Progress / Surveys / Asset Map / Defects) by company. Until then a Supervisor's menu is only Maintenance Packages + Repair Verification, and the API refuses the client survey endpoints for Supervisors.
