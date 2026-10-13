@@ -16,9 +16,10 @@ import { AuthGuard } from "@/components/auth-guard";
 import { CrewDailyModal } from "@/components/crew-daily-modal";
 import {
   MaintenanceByDayTable,
+  MaintenanceTree,
   PeriodPicker,
-  ScopePanel,
   SurveyByDayTable,
+  SurveyTree,
   TeamDailyPanel,
   presetPeriod,
   type Period,
@@ -40,10 +41,6 @@ import {
 } from "@/lib/reports";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import type { AuthSession } from "@/types/auth";
-
-/** Clickable names in the tables: dotted underline, brand on hover. */
-const linkButtonClass =
-  "rounded-sm text-left underline decoration-[var(--line)] decoration-dotted underline-offset-4 outline-none transition hover:text-[var(--brand)] hover:decoration-[var(--brand)] focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
 
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -160,7 +157,6 @@ function CrewPerformanceContent() {
   const [view, setView] = useState<"SUMMARY" | "BY_DAY">("SUMMARY");
   const [surveyDays, setSurveyDays] = useState<SurveyDayRow[] | null>(null);
   const [maintenanceDays, setMaintenanceDays] = useState<MaintenanceDayRow[] | null>(null);
-  const [scopeCompany, setScopeCompany] = useState<{ id: string; name: string } | null>(null);
   const [dailyTeam, setDailyTeam] = useState<{ teamId: string; teamName: string } | null>(null);
   const [data, setData] = useState<CrewPerformance | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -341,16 +337,6 @@ function CrewPerformanceContent() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [allRows, allTeams, tab]);
   const multiCompany = companies.length > 1;
-  // Plan §19: the company "Progress by scope" opens for — the filtered one, or
-  // the only one in view.
-  const scopeTarget = useMemo(() => {
-    const source = tab === "MAINTENANCE" ? allTeams : allRows;
-    const wanted =
-      companyFilter !== "ALL" ? companyFilter : companies.length === 1 ? companies[0] : null;
-    if (!wanted) return null;
-    const row = source.find((candidate) => (candidate.companyName ?? UNTEAMED_COMPANY) === wanted);
-    return row?.companyId ? { id: row.companyId, name: wanted } : null;
-  }, [allRows, allTeams, companies, companyFilter, tab]);
   // A month change can drop the filtered company from the payload — fall back
   // to ALL instead of showing a silently empty table.
   useEffect(() => {
@@ -393,6 +379,18 @@ function CrewPerformanceContent() {
     [teamRows],
   );
   const isMaintenance = tab === "MAINTENANCE";
+  // Plan §19: Company → scope / work type → team.
+  const maintenanceTree = useMemo(
+    () =>
+      (maintenance?.tree ?? []).filter(
+        (company) => companyFilter === "ALL" || company.name === companyFilter,
+      ),
+    [companyFilter, maintenance],
+  );
+  const surveyTree = useMemo(
+    () => (data?.tree ?? []).filter((company) => companyFilter === "ALL" || company.name === companyFilter),
+    [companyFilter, data],
+  );
   // Fleet totals from real payload fields only — no defect or SLA figure exists.
   const totalInspections = useMemo(
     () => rows.reduce((sum, row) => sum + row.submittedInspections, 0),
@@ -454,11 +452,6 @@ function CrewPerformanceContent() {
                   value={view}
                   onChange={onViewChange}
                 />
-                {scopeTarget ? (
-                  <Tbtn onClick={() => setScopeCompany(scopeTarget)}>
-                    {isMaintenance ? "Progress by work type" : "Progress by scope"}
-                  </Tbtn>
-                ) : null}
                 <Tbtn
                   variant="primary"
                   onClick={() => void handleDownload()}
@@ -504,129 +497,32 @@ function CrewPerformanceContent() {
               )}
             </Card>
           ) : isMaintenance ? (
-            <div className="mt-6 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
-              {/* Per TEAM (owner: maintenance crews work as a team). */}
+            <div className="mt-6 space-y-4">
+              {/* Plan §19: Company → work type → team (click to drill down). */}
               <Card padded={false}>
                 <div className="flex items-center justify-between gap-3 border-b border-[var(--line2)] p-[18px]">
-                  <CardHead title="Maintenance teams" hint="Ranked by Kejanggalan repaired" />
+                  <CardHead
+                    title="Maintenance by company"
+                    hint="Click a company for its work types, a work type for its teams, a team for its day by day"
+                  />
                   {maintenance ? (
-                    <span className="shrink-0 text-[12px] text-[var(--muted)]">
-                      {maintenance.period} · {teamRows.length} {teamRows.length === 1 ? "team" : "teams"}
-                    </span>
+                    <span className="shrink-0 text-[12px] text-[var(--muted)]">{maintenance.period}</span>
                   ) : null}
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left">
-                    <thead>
-                      <tr className="bg-[var(--panel-muted)] font-mono text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--muted)]">
-                        <th className="px-3.5 py-2.5 text-left font-semibold">#</th>
-                        <th className="px-3.5 py-2.5 text-left font-semibold">Team</th>
-                        {multiCompany ? (
-                          <th className="px-3.5 py-2.5 text-left font-semibold">Company</th>
-                        ) : null}
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Marked done this period">Repaired</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Verified (closed) this period">Closed</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Rejected at verification this period">Sent back</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Closed ÷ (closed + sent back)">Pass</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Reported 'cannot repair'">Can't</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Average assigned → marked done">Avg time</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Days with repair photos or a 'done'">Days</th>
-                        <th className="px-3.5 py-2.5 text-right font-semibold" title="Assigned / in progress right now">On hand</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {maintenanceLoading ? (
-                        <tr>
-                          <td colSpan={multiCompany ? 11 : 10} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
-                            Loading…
-                          </td>
-                        </tr>
-                      ) : teamRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={multiCompany ? 11 : 10} className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
-                            No maintenance work in this period.
-                          </td>
-                        </tr>
-                      ) : (
-                        teamRows.map((row, index) => (
-                          <tr
-                            key={row.teamId}
-                            className="border-b border-[var(--line2)] transition last:border-b-0 hover:bg-[var(--panel-muted)]"
-                          >
-                            <td className="px-3.5 py-3">
-                              <span
-                                className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 font-mono text-[11px] font-bold tabular-nums ${
-                                  index === 0 && row.repaired > 0
-                                    ? "bg-[var(--foreground)] text-[var(--panel)]"
-                                    : "bg-[var(--panel-muted)] text-[var(--muted)]"
-                                }`}
-                              >
-                                {index + 1}
-                              </span>
-                            </td>
-                            <td className="px-3.5 py-3 text-[13px] font-semibold text-[var(--foreground)]">
-                              <button
-                                type="button"
-                                onClick={() => openTeamDaily({ teamId: row.teamId, teamName: row.teamName })}
-                                title="Day by day"
-                                className={linkButtonClass}
-                              >
-                                {row.teamName}
-                              </button>
-                            </td>
-                            {multiCompany ? (
-                              <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
-                                {row.companyId && row.companyName ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setScopeCompany({ id: row.companyId!, name: row.companyName! })}
-                                    title="Progress by work type"
-                                    className={linkButtonClass}
-                                  >
-                                    {row.companyName}
-                                  </button>
-                                ) : (
-                                  row.companyName ?? "—"
-                                )}
-                              </td>
-                            ) : null}
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] font-bold tabular-nums text-[var(--foreground)]">
-                              {row.repaired}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {row.closed}
-                            </td>
-                            <td
-                              className={`px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums ${
-                                row.sentBack > 0 ? "font-semibold text-[var(--high-text)]" : "text-[var(--muted)]"
-                              }`}
-                            >
-                              {row.sentBack}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {row.passRate === null ? "—" : `${row.passRate}%`}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {row.cannotRepair}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {formatDuration(row.avgHoursToDone)}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {row.activeDays}
-                            </td>
-                            <td className="px-3.5 py-3 text-right font-mono text-[12.5px] tabular-nums text-[var(--muted)]">
-                              {row.onHand}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                {maintenance ? (
+                  <MaintenanceTree
+                    key={`${maintenance.period}|${maintenanceTree.map((company) => company.companyId).join(",")}`}
+                    tree={maintenanceTree}
+                    onTeam={openTeamDaily}
+                  />
+                ) : (
+                  <p className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">
+                    {maintenanceLoading ? "Loading…" : "No data."}
+                  </p>
+                )}
               </Card>
 
-              <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <Card>
                   <CardHead title="Repairs by team" hint="Marked done this period" />
                   <div className="mt-4">
@@ -647,7 +543,22 @@ function CrewPerformanceContent() {
               </div>
             </div>
           ) : (
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+          <>
+          <Card padded={false} className="mt-6">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--line2)] p-[18px]">
+              <CardHead title="Survey by company" hint="Click a company for its scopes, a scope for its teams" />
+              {data ? <span className="shrink-0 text-[12px] text-[var(--muted)]">{data.period}</span> : null}
+            </div>
+            {data ? (
+              <SurveyTree
+                key={`${data.period}|${surveyTree.map((company) => company.companyId).join(",")}`}
+                tree={surveyTree}
+              />
+            ) : (
+              <p className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">{isLoading ? "Loading…" : "No data."}</p>
+            )}
+          </Card>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
             {/* Leaderboard — per PERSON (this is a pay sheet; a team rollup can't
                 pay individuals). Rank is cosmetic: rows arrive sorted desc. */}
             <Card padded={false}>
@@ -724,18 +635,7 @@ function CrewPerformanceContent() {
                             </td>
                             {multiCompany ? (
                               <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
-                                {row.companyId && row.companyName ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setScopeCompany({ id: row.companyId!, name: row.companyName! })}
-                                    title="Progress by scope"
-                                    className={linkButtonClass}
-                                  >
-                                    {row.companyName}
-                                  </button>
-                                ) : (
-                                  row.companyName ?? "—"
-                                )}
+                                {row.companyName ?? "—"}
                               </td>
                             ) : null}
                             <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
@@ -784,21 +684,12 @@ function CrewPerformanceContent() {
               </Card>
             </div>
           </div>
+          </>
           )}
         </div>
 
         {/* Daily drill-down — click a name for the per-day bar chart +
             attendance gaps; month steps independently of the page month. */}
-        {scopeCompany && session?.token ? (
-          <ScopePanel
-            token={session.token}
-            kind={tab}
-            company={scopeCompany}
-            period={period}
-            onClose={() => setScopeCompany(null)}
-            onUnauthorized={handleLogout}
-          />
-        ) : null}
         {dailyTeam ? (
           <TeamDailyPanel
             team={dailyTeam}

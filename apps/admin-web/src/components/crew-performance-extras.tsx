@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
-import { Chip, IconBtn, filterControlClass, filterSelectClass } from "@/components/ui";
-import { ApiError } from "@/lib/api";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronRight, X } from "lucide-react";
+import { IconBtn, filterControlClass, filterSelectClass } from "@/components/ui";
 import {
-  fetchMaintenanceScopes,
-  fetchSurveyScopes,
   type MaintenanceDayRow,
-  type MaintenanceScopeTotals,
-  type MaintenanceScopes,
+  type MaintenanceTreeCompany,
+  type MaintenanceTreeMetrics,
+  type SurveyTreeCompany,
+  type SurveyTreeMetrics,
   type SurveyDayRow,
-  type SurveyScopes,
 } from "@/lib/reports";
 
 /**
@@ -327,157 +325,6 @@ const WORK_TYPE_LABEL: Record<string, string> = {
   CAT_TIANG: "Cat tiang",
   SELENGGARAAN: "Selenggaraan",
 };
-const BAR = [
-  { key: "closed", label: "Closed", color: "#16a34a" },
-  { key: "awaiting", label: "Waiting verification", color: "#2563eb" },
-  { key: "inProgress", label: "In progress", color: "#f59e0b" },
-  { key: "todo", label: "To do", color: "#cbd5e1" },
-] as const;
-
-function ProgressLine({ totals }: { totals: MaintenanceScopeTotals }) {
-  const pct = totals.total === 0 ? 0 : Math.round((totals.closed / totals.total) * 100);
-  return (
-    <div>
-      <div className="flex h-2 overflow-hidden rounded-full bg-[var(--line2)]">
-        {totals.total > 0
-          ? BAR.map((part) =>
-              totals[part.key] > 0 ? (
-                <span
-                  key={part.key}
-                  title={`${part.label}: ${totals[part.key]}`}
-                  style={{ width: `${(totals[part.key] / totals.total) * 100}%`, background: part.color }}
-                />
-              ) : null,
-            )
-          : null}
-      </div>
-      <p className="mt-1 text-[12px] text-[var(--muted)]">
-        <span className="font-semibold text-[var(--foreground)]">{totals.closed}</span>/{totals.total} closed ({pct}%)
-        {totals.awaiting > 0 ? ` · ${totals.awaiting} waiting verification` : ""}
-        {totals.inProgress > 0 ? ` · ${totals.inProgress} in progress` : ""}
-        {` · in period: ${totals.repaired} repaired, ${totals.verified} verified`}
-      </p>
-    </div>
-  );
-}
-
-export function ScopePanel({
-  token,
-  kind,
-  company,
-  period,
-  onClose,
-  onUnauthorized,
-}: {
-  token: string;
-  kind: "SURVEY" | "MAINTENANCE";
-  company: { id: string; name: string };
-  period: Period;
-  onClose: () => void;
-  onUnauthorized: () => void;
-}) {
-  const [survey, setSurvey] = useState<SurveyScopes | null>(null);
-  const [maintenance, setMaintenance] = useState<MaintenanceScopes | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    setError("");
-    const request =
-      kind === "SURVEY"
-        ? fetchSurveyScopes(token, company.id, period.from, period.to).then((data) => {
-            if (!cancelled) setSurvey(data);
-          })
-        : fetchMaintenanceScopes(token, company.id, period.from, period.to).then((data) => {
-            if (!cancelled) setMaintenance(data);
-          });
-    request.catch((loadError) => {
-      if (cancelled) return;
-      if (loadError instanceof ApiError && loadError.status === 401) {
-        onUnauthorized();
-        return;
-      }
-      setError(loadError instanceof Error ? loadError.message : "Unable to load the progress.");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [company.id, kind, onUnauthorized, period.from, period.to, token]);
-
-  const loading = !error && (kind === "SURVEY" ? !survey : !maintenance);
-  return (
-    <Panel
-      title={company.name}
-      subtitle={
-        kind === "SURVEY"
-          ? `Survey progress by scope · ${formatDay(period.from)} – ${formatDay(period.to)}`
-          : `Maintenance progress by work type · repaired / verified ${formatDay(period.from)} – ${formatDay(period.to)}`
-      }
-      onClose={onClose}
-    >
-      {error ? <p className="text-[13px] text-[var(--critical-text)]">{error}</p> : null}
-      {loading ? <p className="text-[13px] text-[var(--muted)]">Loading…</p> : null}
-
-      {kind === "SURVEY" && survey ? (
-        survey.scopes.length === 0 ? (
-          <p className="text-[13px] text-[var(--muted)]">No surveys by this company in the period.</p>
-        ) : (
-          survey.scopes.map((scope) => (
-            <section key={scope.scope} className="rounded-[var(--radius-card)] border border-[var(--line)] p-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-[15px] font-semibold text-[var(--foreground)]">
-                  {SURVEY_SCOPE_LABEL[scope.scope] ?? scope.scope}
-                </h3>
-                <Chip tone="brand">{scope.assetsInspected.toLocaleString()} poles</Chip>
-              </div>
-              <p className="mt-1 text-[12px] text-[var(--muted)]">
-                {scope.submittedInspections.toLocaleString()} inspections · {scope.surveyors} surveyor
-                {scope.surveyors === 1 ? "" : "s"}
-              </p>
-              <ul className="mt-3 divide-y divide-[var(--line2)] border-t border-[var(--line2)]">
-                {scope.teams.map((team) => (
-                  <li key={team.teamName} className="flex items-center justify-between gap-3 py-2 text-[13px]">
-                    <span className="font-medium text-[var(--foreground-soft)]">{team.teamName}</span>
-                    <span className="font-mono tabular-nums text-[var(--foreground)]">
-                      {team.assetsInspected} poles
-                      <span className="text-[var(--muted)]"> · {team.surveyors} crew</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))
-        )
-      ) : null}
-
-      {kind === "MAINTENANCE" && maintenance ? (
-        maintenance.scopes.length === 0 ? (
-          <p className="text-[13px] text-[var(--muted)]">No maintenance work routed to this company.</p>
-        ) : (
-          maintenance.scopes.map((scope) => (
-            <section key={scope.scope} className="rounded-[var(--radius-card)] border border-[var(--line)] p-4">
-              <h3 className="text-[15px] font-semibold text-[var(--foreground)]">
-                {WORK_TYPE_LABEL[scope.scope] ?? scope.scope}
-              </h3>
-              <div className="mt-2">
-                <ProgressLine totals={scope} />
-              </div>
-              <ul className="mt-3 space-y-3 border-t border-[var(--line2)] pt-3">
-                {scope.teams.map((team) => (
-                  <li key={team.teamName}>
-                    <p className="text-[13px] font-semibold text-[var(--foreground-soft)]">{team.teamName}</p>
-                    <ProgressLine totals={team} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))
-        )
-      ) : null}
-    </Panel>
-  );
-}
-
 /** One maintenance team's day by day (the Survey tab's per-person drill has its own modal). */
 export function TeamDailyPanel({
   team,
@@ -505,5 +352,259 @@ export function TeamDailyPanel({
         <MaintenanceByDayTable rows={mine} showCompany={false} />
       )}
     </Panel>
+  );
+}
+
+// ── Drill-down: Company → scope / work type → team (plan §19) ──────────────
+
+function hoursLabel(hours: number | null) {
+  if (hours === null) return "—";
+  return hours < 24 ? `${Math.round(hours)} h` : `${(hours / 24).toFixed(1)} d`;
+}
+
+const LEVEL_PAD = ["pl-3.5", "pl-9", "pl-14"];
+const ROW_TONE = ["bg-[var(--panel)]", "bg-[var(--panel-muted)]", "bg-[var(--panel)]"];
+
+function TreeName({
+  level,
+  label,
+  open,
+  onToggle,
+  onClick,
+  hint,
+}: {
+  level: 0 | 1 | 2;
+  label: string;
+  open?: boolean;
+  /** A level that opens / closes. */
+  onToggle?: () => void;
+  /** Leaf action (a team's day by day). */
+  onClick?: () => void;
+  hint?: string;
+}) {
+  const tone =
+    level === 0
+      ? "font-bold text-[var(--foreground)]"
+      : level === 1
+        ? "font-semibold text-[var(--foreground)]"
+        : "text-[var(--foreground-soft)]";
+  const text = <span className={tone}>{label}</span>;
+  return (
+    <td className={`${LEVEL_PAD[level]} py-2.5 pr-3.5 text-[13px]`}>
+      {onToggle ? (
+        <button type="button" onClick={onToggle} aria-expanded={open} className="inline-flex items-center gap-1.5 text-left">
+          <ChevronRight
+            size={15}
+            className={`shrink-0 text-[var(--muted)] transition-transform ${open ? "rotate-90" : ""}`}
+          />
+          {text}
+        </button>
+      ) : onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          title={hint}
+          className="ml-[21px] rounded-sm text-left underline decoration-[var(--line)] decoration-dotted underline-offset-4 hover:text-[var(--brand)]"
+        >
+          {text}
+        </button>
+      ) : (
+        <span className="ml-[21px]">{text}</span>
+      )}
+    </td>
+  );
+}
+
+function useExpanded(initial: string[]) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set(initial));
+  const toggle = (key: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  return { open, toggle };
+}
+
+function MaintenanceCells({ metrics }: { metrics: MaintenanceTreeMetrics }) {
+  return (
+    <>
+      <td className={`${numClass} font-bold`}>{metrics.repaired}</td>
+      <td className={numClass}>{metrics.closed}</td>
+      <td className={`${numClass} ${metrics.sentBack > 0 ? "text-[var(--critical-text)]" : ""}`}>{metrics.sentBack}</td>
+      <td className={numClass}>{metrics.passRate === null ? "—" : `${Math.round(metrics.passRate)}%`}</td>
+      <td className={numClass}>{metrics.cannotRepair}</td>
+      <td className={numClass}>{hoursLabel(metrics.avgHoursToDone)}</td>
+      <td className={numClass}>{metrics.activeDays}</td>
+      <td className={numClass}>{metrics.onHand}</td>
+    </>
+  );
+}
+
+/** Maintenance: Company → work type → team; click a team for its day by day. */
+export function MaintenanceTree({
+  tree,
+  onTeam,
+}: {
+  tree: MaintenanceTreeCompany[];
+  onTeam: (team: { teamId: string; teamName: string }) => void;
+}) {
+  // One company in view → already open.
+  const { open, toggle } = useExpanded(tree.length === 1 ? [`c:${tree[0].companyId ?? "none"}`] : []);
+  if (tree.length === 0) {
+    return <p className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">No maintenance work in this period.</p>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[860px] text-left">
+        <thead>
+          <tr className={headClass}>
+            <th className={thClass}>Company · work type · team</th>
+            <th className={`${thClass} text-right`}>Repaired</th>
+            <th className={`${thClass} text-right`}>Verified</th>
+            <th className={`${thClass} text-right`}>Sent back</th>
+            <th className={`${thClass} text-right`} title="Verified ÷ (verified + sent back)">
+              Pass
+            </th>
+            <th className={`${thClass} text-right`}>Can&apos;t repair</th>
+            <th className={`${thClass} text-right`} title="Assigned → marked done">
+              Avg time
+            </th>
+            <th className={`${thClass} text-right`}>Days</th>
+            <th className={`${thClass} text-right`} title="Assigned / in progress right now">
+              On hand
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {tree.map((company) => {
+            const companyKey = `c:${company.companyId ?? "none"}`;
+            const companyOpen = open.has(companyKey);
+            return (
+              <Fragment key={companyKey}>
+                <tr className={`border-b border-[var(--line2)] ${ROW_TONE[0]}`}>
+                  <TreeName level={0} label={company.name} open={companyOpen} onToggle={() => toggle(companyKey)} />
+                  <MaintenanceCells metrics={company} />
+                </tr>
+                {companyOpen
+                  ? company.categories.map((category) => {
+                      const categoryKey = `${companyKey}|${category.category}`;
+                      const categoryOpen = open.has(categoryKey);
+                      return (
+                        <Fragment key={categoryKey}>
+                          <tr className={`border-b border-[var(--line2)] ${ROW_TONE[1]}`}>
+                            <TreeName
+                              level={1}
+                              label={WORK_TYPE_LABEL[category.category] ?? category.category}
+                              open={categoryOpen}
+                              onToggle={() => toggle(categoryKey)}
+                            />
+                            <MaintenanceCells metrics={category} />
+                          </tr>
+                          {categoryOpen
+                            ? category.teams.map((team) => (
+                                <tr
+                                  key={`${categoryKey}|${team.teamId}`}
+                                  className={`border-b border-[var(--line2)] ${ROW_TONE[2]}`}
+                                >
+                                  <TreeName
+                                    level={2}
+                                    label={team.name}
+                                    onClick={() => onTeam({ teamId: team.teamId, teamName: team.name })}
+                                    hint="Day by day"
+                                  />
+                                  <MaintenanceCells metrics={team} />
+                                </tr>
+                              ))
+                            : null}
+                        </Fragment>
+                      );
+                    })
+                  : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SurveyCells({ metrics }: { metrics: SurveyTreeMetrics }) {
+  return (
+    <>
+      <td className={`${numClass} font-bold`}>{metrics.assetsInspected}</td>
+      <td className={numClass}>{metrics.submittedInspections}</td>
+      <td className={numClass}>{metrics.surveyors}</td>
+      <td className={numClass}>{metrics.activeDays}</td>
+    </>
+  );
+}
+
+/** Survey: Company → scope (SAVR / SAVT / …) → team. */
+export function SurveyTree({ tree }: { tree: SurveyTreeCompany[] }) {
+  const { open, toggle } = useExpanded(tree.length === 1 ? [`c:${tree[0].companyId ?? "none"}`] : []);
+  if (tree.length === 0) {
+    return <p className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">No surveys in this period.</p>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[620px] text-left">
+        <thead>
+          <tr className={headClass}>
+            <th className={thClass}>Company · scope · team</th>
+            <th className={`${thClass} text-right`}>Poles</th>
+            <th className={`${thClass} text-right`}>Inspections</th>
+            <th className={`${thClass} text-right`}>Surveyors</th>
+            <th className={`${thClass} text-right`}>Days</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tree.map((company) => {
+            const companyKey = `c:${company.companyId ?? "none"}`;
+            const companyOpen = open.has(companyKey);
+            return (
+              <Fragment key={companyKey}>
+                <tr className={`border-b border-[var(--line2)] ${ROW_TONE[0]}`}>
+                  <TreeName level={0} label={company.name} open={companyOpen} onToggle={() => toggle(companyKey)} />
+                  <SurveyCells metrics={company} />
+                </tr>
+                {companyOpen
+                  ? company.scopes.map((scope) => {
+                      const scopeKey = `${companyKey}|${scope.scope}`;
+                      const scopeOpen = open.has(scopeKey);
+                      return (
+                        <Fragment key={scopeKey}>
+                          <tr className={`border-b border-[var(--line2)] ${ROW_TONE[1]}`}>
+                            <TreeName
+                              level={1}
+                              label={SURVEY_SCOPE_LABEL[scope.scope] ?? scope.scope}
+                              open={scopeOpen}
+                              onToggle={() => toggle(scopeKey)}
+                            />
+                            <SurveyCells metrics={scope} />
+                          </tr>
+                          {scopeOpen
+                            ? scope.teams.map((team) => (
+                                <tr
+                                  key={`${scopeKey}|${team.name}`}
+                                  className={`border-b border-[var(--line2)] ${ROW_TONE[2]}`}
+                                >
+                                  <TreeName level={2} label={team.name} />
+                                  <SurveyCells metrics={team} />
+                                </tr>
+                              ))
+                            : null}
+                        </Fragment>
+                      );
+                    })
+                  : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
