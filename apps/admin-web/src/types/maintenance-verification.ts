@@ -56,3 +56,36 @@ export interface VerificationQueue {
   tab: VerificationTab;
   items: VerificationItem[];
 }
+
+/** Plan §19 (N54): narrowing shared by the grouped view and one opened group. */
+export interface VerificationFilters {
+  search?: string;
+  organizationId?: string;
+  category?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface VerificationGroup {
+  siteVisitId: string;
+  pencawangName: string | null;
+  pencawangCode: string | null;
+  mainhead: string | null;
+  company: { id: string; name: string };
+  count: number;
+  emergencies: number;
+  categories: string[];
+  oldestAt: string | null;
+  latestAt: string | null;
+}
+
+export interface VerificationGroups {
+  actor: VerificationQueue["actor"];
+  counts: VerificationQueue["counts"];
+  tab: VerificationTab;
+  page: number;
+  pageSize: number;
+  totalGroups: number;
+  companies: Array<{ id: string; name: string }>;
+  groups: VerificationGroup[];
+}

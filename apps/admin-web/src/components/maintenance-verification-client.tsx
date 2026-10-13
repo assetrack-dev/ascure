@@ -3,7 +3,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardCheck, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import {
@@ -25,6 +25,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import {
+  fetchVerificationGroups,
   fetchVerificationQueue,
   reassignCannotRepair,
   rejectRepair,
@@ -34,6 +35,9 @@ import {
 import type { AuthSession } from "@/types/auth";
 import type {
   RepairEvidence,
+  VerificationFilters,
+  VerificationGroup,
+  VerificationGroups,
   VerificationItem,
   VerificationQueue,
   VerificationTab,
@@ -270,7 +274,7 @@ function RepairCard({
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
           {!isClosed && canDecide ? (
             item.cannotRepair ? (
               <>
@@ -325,12 +329,33 @@ function RepairCard({
   );
 }
 
+function groupKey(group: Pick<VerificationGroup, "siteVisitId" | "company">) {
+  return `${group.siteVisitId}|${group.company.id}`;
+}
+
+function waitingFor(iso: string | null) {
+  if (!iso) return null;
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return "today";
+  return days === 1 ? "1 day" : `${days} days`;
+}
+
+const EMPTY_FILTERS: VerificationFilters = { search: "", organizationId: "", category: "", from: "", to: "" };
+
 function MaintenanceVerificationContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [tab, setTab] = useState<VerificationTab>("PENDING");
+  const [filters, setFilters] = useState<VerificationFilters>(EMPTY_FILTERS);
+  // Search is applied a moment after typing stops.
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(0);
+  const [groups, setGroups] = useState<VerificationGroups | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
   const [queue, setQueue] = useState<VerificationQueue | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingGroup, setIsLoadingGroup] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [action, setAction] = useState<{ kind: ActionKind; item: VerificationItem } | null>(null);
@@ -342,41 +367,102 @@ function MaintenanceVerificationContent() {
     router.replace("/login");
   }, [router]);
 
-  const loadQueue = useCallback(
-    async (token: string, nextTab: VerificationTab) => {
+  const fail = useCallback(
+    (loadError: unknown, fallback: string) => {
+      if (loadError instanceof ApiError && loadError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setError(loadError instanceof Error ? loadError.message : fallback);
+    },
+    [handleLogout],
+  );
+
+  const loadGroups = useCallback(
+    async (token: string) => {
       setIsLoading(true);
       setError("");
       try {
-        setQueue(await fetchVerificationQueue(token, nextTab));
+        setGroups(await fetchVerificationGroups(token, tab, filters, page));
       } catch (loadError) {
-        if (loadError instanceof ApiError && loadError.status === 401) {
-          handleLogout();
-          return;
-        }
-        setError(loadError instanceof Error ? loadError.message : "Unable to load repairs.");
+        fail(loadError, "Unable to load repairs.");
       } finally {
         setIsLoading(false);
       }
     },
-    [handleLogout],
+    [fail, filters, page, tab],
+  );
+
+  const loadGroup = useCallback(
+    async (token: string, key: string) => {
+      const [siteVisitId, organizationId] = key.split("|");
+      setIsLoadingGroup(true);
+      try {
+        setQueue(
+          await fetchVerificationQueue(token, tab, {
+            siteVisitId,
+            organizationId,
+            category: filters.category,
+            from: filters.from,
+            to: filters.to,
+          }),
+        );
+      } catch (loadError) {
+        fail(loadError, "Unable to load these repairs.");
+      } finally {
+        setIsLoadingGroup(false);
+      }
+    },
+    [fail, filters.category, filters.from, filters.to, tab],
   );
 
   useEffect(() => {
     const storedSession = readStoredSession();
     setSession(storedSession);
     if (storedSession?.token) {
-      void loadQueue(storedSession.token, tab);
+      void loadGroups(storedSession.token);
     }
-  }, [loadQueue, tab]);
+  }, [loadGroups]);
+
+  // Typing settles → apply the search (back to page 1).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFilters((current) => (current.search === searchInput ? current : { ...current, search: searchInput }));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  // Tab / filters change → page 1, nothing open.
+  useEffect(() => {
+    setPage(0);
+    setOpenKey(null);
+    setQueue(null);
+  }, [tab, filters]);
+
+  const toggleGroup = (group: VerificationGroup) => {
+    const key = groupKey(group);
+    if (openKey === key) {
+      setOpenKey(null);
+      setQueue(null);
+      return;
+    }
+    setOpenKey(key);
+    setQueue(null);
+    if (session?.token) void loadGroup(session.token, key);
+  };
 
   const tabOptions = useMemo(
     () => [
-      { value: "PENDING" as const, label: `Awaiting verification${queue ? ` (${queue.counts.pending})` : ""}` },
-      { value: "CANNOT_REPAIR" as const, label: `Cannot repair${queue ? ` (${queue.counts.cannotRepair})` : ""}` },
+      { value: "PENDING" as const, label: `Awaiting verification${groups ? ` (${groups.counts.pending})` : ""}` },
+      { value: "CANNOT_REPAIR" as const, label: `Cannot repair${groups ? ` (${groups.counts.cannotRepair})` : ""}` },
       { value: "CLOSED" as const, label: "Closed" },
     ],
-    [queue],
+    [groups],
   );
+
+  const activeFilterCount = [filters.organizationId, filters.category, filters.from, filters.to].filter(Boolean).length;
+  const setFilter = (key: keyof VerificationFilters, value: string) =>
+    setFilters((current) => ({ ...current, [key]: value }));
 
   const submitAction = async (text: string, companyId: string) => {
     const token = session?.token;
@@ -399,7 +485,8 @@ function MaintenanceVerificationContent() {
         setNotice("Handed to the new company.");
       }
       setAction(null);
-      await loadQueue(token, tab);
+      // Refresh the open group and the group counts.
+      await Promise.all([loadGroups(token), openKey ? loadGroup(token, openKey) : Promise.resolve()]);
     } catch (actionFailure) {
       if (actionFailure instanceof ApiError && actionFailure.status === 401) {
         handleLogout();
@@ -411,15 +498,17 @@ function MaintenanceVerificationContent() {
     }
   };
 
-  const roleChip = queue
-    ? queue.actor.kind === "MAIN_CONTRACTOR"
+  const actor = groups?.actor ?? queue?.actor ?? null;
+  const roleChip = actor
+    ? actor.kind === "MAIN_CONTRACTOR"
       ? "Main contractor"
-      : queue.actor.canVerify
-        ? queue.actor.kind === "TNB"
+      : actor.canVerify
+        ? actor.kind === "TNB"
           ? "TNB — can act"
           : "Admin"
         : "View only"
     : null;
+  const pages = groups ? Math.max(1, Math.ceil(groups.totalGroups / groups.pageSize)) : 1;
 
   return (
     <AppShell user={session?.user ?? null} onLogout={handleLogout}>
@@ -428,11 +517,11 @@ function MaintenanceVerificationContent() {
           <PageHeader
             eyebrow="Maintenance"
             title="Repair verification"
-            subtitle="Check each repair against its before / after photos, then verify it, send it back to the crew, or — for items the crew could not repair — decide what happens next."
-            chips={roleChip ? <Chip tone={queue?.actor.canVerify ? "brand" : "neutral"}>{roleChip}</Chip> : null}
+            subtitle="Repairs grouped by Pencawang and company. Open a group, check each repair against its before / after photos, then verify it or send it back to the crew."
+            chips={roleChip ? <Chip tone={actor?.canVerify ? "brand" : "neutral"}>{roleChip}</Chip> : null}
             actions={
               <Tbtn
-                onClick={() => (session?.token ? loadQueue(session.token, tab) : undefined)}
+                onClick={() => (session?.token ? loadGroups(session.token) : undefined)}
                 disabled={isLoading || !session?.token}
               >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
@@ -442,7 +531,87 @@ function MaintenanceVerificationContent() {
           />
 
           <div className="mt-6 space-y-4">
-            <Seg aria-label="Verification tab" options={tabOptions} value={tab} onChange={setTab} />
+            <div className="overflow-x-auto">
+              <Seg aria-label="Verification tab" options={tabOptions} value={tab} onChange={setTab} />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <input
+                type="search"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search Pencawang"
+                aria-label="Search Pencawang"
+                className={`${filterControlClass} min-w-[200px] flex-1`}
+              />
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                aria-expanded={filtersOpen}
+                className={`${filterControlClass} inline-flex items-center gap-1.5 font-semibold md:hidden`}
+              >
+                <SlidersHorizontal size={15} />
+                Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+              </button>
+              {/* Phones: folded behind the button above; md+: inline (plan §19, N49). */}
+              <div className={`${filtersOpen ? "flex" : "hidden"} w-full flex-wrap items-center gap-2.5 md:contents`}>
+                <select
+                  aria-label="Company"
+                  value={filters.organizationId ?? ""}
+                  onChange={(event) => setFilter("organizationId", event.target.value)}
+                  className={filterSelectClass}
+                >
+                  <option value="">All companies</option>
+                  {(groups?.companies ?? []).map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Work type"
+                  value={filters.category ?? ""}
+                  onChange={(event) => setFilter("category", event.target.value)}
+                  className={filterSelectClass}
+                >
+                  <option value="">All work types</option>
+                  {Object.entries(CATEGORY_LABEL).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--muted)]">
+                  {tab === "CLOSED" ? "Closed" : "Submitted"} from
+                  <input
+                    type="date"
+                    value={filters.from ?? ""}
+                    onChange={(event) => setFilter("from", event.target.value)}
+                    className={filterControlClass}
+                  />
+                </label>
+                <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--muted)]">
+                  to
+                  <input
+                    type="date"
+                    value={filters.to ?? ""}
+                    onChange={(event) => setFilter("to", event.target.value)}
+                    className={filterControlClass}
+                  />
+                </label>
+                {activeFilterCount > 0 || searchInput ? (
+                  <Tbtn
+                    variant="ghost"
+                    onClick={() => {
+                      setSearchInput("");
+                      setFilters(EMPTY_FILTERS);
+                    }}
+                  >
+                    Clear
+                  </Tbtn>
+                ) : null}
+              </div>
+            </div>
 
             {notice ? (
               <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-4 py-3 text-[13px] text-[var(--foreground-soft)]">
@@ -455,19 +624,108 @@ function MaintenanceVerificationContent() {
               </div>
             ) : null}
 
-            {queue && queue.tab === tab ? (
-              queue.items.length > 0 ? (
-                queue.items.map((item) => (
-                  <RepairCard
-                    key={item.id}
-                    item={item}
-                    queue={queue}
-                    onAction={(kind, target) => {
-                      setActionError("");
-                      setAction({ kind, item: target });
-                    }}
-                  />
-                ))
+            {groups && groups.tab === tab ? (
+              groups.groups.length > 0 ? (
+                <>
+                  <p className="text-[12.5px] text-[var(--muted)]">
+                    {groups.totalGroups.toLocaleString()} group{groups.totalGroups === 1 ? "" : "s"} · Pencawang +
+                    company
+                  </p>
+                  <ul className="space-y-2.5">
+                    {groups.groups.map((group) => {
+                      const key = groupKey(group);
+                      const isOpen = openKey === key;
+                      const waiting = waitingFor(tab === "CLOSED" ? null : group.oldestAt);
+                      return (
+                        <li
+                          key={key}
+                          className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-soft)]"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(group)}
+                            aria-expanded={isOpen}
+                            className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 text-left hover:bg-[var(--panel-muted)]"
+                          >
+                            <ChevronDown
+                              size={16}
+                              className={`shrink-0 text-[var(--muted)] transition-transform ${isOpen ? "rotate-180" : ""}`}
+                            />
+                            {/* Phones: the name takes the first line, chips wrap below. */}
+                            <div className="min-w-0 basis-[calc(100%-28px)] sm:flex-1 sm:basis-auto">
+                              <p className="truncate text-[14px] font-semibold text-[var(--foreground)]">
+                                {group.pencawangName || group.pencawangCode || "Unnamed Pencawang"}
+                              </p>
+                              <p className="truncate text-[12px] text-[var(--muted)]">
+                                {group.company.name}
+                                {group.mainhead ? ` · ${group.mainhead}` : ""}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 pl-7 sm:pl-0">
+                              {group.emergencies > 0 ? (
+                                <Chip tone="critical">
+                                  <AlertTriangle size={12} className="shrink-0" />
+                                  {group.emergencies} emergency
+                                </Chip>
+                              ) : null}
+                              {group.categories.map((category) => (
+                                <Chip key={category} tone="neutral">
+                                  {CATEGORY_LABEL[category] ?? category}
+                                </Chip>
+                              ))}
+                              <Chip tone={tab === "CLOSED" ? "success" : "brand"}>
+                                {group.count} {tab === "CLOSED" ? "closed" : "waiting"}
+                              </Chip>
+                              {waiting ? (
+                                <span className="text-[12px] text-[var(--muted)]">oldest {waiting}</span>
+                              ) : null}
+                            </div>
+                          </button>
+                          {isOpen ? (
+                            <div className="space-y-3 border-t border-[var(--line2)] bg-[var(--panel-muted)] p-3">
+                              {queue && !isLoadingGroup ? (
+                                queue.items.length > 0 ? (
+                                  queue.items.map((item) => (
+                                    <RepairCard
+                                      key={item.id}
+                                      item={item}
+                                      queue={queue}
+                                      onAction={(kind, target) => {
+                                        setActionError("");
+                                        setAction({ kind, item: target });
+                                      }}
+                                    />
+                                  ))
+                                ) : (
+                                  <p className="px-1 py-3 text-[13px] text-[var(--muted)]">
+                                    Nothing left in this group.
+                                  </p>
+                                )
+                              ) : (
+                                <p className="px-1 py-3 text-[13px] text-[var(--muted)]">Loading repairs…</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {pages > 1 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-[var(--muted)]">
+                      <span>
+                        Page {page + 1} of {pages}
+                      </span>
+                      <div className="flex gap-2">
+                        <Tbtn onClick={() => setPage(page - 1)} disabled={page === 0 || isLoading}>
+                          Previous
+                        </Tbtn>
+                        <Tbtn onClick={() => setPage(page + 1)} disabled={page >= pages - 1 || isLoading}>
+                          Next
+                        </Tbtn>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <Card className="px-5 py-12 text-center">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--panel-muted)] text-[var(--muted)]">
@@ -475,9 +733,11 @@ function MaintenanceVerificationContent() {
                   </div>
                   <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">Nothing here</p>
                   <p className="mt-1 text-[12.5px] text-[var(--muted)]">
-                    {tab === "CLOSED"
-                      ? "No closed Kejanggalan yet."
-                      : "Repairs appear here once a crew submits them."}
+                    {activeFilterCount > 0 || filters.search
+                      ? "No repairs match these filters."
+                      : tab === "CLOSED"
+                        ? "No closed Kejanggalan yet."
+                        : "Repairs appear here once a crew submits them."}
                   </p>
                 </Card>
               )
