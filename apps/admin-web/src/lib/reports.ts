@@ -26,6 +26,8 @@ export interface CrewPerformanceRow {
 }
 
 export interface CrewPerformance {
+  /** Absent from APIs before plan §19. */
+  tree?: SurveyTreeCompany[];
   period: string;
   from: string;
   to: string;
@@ -111,6 +113,8 @@ export interface MaintenancePerformanceRow {
 }
 
 export interface MaintenancePerformance {
+  /** Absent from APIs before plan §19. */
+  tree?: MaintenanceTreeCompany[];
   period: string;
   from: string;
   to: string;
@@ -404,46 +408,36 @@ export function fetchMaintenancePerformanceByDay(token: string, from: string, to
   );
 }
 
-export interface SurveyScopeTotals {
-  assetsInspected: number;
-  submittedInspections: number;
-  surveyors: number;
-}
+// ── Plan §19: Company → scope / work type → team drill-down ────────────────
 
-export interface SurveyScopes {
-  period: string;
-  company: { id: string; name: string } | null;
-  scopes: Array<SurveyScopeTotals & { scope: string; teams: Array<SurveyScopeTotals & { teamName: string }> }>;
-}
-
-export interface MaintenanceScopeTotals {
-  total: number;
-  todo: number;
-  inProgress: number;
-  awaiting: number;
-  closed: number;
+export interface MaintenanceTreeMetrics {
   repaired: number;
-  verified: number;
+  closed: number;
+  sentBack: number;
+  cannotRepair: number;
+  activeDays: number;
+  avgHoursToDone: number | null;
+  passRate: number | null;
+  onHand: number;
 }
 
-export interface MaintenanceScopes {
-  period: string;
-  company: { id: string; name: string } | null;
-  scopes: Array<
-    MaintenanceScopeTotals & { scope: string; teams: Array<MaintenanceScopeTotals & { teamName: string }> }
+export interface MaintenanceTreeCompany extends MaintenanceTreeMetrics {
+  companyId: string | null;
+  name: string;
+  categories: Array<
+    MaintenanceTreeMetrics & { category: string; teams: Array<MaintenanceTreeMetrics & { teamId: string; name: string }> }
   >;
 }
 
-export function fetchSurveyScopes(token: string, organizationId: string, from: string, to: string) {
-  return apiRequest<SurveyScopes>(
-    `/reports/crew-performance/scopes${periodQuery({ organizationId, from, to })}`,
-    { token },
-  );
+export interface SurveyTreeMetrics {
+  assetsInspected: number;
+  submittedInspections: number;
+  surveyors: number;
+  activeDays: number;
 }
 
-export function fetchMaintenanceScopes(token: string, organizationId: string, from: string, to: string) {
-  return apiRequest<MaintenanceScopes>(
-    `/reports/maintenance-performance/scopes${periodQuery({ organizationId, from, to })}`,
-    { token },
-  );
+export interface SurveyTreeCompany extends SurveyTreeMetrics {
+  companyId: string | null;
+  name: string;
+  scopes: Array<SurveyTreeMetrics & { scope: string; name: string; teams: Array<SurveyTreeMetrics & { name: string }> }>;
 }
