@@ -471,3 +471,65 @@ New `GET /maintenance-packages/overview` (board actors; COMPANY = own company, M
 5. Web: sidebar by mode + MC switch + home redirect.
 
 Each step can ship on its own. One additive migration (step 1) → prod `migrate deploy`. Deploy = API + admin picks, no APK. Before the switch-over (step 5), Admin sets `workMode` on every contractor company in prod.
+
+## 18. Manager progress view in the mobile app (owner, 2026-10-12)
+
+Today a contractor Manager on the phone only gets the crew's "My Pencawang packages" list: a "N to repair" chip per PE, no teams, no progress bar, no work-type breakdown, no filters. To see who is doing what, they have to open every Pencawang.
+
+| # | Decision |
+|---|---|
+| M43 | **Who:** contractor **MANAGER / SUPERVISOR** get a new **Pencawang progress** screen. Technicians keep "My Pencawang packages" unchanged. **Subcontractor** = its own teams. **Main Contractor** Manager = its own teams **and its subcontractors** (grouped by company → team). Supervisors view only. |
+| M44 | **Data = the web's board** (`GET /maintenance-packages/board`). Same scope rules as the web (§12, §15), so no new authorization. Cached for offline viewing; **assigning is online-only** ("Connect to assign"). |
+| M45 | **Assign from the phone:** tap a work-type row on a tile (or on the map card) → pick a team (SUB) or a subcontractor / team (MC); plus "Whole Pencawang → one team". ⚠ The app sends the **existing target date + notes unchanged** (the API clears them on an MC assign without them). Split by poles and bulk assign stay on the web for now. |
+| M46 | **Map of all assigned Pencawang:** clustered circle layer (never MarkerViews, see the mobile cluster lesson) coloured like the web (red not started · amber in progress · blue waiting TNB · green all closed; hollow = no team), label closed/total, locate-me. Tap → bottom card = the tile + Open + Assign. Filters are shared with the list. |
+| M47 | **By team tab** (SUB) / **By company tab** (MC, expands to teams): Pencawang on hand, still to repair, waiting TNB, closed, no team. Tap → the list filtered to it. Counts come from the board only (no "done this week", which would need another endpoint). |
+| M48 | **Ships as an APK only (v2.0.20):** the prod board already carries team + progress per work type (Deploy 201), so **no API deploy** is needed. Before release, check the board payload size for the largest prod Main Contractor (offline cache chunks rows >2 MB since v2.0.16). |
+
+### 18.1 Screen: Pencawang progress (tabs List · Map · Teams)
+
+- **Summary card:** % closed, waiting TNB, still to repair, overdue PEs, no team. Three work-type bars; tapping one filters every tab to that work type.
+- **Filter chips:** All · In progress · Not started · Waiting TNB · Done · Overdue · No team; team (or company) picker; search.
+- **Tile per PE:** name + status word; bar + `closed/total` + waiting TNB; one row per work type `Rentis · Team A · 5/8` (MC: `SubCo · Team A`); target date (red when overdue); pole count. Tap the tile → the existing Pencawang screen (poles, photos). Tap a work-type row → assign sheet (Managers only).
+- **Entry:** Home maintenance tile → this screen for Managers / Supervisors; the crew list stays one tap away ("My crew work").
+
+### 18.2 Mobile pieces
+
+- `src/maintenance/board.ts`: board types + helpers (port of the web's `laneCell` / state / progress).
+- `MaintenanceProgressScreen` (List / Map / Teams), `AssignLaneSheet` (bottom sheet: work type → destination, online-only).
+- `api.getMaintenanceBoard`, `api.assignMaintenancePackage` (POST `/maintenance-packages`, same body as the web).
+
+### 18.3 Build order
+
+1. Board types/helpers + List tab (summary, filters, tiles) + Home entry.
+2. Assign sheet (lane + whole PE), refresh after save.
+3. Map tab.
+4. Teams / companies tab.
+5. Trial APK (LAN) → owner device test as a SUB manager and an MC manager → official **v2.0.20** + release notes BM + EN.
+
+## 19. Maintenance web usability, TNB Supervisor, notifications, activity log, daily crew performance (owner, 2026-10-12/13)
+
+**Context that shapes everything:** TNB opens the console **on their phones**; `admin.ascure.com.my` is blocked on TNB laptops (worth asking TNB IT to whitelist it, outside our code). So every page touched here must work at phone width, not just shrink.
+
+| # | Decision |
+|---|---|
+| N49 | **Phone width first.** Every page in this section works at 375 px: wide tables become cards below 768 px, buttons are thumb-sized, filters fold into a sheet. |
+| N50 | **Buttons look like buttons.** Owner didn't know Poles / Report were clickable (ghost buttons read as text). Action column **pinned to the right edge**; Manage = solid; Poles / Report = outlined + icon; "+ Kejanggalan" → "⋯" menu. Same pass over Grid, Map panel, Repair Verification. |
+| N51 | **Emergency folds** into one red bar "⚠ N emergencies waiting for a company · Show" (hidden when none). Assign stays inside it on Maintenance Packages; the Maintenance page shows the same fold. |
+| N52 | **Maintenance Packages shorter:** KPIs + work-type bars in one compact strip with "Hide summary" (remembered); filters + table header stay pinned; **50 Pencawang per page**. "Another company" is relabelled to what it really is: **"Your poles: N (split) · Manage poles"** or **"Started by your crew: N"**, and own work shows own team. |
+| N53 | **Quick team assign in the Grid:** the old Maintenance page's per-work-type "Assign…" dropdown (owner: easier for subcontractors) goes **into each Grid cell**: pick a team → saved at once, "Saved · Undo". The old Maintenance page stays (cards folded into rows) until the owner OKs retiring it. |
+| N54 | **Repair Verification grouped:** one folded row per **Pencawang + company** ("PE BKT SEKILAU · Other Co · 12 waiting"); filters company / Pencawang / work type / submitted date; 20 groups per page with server paging (replaces the 200-item cap). Phone: one group at a time, swipe photos, big Verify / Send back. |
+| N55 | **TNB Supervisor rank** (Option 1 = rank order only, below Technician; no per-person link): new `ClientRank.SUPERVISOR` + table `ClientCompanyAccess` (user ↔ contractor company). Set by **Admin, TNB Technician, TNB Foreman** (user form + a Supervisors panel). **Their companies decide everything they see**: maintenance (Packages, Verification, Map) **and** surveys (Progress / Surveys / Asset Map = those companies' surveys). They may **verify, send back, re-open, decide cannot-repair**, and **assign / change Pencawang work only to or from their own companies** (or unassigned work on their Mainheads), never another company's. |
+| N56 | **Notifications:** 🔔 in the console (count + list) **and Web Push** on the phone (Add to Home screen + Allow; Android Chrome; iPhone iOS 16.4+ from the home screen), no app, no outside account (VAPID keys on the VPS). v1 event: **repairs submitted** → that company's TNB Supervisors (none set → the Mainhead's Foreman / Technician), **grouped per Pencawang + company** within 15 min ("Other Co submitted 12 repairs at PE BKT SEKILAU"). Tap → Repair Verification filtered to it. |
+| N57 | **Activity log (Admin only)**, for accountability, disputes and security audit. **Phase 1:** one feed from what is already recorded (Kejanggalan history, survey status changes, deletions): time · who · what · where, filters person / company / Pencawang / action / date, Excel export. **Phase 2:** new append-only `AuditEvent`: package assign / change / withdraw, pole splits, supervisor company access, user / company / rank changes, **logins (success + failed, device / browser)**. Never edited. **Retention:** work actions forever; logins 2 years (nightly prune). |
+| N58 | **Crew Performance by day:** period = **calendar from–to** + presets (Today, Yesterday, This week, Last 7 days, This month, Last month), both Survey and Maintenance tabs; a **By day** view (one row per day per person / team); the Maintenance tab gets the per-team daily drill the Survey tab already has. The API already takes any from / to. |
+
+### 19.1 Build order (each ships on its own)
+
+1. **N50 + N51 + N52 relabel**: web only.
+2. **N49 phone layouts + N53 + N54**: web + API paging for verification.
+3. **N58**: web + a small API addition (maintenance daily per team).
+4. **N55 Supervisor**: migration (enum value + table), scope rules across board / verification / client views, user form. Biggest.
+5. **N56 🔔 + Web Push**: migration (notifications + push subscriptions), service worker, VAPID env on the VPS.
+6. **N57 activity log**: Phase 1, then Phase 2 (migration).
+
+⚠ §17 steps 1–2 (company work mode + Grid, with 1 additive migration) are still dev-only: they ship with the first deploy of this batch.

@@ -10,14 +10,17 @@ import {
   CalendarClock,
   CheckCircle2,
   FileSpreadsheet,
+  FileText,
   Hourglass,
   LayoutGrid,
   Users,
   List,
   Map as MapIcon,
   MapPinOff,
+  MapPinned,
   PackageCheck,
   PackageOpen,
+  Plus,
   RefreshCw,
   SquareDashedMousePointer,
   X,
@@ -30,6 +33,7 @@ import { AddFindingDialog } from "@/components/maintenance-add-finding-dialog";
 import { PoleSplitDialog } from "@/components/maintenance-pole-split-dialog";
 import { RepairReportDialog } from "@/components/maintenance-repair-report-dialog";
 import { MaterialsSummaryDialog } from "@/components/materials-summary-dialog";
+import { EmergencyBar } from "@/components/emergency-bar";
 import {
   MaintenanceGrid,
   WorkTypeCell,
@@ -56,6 +60,9 @@ import {
   modalInputClass,
   modalLabelClass,
   modalSelectClass,
+  pinnedCellClass,
+  pinnedHeadClass,
+  RowMenu,
   routingMessage,
   routingParts,
 } from "@/components/maintenance-packages-shared";
@@ -343,6 +350,18 @@ function matchesSearch(row: PackagePencawang, search: string) {
   return [row.pencawangName, row.pencawangCode, row.mainhead?.name]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(query));
+}
+
+/**
+ * Poles of this PE given to the viewer's own company by a pole split (§12.6).
+ * A company sees a PE it cannot "Manage" only because of these, or because its
+ * crew had already started work that was later moved (plan §19, N52).
+ */
+function ownSplitPoles(row: PackagePencawang, board: MaintenancePackageBoard) {
+  const own = new Set(board.companies.map((company) => company.id));
+  return row.poleSplits
+    .filter((split) => own.has(split.organization.id))
+    .reduce((sum, split) => sum + split.poles, 0);
 }
 
 /** Can the actor act on this PE at all (whole, or at least one lane with work)? */
@@ -820,18 +839,19 @@ function EmergencyQueue({
 }) {
   const [picked, setPicked] = useState<Record<string, string>>({});
 
-  if (board.emergencies.length === 0) {
-    return null;
-  }
+  const count = board.emergencies.length;
+  const oldest = [...board.emergencies].sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
 
   return (
-    <Card padded={false} className="border-[var(--critical-border)]">
-      <div className="flex items-center gap-2 border-b border-[var(--line2)] px-4 py-3">
-        <AlertTriangle size={16} className="text-[var(--critical-text)]" />
-        <p className="text-[13px] font-semibold text-[var(--foreground)]">
-          Emergencies without a company ({board.emergencies.length})
-        </p>
-      </div>
+    <EmergencyBar
+      count={count}
+      title={`${count} emergenc${count === 1 ? "y" : "ies"} waiting for a company`}
+      detail={
+        oldest
+          ? `Oldest: ${oldest.asset.assetCode} · ${pencawangLabel(oldest)} · ${formatDate(oldest.createdAt)}`
+          : null
+      }
+    >
       <ul className="divide-y divide-[var(--line2)]">
         {board.emergencies.map((emergency) => {
           const destination = decodeDestination(picked[emergency.defectId] ?? "", board.teams);
@@ -874,7 +894,7 @@ function EmergencyQueue({
           );
         })}
       </ul>
-    </Card>
+    </EmergencyBar>
   );
 }
 
@@ -1200,10 +1220,12 @@ function MapView({
                 ))}
             </div>
             <div className="mt-2 flex gap-1">
-              <Tbtn variant="ghost" onClick={() => onOpenPoles(activeRow)}>
+              <Tbtn onClick={() => onOpenPoles(activeRow)}>
+                <MapPinned size={15} />
                 Poles
               </Tbtn>
-              <Tbtn variant="ghost" onClick={() => onReports([activeRow])}>
+              <Tbtn onClick={() => onReports([activeRow])} title="Laporan Pembaikan Kejanggalan (PDF)">
+                <FileText size={15} />
                 Report
               </Tbtn>
             </div>
@@ -1287,14 +1309,14 @@ function MapView({
                   <button
                     type="button"
                     onClick={() => onOpenPoles(row)}
-                    className="rounded px-1.5 py-0.5 text-[11.5px] font-semibold text-[var(--brand)] hover:underline"
+                    className="rounded-[6px] border border-[var(--line)] bg-[var(--panel)] px-2 py-0.5 text-[11.5px] font-semibold text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
                   >
                     Poles
                   </button>
                   <button
                     type="button"
                     onClick={() => onReports([row])}
-                    className="rounded px-1.5 py-0.5 text-[11.5px] font-semibold text-[var(--brand)] hover:underline"
+                    className="rounded-[6px] border border-[var(--line)] bg-[var(--panel)] px-2 py-0.5 text-[11.5px] font-semibold text-[var(--foreground-soft)] hover:bg-[var(--panel-muted)]"
                   >
                     Report
                   </button>
@@ -1932,7 +1954,7 @@ function MaintenancePackagesContent() {
                               <th className={tableHeadCellClass}>Work types</th>
                               <th className={tableHeadCellClass}>Company / team</th>
                               <th className={tableHeadCellClass}>Target</th>
-                              <th className={tableHeadCellClass} aria-label="Actions" />
+                              <th className={`${tableHeadCellClass} ${pinnedHeadClass}`} aria-label="Actions" />
                             </tr>
                           </thead>
                           <tbody>
@@ -1941,7 +1963,7 @@ function MaintenancePackagesContent() {
                               const selectable = isSelectable(row);
                               const due = dueInfo(row, board);
                               return (
-                                <tr key={row.siteVisitId} className={tableRowClass}>
+                                <tr key={row.siteVisitId} className={`group ${tableRowClass}`}>
                                   {board.canAssign ? (
                                     <td className="w-10 px-3.5">
                                       <input
@@ -2012,40 +2034,56 @@ function MaintenancePackagesContent() {
                                       "—"
                                     )}
                                   </td>
-                                  <td className={`${tableCellClass} whitespace-nowrap text-right`}>
-                                    <Tbtn variant="ghost" onClick={() => setPoleRow(original(row))} className="mr-1">
-                                      Poles
-                                    </Tbtn>
-                                    <Tbtn
-                                      variant="ghost"
-                                      onClick={() => setReportRows([original(row)])}
-                                      className="mr-1"
-                                      title="Laporan Pembaikan Kejanggalan (PDF)"
-                                    >
-                                      Report
-                                    </Tbtn>
-                                    {board.canAssign ? (
-                                      <Tbtn
-                                        variant="ghost"
-                                        onClick={() => setFindingRow(original(row))}
-                                        className="mr-1"
-                                        title="Add a Kejanggalan found after the survey"
-                                      >
-                                        + Kejanggalan
+                                  <td className={`${tableCellClass} ${pinnedCellClass} whitespace-nowrap`}>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <Tbtn onClick={() => setPoleRow(original(row))} title="Poles of this Pencawang">
+                                        <MapPinned size={15} />
+                                        Poles
                                       </Tbtn>
-                                    ) : null}
-                                    {board.canAssign && selectable ? (
                                       <Tbtn
-                                        variant={row.packages.length === 0 ? "primary" : "secondary"}
-                                        onClick={() => openLaneDialog(original(row), null)}
+                                        onClick={() => setReportRows([original(row)])}
+                                        title="Laporan Pembaikan Kejanggalan (PDF)"
                                       >
-                                        {row.packages.length === 0 ? "Assign" : "Manage"}
+                                        <FileText size={15} />
+                                        Report
                                       </Tbtn>
-                                    ) : board.canAssign ? (
-                                      <span className="text-[12px] text-[var(--muted)]">
-                                        {isCompany ? "Another company" : "TNB only"}
-                                      </span>
-                                    ) : null}
+                                      {board.canAssign ? (
+                                        <RowMenu
+                                          items={[
+                                            {
+                                              label: "Add Kejanggalan",
+                                              icon: <Plus size={15} />,
+                                              title: "Add a Kejanggalan found after the survey",
+                                              onClick: () => setFindingRow(original(row)),
+                                            },
+                                          ]}
+                                        />
+                                      ) : null}
+                                      {board.canAssign && selectable ? (
+                                        <Tbtn variant="primary" onClick={() => openLaneDialog(original(row), null)}>
+                                          {row.packages.length === 0 ? "Assign" : "Manage"}
+                                        </Tbtn>
+                                      ) : board.canAssign && isCompany ? (
+                                        ownSplitPoles(row, board) > 0 ? (
+                                          <Tbtn
+                                            variant="primary"
+                                            onClick={() => setPoleRow(original(row))}
+                                            title="TNB or your main contractor gave your company some poles of this Pencawang — choose which of your teams does them"
+                                          >
+                                            Your poles: {ownSplitPoles(row, board)} · Manage
+                                          </Tbtn>
+                                        ) : (
+                                          <span
+                                            className="text-[12px] text-[var(--muted)]"
+                                            title="Your crew had already started this work before it was moved to another company, so it stays with them."
+                                          >
+                                            Started by your crew
+                                          </span>
+                                        )
+                                      ) : board.canAssign ? (
+                                        <span className="text-[12px] text-[var(--muted)]">TNB only</span>
+                                      ) : null}
+                                    </div>
                                   </td>
                                 </tr>
                               );

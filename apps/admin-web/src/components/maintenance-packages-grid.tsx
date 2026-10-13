@@ -1,12 +1,14 @@
 "use client";
 
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, FileText, MapPinned } from "lucide-react";
 import {
   CATEGORY_LABEL,
   PROGRESS_PARTS,
   checkboxClass,
   formatDate,
   pencawangLabel,
+  pinnedCellClass,
+  pinnedHeadClass,
   progressOf,
   startOfToday,
 } from "@/components/maintenance-packages-shared";
@@ -52,7 +54,24 @@ export function laneCell(
   const isCompany = board.actorKind === "COMPANY";
   const own = new Set(board.companies.map((company) => company.id));
 
-  const owner = !lane.organization
+  // A company sees a lane another company holds only for its own split poles
+  // or work its crew had already started before the move (plan §19, N52).
+  const ownSplits = row.poleSplits.filter(
+    (split) =>
+      (split.category === category || split.category === null) && own.has(split.organization.id),
+  );
+  const foreignLane = isCompany && lane.organization !== null && !own.has(lane.organization.id);
+  const owner = foreignLane
+    ? {
+        owner:
+          ownSplits.length > 0
+            ? `Your poles: ${ownSplits
+                .map((split) => `${split.team?.name ?? "no team"} ${split.poles}`)
+                .join(", ")}`
+            : "Started by your crew",
+        ownerTone: "team" as const,
+      }
+    : !lane.organization
     ? { owner: "No company yet", ownerTone: "noCompany" as const }
     : lane.team
       ? {
@@ -81,7 +100,7 @@ export function laneCell(
     noTeam: lane.noTeam ?? 0,
     dueDate,
     overdue: dueDate !== null && lane.open > 0 && new Date(dueDate).getTime() < startOfToday(),
-    splits: row.poleSplits
+    splits: (foreignLane ? [] : row.poleSplits)
       .filter((split) => split.category === category || split.category === null)
       .filter((split) => !isCompany || own.has(split.organization.id))
       .map((split) => ({
@@ -252,14 +271,14 @@ export function MaintenanceGrid({
               </th>
             ))}
             <th className={`${tableHeadCellClass} w-[110px]`}>Total</th>
-            <th className={tableHeadCellClass} aria-label="Actions" />
+            <th className={`${tableHeadCellClass} ${pinnedHeadClass}`} aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => {
             const total = rowProgress(row, categories, board);
             return (
-              <tr key={row.siteVisitId} className={`${tableRowClass} align-top`}>
+              <tr key={row.siteVisitId} className={`group ${tableRowClass} align-top`}>
                 {board.canAssign ? (
                   <td className="w-10 px-3.5 pt-4">
                     <input
@@ -300,17 +319,17 @@ export function MaintenanceGrid({
                     {total.awaiting > 0 ? ` · ${total.awaiting} waiting` : ""}
                   </div>
                 </td>
-                <td className={`${tableCellClass} whitespace-nowrap text-right`}>
-                  <Tbtn variant="ghost" onClick={() => onOpenPoles(row)} className="mr-1">
-                    Poles
-                  </Tbtn>
-                  <Tbtn
-                    variant="ghost"
-                    onClick={() => onReport(row)}
-                    title="Laporan Pembaikan Kejanggalan (PDF)"
-                  >
-                    Report
-                  </Tbtn>
+                <td className={`${tableCellClass} ${pinnedCellClass} whitespace-nowrap`}>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Tbtn onClick={() => onOpenPoles(row)} title="Poles of this Pencawang">
+                      <MapPinned size={15} />
+                      Poles
+                    </Tbtn>
+                    <Tbtn onClick={() => onReport(row)} title="Laporan Pembaikan Kejanggalan (PDF)">
+                      <FileText size={15} />
+                      Report
+                    </Tbtn>
+                  </div>
                 </td>
               </tr>
             );
