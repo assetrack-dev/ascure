@@ -721,7 +721,9 @@ function UserFormModal({
               </select>
               <span className="mt-1.5 block text-[12px] text-[var(--muted)]">
                 Foreman and Technician can assign Pencawang to maintenance companies, verify or
-                re-open repairs, and decide cannot-repair items. Engineer is view only.
+                re-open repairs, and decide cannot-repair items. Supervisor does the same, but only
+                for the contractor companies given to them on the TNB Supervisors page. Engineer is
+                view only.
               </span>
             </label>
           ) : null}

@@ -55,6 +55,9 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     canViewMaintenancePackages:
       "canViewMaintenancePackages" in user ? user.canViewMaintenancePackages : undefined,
     workMode: "workMode" in user ? user.workMode : undefined,
+    isClientSupervisor: "isClientSupervisor" in user ? user.isClientSupervisor : undefined,
+    canManageClientSupervisors:
+      "canManageClientSupervisors" in user ? user.canManageClientSupervisors : undefined,
   };
 }
 

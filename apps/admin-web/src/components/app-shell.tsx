@@ -66,6 +66,8 @@ type NavItem = {
   requiresRepairVerification?: boolean;
   /** Server flag canViewMaintenancePackages: + any contractor Manager / Supervisor (plan §15). */
   requiresMaintenancePackages?: boolean;
+  /** Plan §19 (N55): ADMIN or TNB Foreman / Technician — the TNB Supervisors page. */
+  requiresManageClientSupervisors?: boolean;
   /** Admin config surface — collapsed under the "Setup" group in the sidebar. */
   group?: "setup";
   /** Kept in code but removed from the nav (pending deletion). */
@@ -111,6 +113,13 @@ const MANAGER_NAV_HREFS = new Set<string>([
 // "/maintenance-packages" is TNB's hand-off of surveyed Pencawang to maintenance
 // companies; every TNB rank sees it, only Foreman/Technician can act (API-enforced).
 // "/maintenance-verification" is where TNB signs off (or re-opens) repairs.
+// A TNB Supervisor (plan §19, N55): only the maintenance work of its companies —
+// the survey views follow later (step 4c; the API refuses them meanwhile).
+const CLIENT_SUPERVISOR_NAV_HREFS = new Set<string>([
+  "/maintenance-packages",
+  "/maintenance-verification",
+]);
+
 const CLIENT_NAV_HREFS = new Set<string>([
   "/progress",
   "/visits",
@@ -207,6 +216,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     },
     // Admin — people, then the collapsed Setup config group.
     { href: "/users", label: "Users", icon: Users, section: "admin", requiresManageUsers: true },
+    {
+      href: "/tnb-supervisors",
+      label: "TNB Supervisors",
+      icon: ShieldCheck,
+      section: "admin",
+      requiresManageClientSupervisors: true,
+    },
     { href: "/organizations", label: "Organizations", icon: Building2, section: "admin", adminOnly: true, group: "setup" },
     { href: "/operational-regions", label: "Regions", icon: MapPinned, section: "admin", adminOnly: true, group: "setup" },
     { href: "/mainheads", label: "Mainheads", icon: Network, section: "admin", adminOnly: true, group: "setup" },
@@ -241,8 +257,16 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       return false;
     }
 
+    // The TNB Supervisors page: ADMIN + TNB Foreman / Technician.
+    if (item.requiresManageClientSupervisors) {
+      return user?.canManageClientSupervisors === true;
+    }
+
     // CLIENT VIEWER (TNB): closed allow-list — the progress view only.
     if (user?.isClientViewer === true && user?.role !== "ADMIN") {
+      if (user?.isClientSupervisor === true) {
+        return CLIENT_SUPERVISOR_NAV_HREFS.has(item.href);
+      }
       return CLIENT_NAV_HREFS.has(item.href);
     }
 

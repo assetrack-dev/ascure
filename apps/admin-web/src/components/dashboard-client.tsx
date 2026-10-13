@@ -569,7 +569,7 @@ function DashboardContent() {
       storedSession?.user?.isClientViewer === true &&
       storedSession.user.role !== "ADMIN"
     ) {
-      router.replace("/progress");
+      router.replace(storedSession.user.isClientSupervisor ? "/maintenance-packages" : "/progress");
       return;
     }
     if (storedSession?.token) {
