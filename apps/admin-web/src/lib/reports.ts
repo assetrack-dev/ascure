@@ -17,6 +17,8 @@ export interface CrewPerformanceRow {
   role: string | null;
   teamName: string | null;
   companyName: string | null;
+  /** Absent from APIs before plan §19. */
+  companyId?: string | null;
   assetsInspected: number;
   submittedInspections: number;
   visits: number;
@@ -94,6 +96,8 @@ export interface MaintenancePerformanceRow {
   teamId: string;
   teamName: string;
   companyName: string | null;
+  /** Absent from APIs before plan §19. */
+  companyId?: string | null;
   repaired: number;
   closed: number;
   sentBack: number;
@@ -353,4 +357,93 @@ export function triggerBrowserDownload(blob: Blob, filename: string): void {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Plan §19 (N58): by day + progress by scope ─────────────────────────────
+
+function periodQuery(params: Record<string, string | undefined>) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (value) search.set(key, value);
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+export interface SurveyDayRow {
+  date: string;
+  userId: string;
+  name: string;
+  teamName: string | null;
+  companyName: string | null;
+  companyId: string | null;
+  assetsInspected: number;
+  submittedInspections: number;
+}
+
+export interface MaintenanceDayRow {
+  date: string;
+  teamId: string;
+  teamName: string;
+  companyName: string | null;
+  companyId: string | null;
+  repaired: number;
+  cannotRepair: number;
+  closed: number;
+}
+
+export function fetchCrewPerformanceByDay(token: string, from: string, to: string) {
+  return apiRequest<{ period: string; rows: SurveyDayRow[] }>(
+    `/reports/crew-performance/by-day${periodQuery({ from, to })}`,
+    { token },
+  );
+}
+
+export function fetchMaintenancePerformanceByDay(token: string, from: string, to: string) {
+  return apiRequest<{ period: string; rows: MaintenanceDayRow[] }>(
+    `/reports/maintenance-performance/by-day${periodQuery({ from, to })}`,
+    { token },
+  );
+}
+
+export interface SurveyScopeTotals {
+  assetsInspected: number;
+  submittedInspections: number;
+  surveyors: number;
+}
+
+export interface SurveyScopes {
+  period: string;
+  company: { id: string; name: string } | null;
+  scopes: Array<SurveyScopeTotals & { scope: string; teams: Array<SurveyScopeTotals & { teamName: string }> }>;
+}
+
+export interface MaintenanceScopeTotals {
+  total: number;
+  todo: number;
+  inProgress: number;
+  awaiting: number;
+  closed: number;
+  repaired: number;
+  verified: number;
+}
+
+export interface MaintenanceScopes {
+  period: string;
+  company: { id: string; name: string } | null;
+  scopes: Array<
+    MaintenanceScopeTotals & { scope: string; teams: Array<MaintenanceScopeTotals & { teamName: string }> }
+  >;
+}
+
+export function fetchSurveyScopes(token: string, organizationId: string, from: string, to: string) {
+  return apiRequest<SurveyScopes>(
+    `/reports/crew-performance/scopes${periodQuery({ organizationId, from, to })}`,
+    { token },
+  );
+}
+
+export function fetchMaintenanceScopes(token: string, organizationId: string, from: string, to: string) {
+  return apiRequest<MaintenanceScopes>(
+    `/reports/maintenance-performance/scopes${periodQuery({ organizationId, from, to })}`,
+    { token },
+  );
 }

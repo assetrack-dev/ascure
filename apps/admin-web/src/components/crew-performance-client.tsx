@@ -14,13 +14,26 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import { CrewDailyModal } from "@/components/crew-daily-modal";
+import {
+  MaintenanceByDayTable,
+  PeriodPicker,
+  ScopePanel,
+  SurveyByDayTable,
+  TeamDailyPanel,
+  presetPeriod,
+  type Period,
+} from "@/components/crew-performance-extras";
 import { Card, CardHead, PageHeader, Seg, Tbtn, filterSelectClass } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import {
   downloadCrewPerformance,
   downloadMaintenancePerformance,
   fetchCrewPerformance,
+  fetchCrewPerformanceByDay,
   fetchMaintenancePerformance,
+  fetchMaintenancePerformanceByDay,
+  type MaintenanceDayRow,
+  type SurveyDayRow,
   type CrewPerformance,
   type CrewPerformanceRow,
   type MaintenancePerformance,
@@ -28,21 +41,9 @@ import {
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
 import type { AuthSession } from "@/types/auth";
 
-function currentMonthValue(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthRange(month: string): { from: string; to: string } {
-  const [yearStr, monthStr] = month.split("-");
-  const year = Number(yearStr);
-  const monthIndex = Number(monthStr) - 1;
-  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
-  return {
-    from: `${month}-01`,
-    to: `${month}-${String(lastDay).padStart(2, "0")}`,
-  };
-}
+/** Clickable names in the tables: dotted underline, brand on hover. */
+const linkButtonClass =
+  "rounded-sm text-left underline decoration-[var(--line)] decoration-dotted underline-offset-4 outline-none transition hover:text-[var(--brand)] hover:decoration-[var(--brand)] focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
 
 function requestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -153,7 +154,14 @@ function FleetStat({
 
 function CrewPerformanceContent() {
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [month, setMonth] = useState<string>(currentMonthValue());
+  // Plan §19 (N58): any calendar period, default this month.
+  const [period, setPeriod] = useState<Period>(() => presetPeriod("THIS_MONTH"));
+  const month = period.from.slice(0, 7);
+  const [view, setView] = useState<"SUMMARY" | "BY_DAY">("SUMMARY");
+  const [surveyDays, setSurveyDays] = useState<SurveyDayRow[] | null>(null);
+  const [maintenanceDays, setMaintenanceDays] = useState<MaintenanceDayRow[] | null>(null);
+  const [scopeCompany, setScopeCompany] = useState<{ id: string; name: string } | null>(null);
+  const [dailyTeam, setDailyTeam] = useState<{ teamId: string; teamName: string } | null>(null);
   const [data, setData] = useState<CrewPerformance | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -174,10 +182,10 @@ function CrewPerformanceContent() {
   }, []);
 
   const load = useCallback(
-    async (token: string, selectedMonth: string) => {
+    async (token: string, range: Period) => {
       setIsLoading(true);
       setError("");
-      const { from, to } = monthRange(selectedMonth);
+      const { from, to } = range;
       try {
         setData(await fetchCrewPerformance(token, from, to));
       } catch (loadError) {
@@ -200,10 +208,10 @@ function CrewPerformanceContent() {
   );
 
   const loadMaintenance = useCallback(
-    async (token: string, selectedMonth: string) => {
+    async (token: string, range: Period) => {
       setMaintenanceLoading(true);
       setError("");
-      const { from, to } = monthRange(selectedMonth);
+      const { from, to } = range;
       try {
         setMaintenance(await fetchMaintenancePerformance(token, from, to));
       } catch (loadError) {
@@ -229,19 +237,60 @@ function CrewPerformanceContent() {
     }
     const startTab = initialTab();
     setTab(startTab);
-    void load(stored.token, currentMonthValue());
+    void load(stored.token, presetPeriod("THIS_MONTH"));
     if (startTab === "MAINTENANCE") {
-      void loadMaintenance(stored.token, currentMonthValue());
+      void loadMaintenance(stored.token, presetPeriod("THIS_MONTH"));
     }
   }, [load, loadMaintenance]);
 
-  const onMonthChange = (value: string) => {
-    setMonth(value);
+  /** By-day rows for one crew type (null while loading). */
+  const loadDays = useCallback(
+    async (token: string, kind: Tab, range: Period) => {
+      try {
+        if (kind === "MAINTENANCE") {
+          setMaintenanceDays(null);
+          setMaintenanceDays((await fetchMaintenancePerformanceByDay(token, range.from, range.to)).rows);
+        } else {
+          setSurveyDays(null);
+          setSurveyDays((await fetchCrewPerformanceByDay(token, range.from, range.to)).rows);
+        }
+      } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          handleLogout();
+          return;
+        }
+        setError(requestErrorMessage(loadError, "Unable to load the day-by-day numbers."));
+        if (kind === "MAINTENANCE") setMaintenanceDays([]);
+        else setSurveyDays([]);
+      }
+    },
+    [handleLogout],
+  );
+
+  const onPeriodChange = (next: Period) => {
+    setPeriod(next);
+    // Day rows belong to the old period now.
+    setSurveyDays(null);
+    setMaintenanceDays(null);
     const token = session?.token;
-    if (token && value) {
-      void load(token, value);
-      if (tab === "MAINTENANCE") void loadMaintenance(token, value);
+    if (token) {
+      void load(token, next);
+      if (tab === "MAINTENANCE") void loadMaintenance(token, next);
+      if (view === "BY_DAY") void loadDays(token, tab, next);
     }
+  };
+
+  const onViewChange = (next: "SUMMARY" | "BY_DAY") => {
+    setView(next);
+    const token = session?.token;
+    if (next === "BY_DAY" && token && (tab === "MAINTENANCE" ? !maintenanceDays : !surveyDays)) {
+      void loadDays(token, tab, period);
+    }
+  };
+
+  const openTeamDaily = (team: { teamId: string; teamName: string }) => {
+    setDailyTeam(team);
+    if (!maintenanceDays && session?.token) void loadDays(session.token, "MAINTENANCE", period);
   };
 
   const onTabChange = (value: Tab) => {
@@ -251,7 +300,10 @@ function CrewPerformanceContent() {
     else url.searchParams.delete("tab");
     window.history.replaceState(null, "", url.toString());
     if (value === "MAINTENANCE" && session?.token && !maintenance) {
-      void loadMaintenance(session.token, month);
+      void loadMaintenance(session.token, period);
+    }
+    if (view === "BY_DAY" && session?.token && (value === "MAINTENANCE" ? !maintenanceDays : !surveyDays)) {
+      void loadDays(session.token, value, period);
     }
   };
 
@@ -262,7 +314,7 @@ function CrewPerformanceContent() {
     }
     setIsDownloading(true);
     setError("");
-    const { from, to } = monthRange(month);
+    const { from, to } = period;
     try {
       if (tab === "MAINTENANCE") await downloadMaintenancePerformance(token, from, to);
       else await downloadCrewPerformance(token, from, to);
@@ -289,6 +341,16 @@ function CrewPerformanceContent() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [allRows, allTeams, tab]);
   const multiCompany = companies.length > 1;
+  // Plan §19: the company "Progress by scope" opens for — the filtered one, or
+  // the only one in view.
+  const scopeTarget = useMemo(() => {
+    const source = tab === "MAINTENANCE" ? allTeams : allRows;
+    const wanted =
+      companyFilter !== "ALL" ? companyFilter : companies.length === 1 ? companies[0] : null;
+    if (!wanted) return null;
+    const row = source.find((candidate) => (candidate.companyName ?? UNTEAMED_COMPANY) === wanted);
+    return row?.companyId ? { id: row.companyId, name: wanted } : null;
+  }, [allRows, allTeams, companies, companyFilter, tab]);
   // A month change can drop the filtered company from the payload — fall back
   // to ALL instead of showing a silently empty table.
   useEffect(() => {
@@ -382,16 +444,21 @@ function CrewPerformanceContent() {
                     </select>
                   </>
                 ) : null}
-                <label className="sr-only" htmlFor="crew-month">
-                  Month
-                </label>
-                <input
-                  id="crew-month"
-                  type="month"
-                  value={month}
-                  onChange={(event) => onMonthChange(event.target.value)}
-                  className={filterSelectClass}
+                <PeriodPicker value={period} onChange={onPeriodChange} />
+                <Seg
+                  aria-label="View"
+                  options={[
+                    { value: "SUMMARY", label: "Summary" },
+                    { value: "BY_DAY", label: "By day" },
+                  ]}
+                  value={view}
+                  onChange={onViewChange}
                 />
+                {scopeTarget ? (
+                  <Tbtn onClick={() => setScopeCompany(scopeTarget)}>
+                    {isMaintenance ? "Progress by work type" : "Progress by scope"}
+                  </Tbtn>
+                ) : null}
                 <Tbtn
                   variant="primary"
                   onClick={() => void handleDownload()}
@@ -410,7 +477,33 @@ function CrewPerformanceContent() {
             </div>
           ) : null}
 
-          {isMaintenance ? (
+          {view === "BY_DAY" ? (
+            <Card padded={false} className="mt-6">
+              <div className="border-b border-[var(--line2)] p-[18px]">
+                <CardHead
+                  title={isMaintenance ? "Maintenance teams · day by day" : "Crew · day by day"}
+                  hint={isMaintenance ? "Repaired, cannot repair and verified per team per day" : "Poles surveyed per person per day"}
+                />
+              </div>
+              {(isMaintenance ? maintenanceDays : surveyDays) === null ? (
+                <p className="px-4 py-10 text-center text-[13px] text-[var(--muted)]">Loading…</p>
+              ) : isMaintenance ? (
+                <MaintenanceByDayTable
+                  rows={(maintenanceDays ?? []).filter(
+                    (row) => companyFilter === "ALL" || (row.companyName ?? UNTEAMED_COMPANY) === companyFilter,
+                  )}
+                  showCompany={multiCompany}
+                />
+              ) : (
+                <SurveyByDayTable
+                  rows={(surveyDays ?? []).filter(
+                    (row) => companyFilter === "ALL" || (row.companyName ?? UNTEAMED_COMPANY) === companyFilter,
+                  )}
+                  showCompany={multiCompany}
+                />
+              )}
+            </Card>
+          ) : isMaintenance ? (
             <div className="mt-6 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
               {/* Per TEAM (owner: maintenance crews work as a team). */}
               <Card padded={false}>
@@ -472,11 +565,29 @@ function CrewPerformanceContent() {
                               </span>
                             </td>
                             <td className="px-3.5 py-3 text-[13px] font-semibold text-[var(--foreground)]">
-                              {row.teamName}
+                              <button
+                                type="button"
+                                onClick={() => openTeamDaily({ teamId: row.teamId, teamName: row.teamName })}
+                                title="Day by day"
+                                className={linkButtonClass}
+                              >
+                                {row.teamName}
+                              </button>
                             </td>
                             {multiCompany ? (
                               <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
-                                {row.companyName ?? "—"}
+                                {row.companyId && row.companyName ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setScopeCompany({ id: row.companyId!, name: row.companyName! })}
+                                    title="Progress by work type"
+                                    className={linkButtonClass}
+                                  >
+                                    {row.companyName}
+                                  </button>
+                                ) : (
+                                  row.companyName ?? "—"
+                                )}
                               </td>
                             ) : null}
                             <td className="px-3.5 py-3 text-right font-mono text-[12.5px] font-bold tabular-nums text-[var(--foreground)]">
@@ -613,7 +724,18 @@ function CrewPerformanceContent() {
                             </td>
                             {multiCompany ? (
                               <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
-                                {row.companyName ?? "—"}
+                                {row.companyId && row.companyName ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setScopeCompany({ id: row.companyId!, name: row.companyName! })}
+                                    title="Progress by scope"
+                                    className={linkButtonClass}
+                                  >
+                                    {row.companyName}
+                                  </button>
+                                ) : (
+                                  row.companyName ?? "—"
+                                )}
                               </td>
                             ) : null}
                             <td className="px-3.5 py-3 text-[13px] text-[var(--foreground-soft)]">
@@ -667,6 +789,24 @@ function CrewPerformanceContent() {
 
         {/* Daily drill-down — click a name for the per-day bar chart +
             attendance gaps; month steps independently of the page month. */}
+        {scopeCompany && session?.token ? (
+          <ScopePanel
+            token={session.token}
+            kind={tab}
+            company={scopeCompany}
+            period={period}
+            onClose={() => setScopeCompany(null)}
+            onUnauthorized={handleLogout}
+          />
+        ) : null}
+        {dailyTeam ? (
+          <TeamDailyPanel
+            team={dailyTeam}
+            rows={maintenanceDays}
+            period={period}
+            onClose={() => setDailyTeam(null)}
+          />
+        ) : null}
         {dailyUser && session?.token ? (
           <CrewDailyModal
             token={session.token}
