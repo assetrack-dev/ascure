@@ -7,6 +7,7 @@ import {
   ScopeContext,
 } from '../common/authorization/scope-context';
 import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
+import { resolveClientSupervisorCompanyIds } from '../common/authorization/client-maintenance-actor';
 import { isSurveyFinished } from '../common/client-visibility';
 import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
@@ -97,6 +98,12 @@ export class ClientProgressService {
       throw new ForbiddenException(
         'This view is only available to a client organization.',
       );
+    }
+
+    // Plan §19 (N55): a TNB Supervisor's survey view will follow its companies
+    // (step 4c). Until then it gets none, rather than every Mainhead's surveys.
+    if ((await resolveClientSupervisorCompanyIds(this.prisma, user)) !== null) {
+      throw new ForbiddenException('The survey views are not available to TNB Supervisors yet.');
     }
 
     return { ctx, mainheadIds: ctx.clientMainheadIds };

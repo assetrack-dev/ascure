@@ -21,7 +21,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { buildScopeContext } from '../common/authorization/scope-context';
-import { isClientMaintenanceActor } from '../common/authorization/client-maintenance-actor';
+import {
+  isClientMaintenanceActor,
+  resolveClientSupervisorCompanyIds,
+} from '../common/authorization/client-maintenance-actor';
 import { resolveMainContractorOrgIds } from '../common/authorization/maintenance-closure';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
@@ -110,6 +113,12 @@ type ActorScope = {
    */
   orgIds: string[] | null;
   canAssign: boolean;
+  /**
+   * Plan §19 (N55) — a TNB Supervisor: sees only its companies' work (plus
+   * Pencawang on its Mainheads nobody has been given yet), never another
+   * company's lanes the way a Main Contractor does.
+   */
+  ownWorkOnly?: boolean;
 };
 
 type PackageOwner = {
@@ -268,6 +277,18 @@ export class MaintenancePackagesService {
       );
     }
 
+    // A TNB Supervisor acts only for its assigned companies (fails closed: none → nothing).
+    const supervisorCompanyIds = await resolveClientSupervisorCompanyIds(this.prisma, user);
+    if (supervisorCompanyIds) {
+      return {
+        kind: 'TNB',
+        mainheadIds: ctx.clientMainheadIds,
+        orgIds: supervisorCompanyIds,
+        canAssign: true,
+        ownWorkOnly: true,
+      };
+    }
+
     return {
       kind: 'TNB',
       mainheadIds: ctx.clientMainheadIds,
@@ -323,12 +344,20 @@ export class MaintenancePackagesService {
     return actor.orgIds === null || actor.orgIds.includes(organizationId);
   }
 
-  /** A PE shows on the actor's board: its Mainheads, or (MC) routed into its group. */
+  /** A PE shows on the actor's board: its Mainheads, or (MC / Supervisor) routed into its group. */
   private visitVisible(
     actor: ActorScope,
     mainheadId: string | null,
     packages: Array<{ maintenanceOrganizationId: string }>,
   ): boolean {
+    // A TNB Supervisor: its companies' PEs, or untouched PEs on its Mainheads (§19, N55).
+    if (actor.ownWorkOnly) {
+      return (
+        this.inScope(actor, mainheadId) &&
+        (packages.length === 0 ||
+          packages.some((pkg) => this.ownsCompany(actor, pkg.maintenanceOrganizationId)))
+      );
+    }
     if (this.inScope(actor, mainheadId)) {
       return true;
     }
@@ -382,10 +411,28 @@ export class MaintenancePackagesService {
       return { ...header, emergencies: [], pencawangs: [] };
     }
 
-    // An MC also sees PEs routed into its group outside its own Mainheads.
+    // An MC also sees PEs routed into its group outside its own Mainheads. A TNB
+    // Supervisor sees its companies' PEs + PEs on its Mainheads nobody has yet.
     const scopeSql =
       actor.mainheadIds === null
         ? Prisma.empty
+        : actor.ownWorkOnly && actor.orgIds
+          ? Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[]) AND (
+              EXISTS (
+                SELECT 1 FROM "MaintenancePackage" mp
+                WHERE mp."siteVisitId" = sv."id"
+                  AND mp."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])
+              )
+              OR EXISTS (
+                SELECT 1 FROM "MaintenancePoleAssignment" mpa
+                WHERE mpa."siteVisitId" = sv."id"
+                  AND mpa."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])
+              )
+              OR (
+                NOT EXISTS (SELECT 1 FROM "MaintenancePackage" mp WHERE mp."siteVisitId" = sv."id")
+                AND NOT EXISTS (SELECT 1 FROM "MaintenancePoleAssignment" mpa WHERE mpa."siteVisitId" = sv."id")
+              )
+            )`
         : actor.orgIds === null
           ? Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[])`
           : Prisma.sql`AND (
@@ -406,7 +453,10 @@ export class MaintenancePackagesService {
     const ownWorkSql =
       actor.kind === 'COMPANY' && actor.orgIds
         ? Prisma.sql`AND d."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[])`
-        : Prisma.empty;
+        : actor.ownWorkOnly && actor.orgIds
+          ? // A Supervisor: its companies' Kejanggalan + not-yet-routed ones it may hand out.
+            Prisma.sql`AND (d."maintenanceOrganizationId" = ANY(${actor.orgIds}::uuid[]) OR d."maintenanceOrganizationId" IS NULL)`
+          : Prisma.empty;
     const fromSql = Prisma.sql`
       FROM "Defect" d
       JOIN "InspectionItemResult" r ON r."id" = d."inspectionItemResultId"

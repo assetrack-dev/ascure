@@ -1,11 +1,14 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { OrganizationType, OrganizationWorkMode, UserRole } from '@prisma/client';
+import { ClientRank, OrganizationType, OrganizationWorkMode, UserRole } from '@prisma/client';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { resolveCanReport } from '../common/authorization/reporting-actor';
 import { resolveCanImport } from '../common/authorization/import-actor';
-import { hasClientMaintenanceActorShape } from '../common/authorization/client-maintenance-actor';
+import {
+  canManageClientSupervisorsShape,
+  hasClientMaintenanceActorShape,
+} from '../common/authorization/client-maintenance-actor';
 import { resolveMainContractorOrgIds } from '../common/authorization/maintenance-closure';
 import {
   buildScopeContext,
@@ -32,6 +35,20 @@ const MOBILE_TOKEN_TTL = '30d';
  * always keeps the full console. Null = unchanged full console. Navigation only —
  * every endpoint keeps its own scope checks.
  */
+/** Plan §19 (N55): a TNB Supervisor (CLIENT, rank SUPERVISOR, active TNB org). */
+function isClientSupervisorShape(user: {
+  role: UserRole;
+  clientRank: ClientRank | null;
+  organization: { type: OrganizationType; isActive: boolean } | null;
+}) {
+  return (
+    user.role === UserRole.CLIENT &&
+    user.clientRank === ClientRank.SUPERVISOR &&
+    user.organization?.type === OrganizationType.TNB &&
+    user.organization.isActive === true
+  );
+}
+
 function resolveWorkMode(
   role: UserRole,
   organization: { type: OrganizationType; isActive: boolean; workMode: OrganizationWorkMode | null } | null,
@@ -168,6 +185,8 @@ export class AuthService {
         canViewRepairVerification,
         canViewMaintenancePackages,
         workMode: resolveWorkMode(user.role, user.organization),
+        isClientSupervisor: isClientSupervisorShape(user),
+        canManageClientSupervisors: canManageClientSupervisorsShape(user),
       },
     };
   }
@@ -393,6 +412,8 @@ export class AuthService {
       canViewRepairVerification,
       canViewMaintenancePackages,
       workMode: resolveWorkMode(currentUser.role, organization),
+      isClientSupervisor: isClientSupervisorShape(currentUser),
+      canManageClientSupervisors: canManageClientSupervisorsShape(currentUser),
     };
   }
 

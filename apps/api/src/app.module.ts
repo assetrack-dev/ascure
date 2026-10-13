@@ -12,6 +12,7 @@ import { AssetsModule } from './assets/assets.module';
 import { DefectsModule } from './defects/defects.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ClientModule } from './client/client.module';
+import { ClientSupervisorsModule } from './client-supervisors/client-supervisors.module';
 import { MaintenancePackagesModule } from './maintenance-packages/maintenance-packages.module';
 import { EnterpriseModule } from './enterprise/enterprise.module';
 import { TeamsModule } from './teams/teams.module';
@@ -45,6 +46,7 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module';
     DefectsModule,
     DashboardModule,
     ClientModule,
+    ClientSupervisorsModule,
     MaintenancePackagesModule,
     EnterpriseModule,
     TeamsModule,

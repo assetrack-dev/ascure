@@ -16,7 +16,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { buildScopeContext } from '../common/authorization/scope-context';
-import { isClientMaintenanceActor } from '../common/authorization/client-maintenance-actor';
+import {
+  isClientMaintenanceActor,
+  resolveClientSupervisorCompanyIds,
+} from '../common/authorization/client-maintenance-actor';
 import {
   CANNOT_REPAIR_OUTCOMES,
   isCannotRepairOutcome,
@@ -54,7 +57,8 @@ function nextDayStart(value: string) {
 
 type ClosureActor =
   | { kind: 'ADMIN' }
-  | { kind: 'TNB'; mainheadIds: string[]; canAct: boolean }
+  /** companyIds: a TNB Supervisor's companies (plan §19, N55); null = any company. */
+  | { kind: 'TNB'; mainheadIds: string[]; canAct: boolean; companyIds: string[] | null }
   | { kind: 'MAIN_CONTRACTOR'; organizationIds: string[] };
 
 /**
@@ -82,10 +86,13 @@ export class MaintenanceClosureService {
 
     const ctx = await buildScopeContext(this.prisma, user);
     if (ctx.isClientViewer) {
+      // A TNB Supervisor acts only on its assigned companies' work (fails closed).
+      const supervisorCompanyIds = await resolveClientSupervisorCompanyIds(this.prisma, user);
       return {
         kind: 'TNB',
         mainheadIds: ctx.clientMainheadIds,
-        canAct: await isClientMaintenanceActor(this.prisma, user),
+        canAct: supervisorCompanyIds !== null ? true : await isClientMaintenanceActor(this.prisma, user),
+        companyIds: supervisorCompanyIds,
       };
     }
 
@@ -112,7 +119,10 @@ export class MaintenanceClosureService {
 
     const scopeSql =
       actor.kind === 'TNB'
-        ? Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[])`
+        ? actor.companyIds
+          ? Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[])
+              AND d."maintenanceOrganizationId" = ANY(${actor.companyIds}::uuid[])`
+          : Prisma.sql`AND sv."mainheadId" = ANY(${actor.mainheadIds}::uuid[])`
         : actor.kind === 'MAIN_CONTRACTOR'
           ? Prisma.sql`AND d."maintenanceOrganizationId" = ANY(${actor.organizationIds}::uuid[])`
           : Prisma.empty;
@@ -287,6 +297,7 @@ export class MaintenanceClosureService {
     if (actor.kind === 'TNB') {
       return {
         ...tenant,
+        ...(actor.companyIds ? { maintenanceOrganizationId: { in: actor.companyIds } } : {}),
         inspectionItemResult: {
           inspection: {
             siteVisit: { tenantId: user.tenantId, mainheadId: { in: actor.mainheadIds } },
@@ -446,6 +457,7 @@ export class MaintenanceClosureService {
             isActive: true,
             type: { in: [OrganizationType.MAIN_CONTRACTOR, OrganizationType.SUBCONTRACTOR] },
             OR: [{ tenantId: user.tenantId }, { tenantId: null }],
+            ...(actor.kind === 'TNB' && actor.companyIds ? { id: { in: actor.companyIds } } : {}),
           },
           select: { id: true, name: true, code: true },
           orderBy: { name: 'asc' },
@@ -696,6 +708,9 @@ export class MaintenanceClosureService {
         company.type !== OrganizationType.SUBCONTRACTOR)
     ) {
       throw new NotFoundException('Maintenance company not found or inactive.');
+    }
+    if (actor.kind === 'TNB' && actor.companyIds && !actor.companyIds.includes(company.id)) {
+      throw new ForbiddenException('You can only hand this to a company you supervise.');
     }
 
     const now = new Date();
