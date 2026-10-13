@@ -186,7 +186,19 @@ export function laneInfo(
 
   let owner: string;
   let ownerTone: LaneInfo['ownerTone'];
-  if (!lane.organization) {
+  // A company sees a lane another company holds only for its own split poles or
+  // work its crew had already started before the move (plan §19, N52).
+  const ownSplits = row.poleSplits.filter(
+    (split) => (split.category === category || split.category === null) && own.has(split.organization.id),
+  );
+  const foreignLane = isCompany && lane.organization !== null && !own.has(lane.organization.id);
+  if (foreignLane) {
+    owner =
+      ownSplits.length > 0
+        ? `Your poles: ${ownSplits.map((split) => `${split.team?.name ?? 'no team'} ${split.poles}`).join(', ')}`
+        : 'Started by your crew';
+    ownerTone = 'team';
+  } else if (!lane.organization) {
     owner = 'Not given out';
     ownerTone = 'noCompany';
   } else if (lane.team) {
@@ -208,7 +220,7 @@ export function laneInfo(
     status: statusOf(progress, lane.unrouted ?? 0),
     dueDate,
     overdue: isOverdue(dueDate, lane.open),
-    splits: row.poleSplits
+    splits: (foreignLane ? [] : row.poleSplits)
       .filter((split) => split.category === category || split.category === null)
       .filter((split) => !isCompany || own.has(split.organization.id))
       .map((split) => {
