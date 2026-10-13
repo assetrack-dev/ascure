@@ -18,9 +18,15 @@ import {
  * the operation, so they go to their progress view — /dashboard is the
  * contractor console and isn't theirs to read.
  */
-function landingPath(user: { mustChangePassword?: boolean; isClientViewer?: boolean } | null): string {
+function landingPath(
+  user: { mustChangePassword?: boolean; isClientViewer?: boolean; isClientSupervisor?: boolean } | null,
+): string {
   if (user?.mustChangePassword) {
     return "/change-password";
+  }
+  // A TNB Supervisor has no survey views yet (plan §19, N55) — start on its work.
+  if (user?.isClientSupervisor) {
+    return "/maintenance-packages";
   }
   return user?.isClientViewer ? "/progress" : "/dashboard";
 }

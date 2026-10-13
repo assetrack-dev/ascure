@@ -15,7 +15,7 @@ export type MainheadAccessRole = "ENGINEER" | "SENIOR_TECHNICIAN" | "FOREMAN" | 
  * CLIENT user in a TNB organization. FOREMAN + TECHNICIAN act on maintenance
  * (assign PE, verify / re-open, cannot-repair); ENGINEER is view-only.
  */
-export const CLIENT_RANKS = ["FOREMAN", "TECHNICIAN", "ENGINEER"] as const;
+export const CLIENT_RANKS = ["FOREMAN", "TECHNICIAN", "SUPERVISOR", "ENGINEER"] as const;
 export type ClientRank = (typeof CLIENT_RANKS)[number];
 
 export interface UserDepartment {

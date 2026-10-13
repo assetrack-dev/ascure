@@ -40,6 +40,10 @@ export interface ApiUser {
   canViewMaintenancePackages?: boolean;
   /** The company's web view (plan §17); null = full console. Navigation only. */
   workMode?: OrganizationWorkMode | null;
+  /** Plan §19 (N55): a TNB Supervisor — maintenance of its assigned companies only. */
+  isClientSupervisor?: boolean;
+  /** ADMIN or TNB Foreman / Technician — the TNB Supervisors page. */
+  canManageClientSupervisors?: boolean;
 }
 
 export interface AuthUser {
@@ -133,6 +137,8 @@ export interface AuthUser {
   canViewMaintenancePackages?: boolean;
   /** The company's web view (plan §17); null = full console. Navigation only. */
   workMode?: OrganizationWorkMode | null;
+  isClientSupervisor?: boolean;
+  canManageClientSupervisors?: boolean;
 }
 
 export interface AuthSession {
