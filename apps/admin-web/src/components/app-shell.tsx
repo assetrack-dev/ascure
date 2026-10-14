@@ -31,10 +31,13 @@ import {
   Settings2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import type { AuthUser } from "@/types/auth";
+import { readStoredSession } from "@/lib/auth";
+import { releasePushOnLogout } from "@/lib/push";
 import { roleLabel } from "@/lib/roles";
+import { NotificationBell } from "./notification-bell";
 import { ThemeToggle } from "./theme-toggle";
 
 /** Sidebar grouping. Purely presentational — gating is unchanged. */
@@ -123,7 +126,27 @@ const CLIENT_NAV_HREFS = new Set<string>([
   "/maintenance-verification",
 ]);
 
-export function AppShell({ children, user, onLogout }: AppShellProps) {
+/** null until mounted — the bell renders in exactly ONE place (one poller). */
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return isDesktop;
+}
+
+export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellProps) {
+  const isDesktop = useIsDesktop();
+  // An explicit sign-out stops this device getting the user's phone alerts.
+  // (A session merely expiring does not — the user keeps them after signing back in.)
+  const onLogout = () => {
+    releasePushOnLogout(readStoredSession()?.token ?? null);
+    onLogoutProp();
+  };
   const pathname = usePathname();
   const navItems: NavItem[] = [
     // Operations — daily-use surfaces (top of the sidebar).
@@ -447,14 +470,17 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onLogout}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-[9px] border border-[var(--chrome-line-strong)] text-[var(--on-chrome)] transition hover:bg-[var(--chrome-panel)] lg:hidden"
-            aria-label="Logout"
-          >
-            <LogOut size={18} />
-          </button>
+          <div className="flex items-center gap-2 lg:hidden">
+            {isDesktop === false && user ? <NotificationBell variant="chrome" /> : null}
+            <button
+              type="button"
+              onClick={onLogout}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-[9px] border border-[var(--chrome-line-strong)] text-[var(--on-chrome)] transition hover:bg-[var(--chrome-panel)]"
+              aria-label="Logout"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
 
         <nav className="flex gap-2 overflow-x-auto px-[14px] pb-4 lg:block lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto">
@@ -496,8 +522,8 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
       <div className="flex min-w-0 flex-col">
         {/* Translucent 64px rail. Content scrolls under it. The design also puts a
-            global search field and a notification bell here — both omitted: the
-            codebase has no search endpoint and no notification model. */}
+            global search field here — omitted: the codebase has no search
+            endpoint. The 🔔 sits at its right end (plan §19, N56). */}
         <div className="sticky top-0 z-30 hidden h-16 shrink-0 items-center border-b border-[var(--line)] bg-[var(--chrome-translucent)] px-[30px] backdrop-blur-[8px] lg:flex">
           <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12.5px] font-medium">
             {activeItem ? (
@@ -512,6 +538,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               <span className="font-semibold text-[var(--foreground)]">ASCURE</span>
             )}
           </nav>
+          {isDesktop === true && user ? (
+            <div className="ml-auto">
+              <NotificationBell variant="rail" />
+            </div>
+          ) : null}
         </div>
 
         <div className="min-w-0 flex-1">{children}</div>
