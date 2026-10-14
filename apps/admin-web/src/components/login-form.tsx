@@ -24,7 +24,8 @@ function landingPath(
   if (user?.mustChangePassword) {
     return "/change-password";
   }
-  // A TNB Supervisor has no survey views yet (plan §19, N55) — start on its work.
+  // A TNB Supervisor starts on its repair work (plan §19, N55 — owner's call
+  // 2026-10-14); Progress / Surveys / Map are one click away in the menu.
   if (user?.isClientSupervisor) {
     return "/maintenance-packages";
   }
