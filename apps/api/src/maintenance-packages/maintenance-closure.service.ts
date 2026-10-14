@@ -138,6 +138,10 @@ export class MaintenanceClosureService {
     const filterSql = Prisma.join(
       [
         Prisma.sql`TRUE`,
+        // One Pencawang's group (a notification deep link opens exactly it).
+        query.siteVisitId
+          ? Prisma.sql`sv."id" = ${query.siteVisitId}::uuid`
+          : Prisma.sql`TRUE`,
         query.organizationId
           ? Prisma.sql`d."maintenanceOrganizationId" = ${query.organizationId}::uuid`
           : Prisma.sql`TRUE`,
