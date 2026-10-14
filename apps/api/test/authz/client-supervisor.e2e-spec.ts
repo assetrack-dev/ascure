@@ -14,7 +14,10 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  *  3. Maintenance Packages: only its companies' work (+ untouched PEs), and it
  *     can hand work only to / change work only of its companies.
  *  4. Repair Verification: only its companies' repairs; verify there, 404 elsewhere.
- *  5. The client survey views are closed to a Supervisor until step 4c.
+ *  5. Survey views (step 4c, "by Pencawang"): only its companies' surveys, and
+ *     every pole of a Pencawang one of them surveyed — never a PE surveyed only
+ *     by another company, nor an untouched PE. Same rule on the Asset Map, the
+ *     pole panel and /site-visits; a Foreman keeps the whole Mainhead.
  *
  * Self-contained: builds and removes its own TNB org / Mainhead / PE chain.
  */
@@ -26,8 +29,18 @@ const S = {
   region: 'd0000000-0000-4000-8000-0000000000d1',
   mh: 'e0000000-0000-4000-8000-0000000000d1',
   sub: '30000000-0000-4000-8000-0000000000d1',
+  /** PE surveyed only by Company B. */
+  subB: '30000000-0000-4000-8000-0000000000d2',
+  /** PE nobody has surveyed. */
+  subIdle: '30000000-0000-4000-8000-0000000000d3',
   visit: '60000000-0000-4000-8000-0000000000d1',
+  visitB: '60000000-0000-4000-8000-0000000000d2',
   asset: '70000000-0000-4000-8000-0000000000d1',
+  /** Not yet surveyed, in Company A's PE — still visible (real totals). */
+  assetIdleInA: '70000000-0000-4000-8000-0000000000d2',
+  assetB: '70000000-0000-4000-8000-0000000000d3',
+  assetIdle: '70000000-0000-4000-8000-0000000000d4',
+  inspectionB: '80000000-0000-4000-8000-0000000000d2',
   inspection: '80000000-0000-4000-8000-0000000000d1',
   item: { a: '90000000-0000-4000-8000-0000000000d1', b: '90000000-0000-4000-8000-0000000000d2' },
   defect: { a: 'a0000000-0000-4000-8000-0000000000d1', b: 'a0000000-0000-4000-8000-0000000000d2' },
@@ -80,8 +93,12 @@ describe('Authz · TNB Supervisor (company-scoped maintenance)', () => {
     await prisma.organizationMainhead.create({
       data: { organizationId: S.tnb, mainheadId: S.mh, isActive: true },
     });
-    await prisma.substation.create({
-      data: { id: S.sub, tenantId: t, name: 'Sup Pencawang', code: 'SP-1', mainheadId: S.mh },
+    await prisma.substation.createMany({
+      data: [
+        { id: S.sub, tenantId: t, name: 'Sup Pencawang', code: 'SP-1', mainheadId: S.mh },
+        { id: S.subB, tenantId: t, name: 'Sup Pencawang B', code: 'SP-2', mainheadId: S.mh },
+        { id: S.subIdle, tenantId: t, name: 'Sup Pencawang idle', code: 'SP-3', mainheadId: S.mh },
+      ],
     });
     await prisma.siteVisit.create({
       data: {
@@ -96,8 +113,30 @@ describe('Authz · TNB Supervisor (company-scoped maintenance)', () => {
         lifecycleStatus: 'LAPORAN_SELESAI',
       },
     });
-    await prisma.asset.create({
-      data: { id: S.asset, tenantId: t, assetCode: 'SUP-POLE-1', substationId: S.sub, assetTypeId: IDS.assetType.savr },
+    // Company B surveys its own PE on the same Mainhead.
+    await prisma.siteVisit.create({
+      data: {
+        id: S.visitB,
+        tenantId: t,
+        teamId: IDS.team.b,
+        createdByUserId: IDS.user.mgrB,
+        organizationId: IDS.org.b,
+        status: 'ACTIVE',
+        substationId: S.subB,
+        mainheadId: S.mh,
+        lifecycleStatus: 'DALAM_RONDAAN',
+      },
+    });
+    const pole = (id: string, code: string, substationId: string) => ({
+      id, tenantId: t, assetCode: code, substationId, assetTypeId: IDS.assetType.savr, latitude: 3.5, longitude: 101.5,
+    });
+    await prisma.asset.createMany({
+      data: [
+        pole(S.asset, 'SUP-POLE-1', S.sub),
+        pole(S.assetIdleInA, 'SUP-POLE-1B', S.sub),
+        pole(S.assetB, 'SUP-POLE-2', S.subB),
+        pole(S.assetIdle, 'SUP-POLE-3', S.subIdle),
+      ],
     });
     await prisma.inspection.create({
       data: {
@@ -107,6 +146,18 @@ describe('Authz · TNB Supervisor (company-scoped maintenance)', () => {
         siteVisitId: S.visit,
         templateId: IDS.template.tmpl,
         createdByUserId: IDS.user.techA,
+        completionStatus: 'SUBMITTED',
+        submittedAt: new Date(),
+      },
+    });
+    await prisma.inspection.create({
+      data: {
+        id: S.inspectionB,
+        tenantId: t,
+        assetId: S.assetB,
+        siteVisitId: S.visitB,
+        templateId: IDS.template.tmpl,
+        createdByUserId: IDS.user.techB,
         completionStatus: 'SUBMITTED',
         submittedAt: new Date(),
       },
@@ -157,10 +208,10 @@ describe('Authz · TNB Supervisor (company-scoped maintenance)', () => {
     await prisma.defect.deleteMany({ where: { id: { in: defects } } });
     await prisma.maintenancePackage.deleteMany({ where: { siteVisitId: S.visit } });
     await prisma.inspectionItemResult.deleteMany({ where: { inspectionId: S.inspection } });
-    await prisma.inspection.deleteMany({ where: { id: S.inspection } });
-    await prisma.siteVisit.deleteMany({ where: { id: S.visit } });
-    await prisma.asset.deleteMany({ where: { id: S.asset } });
-    await prisma.substation.deleteMany({ where: { id: S.sub } });
+    await prisma.inspection.deleteMany({ where: { id: { in: [S.inspection, S.inspectionB] } } });
+    await prisma.siteVisit.deleteMany({ where: { id: { in: [S.visit, S.visitB] } } });
+    await prisma.asset.deleteMany({ where: { id: { in: [S.asset, S.assetIdleInA, S.assetB, S.assetIdle] } } });
+    await prisma.substation.deleteMany({ where: { id: { in: [S.sub, S.subB, S.subIdle] } } });
     await prisma.organizationMainhead.deleteMany({ where: { organizationId: S.tnb } });
     await prisma.mainhead.deleteMany({ where: { id: S.mh } });
     await prisma.operationalRegion.deleteMany({ where: { id: S.region } });
@@ -251,8 +302,99 @@ describe('Authz · TNB Supervisor (company-scoped maintenance)', () => {
     expect(row.lifecycleStatus).toBe('CLOSED');
   });
 
-  it('the client survey views stay closed to a Supervisor (until step 4c)', async () => {
-    await http(app, token.supervisor).get('/api/v1/client/progress').expect(403);
-    await http(app, token.foreman).get('/api/v1/client/progress').expect(200);
+  // ── Step 4c: survey views by company ("by Pencawang") ─────────────────────
+  const progress = async (who: string) =>
+    (await http(app, token[who]).get(`/api/v1/client/progress?mainheadId=${S.mh}`).expect(200)).body as {
+      total: number;
+      inspected: number;
+      groups: Array<{ id: string; total: number; inspected: number }>;
+      pencawang: { total: number; completed: number };
+    };
+
+  it("Progress: only Company A's Pencawang, with every pole in it (real totals)", async () => {
+    const sup = await progress('supervisor');
+    expect(sup.groups.map((group) => group.id)).toEqual([S.sub]);
+    expect(sup).toMatchObject({ total: 2, inspected: 1, pencawang: { total: 1, completed: 0 } });
+
+    // A Foreman keeps the whole Mainhead: three PEs, four poles.
+    const foreman = await progress('foreman');
+    expect(foreman.groups.map((group) => group.id).sort()).toEqual([S.sub, S.subB, S.subIdle].sort());
+    expect(foreman.total).toBe(4);
+
+    const top = await http(app, token.supervisor).get('/api/v1/client/progress').expect(200);
+    expect(top.body.groups).toEqual([expect.objectContaining({ id: S.mh, total: 2, inspected: 1 })]);
+    const mainheads = await http(app, token.supervisor).get('/api/v1/client/mainheads').expect(200);
+    expect(mainheads.body.map((mh: { id: string }) => mh.id)).toEqual([S.mh]);
+  });
+
+  it("Pencawang poles: Company A's PE lists every pole; other PEs are refused", async () => {
+    const own = await http(app, token.supervisor).get(`/api/v1/client/pencawang/${S.sub}/poles`).expect(200);
+    expect(own.body.poles.map((row: { id: string }) => row.id).sort()).toEqual([S.asset, S.assetIdleInA].sort());
+    await http(app, token.supervisor).get(`/api/v1/client/pencawang/${S.subB}/poles`).expect(403);
+    await http(app, token.supervisor).get(`/api/v1/client/pencawang/${S.subIdle}/poles`).expect(403);
+    await http(app, token.foreman).get(`/api/v1/client/pencawang/${S.subB}/poles`).expect(200);
+  });
+
+  it("Surveys: only Company A's survey; Company B's is refused", async () => {
+    const visits = await http(app, token.supervisor).get('/api/v1/client/visits').expect(200);
+    const ids = visits.body.visits.map((row: { id: string }) => row.id);
+    expect(ids).toContain(S.visit);
+    expect(ids).not.toContain(S.visitB);
+    await http(app, token.supervisor).get(`/api/v1/client/visits/${S.visit}`).expect(200);
+    await http(app, token.supervisor).get(`/api/v1/client/visits/${S.visitB}`).expect(403);
+    const foreman = await http(app, token.foreman).get('/api/v1/client/visits').expect(200);
+    expect(foreman.body.visits.map((row: { id: string }) => row.id)).toEqual(
+      expect.arrayContaining([S.visit, S.visitB]),
+    );
+    // The generic site-visit list follows the same company rule.
+    const list = await http(app, token.supervisor).get('/api/v1/site-visits').expect(200);
+    expect(JSON.stringify(list.body)).not.toContain(S.visitB);
+  });
+
+  it("Asset Map + pole panel: Company A's Pencawang only", async () => {
+    const points = await http(app, token.supervisor)
+      .get(`/api/v1/assets/map?level=points&mainheadId=${S.mh}`)
+      .expect(200);
+    const body = JSON.stringify(points.body);
+    expect(body).toContain(S.asset);
+    expect(body).toContain(S.assetIdleInA);
+    expect(body).not.toContain(S.assetB);
+    expect(body).not.toContain(S.assetIdle);
+
+    const bubbles = await http(app, token.supervisor)
+      .get(`/api/v1/assets/map?level=pencawang&mainheadId=${S.mh}`)
+      .expect(200);
+    expect(JSON.stringify(bubbles.body)).not.toContain(S.subB);
+    expect(JSON.stringify(bubbles.body)).not.toContain(S.subIdle);
+
+    // The PE's check-in card is withheld for a PE outside scope.
+    const other = await http(app, token.supervisor)
+      .get(`/api/v1/assets/map?level=points&pencawangId=${S.subB}`)
+      .expect(200);
+    expect(other.body).toMatchObject({ poles: [], pencawang: null });
+
+    await http(app, token.supervisor).get(`/api/v1/assets/${S.assetIdleInA}`).expect(200);
+    await http(app, token.supervisor).get(`/api/v1/assets/${S.assetB}`).expect(404);
+    await http(app, token.supervisor).get(`/api/v1/assets/${S.assetIdle}`).expect(404);
+    await http(app, token.foreman).get(`/api/v1/assets/${S.assetB}`).expect(200);
+  });
+
+  it("pole repairs: a Supervisor sees only its companies' repairs", async () => {
+    const sup = await http(app, token.supervisor).get(`/api/v1/assets/${S.asset}/repairs`).expect(200);
+    expect(sup.body.map((row: { id: string }) => row.id)).toEqual([S.defect.a]);
+    const foreman = await http(app, token.foreman).get(`/api/v1/assets/${S.asset}/repairs`).expect(200);
+    expect(foreman.body.map((row: { id: string }) => row.id).sort()).toEqual([S.defect.a, S.defect.b].sort());
+  });
+
+  it('a Supervisor with no company sees no survey view data (fails closed)', async () => {
+    await http(app, token.foreman)
+      .put(`/api/v1/client-supervisors/${S.supervisor}/companies`)
+      .send({ organizationIds: [] })
+      .expect(200);
+    const top = await http(app, token.supervisor).get('/api/v1/client/progress').expect(200);
+    expect(top.body).toMatchObject({ total: 0, groups: [] });
+    const visits = await http(app, token.supervisor).get('/api/v1/client/visits').expect(200);
+    expect(visits.body.total).toBe(0);
+    await http(app, token.supervisor).get(`/api/v1/assets/${S.asset}`).expect(404);
   });
 });

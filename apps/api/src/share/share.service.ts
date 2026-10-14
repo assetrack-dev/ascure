@@ -9,7 +9,10 @@ import { Prisma } from '@prisma/client';
 import { AssetsService } from '../assets/assets.service';
 import { isQaActor } from '../common/authorization/qa-actor';
 import { buildScopeContext } from '../common/authorization/scope-context';
-import { assetOversightWhere } from '../common/authorization/site-visit-scope';
+import {
+  assetOversightWhere,
+  clientAssetWhere,
+} from '../common/authorization/site-visit-scope';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -80,7 +83,8 @@ export class ShareService {
     // query never enforced it.)
     //
     // THE RULE: you may share what you may already SEE.
-    //  - client  → poles in their assigned Mainheads. Their own scope, NOT the
+    //  - client  → poles in their assigned Mainheads (a TNB Supervisor: the
+    //    Pencawang its companies surveyed — step 4c). Their own scope, NOT the
     //    contractor's transitive one: a client's never-surveyed pole has no
     //    visit to reach it through, so the transitive rule would hide poles they
     //    can plainly see everywhere else in their view.
@@ -89,7 +93,7 @@ export class ShareService {
     //    SUPERVISOR/TECHNICIAN ⇒ their own teams' work).
     // Fails closed in every branch — an empty scope matches nothing ⇒ 404.
     const scopeWhere: Prisma.AssetWhereInput = isClientSharer
-      ? { substation: { mainheadId: { in: ctx.clientMainheadIds } } }
+      ? clientAssetWhere(ctx)
       : assetOversightWhere(user, ctx);
 
     const asset = await this.prisma.asset.findFirst({

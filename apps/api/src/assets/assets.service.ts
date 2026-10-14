@@ -35,6 +35,8 @@ import {
 import {
   assetAccessWhere,
   assetOversightWhere,
+  clientAssetWhere,
+  clientSubstationWhere,
   siteVisitAccessWhere,
   siteVisitMapWhere,
 } from '../common/authorization/site-visit-scope';
@@ -212,8 +214,9 @@ export class AssetsService {
     }
 
     if (ctx.isClientViewer) {
-      // Fails closed: an empty assignment list matches no Pencawang.
-      return { substation: { mainheadId: { in: ctx.clientMainheadIds } } };
+      // Fails closed: an empty assignment list matches no Pencawang. A TNB
+      // Supervisor only gets the Pencawang its companies surveyed (step 4c).
+      return clientAssetWhere(ctx);
     }
 
     return {
@@ -656,10 +659,20 @@ export class AssetsService {
    * real Pencawang against the satellite view and confirm the PE is the right
    * one.
    */
-  private async pencawangCheckIn(user: RequestUser, pencawangId: string) {
+  private async pencawangCheckIn(
+    user: RequestUser,
+    pencawangId: string,
+    ctx: ScopeContext,
+  ) {
     const [substation, checkInPhotos] = await Promise.all([
       this.prisma.substation.findFirst({
-        where: { id: pencawangId, tenantId: user.tenantId },
+        where: {
+          id: pencawangId,
+          tenantId: user.tenantId,
+          // A client viewer only learns about a Pencawang in its own scope —
+          // no row → null, and the photos below are never returned.
+          ...(ctx.isClientViewer && !ctx.isAdmin ? clientSubstationWhere(ctx) : {}),
+        },
         select: {
           id: true,
           code: true,
@@ -758,7 +771,7 @@ export class AssetsService {
             context,
             categories,
           ),
-          this.pencawangCheckIn(user, query.pencawangId),
+          this.pencawangCheckIn(user, query.pencawangId, context.ctx),
         ]);
         return { poles, pencawang };
       }
@@ -1659,9 +1672,7 @@ export class AssetsService {
     // with no assignment yields `in: []`, which matches nothing.
     const ctx = await buildScopeContext(this.prisma, user);
     const clientWhere: Prisma.AssetWhereInput =
-      ctx.isClientViewer && !ctx.isAdmin
-        ? { substation: { mainheadId: { in: ctx.clientMainheadIds } } }
-        : {};
+      ctx.isClientViewer && !ctx.isAdmin ? clientAssetWhere(ctx) : {};
 
     const asset = await this.prisma.asset.findFirst({
       where: {
@@ -2055,9 +2066,7 @@ export class AssetsService {
   async getRepairs(user: RequestUser, id: string) {
     const ctx = await buildScopeContext(this.prisma, user);
     const clientWhere: Prisma.AssetWhereInput =
-      ctx.isClientViewer && !ctx.isAdmin
-        ? { substation: { mainheadId: { in: ctx.clientMainheadIds } } }
-        : {};
+      ctx.isClientViewer && !ctx.isAdmin ? clientAssetWhere(ctx) : {};
     const asset = await this.prisma.asset.findFirst({
       where: { id, tenantId: user.tenantId, ...clientWhere },
       select: { id: true },
@@ -2066,7 +2075,13 @@ export class AssetsService {
       throw new NotFoundException('Asset not found.');
     }
 
-    const orgIds = ctx.isAdmin || ctx.isClientViewer ? null : ctx.maintenanceOrgIds;
+    // TNB: every routed repair in scope — except a TNB Supervisor, who sees only
+    // its companies' repairs (same as its Maintenance Packages board).
+    const orgIds = ctx.isAdmin
+      ? null
+      : ctx.isClientViewer
+        ? (ctx.clientSupervisorCompanyIds ?? null)
+        : ctx.maintenanceOrgIds;
     if (orgIds !== null && orgIds.length === 0) {
       return [];
     }

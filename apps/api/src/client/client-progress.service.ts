@@ -6,8 +6,11 @@ import {
   buildScopeContext,
   ScopeContext,
 } from '../common/authorization/scope-context';
-import { siteVisitAccessWhere } from '../common/authorization/site-visit-scope';
-import { resolveClientSupervisorCompanyIds } from '../common/authorization/client-maintenance-actor';
+import {
+  clientAssetWhere,
+  clientSubstationWhere,
+  siteVisitAccessWhere,
+} from '../common/authorization/site-visit-scope';
 import { isSurveyFinished } from '../common/client-visibility';
 import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
 
@@ -100,30 +103,35 @@ export class ClientProgressService {
       );
     }
 
-    // Plan §19 (N55): a TNB Supervisor's survey view will follow its companies
-    // (step 4c). Until then it gets none, rather than every Mainhead's surveys.
-    if ((await resolveClientSupervisorCompanyIds(this.prisma, user)) !== null) {
-      throw new ForbiddenException('The survey views are not available to TNB Supervisors yet.');
-    }
-
+    // A TNB Supervisor (plan §19 N55, step 4c) is narrowed INSIDE these
+    // Mainheads by ctx.clientSupervisorCompanyIds — see clientAssets() and the
+    // client branch of buildSiteVisitScope.
     return { ctx, mainheadIds: ctx.clientMainheadIds };
   }
 
-  /** Assets in the client's scope — the base filter every rollup builds on. */
-  private assetScope(
+  /**
+   * Assets in the client's scope — the base filter every rollup builds on.
+   * A pole belongs to the client's network when its Pencawang sits under one of
+   * their Mainheads (Substation.mainheadId is kept current by the check-in
+   * self-heal + the admin Pencawang→Mainhead assignment); a TNB Supervisor only
+   * gets the Pencawang its companies surveyed — see clientSubstationWhere.
+   *
+   * ⚠ Narrow it with AND, never by spreading a `substation` key over it: that
+   * would REPLACE the Supervisor's Pencawang filter.
+   */
+  private clientAssets(
     user: RequestUser,
-    mainheadIds: string[] | null,
+    ctx: ScopeContext,
   ): Prisma.AssetWhereInput {
-    if (mainheadIds === null) {
+    if (ctx.isAdmin) {
       return { tenantId: user.tenantId };
     }
-    // A pole belongs to the client's network when its Pencawang sits under one
-    // of their Mainheads. Substation.mainheadId is kept current by the check-in
-    // self-heal + the admin Pencawang→Mainhead assignment.
-    return {
-      tenantId: user.tenantId,
-      substation: { mainheadId: { in: mainheadIds } },
-    };
+    return { tenantId: user.tenantId, ...clientAssetWhere(ctx) };
+  }
+
+  /** Pencawang in the client's scope (ADMIN preview: every Pencawang). */
+  private clientSubstations(ctx: ScopeContext): Prisma.SubstationWhereInput {
+    return ctx.isAdmin ? {} : clientSubstationWhere(ctx);
   }
 
   /**
@@ -131,7 +139,7 @@ export class ClientProgressService {
    * Mainhead's Pencawang. This is the client's "how far along are you" view.
    */
   async getProgress(user: RequestUser, mainheadId?: string) {
-    const { mainheadIds } = await this.requireClientScope(user);
+    const { ctx, mainheadIds } = await this.requireClientScope(user);
 
     // Drilling into a Mainhead the client isn't assigned = empty, not an error:
     // the UI can't offer it, so this only trips on a hand-crafted request.
@@ -139,9 +147,9 @@ export class ClientProgressService {
       throw new ForbiddenException('That Mainhead is not in your scope.');
     }
 
-    const base = this.assetScope(user, mainheadIds);
+    const base = this.clientAssets(user, ctx);
     const where: Prisma.AssetWhereInput = mainheadId
-      ? { ...base, substation: { mainheadId } }
+      ? { AND: [base, { substation: { mainheadId } }] }
       : base;
 
     const [total, inspected, groups, defects, lastActivity, pencawang] =
@@ -152,7 +160,7 @@ export class ClientProgressService {
         }),
         mainheadId
           ? this.groupByPencawang(where)
-          : this.groupByMainhead(user, mainheadIds),
+          : this.groupByMainhead(ctx, base, mainheadIds),
         this.defectSummary(where),
         this.prisma.inspection.findFirst({
           where: { asset: where, ...SURVEYED_INSPECTION },
@@ -220,15 +228,18 @@ export class ClientProgressService {
 
   /** Per-Mainhead rollup across everything in scope. */
   private async groupByMainhead(
-    user: RequestUser,
+    ctx: ScopeContext,
+    base: Prisma.AssetWhereInput,
     mainheadIds: string[] | null,
   ): Promise<ProgressGroup[]> {
     const mainheads = await this.prisma.mainhead.findMany({
       where: {
         isActive: true,
         ...(mainheadIds === null ? {} : { id: { in: mainheadIds } }),
-        // Only Mainheads that actually hold poles — an empty one is noise.
-        substations: { some: { assets: { some: {} } } },
+        // Only Mainheads that actually hold poles in scope — an empty one is noise.
+        substations: {
+          some: { AND: [this.clientSubstations(ctx), { assets: { some: {} } }] },
+        },
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
@@ -237,8 +248,7 @@ export class ClientProgressService {
     return Promise.all(
       mainheads.map(async (mainhead) => {
         const where: Prisma.AssetWhereInput = {
-          tenantId: user.tenantId,
-          substation: { mainheadId: mainhead.id },
+          AND: [base, { substation: { mainheadId: mainhead.id } }],
         };
         return {
           id: mainhead.id,
@@ -400,13 +410,13 @@ export class ClientProgressService {
    * UI says WHICH state a pole is in instead of dropping it from the list.
    */
   async listPoles(user: RequestUser, substationId: string) {
-    const { ctx, mainheadIds } = await this.requireClientScope(user);
+    const { ctx } = await this.requireClientScope(user);
 
     const substation = await this.prisma.substation.findFirst({
       where: {
         id: substationId,
         tenantId: user.tenantId,
-        ...(mainheadIds === null ? {} : { mainheadId: { in: mainheadIds } }),
+        ...this.clientSubstations(ctx),
       },
       select: { id: true, name: true, code: true, mainheadId: true },
     });
@@ -449,16 +459,10 @@ export class ClientProgressService {
    * at every stage; scope is the only boundary, and it still fails closed.
    */
   async assertPoleVisible(user: RequestUser, assetId: string): Promise<void> {
-    const { mainheadIds } = await this.requireClientScope(user);
+    const { ctx } = await this.requireClientScope(user);
 
     const asset = await this.prisma.asset.findFirst({
-      where: {
-        id: assetId,
-        tenantId: user.tenantId,
-        ...(mainheadIds === null
-          ? {}
-          : { substation: { mainheadId: { in: mainheadIds } } }),
-      },
+      where: { AND: [this.clientAssets(user, ctx), { id: assetId }] },
       select: { id: true },
     });
 
@@ -469,12 +473,16 @@ export class ClientProgressService {
 
   /** The Mainheads assigned to the client's organization (for the filter bar). */
   async listMainheads(user: RequestUser) {
-    const { mainheadIds } = await this.requireClientScope(user);
+    const { ctx, mainheadIds } = await this.requireClientScope(user);
 
     const mainheads = await this.prisma.mainhead.findMany({
       where: {
         isActive: true,
         ...(mainheadIds === null ? {} : { id: { in: mainheadIds } }),
+        // A TNB Supervisor: only Mainheads holding a Pencawang its companies surveyed.
+        ...(ctx.clientSupervisorCompanyIds
+          ? { substations: { some: this.clientSubstations(ctx) } }
+          : {}),
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
