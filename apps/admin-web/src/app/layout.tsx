@@ -31,6 +31,9 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "ASCURE Admin",
   description: "ASCURE inspection operations admin console",
+  // Home-screen install (plan §19, N56) — iPhone Web Push needs it.
+  // (The home-screen icon itself is the app/apple-icon.png file convention.)
+  appleWebApp: { capable: true, title: "ASCURE", statusBarStyle: "default" },
 };
 
 const themeScript = `(function(){try{var t=localStorage.getItem('ascure-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.dataset.theme=t;}catch(e){}})();`;

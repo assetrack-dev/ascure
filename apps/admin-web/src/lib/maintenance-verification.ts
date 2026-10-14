@@ -33,7 +33,7 @@ export function fetchVerificationQueue(
 export function fetchVerificationGroups(
   token: string,
   tab: VerificationTab,
-  filters: VerificationFilters,
+  filters: VerificationFilters & { siteVisitId?: string },
   page: number,
 ) {
   return apiRequest<VerificationGroups>(`${base}/groups?${filterQuery(tab, { ...filters, page })}`, { token });

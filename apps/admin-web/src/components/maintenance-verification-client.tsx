@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -361,6 +361,11 @@ function MaintenanceVerificationContent() {
   const [action, setAction] = useState<{ kind: ActionKind; item: VerificationItem } | null>(null);
   const [actionError, setActionError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  // A notification link (plan §19, N56) opens ONE Pencawang + company group:
+  // ?siteVisitId=…&organizationId=… narrows the list and opens that group.
+  const [focusVisitId, setFocusVisitId] = useState("");
+  const [urlReady, setUrlReady] = useState(false);
+  const pendingOpenRef = useRef<string | null>(null);
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -383,14 +388,16 @@ function MaintenanceVerificationContent() {
       setIsLoading(true);
       setError("");
       try {
-        setGroups(await fetchVerificationGroups(token, tab, filters, page));
+        setGroups(
+          await fetchVerificationGroups(token, tab, { ...filters, siteVisitId: focusVisitId || undefined }, page),
+        );
       } catch (loadError) {
         fail(loadError, "Unable to load repairs.");
       } finally {
         setIsLoading(false);
       }
     },
-    [fail, filters, page, tab],
+    [fail, filters, focusVisitId, page, tab],
   );
 
   const loadGroup = useCallback(
@@ -416,13 +423,46 @@ function MaintenanceVerificationContent() {
     [fail, filters.category, filters.from, filters.to, tab],
   );
 
+  // Read the notification deep link once, before the first load.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const siteVisitId = params.get("siteVisitId") ?? "";
+    const organizationId = params.get("organizationId") ?? "";
+    if (siteVisitId) {
+      setFocusVisitId(siteVisitId);
+      if (organizationId) {
+        setFilters({ ...EMPTY_FILTERS, organizationId });
+        pendingOpenRef.current = `${siteVisitId}|${organizationId}`;
+      }
+    }
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
     const storedSession = readStoredSession();
     setSession(storedSession);
     if (storedSession?.token) {
       void loadGroups(storedSession.token);
     }
-  }, [loadGroups]);
+  }, [loadGroups, urlReady]);
+
+  // …then open the linked group once it is on the page.
+  useEffect(() => {
+    const key = pendingOpenRef.current;
+    const token = readStoredSession()?.token;
+    if (!key || !token || !groups || !groups.groups.some((group) => groupKey(group) === key)) return;
+    pendingOpenRef.current = null;
+    setOpenKey(key);
+    void loadGroup(token, key);
+  }, [groups, loadGroup]);
+
+  const showAllPencawang = () => {
+    pendingOpenRef.current = null;
+    setFocusVisitId("");
+    setFilters(EMPTY_FILTERS);
+    window.history.replaceState(null, "", window.location.pathname);
+  };
 
   // Typing settles → apply the search (back to page 1).
   useEffect(() => {
@@ -437,7 +477,7 @@ function MaintenanceVerificationContent() {
     setPage(0);
     setOpenKey(null);
     setQueue(null);
-  }, [tab, filters]);
+  }, [tab, filters, focusVisitId]);
 
   const toggleGroup = (group: VerificationGroup) => {
     const key = groupKey(group);
@@ -613,6 +653,12 @@ function MaintenanceVerificationContent() {
               </div>
             </div>
 
+            {focusVisitId ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-control)] border border-[var(--info-border)] bg-[var(--info-bg)] px-4 py-3 text-[13px] text-[var(--info-text)]">
+                <span>Showing the Pencawang from your notification.</span>
+                <Tbtn onClick={showAllPencawang}>Show all Pencawang</Tbtn>
+              </div>
+            ) : null}
             {notice ? (
               <div className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-4 py-3 text-[13px] text-[var(--foreground-soft)]">
                 {notice}
