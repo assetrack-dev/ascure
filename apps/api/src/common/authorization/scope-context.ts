@@ -1,6 +1,7 @@
 import { OrganizationType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RequestUser } from '../interfaces/request-user.interface';
+import { resolveClientSupervisorCompanyIds } from './client-maintenance-actor';
 import { isQaActor } from './qa-actor';
 
 /**
@@ -62,6 +63,15 @@ export interface ScopeContext {
    * (fail closed — never widen to the tenant).
    */
   clientMainheadIds: string[];
+  /**
+   * Plan §19 (N55, step 4c): the contractor companies a TNB SUPERVISOR handles
+   * (ClientCompanyAccess), narrowing the client scope above to those companies'
+   * surveys — and to every pole of a Pencawang one of them surveyed. Null for
+   * everyone else (a non-Supervisor client keeps the full Mainhead scope).
+   * EMPTY fails closed: a Supervisor with no company sees nothing.
+   * Optional so hand-built contexts (tests) default to "not a Supervisor".
+   */
+  clientSupervisorCompanyIds?: string[] | null;
 }
 
 /** Organization types that OWN the network rather than work it. */
@@ -85,6 +95,7 @@ export async function buildScopeContext(
       crossTeamMainheadIds: [],
       isClientViewer: false,
       clientMainheadIds: [],
+      clientSupervisorCompanyIds: null,
     };
   }
 
@@ -172,9 +183,18 @@ export async function buildScopeContext(
 async function resolveClientScope(
   prisma: PrismaService,
   user: RequestUser,
-): Promise<{ isClientViewer: boolean; clientMainheadIds: string[] }> {
+): Promise<{
+  isClientViewer: boolean;
+  clientMainheadIds: string[];
+  clientSupervisorCompanyIds: string[] | null;
+}> {
+  const none = {
+    isClientViewer: false,
+    clientMainheadIds: [],
+    clientSupervisorCompanyIds: null,
+  };
   if (!user.organizationId) {
-    return { isClientViewer: false, clientMainheadIds: [] };
+    return none;
   }
 
   // Look up by id only — `Organization.tenantId` is NULLABLE and real rows carry
@@ -187,21 +207,25 @@ async function resolveClientScope(
   });
 
   if (!organization || !CLIENT_ORG_TYPES.has(organization.type)) {
-    return { isClientViewer: false, clientMainheadIds: [] };
+    return none;
   }
 
-  const assignments = await prisma.organizationMainhead.findMany({
-    where: {
-      organizationId: user.organizationId,
-      isActive: true,
-      mainhead: { isActive: true },
-    },
-    select: { mainheadId: true },
-  });
+  const [assignments, clientSupervisorCompanyIds] = await Promise.all([
+    prisma.organizationMainhead.findMany({
+      where: {
+        organizationId: user.organizationId,
+        isActive: true,
+        mainhead: { isActive: true },
+      },
+      select: { mainheadId: true },
+    }),
+    resolveClientSupervisorCompanyIds(prisma, user),
+  ]);
 
   return {
     isClientViewer: true,
     clientMainheadIds: assignments.map((row) => row.mainheadId),
+    clientSupervisorCompanyIds,
   };
 }
 

@@ -99,12 +99,23 @@ function buildSiteVisitScope(
   // `substation.mainheadId` instead. Matching only the visit's own column would
   // silently drop a survey whose Mainhead was never stamped — its poles would
   // show on the client's map while the survey itself vanished from their feed.
+  //
+  // A TNB SUPERVISOR (plan §19 N55, step 4c) additionally sees only the surveys
+  // its companies performed — the survey's company is its TEAM's organization
+  // (SiteVisit.organizationId is optional and not reliable).
   if (ctx?.isClientViewer) {
-    return {
+    const network: Prisma.SiteVisitWhereInput = {
       OR: [
         { mainheadId: { in: ctx.clientMainheadIds } },
         { substation: { mainheadId: { in: ctx.clientMainheadIds } } },
       ],
+    };
+    const companyIds = ctx.clientSupervisorCompanyIds;
+    if (!companyIds) {
+      return network;
+    }
+    return {
+      AND: [network, { team: { organizationId: { in: companyIds } } }],
     };
   }
 
@@ -177,6 +188,31 @@ function buildSiteVisitScope(
 
   // TECHNICIAN / VIEWER / CLIENT: only their own teams' visits.
   return { team: ownTeamMembership };
+}
+
+/**
+ * The Pencawang a CLIENT viewer may see: those under its organization's
+ * Mainheads. A TNB SUPERVISOR (plan §19 N55, step 4c — owner chose "by
+ * Pencawang", 2026-10-14) sees only the Pencawang where one of its companies
+ * has a survey, but then EVERY pole there — so Progress keeps real totals
+ * (120 / 150 surveyed) instead of only the poles its crews touched.
+ * Fails closed: no Mainhead / no company → `in: []` → nothing.
+ */
+export function clientSubstationWhere(
+  ctx: ScopeContext,
+): Prisma.SubstationWhereInput {
+  const companyIds = ctx.clientSupervisorCompanyIds;
+  return {
+    mainheadId: { in: ctx.clientMainheadIds },
+    ...(companyIds
+      ? { siteVisits: { some: { team: { organizationId: { in: companyIds } } } } }
+      : {}),
+  };
+}
+
+/** Poles a CLIENT viewer may see — every pole of a {@link clientSubstationWhere} Pencawang. */
+export function clientAssetWhere(ctx: ScopeContext): Prisma.AssetWhereInput {
+  return { substation: clientSubstationWhere(ctx) };
 }
 
 /**

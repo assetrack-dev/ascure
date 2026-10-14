@@ -10,6 +10,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
   assetAccessWhere,
   assetOversightWhere,
+  clientAssetWhere,
   siteVisitAccessWhere,
 } from '../common/authorization/site-visit-scope';
 import { buildScopeContext } from '../common/authorization/scope-context';
@@ -737,7 +738,8 @@ export class MasterDataService {
     }
 
     if (ctx.isClientViewer) {
-      return { substation: { mainheadId: { in: ctx.clientMainheadIds } } };
+      // A TNB Supervisor only gets the Pencawang its companies surveyed (step 4c).
+      return clientAssetWhere(ctx);
     }
 
     let allowed: string[] = [];
