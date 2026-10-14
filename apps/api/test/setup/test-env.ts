@@ -35,6 +35,11 @@ export function loadTestEnv(): void {
   // Auto ground clearance hooks are opt-in per environment (prod switches them
   // on after the one-time backfill); the suite exercises them.
   process.env.AUTO_GROUND_CLEARANCE = process.env.AUTO_GROUND_CLEARANCE || 'true';
+  // Web Push stays OFF under test (plan §19, N56) even when a developer's .env
+  // carries VAPID keys — a test must never send a real push. Set (empty) here,
+  // so the app's ConfigModule (dotenv: never overrides) can't fill them in.
+  process.env.VAPID_PUBLIC_KEY = '';
+  process.env.VAPID_PRIVATE_KEY = '';
 }
 
 loadTestEnv();

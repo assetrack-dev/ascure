@@ -23,6 +23,7 @@ import { ImportsModule } from './imports/imports.module';
 import { SyncModule } from './sync/sync.module';
 import { PublicModule } from './public/public.module';
 import { ShareModule } from './share/share.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 
 @Module({
@@ -57,6 +58,7 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module';
     SyncModule,
     PublicModule,
     ShareModule,
+    NotificationsModule,
     // RSS-leak instrumentation: 60s memory sampler + per-route attribution
     // (global interceptor) + ADMIN /diagnostics endpoints + SIGUSR2 dump.
     DiagnosticsModule,

@@ -68,6 +68,7 @@ import { UpdateDefectVerificationDto } from './dto/update-defect-verification.dt
 import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
 import { DefectRegistryQueryDto } from './dto/registry-query.dto';
 import { REGISTRY_UNASSIGNED } from '../assets/dto/registry-query.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /** Max rows a cross-scope defect search returns (fetches cap+1 to flag
  *  truncation). */
@@ -529,7 +530,10 @@ const LEGACY_MAINTENANCE_RESOLUTION_OUTCOME_MAP: Partial<
 
 @Injectable()
 export class DefectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async list(user: RequestUser, limit?: number) {
     const ctx = await buildScopeContext(this.prisma, user);
@@ -2564,6 +2568,24 @@ export class DefectsService {
         },
       });
     });
+
+    // Plan §19 (N56): a routed repair newly submitted → tell TNB (🔔 + push).
+    // Only on the transition INTO COMPLETED, so an offline replay or an
+    // outcome edit of an already-submitted repair never notifies twice.
+    if (
+      defect.maintenanceOrganizationId &&
+      currentLifecycleStatus !== DefectLifecycleStatus.COMPLETED
+    ) {
+      const visit = defect.inspectionItemResult?.inspection?.siteVisit;
+      if (visit) {
+        await this.notifications.repairSubmitted({
+          tenantId: user.tenantId,
+          actorUserId: user.id,
+          siteVisitId: visit.id,
+          maintenanceOrganizationId: defect.maintenanceOrganizationId,
+        });
+      }
+    }
 
     return this.getDetail(user, defect.id);
   }
