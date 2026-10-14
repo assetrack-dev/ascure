@@ -113,13 +113,8 @@ const MANAGER_NAV_HREFS = new Set<string>([
 // "/maintenance-packages" is TNB's hand-off of surveyed Pencawang to maintenance
 // companies; every TNB rank sees it, only Foreman/Technician can act (API-enforced).
 // "/maintenance-verification" is where TNB signs off (or re-opens) repairs.
-// A TNB Supervisor (plan §19, N55): only the maintenance work of its companies —
-// the survey views follow later (step 4c; the API refuses them meanwhile).
-const CLIENT_SUPERVISOR_NAV_HREFS = new Set<string>([
-  "/maintenance-packages",
-  "/maintenance-verification",
-]);
-
+// A TNB Supervisor (plan §19, N55) gets the same pages: the API narrows every
+// one of them to its companies (step 4c — the Pencawang they surveyed).
 const CLIENT_NAV_HREFS = new Set<string>([
   "/progress",
   "/visits",
@@ -264,9 +259,6 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
     // CLIENT VIEWER (TNB): closed allow-list — the progress view only.
     if (user?.isClientViewer === true && user?.role !== "ADMIN") {
-      if (user?.isClientSupervisor === true) {
-        return CLIENT_SUPERVISOR_NAV_HREFS.has(item.href);
-      }
       return CLIENT_NAV_HREFS.has(item.href);
     }
 
