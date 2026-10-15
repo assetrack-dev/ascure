@@ -13,6 +13,7 @@ import {
   FileText,
   FolderKanban,
   GitBranch,
+  Hammer,
   LayoutDashboard,
   Layers2,
   LogOut,
@@ -250,6 +251,7 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
     { href: "/pencawang", label: "Pencawang", icon: Factory, section: "admin", adminOnly: true, group: "setup" },
     { href: "/capabilities", label: "Capabilities", icon: Tags, section: "admin", adminOnly: true, group: "setup" },
     { href: "/checklist-templates", label: "Checklists", icon: ClipboardList, section: "admin", adminOnly: true, group: "setup" },
+    { href: "/repair-methods", label: "Repair types", icon: Hammer, section: "admin", adminOnly: true, group: "setup" },
     { href: "/report-templates", label: "Report Templates", icon: FileText, section: "admin", adminOnly: true, group: "setup" },
     { href: "/imports", label: "Imports", icon: Upload, section: "admin", requiresImport: true, group: "setup" },
     // Hidden from nav (kept in code, pending deletion) — declutter pass 2026-07-06.

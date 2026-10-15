@@ -253,12 +253,35 @@ function RepairCard({
                 {OUTCOME_LABEL[item.resolutionOutcome] ?? item.resolutionOutcome}
               </Chip>
             ) : null}
+            {/* Plan §20 (P2): the kind of repair done; Rentis without one = not set. */}
+            {item.repairMethod ? (
+              <Chip tone="info" title={item.repairMethod.note ?? undefined}>
+                {item.repairMethod.label}
+                {item.repairMethod.note ? ` — ${item.repairMethod.note}` : ""}
+              </Chip>
+            ) : item.category === "RENTIS" && !item.cannotRepair ? (
+              <Chip tone="warning">Rentis type not set</Chip>
+            ) : null}
+            {item.photosChangedAfterSubmission ? (
+              <Chip tone="high" title="The crew changed the repair photos after submitting — check them again.">
+                Photos changed after submission
+              </Chip>
+            ) : null}
           </div>
           <h3 className="mt-2 text-[14px] font-semibold text-[var(--foreground)]">
             {item.remark || item.label}
           </h3>
           <p className="mt-1 text-[12.5px] text-[var(--muted)]">
             <span className="font-mono">{item.asset.assetCode}</span> ·{" "}
+            {item.asset.noTiangLama ? (
+              <>
+                Lama {item.asset.noTiangLama}
+                {item.noTiangLamaPrevious !== undefined && item.noTiangLamaPrevious !== null
+                  ? ` (dahulu: ${item.noTiangLamaPrevious})`
+                  : ""}{" "}
+                ·{" "}
+              </>
+            ) : null}
             {item.pencawangName || item.pencawangCode || "Unnamed Pencawang"} ·{" "}
             {item.mainhead?.name ?? "No Mainhead"}
           </p>

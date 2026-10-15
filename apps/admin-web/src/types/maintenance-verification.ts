@@ -36,7 +36,20 @@ export interface VerificationItem {
   closedBy: { id: string; name: string } | null;
   closureNotes: string | null;
   company: { id: string; name: string } | null;
-  asset: { id: string; assetCode: string; latitude: number | null; longitude: number | null };
+  asset: {
+    id: string;
+    assetCode: string;
+    /** NO TIANG LAMA as the reports read it (plan §20, P3). */
+    noTiangLama?: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  };
+  /** The Lama before a maintenance crew corrected it on site (plan §20, P3). */
+  noTiangLamaPrevious?: string | null;
+  /** The kind of repair done (plan §20, P2 — Rentis: KAEDAH LAZIM …). */
+  repairMethod?: { id: string; label: string | null; note: string | null } | null;
+  /** The crew changed the photos after submitting — look again (plan §20, P1). */
+  photosChangedAfterSubmission?: boolean;
   siteVisitId: string;
   pencawangName: string | null;
   pencawangCode: string | null;
