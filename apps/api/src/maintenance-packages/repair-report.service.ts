@@ -35,6 +35,8 @@ import {
   RepairStage,
   RepairStatus,
 } from './repair-report-layout';
+import { previousNoTiangLama } from './maintenance-closure.service';
+import { effectiveLama } from './maintenance-work.service';
 
 const CATEGORY_LABEL: Record<MaintenanceCategory, string> = {
   RENTIS: 'Rentis',
@@ -148,6 +150,8 @@ export class RepairReportService {
           maintenanceNotes: true,
           maintainedAt: true,
           closureVerifiedAt: true,
+          repairMethodNote: true,
+          repairMethod: { select: { label: true } },
           maintainedByUser: { select: { name: true } },
           closureVerifiedByUser: {
             select: { name: true, clientRank: true, organization: { select: { name: true } } },
@@ -178,7 +182,7 @@ export class RepairReportService {
               inspection: {
                 select: {
                   asset: {
-                    select: { assetCode: true, latitude: true, longitude: true },
+                    select: { id: true, assetCode: true, noTiangLama: true, name: true, latitude: true, longitude: true },
                   },
                 },
               },
@@ -215,6 +219,12 @@ export class RepairReportService {
           undefined,
           { numeric: true, sensitivity: 'base' },
         ) || left.inspectionItemResult.label.localeCompare(right.inspectionItemResult.label),
+    );
+
+    // Plan §20 (P3): poles whose No Tiang Lama the crew corrected on site.
+    const previousLama = await previousNoTiangLama(
+      this.prisma,
+      sorted.map((defect) => defect.inspectionItemResult.inspection.asset.id),
     );
 
     for (const defect of sorted) {
@@ -260,6 +270,16 @@ export class RepairReportService {
       } else if (defect.maintenanceNotes) {
         notes.push(`Catatan pasukan: ${defect.maintenanceNotes}`);
       }
+      // Plan §20 (P2): what the "Lain-lain" kind of repair was.
+      if (defect.repairMethodNote) {
+        notes.push(`Kaedah: ${defect.repairMethodNote}`);
+      }
+      // Plan §20 (P3): owner — show both, so TNB sees why the number changed.
+      if (previousLama.has(asset.id)) {
+        notes.push(
+          `No Tiang Lama: ${effectiveLama(asset) ?? '-'} (dahulu: ${previousLama.get(asset.id) ?? '-'})`,
+        );
+      }
 
       const verifier = defect.closureVerifiedByUser;
       const reportItem: RepairReportItem = {
@@ -268,7 +288,9 @@ export class RepairReportService {
           asset.latitude != null && asset.longitude != null
             ? `${Number(asset.latitude).toFixed(5)}, ${Number(asset.longitude).toFixed(5)}`
             : '',
-        workType: CATEGORY_LABEL[defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN],
+        workType: defect.repairMethod
+          ? `${CATEGORY_LABEL[defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN]} · ${defect.repairMethod.label}`
+          : CATEGORY_LABEL[defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN],
         category: this.categoryFor(defect.severity),
         status,
         label: item.label,

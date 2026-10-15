@@ -9,6 +9,7 @@ import { MaintenanceVerificationController } from './maintenance-verification.co
 import { MaintenanceWorkController } from './maintenance-work.controller';
 import { MaintenanceWorkService } from './maintenance-work.service';
 import { RepairReportService } from './repair-report.service';
+import { RepairMethodsController } from './repair-methods.controller';
 
 @Module({
   imports: [PrismaModule],
@@ -17,6 +18,7 @@ import { RepairReportService } from './repair-report.service';
     MaintenanceVerificationController,
     MaintenanceWorkController,
     MaintenanceMaterialsController,
+    RepairMethodsController,
   ],
   providers: [
     MaintenancePackagesService,

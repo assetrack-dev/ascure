@@ -802,6 +802,8 @@ export class ReportsService {
           maintainedAt: true,
           closureVerifiedAt: true,
           resolutionOutcome: true,
+          // Plan §20 (P2): repaired count per kind of repair (claims).
+          repairMethod: { select: { label: true } },
           timelineEntries: {
             where: {
               type: DefectTimelineEventType.STATUS_CHANGED,
@@ -840,6 +842,8 @@ export class ReportsService {
       days: Set<string>;
       hoursToDone: number[];
       onHand: number;
+      /** Plan §20 (P2): repaired per kind of repair ("" = not set, Rentis only). */
+      methods: Map<string, number>;
     };
     const byTeam = new Map<string, Aggregate>();
     const teamOf = (row: { assignedToTeamId: string | null; assignedTeamId: string | null }) =>
@@ -855,6 +859,7 @@ export class ReportsService {
           days: new Set(),
           hoursToDone: [],
           onHand: 0,
+          methods: new Map(),
         };
         byTeam.set(teamId, aggregate);
       }
@@ -869,7 +874,7 @@ export class ReportsService {
       const key = `${teamId}|${category}`;
       let aggregate = byTeamCategory.get(key);
       if (!aggregate) {
-        aggregate = { repaired: 0, cannotRepair: 0, closed: 0, sentBack: 0, days: new Set(), hoursToDone: [], onHand: 0 };
+        aggregate = { repaired: 0, cannotRepair: 0, closed: 0, sentBack: 0, days: new Set(), hoursToDone: [], onHand: 0, methods: new Map() };
         byTeamCategory.set(key, aggregate);
       }
       return aggregate;
@@ -884,6 +889,11 @@ export class ReportsService {
             aggregate.cannotRepair += 1;
           } else {
             aggregate.repaired += 1;
+            const method =
+              defect.repairMethod?.label ?? (categoryOf(defect) === 'RENTIS' ? '' : null);
+            if (method !== null) {
+              aggregate.methods.set(method, (aggregate.methods.get(method) ?? 0) + 1);
+            }
             if (defect.assignedAt && defect.maintainedAt! > defect.assignedAt) {
               aggregate.hoursToDone.push(
                 (defect.maintainedAt!.getTime() - defect.assignedAt.getTime()) / 3_600_000,
@@ -967,6 +977,10 @@ export class ReportsService {
       days: new Set(parts.flatMap((part) => [...part.days])),
       hoursToDone: parts.flatMap((part) => part.hoursToDone),
       onHand: parts.reduce((total, part) => total + part.onHand, 0),
+      methods: parts.reduce((total, part) => {
+        for (const [label, count] of part.methods) total.set(label, (total.get(label) ?? 0) + count);
+        return total;
+      }, new Map<string, number>()),
     });
     const metrics = (aggregate: Aggregate) => {
       const decided = aggregate.closed + aggregate.sentBack;
@@ -983,6 +997,10 @@ export class ReportsService {
           : null,
         passRate: decided > 0 ? Math.round((aggregate.closed / decided) * 1000) / 10 : null,
         onHand: aggregate.onHand,
+        // Plan §20 (P2): repaired per kind of repair — label null = not set yet.
+        methods: [...aggregate.methods.entries()]
+          .map(([label, count]) => ({ label: label || null, count }))
+          .sort((left, right) => right.count - left.count),
       };
     };
     const companies = new Map<
