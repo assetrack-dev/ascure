@@ -9,11 +9,14 @@ import { useStampedPhoto } from '../camera/useStampedPhoto';
 import {
   deleteRepairPhotoFile,
   enqueueDefectMaterials,
+  enqueueEvidenceEdit,
   enqueueMutation,
+  enqueuePoleNoTiangLama,
   enqueueRepairCompletion,
   isTempId,
   mintTempId,
   persistRepairPhoto,
+  restageQueuedRepairPhoto,
   withdrawQueuedRepairPhoto,
 } from '../syncQueue';
 import {
@@ -21,14 +24,21 @@ import {
   addLocalFinding,
   addLocalPhoto,
   dismissLocalCompletion,
+  dismissLocalEvidenceEdit,
   dismissLocalMaterials,
+  dismissLocalPoleLama,
+  displayPoleLama,
+  moveLocalPhotoStage,
   overlayKejanggalan,
   pendingFindingItems,
   removeLocalFinding,
   removeLocalPhoto,
+  setLocalEvidenceEdit,
   setLocalMaterials,
+  setLocalPoleLama,
   type LocalFinding,
   type OverlaidKejanggalan,
+  type OverlaidPhoto,
 } from '../maintenance/maintenanceLocal';
 import { usePackPhotos } from '../maintenance/packPhotos';
 import { useWorkPack } from '../maintenance/useWorkPack';
@@ -99,6 +109,12 @@ export function MaintenancePoleScreen() {
   // TNB feedback #2 — free text ("Lain-lain") when the checklist has no item for it.
   const [customLabel, setCustomLabel] = useState('');
   const [customType, setCustomType] = useState<MaintenanceCategory | null>(null);
+  // Plan §20 (P2) — the kind of Rentis done, chosen at "Mark done".
+  const [methodId, setMethodId] = useState<string | null>(null);
+  const [methodNote, setMethodNote] = useState('');
+  // Plan §20 (P3) — the crew's No Tiang Lama correction.
+  const [editingLama, setEditingLama] = useState(false);
+  const [lamaDraft, setLamaDraft] = useState('');
 
   const surveyedPole = pack?.surveyedPoles?.find((candidate) => candidate.assetId === assetId) ?? null;
   // A pole with no Kejanggalan yet is still openable to add one.
@@ -129,8 +145,13 @@ export function MaintenancePoleScreen() {
     return [...server, ...added];
   }, [local, pack, pole]);
   const poleCode = pole ? pole.refCode || pole.assetCode : 'Pole';
+  // Plan §20 (P3): a correction made here shows at once (and on new photos).
+  const lama = pole ? displayPoleLama(pole.assetId, pole.noTiangLama, local) : { value: null, pending: null };
   // TNB feedback #5: every repair photo names the Pencawang and NO TIANG LAMA.
-  const stamp = { pencawang: pack?.pencawangName ?? null, noTiangLama: pole?.noTiangLama ?? null };
+  const stamp = { pencawang: pack?.pencawangName ?? null, noTiangLama: lama.value };
+  /** Plan §20 (P2): kinds of repair for a work type (Rentis types), from the pack. */
+  const methodsFor = (category: MaintenanceCategory) =>
+    (pack?.repairMethods ?? []).filter((method) => method.category === category);
 
   /** Checklist items the crew may raise on this pole (its template, its work types). */
   const findingItems: FindingItem[] = useMemo(() => {
@@ -252,6 +273,101 @@ export function MaintenancePoleScreen() {
       },
     ]);
 
+  /** Plan §20 (P1): a photo can be fixed until TNB verifies the repair. */
+  const canFixPhotos = (item: PoleItem) =>
+    item.canCorrect !== false && item.displayState !== 'CLOSED' && !item.localFinding?.rejectedReason;
+
+  const queuePhotoEdit = async (
+    item: PoleItem,
+    photo: OverlaidPhoto,
+    kind: 'DELETE' | 'MOVE',
+    stage?: RepairStage,
+  ) => {
+    if (!photo.evidenceId) return;
+    const queuedAt = new Date().toISOString();
+    await setLocalEvidenceEdit({ evidenceId: photo.evidenceId, defectId: item.id, kind, stage, queuedAt });
+    await enqueueEvidenceEdit({
+      kind,
+      evidenceId: photo.evidenceId,
+      defectId: item.id,
+      stage,
+      queuedAt,
+      label: kind === 'DELETE' ? `Delete photo · ${poleCode}` : `Move photo to ${STAGE_LABEL[stage as RepairStage]} · ${poleCode}`,
+      sublabel: item.remark || item.label,
+      ownerUserId: user.id,
+    });
+    kickSync();
+  };
+
+  const movePhoto = async (item: PoleItem, photo: OverlaidPhoto, stage: RepairStage) => {
+    if (photo.pending) {
+      // Still on the phone: re-file the waiting upload.
+      if (!(await restageQueuedRepairPhoto(photo.id, stage))) {
+        Alert.alert('Uploading now', 'This photo is being sent right now — try again in a moment.');
+        return;
+      }
+      await moveLocalPhotoStage(photo.id, stage);
+      return;
+    }
+    await queuePhotoEdit(item, photo, 'MOVE', stage);
+  };
+
+  /** Long-press a repair photo: move it to another stage, or delete it. */
+  const photoActions = (item: PoleItem, stage: RepairStage, photo: OverlaidPhoto) => {
+    if (photo.rejectedReason) {
+      confirmRemoveLocal(photo.id, photo.url);
+      return;
+    }
+    const otherStages = STAGES.filter((candidate) => candidate !== stage);
+    const chooseStage = () =>
+      Alert.alert('Move this photo to', undefined, [
+        ...otherStages.map((target) => ({
+          text: STAGE_LABEL[target],
+          onPress: () => void movePhoto(item, photo, target),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
+    const confirmDelete = () =>
+      photo.pending
+        ? confirmRemoveLocal(photo.id, photo.url)
+        : Alert.alert(
+            'Delete this photo?',
+            'It is removed from the repair (TNB keeps a record of the change). Take a new one if needed.',
+            [
+              { text: 'Keep', style: 'cancel' },
+              { text: 'Delete', style: 'destructive', onPress: () => void queuePhotoEdit(item, photo, 'DELETE') },
+            ],
+          );
+    Alert.alert(`${STAGE_LABEL[stage]} photo`, 'Fix this photo?', [
+      { text: 'Move to another stage', onPress: chooseStage },
+      { text: 'Delete', style: 'destructive', onPress: confirmDelete },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  /** Plan §20 (P3): save the corrected No Tiang Lama (queues like photos). */
+  const saveLama = async () => {
+    if (!pole) return;
+    const value = lamaDraft.replace(/\s+/g, ' ').trim() || null;
+    if (value && value.length > 60) {
+      setActionError('No Tiang Lama is too long (60 characters at most).');
+      return;
+    }
+    setActionError(null);
+    setEditingLama(false);
+    if (value === lama.value) return;
+    const queuedAt = new Date().toISOString();
+    await setLocalPoleLama(pole.assetId, value, queuedAt);
+    await enqueuePoleNoTiangLama({
+      assetId: pole.assetId,
+      value,
+      queuedAt,
+      label: `No Tiang Lama → ${value ?? '(blank)'} · ${poleCode}`,
+      ownerUserId: user.id,
+    });
+    kickSync();
+  };
+
   const submitCompletion = async (item: OverlaidKejanggalan) => {
     if (!completing) return;
     const isCannot = completing.kind === 'CANNOT';
@@ -261,23 +377,42 @@ export function MaintenancePoleScreen() {
       setActionError('Say why it cannot be repaired — TNB decides from this note.');
       return;
     }
+    // Plan §20 (P2): a repaired Rentis says which kind of Rentis was done.
+    const methods = isCannot ? [] : methodsFor(item.category);
+    const method = methods.find((candidate) => candidate.id === methodId) ?? null;
+    if (methods.length > 0 && !method) {
+      setActionError(`Choose the ${CATEGORY_LABEL[item.category]} type done.`);
+      return;
+    }
+    const methodText = method?.requiresNote ? methodNote.replace(/\s+/g, ' ').trim() || null : null;
+    if (method?.requiresNote && !methodText) {
+      setActionError(`"${method.label}" — describe the work done.`);
+      return;
+    }
     setActionError(null);
     await addLocalCompletion({
       defectId: item.id,
       resolutionOutcome,
       notes: trimmed,
       queuedAt: new Date().toISOString(),
+      repairMethodId: method?.id ?? null,
+      repairMethodLabel: method?.label ?? null,
+      repairMethodNote: methodText,
     });
     await enqueueRepairCompletion({
       defectId: item.id,
       resolutionOutcome,
       maintenanceNotes: trimmed,
+      repairMethodId: method?.id ?? null,
+      repairMethodNote: methodText,
       label: `${isCannot ? 'Cannot repair' : 'Repair done'} · ${poleCode}`,
       sublabel: item.remark || item.label,
       ownerUserId: user.id,
     });
     setCompleting(null);
     setNotes('');
+    setMethodId(null);
+    setMethodNote('');
     kickSync();
   };
 
@@ -453,7 +588,7 @@ export function MaintenancePoleScreen() {
   return (
     <Screen
       title={poleCode}
-      subtitle={pole ? [pole.refCode ? pole.assetCode : null, pole.noTiangLama ? `Lama ${pole.noTiangLama}` : null].filter(Boolean).join(' · ') || undefined : undefined}
+      subtitle={pole ? [pole.refCode ? pole.assetCode : null, lama.value ? `Lama ${lama.value}` : null].filter(Boolean).join(' · ') || undefined : undefined}
       keyboardAware
       leftAction={{ icon: 'back', onPress: () => navigation.goBack(), accessibilityLabel: 'Back' }}
       rightAction={{ icon: 'refresh', onPress: () => void reload(), accessibilityLabel: 'Refresh', disabled: isLoading }}
@@ -490,6 +625,61 @@ export function MaintenancePoleScreen() {
             </View>
           ) : null}
         </View>
+      ) : null}
+
+      {pole && (pole.canEditNoTiangLama || lama.pending) ? (
+        <Card>
+          <Text style={styles.sectionFirst}>No Tiang Lama</Text>
+          {editingLama ? (
+            <View>
+              <TextInput
+                value={lamaDraft}
+                onChangeText={setLamaDraft}
+                placeholder="Number painted on the pole now"
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="characters"
+                maxLength={60}
+                style={styles.input}
+              />
+              <View style={styles.actionRow}>
+                <View style={styles.navButton}>
+                  <AppButton label="Cancel" variant="ghost" onPress={() => setEditingLama(false)} />
+                </View>
+                <View style={styles.navButton}>
+                  <AppButton label="Save" variant="primary" onPress={() => void saveLama()} />
+                </View>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.lamaRow}>
+              <Text style={styles.lamaValue}>{lama.value ?? '—'}</Text>
+              {pole.canEditNoTiangLama ? (
+                <Pressable
+                  onPress={() => {
+                    setLamaDraft(lama.value ?? '');
+                    setEditingLama(true);
+                  }}
+                >
+                  <Text style={styles.link}>Edit</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          )}
+          {lama.pending && !lama.pending.rejectedReason && !lama.pending.syncedAt ? (
+            <Text style={styles.hint}>Changed on this phone — waiting to sync.</Text>
+          ) : null}
+          {lama.pending?.rejectedReason ? (
+            <View style={styles.rejected}>
+              <Text style={styles.rejectedText}>Not accepted: {lama.pending.rejectedReason}</Text>
+              <Pressable onPress={() => void dismissLocalPoleLama(pole.assetId)}>
+                <Text style={styles.link}>Dismiss</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {!editingLama && !lama.pending ? (
+            <Text style={styles.muted}>Repainted? Correct it here — TNB sees the old and new number.</Text>
+          ) : null}
+        </Card>
       ) : null}
 
       {pole ? (
@@ -798,21 +988,27 @@ export function MaintenancePoleScreen() {
                       <Pressable
                         key={photo.id}
                         onPress={() => openPhotos(photos.map((entry) => photoUri(entry.url)), index, `${STAGE_LABEL[stage]} photo`)}
-                        onLongPress={photo.pending ? () => confirmRemoveLocal(photo.id, photo.url) : undefined}
+                        onLongPress={
+                          photo.pending || photo.rejectedReason || (photo.evidenceId && canFixPhotos(item))
+                            ? () => photoActions(item, stage, photo)
+                            : undefined
+                        }
                       >
                         <Image source={{ uri: photoUri(photo.url) }} style={styles.thumb} />
                         {photo.rejectedReason ? (
                           <View style={[styles.badge, styles.badgeDanger]}>
                             <Text style={styles.badgeText}>Rejected</Text>
                           </View>
-                        ) : photo.pending ? (
+                        ) : photo.pending || photo.editPending ? (
                           <View style={styles.badge}>
                             <Feather name="upload-cloud" size={11} color="#ffffff" />
                           </View>
                         ) : null}
                       </Pressable>
                     ))}
-                    {workable ? (
+                    {workable || (canFixPhotos(item) && item.displayState === 'SUBMITTED') ? (
+                      // Plan §20: a submitted, not-yet-verified repair can still
+                      // get a replacement photo (TNB sees it was changed).
                       <Pressable
                         onPress={() => void takePhoto(item, stage)}
                         disabled={busyStage !== null || isStamping}
@@ -823,9 +1019,36 @@ export function MaintenancePoleScreen() {
                       </Pressable>
                     ) : null}
                   </ScrollView>
+                  {photos
+                    .filter((photo) => photo.editRejectedReason && photo.evidenceId)
+                    .map((photo) => (
+                      <View key={`edit-${photo.id}`} style={styles.rejected}>
+                        <Text style={styles.rejectedText}>Photo change not accepted: {photo.editRejectedReason}</Text>
+                        <Pressable onPress={() => void dismissLocalEvidenceEdit(photo.evidenceId as string)}>
+                          <Text style={styles.link}>Dismiss</Text>
+                        </Pressable>
+                      </View>
+                    ))}
                 </View>
               );
             })}
+            {canFixPhotos(item) &&
+            STAGES.some((stage) => item.allPhotos[stage].length > 0) ? (
+              <Text style={styles.hint}>Wrong photo? Press and hold it to move it to Before / After or delete it.</Text>
+            ) : null}
+            {(() => {
+              // Plan §20 (P2): the kind of repair recorded (or waiting to sync).
+              const label = item.pendingCompletion?.repairMethodLabel ?? item.repairMethod?.label ?? null;
+              const note = item.pendingCompletion?.repairMethodLabel
+                ? item.pendingCompletion.repairMethodNote
+                : item.repairMethod?.note;
+              return label ? (
+                <Text style={styles.muted}>
+                  {CATEGORY_LABEL[item.category]} type: {label}
+                  {note ? ` — ${note}` : ''}
+                </Text>
+              ) : null;
+            })()}
 
             <RepairMaterials
               lines={item.displayMaterials}
@@ -845,6 +1068,8 @@ export function MaintenancePoleScreen() {
                     disabled={!hasBefore || !hasAfter || (!item.team && !item.localFinding)}
                     onPress={() => {
                       setNotes('');
+                      setMethodId(null);
+                      setMethodNote('');
                       setCompleting({ defectId: item.id, kind: 'DONE' });
                     }}
                   />
@@ -872,7 +1097,11 @@ export function MaintenancePoleScreen() {
             {isThisCompleting ? (
               <View style={styles.completeBox}>
                 <Text style={styles.section}>
-                  {completing?.kind === 'CANNOT' ? 'Why can it not be repaired?' : 'Repair notes (optional)'}
+                  {completing?.kind === 'CANNOT'
+                    ? 'Why can it not be repaired?'
+                    : methodsFor(item.category).length > 0
+                      ? `${CATEGORY_LABEL[item.category]} type *`
+                      : 'Repair notes (optional)'}
                 </Text>
                 {completing?.kind === 'CANNOT'
                   ? CANNOT_REPAIR_OUTCOMES.map((option) => (
@@ -890,6 +1119,35 @@ export function MaintenancePoleScreen() {
                       </Pressable>
                     ))
                   : null}
+                {completing?.kind === 'DONE' && methodsFor(item.category).length > 0 ? (
+                  <View>
+                    {methodsFor(item.category).map((method) => (
+                      <Pressable
+                        key={method.id}
+                        onPress={() => setMethodId(method.id)}
+                        style={[styles.option, methodId === method.id && styles.optionActive]}
+                      >
+                        <Feather
+                          name={methodId === method.id ? 'check-circle' : 'circle'}
+                          size={16}
+                          color={methodId === method.id ? theme.colors.primary : theme.colors.textMuted}
+                        />
+                        <Text style={styles.optionText}>{method.label}</Text>
+                      </Pressable>
+                    ))}
+                    {methodsFor(item.category).find((method) => method.id === methodId)?.requiresNote ? (
+                      <TextInput
+                        value={methodNote}
+                        onChangeText={setMethodNote}
+                        placeholder="Describe the work done (required)"
+                        placeholderTextColor={theme.colors.textMuted}
+                        maxLength={300}
+                        style={styles.input}
+                      />
+                    ) : null}
+                    <Text style={styles.section}>Repair notes (optional)</Text>
+                  </View>
+                ) : null}
                 <TextInput
                   value={notes}
                   onChangeText={setNotes}
@@ -929,6 +1187,9 @@ function formatDate(value: string) {
 
 function createStyles(theme: Theme) {
   return StyleSheet.create({
+    // Plan §20 (P3) — No Tiang Lama card.
+    lamaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    lamaValue: { fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary },
     navRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
     addRow: { marginBottom: 12 },
     optionMeta: { fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.textMuted },

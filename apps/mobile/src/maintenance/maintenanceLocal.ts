@@ -26,6 +26,10 @@ import type {
  *
  * Plus the materials the crew recorded on a Kejanggalan (TNB feedback #1),
  * shown in place of the pack's list until a fresh pack reflects the save.
+ *
+ * Plus (plan §20) photo fixes on UPLOADED repair photos — deleted, or moved to
+ * another stage — and the crew's correction of a pole's No Tiang Lama, each
+ * shown at once and dropped when a fresh pack reflects it.
  */
 
 const STORAGE_KEY = '@ascure/mobile/maintenance-local/v1';
@@ -50,6 +54,32 @@ export type LocalCompletion = {
   resolutionOutcome: string;
   notes: string | null;
   queuedAt: string;
+  rejectedReason?: string;
+  /** Plan §20 (P2): the kind of repair done (Rentis type) + its note. */
+  repairMethodId?: string | null;
+  repairMethodLabel?: string | null;
+  repairMethodNote?: string | null;
+};
+
+/** Plan §20 (P1): a fix to an UPLOADED repair photo, queued for the server. */
+export type LocalEvidenceEdit = {
+  /** Server evidence id. */
+  evidenceId: string;
+  defectId: string;
+  kind: 'DELETE' | 'MOVE';
+  /** MOVE: the stage the photo now belongs to. */
+  stage?: RepairStage;
+  queuedAt: string;
+  syncedAt?: string;
+  rejectedReason?: string;
+};
+
+/** Plan §20 (P3): the crew's correction of a pole's No Tiang Lama. */
+export type LocalPoleLama = {
+  assetId: string;
+  value: string | null;
+  queuedAt: string;
+  syncedAt?: string;
   rejectedReason?: string;
 };
 
@@ -84,9 +114,18 @@ export type Store = {
   completions: LocalCompletion[];
   findings: LocalFinding[];
   materials: LocalMaterials[];
+  evidenceEdits: LocalEvidenceEdit[];
+  poleLama: LocalPoleLama[];
 };
 
-const EMPTY_STORE: Store = { photos: [], completions: [], findings: [], materials: [] };
+const EMPTY_STORE: Store = {
+  photos: [],
+  completions: [],
+  findings: [],
+  materials: [],
+  evidenceEdits: [],
+  poleLama: [],
+};
 
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
 
@@ -109,6 +148,8 @@ async function load(): Promise<Store> {
       completions: Array.isArray(parsed.completions) ? parsed.completions : [],
       findings: Array.isArray(parsed.findings) ? parsed.findings : [],
       materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+      evidenceEdits: Array.isArray(parsed.evidenceEdits) ? parsed.evidenceEdits : [],
+      poleLama: Array.isArray(parsed.poleLama) ? parsed.poleLama : [],
     };
   } catch {
     return EMPTY_STORE;
@@ -171,6 +212,7 @@ export function addLocalFinding(finding: LocalFinding) {
 export function markLocalFindingSynced(tempId: string, realId: string) {
   const swap = (id: string) => (id === tempId ? realId : id);
   return update((store) => ({
+    ...store,
     photos: store.photos.map((photo) => ({ ...photo, defectId: swap(photo.defectId) })),
     completions: store.completions.map((item) => ({ ...item, defectId: swap(item.defectId) })),
     materials: store.materials.map((entry) => ({ ...entry, defectId: swap(entry.defectId) })),
@@ -193,6 +235,7 @@ export function markLocalFindingRejected(tempId: string, reason: string) {
 export async function removeLocalFinding(tempId: string): Promise<string[]> {
   const files: string[] = [];
   await update((store) => ({
+    ...store,
     photos: store.photos.filter((photo) => {
       if (photo.defectId !== tempId) return true;
       files.push(photo.uri);
@@ -254,6 +297,97 @@ export function removeLocalPhoto(photoId: string) {
     ...store,
     photos: store.photos.filter((photo) => photo.id !== photoId),
   }));
+}
+
+/** A still-queued (not uploaded) photo filed under the wrong stage — fix it locally. */
+export function moveLocalPhotoStage(photoId: string, stage: RepairStage) {
+  return update((store) => ({
+    ...store,
+    photos: store.photos.map((photo) => (photo.id === photoId ? { ...photo, stage } : photo)),
+  }));
+}
+
+/** Plan §20 (P1): record a fix to an uploaded photo (a delete supersedes a move). */
+export function setLocalEvidenceEdit(edit: LocalEvidenceEdit) {
+  return update((store) => ({
+    ...store,
+    evidenceEdits: [...store.evidenceEdits.filter((entry) => entry.evidenceId !== edit.evidenceId), edit],
+  }));
+}
+
+export function markLocalEvidenceEditSynced(evidenceId: string, queuedAt: string) {
+  return update((store) => ({
+    ...store,
+    evidenceEdits: store.evidenceEdits.map((entry) =>
+      entry.evidenceId === evidenceId && entry.queuedAt === queuedAt
+        ? { ...entry, syncedAt: new Date().toISOString() }
+        : entry,
+    ),
+  }));
+}
+
+export function markLocalEvidenceEditRejected(evidenceId: string, reason: string) {
+  return update((store) => ({
+    ...store,
+    evidenceEdits: store.evidenceEdits.map((entry) =>
+      entry.evidenceId === evidenceId ? { ...entry, rejectedReason: reason } : entry,
+    ),
+  }));
+}
+
+export function dismissLocalEvidenceEdit(evidenceId: string) {
+  return update((store) => ({
+    ...store,
+    evidenceEdits: store.evidenceEdits.filter((entry) => entry.evidenceId !== evidenceId),
+  }));
+}
+
+/** Plan §20 (P3): the crew's corrected No Tiang Lama, shown until a fresh pack has it. */
+export function setLocalPoleLama(assetId: string, value: string | null, queuedAt: string) {
+  return update((store) => ({
+    ...store,
+    poleLama: [...store.poleLama.filter((entry) => entry.assetId !== assetId), { assetId, value, queuedAt }],
+  }));
+}
+
+export function markLocalPoleLamaSynced(assetId: string, queuedAt: string) {
+  return update((store) => ({
+    ...store,
+    poleLama: store.poleLama.map((entry) =>
+      entry.assetId === assetId && entry.queuedAt === queuedAt
+        ? { ...entry, syncedAt: new Date().toISOString() }
+        : entry,
+    ),
+  }));
+}
+
+export function markLocalPoleLamaRejected(assetId: string, reason: string) {
+  return update((store) => ({
+    ...store,
+    poleLama: store.poleLama.map((entry) =>
+      entry.assetId === assetId ? { ...entry, rejectedReason: reason } : entry,
+    ),
+  }));
+}
+
+export function dismissLocalPoleLama(assetId: string) {
+  return update((store) => ({
+    ...store,
+    poleLama: store.poleLama.filter((entry) => entry.assetId !== assetId),
+  }));
+}
+
+/** The No Tiang Lama to show for a pole: the crew's pending correction, else the pack's. */
+export function displayPoleLama(
+  assetId: string,
+  packValue: string | null,
+  store: Store,
+): { value: string | null; pending: LocalPoleLama | null } {
+  const pending = store.poleLama.find((entry) => entry.assetId === assetId) ?? null;
+  return {
+    value: pending && !pending.rejectedReason ? pending.value : packValue,
+    pending,
+  };
 }
 
 export function addLocalCompletion(completion: LocalCompletion) {
@@ -337,16 +471,22 @@ export function dismissLocalCompletion(defectId: string) {
  */
 export async function reconcileWithPack(pack: WorkPackageDetail): Promise<string[]> {
   const serverEvidence = new Set<string>();
+  const serverStage = new Map<string, RepairStage>();
+  const serverLama = new Map<string, string | null>();
   const doneOnServer = new Set<string>();
   const inPack = new Set<string>();
   const serverMaterials = new Map<string, MaterialLine[]>();
   const packTime = Date.parse(pack.generatedAt);
   for (const pole of pack.poles) {
+    serverLama.set(pole.assetId, pole.noTiangLama);
     for (const item of pole.kejanggalan) {
       inPack.add(item.id);
       if (item.materials) serverMaterials.set(item.id, item.materials);
       (['BEFORE', 'DURING', 'AFTER'] as RepairStage[]).forEach((stage) =>
-        item.photos[stage].forEach((photo) => serverEvidence.add(photo.id)),
+        item.photos[stage].forEach((photo) => {
+          serverEvidence.add(photo.id);
+          serverStage.set(photo.id, stage);
+        }),
       );
       if (item.state === 'SUBMITTED' || item.state === 'CLOSED') {
         doneOnServer.add(item.id);
@@ -380,13 +520,39 @@ export async function reconcileWithPack(pack: WorkPackageDetail): Promise<string
       if (sameMaterials(server, entry.lines)) return false;
       return !(entry.syncedAt && packTime >= Date.parse(entry.syncedAt));
     }),
+    // Plan §20: a photo fix the pack now reflects (gone / in its new stage).
+    evidenceEdits: store.evidenceEdits.filter((entry) => {
+      if (entry.rejectedReason || !inPack.has(entry.defectId)) return true;
+      const reflected =
+        entry.kind === 'DELETE'
+          ? !serverEvidence.has(entry.evidenceId)
+          : serverStage.get(entry.evidenceId) === entry.stage;
+      return !(reflected && entry.syncedAt);
+    }),
+    // A synced No Tiang Lama the pack now shows (or one the pack was built after).
+    poleLama: store.poleLama.filter((entry) => {
+      if (entry.rejectedReason || !serverLama.has(entry.assetId)) return true;
+      if (!entry.syncedAt) return true;
+      return !(serverLama.get(entry.assetId) === entry.value || packTime >= Date.parse(entry.syncedAt));
+    }),
   }));
   return removable;
 }
 
+export type OverlaidPhoto = WorkPhoto & {
+  local?: boolean;
+  pending?: boolean;
+  rejectedReason?: string;
+  /** The server's id for this photo (absent while it is still queued). */
+  evidenceId?: string;
+  /** A fix to it is queued / was refused (plan §20). */
+  editPending?: boolean;
+  editRejectedReason?: string;
+};
+
 export type OverlaidKejanggalan = WorkKejanggalan & {
   /** Server + local photos per stage; local ones carry `local: true`. */
-  allPhotos: Record<RepairStage, Array<WorkPhoto & { local?: boolean; pending?: boolean; rejectedReason?: string }>>;
+  allPhotos: Record<RepairStage, OverlaidPhoto[]>;
   pendingCompletion: LocalCompletion | null;
   displayState: WorkState;
   /** Materials to show: the crew's local save, else the server's. */
@@ -399,23 +565,40 @@ export type OverlaidKejanggalan = WorkKejanggalan & {
 export function overlayKejanggalan(item: WorkKejanggalan, store: Store): OverlaidKejanggalan {
   const serverIds = new Set<string>();
   const allPhotos = { BEFORE: [], DURING: [], AFTER: [] } as OverlaidKejanggalan['allPhotos'];
+  // Plan §20: queued fixes to uploaded photos — a delete hides it, a move re-files it.
+  const edits = new Map(store.evidenceEdits.map((entry) => [entry.evidenceId, entry]));
+  const place = (stage: RepairStage, photo: OverlaidPhoto, evidenceId: string | undefined) => {
+    const edit = evidenceId ? edits.get(evidenceId) : undefined;
+    if (edit && !edit.rejectedReason && edit.kind === 'DELETE') return;
+    const target = edit && !edit.rejectedReason && edit.kind === 'MOVE' && edit.stage ? edit.stage : stage;
+    allPhotos[target].push({
+      ...photo,
+      evidenceId,
+      editPending: Boolean(edit && !edit.rejectedReason && !edit.syncedAt),
+      editRejectedReason: edit?.rejectedReason,
+    });
+  };
   (['BEFORE', 'DURING', 'AFTER'] as RepairStage[]).forEach((stage) => {
     item.photos[stage].forEach((photo) => {
       serverIds.add(photo.id);
-      allPhotos[stage].push({ ...photo, url: toAbsoluteUrl(photo.url) });
+      place(stage, { ...photo, url: toAbsoluteUrl(photo.url) }, photo.id);
     });
   });
   for (const photo of store.photos) {
     if (photo.defectId !== item.id) continue;
     if (photo.uploadedEvidenceId && serverIds.has(photo.uploadedEvidenceId)) continue;
-    allPhotos[photo.stage].push({
-      id: photo.id,
-      url: photo.uri,
-      takenAt: photo.takenAt,
-      local: true,
-      pending: !photo.uploadedEvidenceId,
-      rejectedReason: photo.rejectedReason,
-    });
+    place(
+      photo.stage,
+      {
+        id: photo.id,
+        url: photo.uri,
+        takenAt: photo.takenAt,
+        local: true,
+        pending: !photo.uploadedEvidenceId,
+        rejectedReason: photo.rejectedReason,
+      },
+      photo.uploadedEvidenceId,
+    );
   }
 
   const pendingCompletion = store.completions.find((entry) => entry.defectId === item.id) ?? null;

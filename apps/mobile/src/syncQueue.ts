@@ -5,6 +5,10 @@ import { removeCache, removeFromCachedArray } from './offlineCache';
 import type { WorkPackageDetail } from './maintenance/types';
 import {
   loadMaintenanceLocal,
+  markLocalEvidenceEditRejected,
+  markLocalEvidenceEditSynced,
+  markLocalPoleLamaRejected,
+  markLocalPoleLamaSynced,
   markLocalCompletionRejected,
   markLocalFindingRejected,
   markLocalFindingSynced,
@@ -70,7 +74,13 @@ export type OfflineMutationType =
   | 'CREATE_DEFECT_FINDING'
   // TNB feedback #1: the whole materials list of one Kejanggalan (a newer save
   // replaces a still-waiting older one).
-  | 'SET_DEFECT_MATERIALS';
+  | 'SET_DEFECT_MATERIALS'
+  // Plan §20: fixes to an UPLOADED repair photo (delete / move stage) — a
+  // queued "done" for that Kejanggalan waits for them — and the crew's
+  // correction of a pole's No Tiang Lama.
+  | 'DELETE_DEFECT_EVIDENCE'
+  | 'RELABEL_DEFECT_EVIDENCE'
+  | 'SET_POLE_NO_TIANG_LAMA';
 
 /**
  * An arrival site photo captured during an OFFLINE check-in. The file is copied
@@ -134,7 +144,9 @@ export function mintTempId(
     | 'evidence'
     | 'completion'
     | 'defect'
-    | 'materials',
+    | 'materials'
+    | 'evidenceEdit'
+    | 'poleLama',
 ) {
   return `${TEMP_ID_PREFIX}${entity}_${nextLocalSuffix()}`;
 }
@@ -511,6 +523,9 @@ export async function enqueueRepairCompletion(input: {
   defectId: string;
   resolutionOutcome: string;
   maintenanceNotes: string | null;
+  /** Plan §20 (P2): the kind of repair done (Rentis type) + its note. */
+  repairMethodId?: string | null;
+  repairMethodNote?: string | null;
   label: string;
   sublabel?: string;
   ownerUserId?: string;
@@ -520,7 +535,10 @@ export async function enqueueRepairCompletion(input: {
     const dependsOn = queue.mutations
       .filter(
         (mutation) =>
-          ((mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
+          (((mutation.type === 'UPLOAD_DEFECT_EVIDENCE' ||
+            // Plan §20: the server's before/after gate must see the fixed photos.
+            mutation.type === 'DELETE_DEFECT_EVIDENCE' ||
+            mutation.type === 'RELABEL_DEFECT_EVIDENCE') &&
             mutation.payload.defectId === input.defectId) ||
             // A Kejanggalan added on site must exist on the server first.
             (mutation.type === 'CREATE_DEFECT_FINDING' && mutation.tempId === input.defectId)) &&
@@ -535,6 +553,8 @@ export async function enqueueRepairCompletion(input: {
         defectId: input.defectId,
         resolutionOutcome: input.resolutionOutcome,
         maintenanceNotes: input.maintenanceNotes,
+        repairMethodId: input.repairMethodId ?? null,
+        repairMethodNote: input.repairMethodNote ?? null,
       },
       dependsOn,
       tempId: mintTempId('completion'),
@@ -594,6 +614,103 @@ export async function enqueueDefectMaterials(input: {
             !(
               existing.type === 'SET_DEFECT_MATERIALS' &&
               existing.payload.defectId === input.defectId &&
+              existing.status !== 'SYNCING'
+            ),
+        ),
+        mutation,
+      ],
+    };
+  });
+}
+
+/**
+ * Plan §20 (P1): queue a fix to an UPLOADED repair photo. A newer fix to the
+ * same photo replaces a still-waiting older one (a delete after a move = just
+ * the delete).
+ */
+export async function enqueueEvidenceEdit(input: {
+  kind: 'DELETE' | 'MOVE';
+  evidenceId: string;
+  defectId: string;
+  stage?: 'BEFORE' | 'DURING' | 'AFTER';
+  queuedAt: string;
+  label: string;
+  sublabel?: string;
+  ownerUserId?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const type: OfflineMutationType =
+    input.kind === 'DELETE' ? 'DELETE_DEFECT_EVIDENCE' : 'RELABEL_DEFECT_EVIDENCE';
+  await updateStoredQueue((queue) => {
+    const mutation: OfflineMutation = {
+      id: `op_${nextLocalSuffix()}`,
+      type,
+      status: 'PENDING_SYNC',
+      payload: {
+        evidenceId: input.evidenceId,
+        defectId: input.defectId,
+        evidenceType: input.stage ?? null,
+        queuedAt: input.queuedAt,
+      },
+      dependsOn: [],
+      tempId: mintTempId('evidenceEdit'),
+      label: input.label,
+      sublabel: input.sublabel,
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      ownerUserId: input.ownerUserId,
+    };
+    return {
+      ...queue,
+      mutations: [
+        ...queue.mutations.filter(
+          (existing) =>
+            !(
+              (existing.type === 'DELETE_DEFECT_EVIDENCE' || existing.type === 'RELABEL_DEFECT_EVIDENCE') &&
+              existing.payload.evidenceId === input.evidenceId &&
+              existing.status !== 'SYNCING'
+            ),
+        ),
+        mutation,
+      ],
+    };
+  });
+}
+
+/** Plan §20 (P3): queue the crew's No Tiang Lama correction (newest wins). */
+export async function enqueuePoleNoTiangLama(input: {
+  assetId: string;
+  value: string | null;
+  queuedAt: string;
+  label: string;
+  sublabel?: string;
+  ownerUserId?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  await updateStoredQueue((queue) => {
+    const mutation: OfflineMutation = {
+      id: `op_${nextLocalSuffix()}`,
+      type: 'SET_POLE_NO_TIANG_LAMA',
+      status: 'PENDING_SYNC',
+      payload: { assetId: input.assetId, noTiangLama: input.value, queuedAt: input.queuedAt },
+      dependsOn: [],
+      tempId: mintTempId('poleLama'),
+      label: input.label,
+      sublabel: input.sublabel,
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      ownerUserId: input.ownerUserId,
+    };
+    return {
+      ...queue,
+      mutations: [
+        ...queue.mutations.filter(
+          (existing) =>
+            !(
+              existing.type === 'SET_POLE_NO_TIANG_LAMA' &&
+              existing.payload.assetId === input.assetId &&
               existing.status !== 'SYNCING'
             ),
         ),
@@ -871,6 +988,8 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
           defectId: string;
           resolutionOutcome: string;
           maintenanceNotes: string | null;
+          repairMethodId?: string | null;
+          repairMethodNote?: string | null;
         };
         await api.completeDefectMaintenance(token, completion.defectId, {
           resolutionOutcome:
@@ -878,6 +997,8 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
               typeof api.completeDefectMaintenance
             >[2]['resolutionOutcome'],
           maintenanceNotes: completion.maintenanceNotes,
+          repairMethodId: completion.repairMethodId ?? null,
+          repairMethodNote: completion.repairMethodNote ?? null,
         });
         realId = completion.defectId;
         break;
@@ -922,6 +1043,38 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
         await api.setDefectMaterials(token, save.defectId, save.items);
         realId = save.defectId;
         await markLocalMaterialsSynced(save.defectId, save.queuedAt);
+        break;
+      }
+      case 'DELETE_DEFECT_EVIDENCE': {
+        const edit = payload as unknown as { evidenceId: string; queuedAt: string };
+        try {
+          await api.deleteRepairEvidence(token, edit.evidenceId);
+        } catch (error) {
+          // Already gone (a retry after a lost response, or the office deleted it).
+          if (!(error instanceof ApiError && error.status === 404 && /repair photo not found/i.test(error.message))) {
+            throw error;
+          }
+        }
+        realId = edit.evidenceId;
+        await markLocalEvidenceEditSynced(edit.evidenceId, edit.queuedAt);
+        break;
+      }
+      case 'RELABEL_DEFECT_EVIDENCE': {
+        const edit = payload as unknown as {
+          evidenceId: string;
+          evidenceType: 'BEFORE' | 'DURING' | 'AFTER';
+          queuedAt: string;
+        };
+        await api.relabelRepairEvidence(token, edit.evidenceId, edit.evidenceType);
+        realId = edit.evidenceId;
+        await markLocalEvidenceEditSynced(edit.evidenceId, edit.queuedAt);
+        break;
+      }
+      case 'SET_POLE_NO_TIANG_LAMA': {
+        const lama = payload as unknown as { assetId: string; noTiangLama: string | null; queuedAt: string };
+        await api.setPoleNoTiangLama(token, lama.assetId, lama.noTiangLama);
+        realId = lama.assetId;
+        await markLocalPoleLamaSynced(lama.assetId, lama.queuedAt);
         break;
       }
       default: {
@@ -989,6 +1142,13 @@ async function recordMaintenanceRejection(mutation: OfflineMutation, reason: str
       await markLocalFindingRejected(mutation.tempId, reason);
     } else if (mutation.type === 'SET_DEFECT_MATERIALS') {
       await markLocalMaterialsRejected(String(mutation.payload.defectId), reason);
+    } else if (
+      mutation.type === 'DELETE_DEFECT_EVIDENCE' ||
+      mutation.type === 'RELABEL_DEFECT_EVIDENCE'
+    ) {
+      await markLocalEvidenceEditRejected(String(mutation.payload.evidenceId), reason);
+    } else if (mutation.type === 'SET_POLE_NO_TIANG_LAMA') {
+      await markLocalPoleLamaRejected(String(mutation.payload.assetId), reason);
     }
   } catch {
     // Best-effort UI note; the queue must keep draining regardless.
@@ -1730,6 +1890,38 @@ export async function withdrawQueuedRepairPhoto(localPhotoId: string): Promise<b
   return withdrawn;
 }
 
+/**
+ * Plan §20 (P1): a still-queued photo filed under the wrong stage — change the
+ * waiting upload's stage. False when it is uploading right now (fix it once
+ * it has synced instead).
+ */
+export async function restageQueuedRepairPhoto(
+  localPhotoId: string,
+  stage: 'BEFORE' | 'DURING' | 'AFTER',
+): Promise<boolean> {
+  let restaged = false;
+  await updateStoredQueue((queue) => {
+    const target = queue.mutations.find(
+      (mutation) =>
+        mutation.type === 'UPLOAD_DEFECT_EVIDENCE' &&
+        mutation.payload.localPhotoId === localPhotoId,
+    );
+    if (!target || target.status === 'SYNCING') {
+      return queue;
+    }
+    restaged = true;
+    return {
+      ...queue,
+      mutations: queue.mutations.map((mutation) =>
+        mutation.id === target.id
+          ? { ...mutation, payload: { ...mutation.payload, evidenceType: stage } }
+          : mutation,
+      ),
+    };
+  });
+  return restaged;
+}
+
 export async function persistRepairPhoto(uri: string, photoId: string) {
   return persistUriToDir(uri, photoId, OFFLINE_REPAIR_PHOTO_DIRECTORY);
 }
@@ -2063,6 +2255,9 @@ function isOfflineMutationType(value: unknown): value is OfflineMutationType {
     case 'COMPLETE_DEFECT_MAINTENANCE':
     case 'CREATE_DEFECT_FINDING':
     case 'SET_DEFECT_MATERIALS':
+    case 'DELETE_DEFECT_EVIDENCE':
+    case 'RELABEL_DEFECT_EVIDENCE':
+    case 'SET_POLE_NO_TIANG_LAMA':
       return true;
     default:
       return false;

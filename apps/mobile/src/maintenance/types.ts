@@ -59,6 +59,20 @@ export type WorkKejanggalan = {
   addedAt?: string | null;
   /** TNB feedback #1 — materials used for the repair (absent in older packs). */
   materials?: MaterialLine[];
+  /** Plan §20 (P2): the kind of repair done (Rentis: KAEDAH LAZIM …). */
+  repairMethod?: { id: string; label: string | null; note: string | null } | null;
+  /** Plan §20 (P1): photos may still be fixed (until TNB verifies). Absent in older packs. */
+  canCorrect?: boolean;
+};
+
+/** A kind of repair (plan §20, P2), shipped with the pack for "Mark done" offline. */
+export type RepairMethod = {
+  id: string;
+  category: MaintenanceCategory;
+  code: string;
+  label: string;
+  /** "Lain-lain": the crew must also describe the work. */
+  requiresNote: boolean;
 };
 
 /** One TNB material ("LIST BARANG IMBANGAN TNB — SAVR"). */
@@ -91,6 +105,8 @@ export type WorkPole = {
   counts: WorkCounts;
   photos?: PolePhoto[];
   kejanggalan: WorkKejanggalan[];
+  /** Plan §20 (P3): the crew may correct No Tiang Lama (unverified work here). */
+  canEditNoTiangLama?: boolean;
 };
 
 export type WorkPackageDetail = {
@@ -107,6 +123,8 @@ export type WorkPackageDetail = {
   findingTemplates?: Array<{ templateId: string; items: FindingItem[] }>;
   /** TNB feedback #1 — the materials list, shipped with the pack so it works offline. */
   materialCatalog?: MaterialCatalogItem[];
+  /** Plan §20 (P2) — kinds of repair per work type (absent in older packs). */
+  repairMethods?: RepairMethod[];
   generatedAt: string;
 };
 

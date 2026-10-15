@@ -36,12 +36,13 @@ import {
   SelectCard,
   StatusChip,
   TextField,
+  WarningBanner,
 } from '../ui';
 import { Theme, useTheme } from '../theme';
 import { Asset, AssetStatus, AssetType, SiteVisit, Substation } from '../types';
 import { normalizeOperationalPayloadText, normalizeOperationalText } from '../utils';
 import { normalizePoleInput, suggestNextPoleCode } from '../utils/feederSequence';
-import { loadLastPoleCode, storeLastPoleCode } from '../storage';
+import { loadLastPoleCode, loadVisitScope, storeLastPoleCode, storeVisitScope } from '../storage';
 import { parseSavtPoleCode } from '@ascure/shared-utils';
 
 type Coordinate = {
@@ -208,6 +209,8 @@ export function AddAssetScreen() {
   // SAVR's feeder grammar. Detected by the VISIT scope (authoritative), not the
   // asset type.
   const [visitScope, setVisitScope] = useState<string | null>(null);
+  // Plan §20 (P4): the survey type could not be read — the crew picks the type.
+  const [scopeUnknown, setScopeUnknown] = useState(false);
   const [visitRouteCode, setVisitRouteCode] = useState<string | null>(null);
 
   const selectedSubstation = useMemo(
@@ -499,21 +502,34 @@ export function AddAssetScreen() {
                 )
               ).value;
           visitOperationalScope = visit?.operationalScope ?? null;
-          setVisitScope(visitOperationalScope);
           setVisitRouteCode(visit?.routeCode ?? null);
         } catch {
           // Leave SAVT numbering dormant; SAVR/generic asset entry is unaffected.
         }
+        // Plan §20 (P4): remember the survey type; fall back to the remembered
+        // one when the visit can't be read offline (evicted read cache).
+        if (visitOperationalScope) {
+          void storeVisitScope(siteVisitId, visitOperationalScope).catch(() => undefined);
+        } else {
+          visitOperationalScope = await loadVisitScope(siteVisitId).catch(() => null);
+        }
+        setVisitScope(visitOperationalScope);
       }
 
       if (assetTypeList.length > 0) {
         // On a scoped visit (e.g. SAVT) default the asset type to one matching that
         // scope, so the crew doesn't re-pick it on every pole — and the pole then
         // resolves that scope's checklist. New poles only; an edit keeps its own type.
+        // ⚠ Plan §20 (P4): never GUESS the type in a survey — a SAVT pole saved
+        // as SAVR gets its answers rejected. Unknown scope → the crew picks.
+        const guessForbidden = !isEditMode && Boolean(siteVisitId) && assetTypeList.length > 1;
         const preferredAssetTypeId =
           !isEditMode && visitOperationalScope
-            ? pickDefaultAssetTypeId(assetTypeList, visitOperationalScope)
-            : assetTypeList[0].id;
+            ? pickDefaultAssetTypeId(assetTypeList, visitOperationalScope) ?? ''
+            : guessForbidden
+              ? ''
+              : assetTypeList[0].id;
+        setScopeUnknown(guessForbidden && !visitOperationalScope);
         setSelectedAssetTypeId((currentValue) =>
           assetTypeList.some((assetType) => assetType.id === currentValue)
             ? currentValue
@@ -701,7 +717,11 @@ export function AddAssetScreen() {
     const normalizedAssetName = normalizeOperationalPayloadText(assetName);
 
     if (!selectedAssetTypeId) {
-      setError('Please select an asset type.');
+      setError(
+        scopeUnknown
+          ? 'Choose the asset type (SAVR or SAVT) — the survey type could not be read offline.'
+          : 'Please select an asset type.',
+      );
       return;
     }
 
@@ -1144,6 +1164,9 @@ export function AddAssetScreen() {
               <SectionTitle>Asset Type</SectionTitle>
               {scopeBadge ? <StatusChip label={scopeBadge} tone="info" /> : null}
             </View>
+            {scopeUnknown && !selectedAssetTypeId ? (
+              <WarningBanner message="This phone can't tell if this survey is SAVR or SAVT right now (offline). Choose the asset type below — check it matches the survey." />
+            ) : null}
             {assetTypes.length === 0 ? (
               <EmptyState
                 title="No asset types available"
@@ -1613,7 +1636,7 @@ function isSavrAssetType(assetType: AssetType | null) {
 function pickDefaultAssetTypeId(
   assetTypes: AssetType[],
   visitScope: string,
-): string {
+): string | null {
   const byScope = assetTypes.find(
     (assetType) => assetType.operationalScope === visitScope,
   );
@@ -1626,7 +1649,8 @@ function pickDefaultAssetTypeId(
     assetTypeMatchesScopeKeyword(assetType, visitScope),
   );
 
-  return (byKeyword ?? assetTypes[0]).id;
+  // Plan §20 (P4): no match → no guess (the crew picks the type).
+  return byKeyword?.id ?? (assetTypes.length === 1 ? assetTypes[0].id : null);
 }
 
 function assetTypeMatchesScopeKeyword(

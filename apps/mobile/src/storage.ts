@@ -109,3 +109,36 @@ export async function storeLastPoleCode(substationId: string, code: string): Pro
   map[substationId] = code;
   await safeSetItem(LAST_POLE_CODE_KEY, JSON.stringify(map));
 }
+
+const VISIT_SCOPE_KEY = '@ascure/mobile/visit-scope';
+const VISIT_SCOPE_MAX = 300;
+
+// Plan §20 (P4): the survey type (SAVR / SAVT …) of each visit the phone has
+// read, so Add Asset still knows it when the visit can't be read offline (the
+// read cache can be evicted). Best-effort; newest entries kept.
+async function loadVisitScopeMap(): Promise<Record<string, string>> {
+  try {
+    const raw = await AsyncStorage.getItem(VISIT_SCOPE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function loadVisitScope(visitId: string): Promise<string | null> {
+  if (!visitId) return null;
+  const value = (await loadVisitScopeMap())[visitId];
+  return typeof value === 'string' && value ? value : null;
+}
+
+export async function storeVisitScope(visitId: string, scope: string): Promise<void> {
+  if (!visitId || !scope) return;
+  const map = await loadVisitScopeMap();
+  if (map[visitId] === scope) return;
+  delete map[visitId];
+  map[visitId] = scope;
+  const keys = Object.keys(map);
+  for (const key of keys.slice(0, Math.max(0, keys.length - VISIT_SCOPE_MAX))) delete map[key];
+  await safeSetItem(VISIT_SCOPE_KEY, JSON.stringify(map));
+}

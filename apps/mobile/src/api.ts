@@ -840,6 +840,9 @@ export const api = {
     input: {
       resolutionOutcome: DefectResolutionOutcome;
       maintenanceNotes?: string | null;
+      /** Plan §20 (P2): the kind of repair done (Rentis type) + its note. */
+      repairMethodId?: string | null;
+      repairMethodNote?: string | null;
     },
   ) {
     return request<DefectDetail>(`/defects/${defectId}/maintenance-completion`, {
@@ -849,8 +852,36 @@ export const api = {
         resolutionOutcome: input.resolutionOutcome,
         maintenanceNotes: input.maintenanceNotes ?? null,
         completionRemarks: input.maintenanceNotes ?? null,
+        ...(input.repairMethodId
+          ? { repairMethodId: input.repairMethodId, repairMethodNote: input.repairMethodNote ?? null }
+          : {}),
       },
     });
+  },
+
+  /** Plan §20 (P1): delete a repair photo (archived on the server) until TNB verifies. */
+  deleteRepairEvidence(token: string, evidenceId: string) {
+    return request<{ id: string; deleted: boolean }>(`/maintenance-work/evidence/${evidenceId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  /** Plan §20 (P1): move a repair photo to another stage (fix a wrong Before / After). */
+  relabelRepairEvidence(token: string, evidenceId: string, evidenceType: 'BEFORE' | 'DURING' | 'AFTER') {
+    return request<{ id: string; evidenceType: string }>(`/maintenance-work/evidence/${evidenceId}`, {
+      method: 'PATCH',
+      token,
+      body: { evidenceType },
+    });
+  },
+
+  /** Plan §20 (P3): correct a pole's No Tiang Lama (logged on the server). */
+  setPoleNoTiangLama(token: string, assetId: string, noTiangLama: string | null) {
+    return request<{ assetId: string; noTiangLama: string | null; changed: boolean }>(
+      `/maintenance-work/poles/${assetId}/no-tiang-lama`,
+      { method: 'PATCH', token, body: { noTiangLama } },
+    );
   },
 
   verifyDefectClosure(

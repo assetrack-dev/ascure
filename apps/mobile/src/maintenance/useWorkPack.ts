@@ -25,6 +25,8 @@ export function useWorkPack(siteVisitId: string) {
     completions: [],
     findings: [],
     materials: [],
+    evidenceEdits: [],
+    poleLama: [],
   });
   const [fromCache, setFromCache] = useState(false);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
