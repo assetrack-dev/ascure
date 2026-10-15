@@ -69,6 +69,7 @@ import { VerifyDefectClosureDto } from './dto/verify-defect-closure.dto';
 import { DefectRegistryQueryDto } from './dto/registry-query.dto';
 import { REGISTRY_UNASSIGNED } from '../assets/dto/registry-query.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { resolveRepairMethod } from '../maintenance-packages/maintenance-work.service';
 
 /** Max rows a cross-scope defect search returns (fetches cap+1 to flag
  *  truncation). */
@@ -1582,6 +1583,15 @@ export class DefectsService {
         },
       });
 
+      if (isRepairStage) {
+        // Plan §20 (P1): later than maintainedAt on a submitted repair =
+        // "photos changed after submission" on Repair Verification.
+        await tx.defect.update({
+          where: { id: defect.id },
+          data: { evidenceChangedAt: createdImage.createdAt },
+        });
+      }
+
       if (startsWork) {
         // Guarded: only moves a Kejanggalan that is still ASSIGNED.
         const started = await tx.defect.updateMany({
@@ -2498,12 +2508,29 @@ export class DefectsService {
 
     this.assertLifecyclePath(currentLifecycleStatus, completionLifecyclePath);
 
+    // Plan §20 (P2): the kind of repair done — validated only when sent.
+    const repairMethod =
+      dto.repairMethodId !== undefined
+        ? await resolveRepairMethod(
+            this.prisma,
+            defect.maintenanceCategory ?? null,
+            dto.repairMethodId,
+            dto.repairMethodNote,
+          )
+        : null;
+
     await this.prisma.$transaction(async (tx) => {
       await tx.defect.update({
         where: {
           id: defect.id,
         },
         data: {
+          ...(repairMethod
+            ? {
+                repairMethodId: repairMethod.repairMethodId,
+                repairMethodNote: repairMethod.repairMethodNote,
+              }
+            : {}),
           lifecycleStatus: DefectLifecycleStatus.COMPLETED,
           resolutionOutcome,
           status: DefectStatus.RESOLVED,
@@ -2944,6 +2971,8 @@ export class DefectsService {
       },
       // TNB feedback #1: materials used for the repair.
       materials: { select: MATERIAL_SELECT },
+      // Plan §20 (P2): the kind of repair done.
+      repairMethod: { select: { id: true, label: true } },
       evidenceImages: {
         orderBy: {
           createdAt: 'asc' as const,
@@ -4124,6 +4153,13 @@ export class DefectsService {
         createdAt: image.createdAt.toISOString(),
       })),
       materials: serializeMaterials(defect.materials),
+      // Plan §20: the routed company + work type (the web corrections card).
+      maintenanceOrganizationId: defect.maintenanceOrganizationId,
+      maintenanceCategory: defect.maintenanceCategory,
+      // Plan §20 (P2).
+      repairMethod: defect.repairMethod
+        ? { id: defect.repairMethod.id, label: defect.repairMethod.label, note: defect.repairMethodNote }
+        : null,
       evidenceImages: defect.evidenceImages.map((image) =>
         this.serializeDefectEvidenceImage(image),
       ),

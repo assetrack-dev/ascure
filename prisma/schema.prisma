@@ -489,6 +489,7 @@ model User {
   clientCompanyAccesses     ClientCompanyAccess[]              @relation("ClientCompanyAccessUser")
   notifications             Notification[]
   pushSubscriptions         PushSubscription[]
+  assetChanges              AssetChangeLog[]
   operationalRegionAccesses UserOperationalRegionAccess[]
   assignedQaSessions        OperationalSession[]          @relation("OperationalSessionAssignedQaUser")
   assignedSessionAssets     OperationalSessionAsset[]     @relation("OperationalSessionAssetAssignedBy")
@@ -771,6 +772,70 @@ model ClientCompanyAccess {
 
   @@unique([userId, organizationId])
   @@index([organizationId])
+}
+
+/// Plan §20 (P2): admin-managed kinds of repair per work type (Rentis:
+/// KAEDAH LAZIM, KAEDAH A.B.C, ULAN/CREEPERS, TEBANG POKOK, Lain-lain).
+model RepairMethod {
+  id           String              @id @default(uuid()) @db.Uuid
+  category     MaintenanceCategory
+  code         String              @unique
+  label        String
+  /// "Lain-lain": the crew must also write what was done.
+  requiresNote Boolean             @default(false)
+  sortOrder    Int                 @default(0)
+  isActive     Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  defects      Defect[]
+
+  @@index([category, isActive])
+}
+
+/// Plan §20 (P1): a repair photo deleted by the crew / office — moved here (not
+/// flagged) so no read path can show it again. The file stays on disk.
+model DefectEvidenceImageArchive {
+  id              String    @id @db.Uuid
+  defectId        String    @db.Uuid
+  createdByUserId String?   @db.Uuid
+  evidenceType    String
+  fileName        String
+  storageKey      String
+  contentType     String?
+  sizeBytes       Int?
+  url             String?
+  note            String?
+  latitude        Float?
+  longitude       Float?
+  timestamp       DateTime?
+  createdAt       DateTime
+  deletedAt       DateTime  @default(now())
+  deletedByUserId String?   @db.Uuid
+
+  @@index([defectId])
+}
+
+enum AssetChangeSource {
+  OFFICE
+  MAINTENANCE
+}
+
+/// Plan §20 (P3): who changed a pole's identity fields (No Tiang Lama), from
+/// what to what. Append-only — the first brick of the §19 N57 activity log.
+model AssetChangeLog {
+  id              String            @id @default(uuid()) @db.Uuid
+  tenantId        String            @db.Uuid
+  assetId         String            @db.Uuid
+  field           String
+  oldValue        String?
+  newValue        String?
+  source          AssetChangeSource
+  changedByUserId String?           @db.Uuid
+  createdAt       DateTime          @default(now())
+  asset           Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  changedBy       User?             @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([assetId, field, createdAt])
 }
 
 /// Plan §19 (N56): the console 🔔. One row per recipient per event GROUP
@@ -1156,6 +1221,7 @@ model Asset {
   inspections              Inspection[]
   images                   Image[]
   shareLinks               AssetShareLink[]
+  changeLogs               AssetChangeLog[]
 
   maintenancePoleAssignments MaintenancePoleAssignment[]
   @@unique([tenantId, substationId, assetCode], map: "Asset_tenantId_substationId_code_key")
@@ -1659,6 +1725,13 @@ model Defect {
   closureVerifiedAt         DateTime?
   closureRemarks            String?
   closureVerificationNotes  String?
+  /// Plan §20 (P2): the kind of repair done (e.g. Rentis: KAEDAH LAZIM …) + the
+  /// free text a "Lain-lain" method requires.
+  repairMethodId            String?                @db.Uuid
+  repairMethodNote          String?
+  /// Plan §20 (P1): last repair-photo change (upload / delete / relabel); later
+  /// than maintainedAt on a submitted repair = "photos changed after submission".
+  evidenceChangedAt         DateTime?
   createdAt                 DateTime               @default(now())
   updatedAt                 DateTime               @updatedAt
   inspectionItemResult      InspectionItemResult   @relation(fields: [inspectionItemResultId], references: [id], onDelete: Cascade)
@@ -1673,6 +1746,7 @@ model Defect {
   evidenceImages            DefectEvidenceImage[]
   timelineEntries           DefectTimelineEntry[]
   materials                 DefectMaterial[]
+  repairMethod              RepairMethod?          @relation(fields: [repairMethodId], references: [id], onDelete: SetNull)
 
   @@index([assignedUserId])
   @@index([assignedTeamId])

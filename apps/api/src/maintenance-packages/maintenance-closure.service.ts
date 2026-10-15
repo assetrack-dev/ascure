@@ -27,6 +27,7 @@ import {
 } from '../common/authorization/maintenance-closure';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { effectiveLama } from './maintenance-work.service';
 import {
   ReassignCannotRepairDto,
   RepairReasonDto,
@@ -384,6 +385,9 @@ export class MaintenanceClosureService {
           maintainedAt: true,
           closedAt: true,
           closureVerificationNotes: true,
+          repairMethodNote: true,
+          evidenceChangedAt: true,
+          repairMethod: { select: { id: true, label: true } },
           maintainedByUser: { select: { id: true, name: true } },
           closureVerifiedByUser: { select: { id: true, name: true } },
           maintenanceOrganization: { select: { id: true, name: true } },
@@ -413,7 +417,7 @@ export class MaintenanceClosureService {
               inspection: {
                 select: {
                   asset: {
-                    select: { id: true, assetCode: true, latitude: true, longitude: true },
+                    select: { id: true, assetCode: true, noTiangLama: true, name: true, latitude: true, longitude: true },
                   },
                   siteVisit: {
                     select: {
@@ -452,6 +456,12 @@ export class MaintenanceClosureService {
         },
       }),
     ]);
+
+    // Plan §20 (P3): No Tiang Lama corrected by maintenance → show the old one too.
+    const previousLama = await previousNoTiangLama(
+      this.prisma,
+      items.map((defect) => defect.inspectionItemResult.inspection.asset.id),
+    );
 
     const permissions = this.permissions(actor);
     // Companies are only needed to hand a cannot-repair item elsewhere.
@@ -502,7 +512,25 @@ export class MaintenanceClosureService {
           closedBy: defect.closureVerifiedByUser,
           closureNotes: defect.closureVerificationNotes,
           company: defect.maintenanceOrganization,
-          asset: inspection.asset,
+          asset: {
+            id: inspection.asset.id,
+            assetCode: inspection.asset.assetCode,
+            noTiangLama: effectiveLama(inspection.asset),
+            latitude: inspection.asset.latitude,
+            longitude: inspection.asset.longitude,
+          },
+          noTiangLamaPrevious: previousLama.get(inspection.asset.id) ?? null,
+          // Plan §20 (P2): the kind of repair done.
+          repairMethod: defect.repairMethod
+            ? { id: defect.repairMethod.id, label: defect.repairMethod.label, note: defect.repairMethodNote }
+            : null,
+          // Plan §20 (P1): the crew changed photos after submitting — look again.
+          photosChangedAfterSubmission: Boolean(
+            defect.maintainedAt &&
+              defect.evidenceChangedAt &&
+              defect.evidenceChangedAt > defect.maintainedAt &&
+              defect.lifecycleStatus !== 'CLOSED',
+          ),
           siteVisitId: inspection.siteVisit.id,
           pencawangName: inspection.siteVisit.pencawangName,
           pencawangCode: inspection.siteVisit.pencawangCode,
@@ -807,4 +835,27 @@ export class MaintenanceClosureService {
       );
     }
   }
+}
+
+/**
+ * Plan §20 (P3): for each pole whose No Tiang Lama a maintenance crew
+ * corrected, the value it had BEFORE the first such correction — so reports
+ * can say "Lama: X (dahulu: Y)".
+ */
+export async function previousNoTiangLama(
+  prisma: PrismaService,
+  assetIds: string[],
+): Promise<Map<string, string | null>> {
+  const ids = [...new Set(assetIds)];
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.assetChangeLog.findMany({
+    where: { assetId: { in: ids }, field: 'noTiangLama', source: 'MAINTENANCE' },
+    orderBy: { createdAt: 'asc' },
+    select: { assetId: true, oldValue: true },
+  });
+  const previous = new Map<string, string | null>();
+  for (const row of rows) {
+    if (!previous.has(row.assetId)) previous.set(row.assetId, row.oldValue);
+  }
+  return previous;
 }

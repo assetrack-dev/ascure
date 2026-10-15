@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   DefectLifecycleStatus,
   DefectStatus,
@@ -9,7 +9,9 @@ import {
   Prisma,
   UserRole,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { buildScopeContext } from '../common/authorization/scope-context';
+import { evidenceTypeLabel, isRepairStageEvidenceType } from '../defects/evidence-types';
 import { isCannotRepairOutcome } from '../common/authorization/maintenance-closure';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -267,6 +269,8 @@ export class MaintenanceWorkService {
         maintenanceNotes: true,
         maintainedAt: true,
         maintenanceOrganizationId: true,
+        repairMethodNote: true,
+        repairMethod: { select: { id: true, label: true } },
         assignedToTeam: { select: { id: true, name: true } },
         assignedTeam: { select: { id: true, name: true } },
         timelineEntries: {
@@ -299,6 +303,9 @@ export class MaintenanceWorkService {
                     id: true,
                     assetCode: true,
                     noTiangLama: true,
+                    // The app stores NO TIANG LAMA as the pole's name; only
+                    // imports fill noTiangLama — read both (effectiveLama).
+                    name: true,
                     latitude: true,
                     longitude: true,
                   },
@@ -345,7 +352,7 @@ export class MaintenanceWorkService {
         select: {
           templateId: true,
           asset: {
-            select: { id: true, assetCode: true, noTiangLama: true, latitude: true, longitude: true },
+            select: { id: true, assetCode: true, noTiangLama: true, name: true, latitude: true, longitude: true },
           },
           inspectionImages: {
             select: { id: true, url: true, templateItemId: true, sizeBytes: true, createdAt: true },
@@ -356,6 +363,7 @@ export class MaintenanceWorkService {
       loadVisitFindingItems(this.prisma, siteVisitId),
       loadMaterialCatalog(this.prisma),
     ]);
+    const repairMethods = await listActiveRepairMethods(this.prisma);
     const poleOwners = await this.prisma.maintenancePoleAssignment.findMany({
       where: { siteVisitId },
       select: { assetId: true, category: true, maintenanceOrganizationId: true, assignedTeamId: true },
@@ -397,6 +405,7 @@ export class MaintenanceWorkService {
       counts: Counts;
       photos: PolePhoto[];
       kejanggalan: unknown[];
+      canEditNoTiangLama: boolean;
     };
     const poles = new Map<string, Pole>();
 
@@ -405,7 +414,7 @@ export class MaintenanceWorkService {
       const asset = item.inspection.asset;
       let pole = poles.get(asset.id);
       if (!pole) {
-        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: null, noTiangLama: asset.noTiangLama, latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), photos: polePhotos.get(asset.id) ?? [], kejanggalan: [] };
+        pole = { assetId: asset.id, assetCode: asset.assetCode, refCode: null, noTiangLama: effectiveLama(asset), latitude: asset.latitude, longitude: asset.longitude, counts: emptyCounts(), photos: polePhotos.get(asset.id) ?? [], kejanggalan: [], canEditNoTiangLama: false };
         poles.set(asset.id, pole);
       }
       const state = workState(defect);
@@ -457,7 +466,15 @@ export class MaintenanceWorkService {
         surveyPhotos: surveyPhotos.map((image) => ({ id: image.id, url: image.url, sizeBytes: image.sizeBytes })),
         photos: { BEFORE: stage('BEFORE'), DURING: stage('DURING'), AFTER: stage('AFTER') },
         materials: serializeMaterials(defect.materials),
+        // Plan §20 (P2): the kind of repair done (Rentis: KAEDAH LAZIM …).
+        repairMethod: defect.repairMethod
+          ? { id: defect.repairMethod.id, label: defect.repairMethod.label, note: defect.repairMethodNote }
+          : null,
+        // Plan §20 (P1): photos / repair type can be corrected until TNB verifies.
+        canCorrect: state !== 'CLOSED',
       });
+      // Plan §20 (P3): No Tiang Lama is editable while any work on the pole is unverified.
+      if (state !== 'CLOSED') pole.canEditNoTiangLama = true;
     }
 
     const poleList = [...poles.values()].sort((left, right) =>
@@ -487,7 +504,7 @@ export class MaintenanceWorkService {
           assetId: asset.id,
           assetCode: asset.assetCode,
           refCode: null, // prod has no Asset.refCode (see 65150de)
-          noTiangLama: asset.noTiangLama,
+          noTiangLama: effectiveLama(asset),
           latitude: asset.latitude,
           longitude: asset.longitude,
           templateId,
@@ -499,6 +516,8 @@ export class MaintenanceWorkService {
       // TNB feedback #1 — the TNB material list, shipped with the pack so the
       // crew can record materials offline.
       materialCatalog,
+      // Plan §20 (P2) — the kinds of repair per work type, for "Mark done" offline.
+      repairMethods,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -592,4 +611,262 @@ export class MaintenanceWorkService {
       },
     });
   }
+
+  // ── Plan §20: crew / office corrections (until TNB verifies) ──────────────
+
+  /** The routed work this user may correct — ADMIN: any in the tenant. */
+  private async correctionScope(user: RequestUser): Promise<Prisma.DefectWhereInput> {
+    return user.role === UserRole.ADMIN
+      ? { inspectionItemResult: { inspection: { tenantId: user.tenantId } } }
+      : (await this.workScope(user)).where;
+  }
+
+  /**
+   * A Kejanggalan this user may still correct: in {@link correctionScope} (crew
+   * = own teams, Manager = company + subcontractors) and NOT yet verified by
+   * TNB (CLOSED).
+   */
+  private async editableDefect(user: RequestUser, defectId: string) {
+    const defect = await this.prisma.defect.findFirst({
+      where: { AND: [await this.correctionScope(user), { id: defectId }] },
+      select: { id: true, lifecycleStatus: true, status: true, maintenanceCategory: true },
+    });
+    if (!defect) {
+      throw new NotFoundException('Kejanggalan not found in your maintenance work.');
+    }
+    if (
+      defect.lifecycleStatus === DefectLifecycleStatus.CLOSED ||
+      defect.status === DefectStatus.CLOSED
+    ) {
+      throw new BadRequestException('TNB has already verified this repair — it can no longer be changed.');
+    }
+    return defect;
+  }
+
+  private async editableEvidenceImage(user: RequestUser, imageId: string) {
+    const image = await this.prisma.defectEvidenceImage.findUnique({ where: { id: imageId } });
+    if (!image || !isRepairStageEvidenceType(image.evidenceType)) {
+      throw new NotFoundException('Repair photo not found.');
+    }
+    await this.editableDefect(user, image.defectId);
+    return image;
+  }
+
+  /**
+   * Delete a repair photo (P1). The row MOVES to DefectEvidenceImageArchive:
+   * every read path keeps reading DefectEvidenceImage, so a deleted photo can
+   * never resurface anywhere; the file stays on disk for an audit.
+   */
+  async deleteEvidenceImage(user: RequestUser, imageId: string) {
+    const image = await this.editableEvidenceImage(user, imageId);
+    const now = new Date();
+    const takenAt = (image.timestamp ?? image.createdAt).toISOString().slice(0, 16).replace('T', ' ');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defectEvidenceImageArchive.create({
+        data: {
+          id: image.id,
+          defectId: image.defectId,
+          createdByUserId: image.createdByUserId,
+          evidenceType: image.evidenceType,
+          fileName: image.fileName,
+          storageKey: image.storageKey,
+          contentType: image.contentType,
+          sizeBytes: image.sizeBytes,
+          url: image.url,
+          note: image.note,
+          latitude: image.latitude,
+          longitude: image.longitude,
+          timestamp: image.timestamp,
+          createdAt: image.createdAt,
+          deletedAt: now,
+          deletedByUserId: user.id,
+        },
+      });
+      await tx.defectEvidenceImage.delete({ where: { id: image.id } });
+      await tx.defect.update({ where: { id: image.defectId }, data: { evidenceChangedAt: now } });
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: image.defectId,
+          type: DefectTimelineEventType.COMMENT,
+          comment: `${evidenceTypeLabel(image.evidenceType)} deleted (taken ${takenAt} UTC).`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+    return { id: image.id, deleted: true };
+  }
+
+  /** Move a repair photo to another stage — fixes a wrong Before / After (P1). */
+  async relabelEvidenceImage(user: RequestUser, imageId: string, evidenceType: string) {
+    const target = evidenceType.trim().toUpperCase();
+    if (!isRepairStageEvidenceType(target)) {
+      throw new BadRequestException('A repair photo can only be BEFORE, DURING or AFTER.');
+    }
+    const image = await this.editableEvidenceImage(user, imageId);
+    if (image.evidenceType === target) {
+      return { id: image.id, evidenceType: target };
+    }
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defectEvidenceImage.update({ where: { id: image.id }, data: { evidenceType: target } });
+      await tx.defect.update({ where: { id: image.defectId }, data: { evidenceChangedAt: now } });
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: image.defectId,
+          type: DefectTimelineEventType.COMMENT,
+          comment: `Photo moved: ${evidenceTypeLabel(image.evidenceType)} → ${evidenceTypeLabel(target)}.`,
+          createdByUserId: user.id,
+          createdAt: now,
+        },
+      });
+    });
+    return { id: image.id, evidenceType: target };
+  }
+
+  /** The active kinds of repair (P2), optionally for one work type. */
+  listRepairMethods(category?: MaintenanceCategory) {
+    return listActiveRepairMethods(this.prisma, category);
+  }
+
+  /** Set / correct the kind of repair after "Mark done" (P2) — crew or office. */
+  async setRepairMethod(
+    user: RequestUser,
+    defectId: string,
+    repairMethodId: string | null,
+    note: string | null | undefined,
+  ) {
+    const defect = await this.editableDefect(user, defectId);
+    const resolved = await resolveRepairMethod(this.prisma, defect.maintenanceCategory, repairMethodId, note);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.defect.update({
+        where: { id: defect.id },
+        data: { repairMethodId: resolved.repairMethodId, repairMethodNote: resolved.repairMethodNote },
+      });
+      await tx.defectTimelineEntry.create({
+        data: {
+          id: randomUUID(),
+          defectId: defect.id,
+          type: DefectTimelineEventType.COMMENT,
+          comment: resolved.label
+            ? `Repair type: ${resolved.label}${resolved.repairMethodNote ? ` — ${resolved.repairMethodNote}` : ''}.`
+            : 'Repair type cleared.',
+          createdByUserId: user.id,
+        },
+      });
+    });
+    return {
+      id: defect.id,
+      repairMethod: resolved.repairMethodId
+        ? { id: resolved.repairMethodId, label: resolved.label, note: resolved.repairMethodNote }
+        : null,
+    };
+  }
+
+  /**
+   * Correct a pole's No Tiang Lama on site (P3) — e.g. repainted before the
+   * crew came. Allowed while the user has unverified work on the pole; every
+   * change is logged (old → new, who, when) in AssetChangeLog.
+   */
+  async setNoTiangLama(user: RequestUser, assetId: string, value: string | null | undefined) {
+    const work = await this.prisma.defect.findFirst({
+      where: {
+        AND: [
+          await this.correctionScope(user),
+          { inspectionItemResult: { inspection: { assetId } } },
+          { NOT: { lifecycleStatus: DefectLifecycleStatus.CLOSED } },
+          { NOT: { status: DefectStatus.CLOSED } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!work) {
+      throw new NotFoundException('No unverified maintenance work of yours on this pole.');
+    }
+    const asset = await this.prisma.asset.findUnique({
+      where: { id: assetId },
+      select: { id: true, tenantId: true, noTiangLama: true, name: true },
+    });
+    if (!asset) {
+      throw new NotFoundException('Pole not found.');
+    }
+    const current = effectiveLama(asset);
+    const next = value?.replace(/\s+/g, ' ').trim() || null;
+    if (next && next.length > 60) {
+      throw new BadRequestException('No Tiang Lama is too long (60 characters at most).');
+    }
+    if (next === current) {
+      return { assetId, noTiangLama: next, previous: current, changed: false };
+    }
+    await this.prisma.$transaction([
+      // Both fields: reports read noTiangLama first, the app's screens read name.
+      this.prisma.asset.update({ where: { id: assetId }, data: { noTiangLama: next, name: next } }),
+      this.prisma.assetChangeLog.create({
+        data: {
+          tenantId: asset.tenantId,
+          assetId,
+          field: 'noTiangLama',
+          oldValue: current,
+          newValue: next,
+          source: 'MAINTENANCE',
+          changedByUserId: user.id,
+        },
+      }),
+    ]);
+    return { assetId, noTiangLama: next, previous: current, changed: true };
+  }
+}
+
+/** Active kinds of repair (plan §20, P2) — shipped with the crew's pack. */
+export function listActiveRepairMethods(
+  prisma: PrismaService | Prisma.TransactionClient,
+  category?: MaintenanceCategory,
+) {
+  return prisma.repairMethod.findMany({
+    where: { isActive: true, ...(category ? { category } : {}) },
+    orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }, { label: 'asc' }],
+    select: { id: true, category: true, code: true, label: true, requiresNote: true },
+  });
+}
+
+/**
+ * Validate a kind of repair for a Kejanggalan's work type (plan §20, P2); null
+ * clears it. A method that requires a note ("Lain-lain") must come with one.
+ * Shared by the crew's "Mark done" and the later correction.
+ */
+export async function resolveRepairMethod(
+  prisma: PrismaService | Prisma.TransactionClient,
+  category: MaintenanceCategory | null,
+  repairMethodId: string | null | undefined,
+  note: string | null | undefined,
+): Promise<{ repairMethodId: string | null; repairMethodNote: string | null; label: string | null }> {
+  if (!repairMethodId) {
+    return { repairMethodId: null, repairMethodNote: null, label: null };
+  }
+  const method = await prisma.repairMethod.findUnique({ where: { id: repairMethodId } });
+  if (!method || !method.isActive) {
+    throw new BadRequestException('That repair type is not available.');
+  }
+  if (method.category !== (category ?? MaintenanceCategory.SELENGGARAAN)) {
+    throw new BadRequestException('That repair type does not belong to this work type.');
+  }
+  const cleanNote = note?.replace(/\s+/g, ' ').trim() || null;
+  if (method.requiresNote && !cleanNote) {
+    throw new BadRequestException(`"${method.label}" needs a short description of the work done.`);
+  }
+  if (cleanNote && cleanNote.length > 300) {
+    throw new BadRequestException('The description is too long (300 characters at most).');
+  }
+  return { repairMethodId: method.id, repairMethodNote: cleanNote, label: method.label };
+}
+
+/**
+ * A pole's NO TIANG LAMA as the reports read it: the dedicated column (filled
+ * by imports and by a maintenance correction), else the pole's name — which is
+ * where the mobile Add-Pole screen stores it.
+ */
+export function effectiveLama(asset: { noTiangLama: string | null; name: string | null }): string | null {
+  return asset.noTiangLama?.trim() || asset.name?.trim() || null;
 }
