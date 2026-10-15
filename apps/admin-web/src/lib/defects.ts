@@ -686,6 +686,15 @@ function normalizeDefectDetail(rawDefect: unknown): DefectDetail | null {
       undefined,
     updatedAt: firstString(record, ["updatedAt"]),
     closedAt: firstString(record, ["closedAt"]),
+    // Plan §20: the routed company + the kind of repair done.
+    maintenanceOrganizationId: firstString(record, ["maintenanceOrganizationId"]),
+    repairMethod: (() => {
+      const method = nestedRecord(record, "repairMethod");
+      const id = firstString(method, ["id"]);
+      return method && id
+        ? { id, label: firstString(method, ["label"]), note: firstString(method, ["note"]) }
+        : null;
+    })(),
     asset: asset
       ? {
           id: firstString(asset, ["id"]) ?? baseDefect.assetId ?? "",

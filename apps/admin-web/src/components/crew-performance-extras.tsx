@@ -442,6 +442,31 @@ function MaintenanceCells({ metrics }: { metrics: MaintenanceTreeMetrics }) {
   );
 }
 
+/** Plan §20 (P2): "KAEDAH LAZIM 12 · TEBANG POKOK 3 · not set 2" under a row. */
+function MethodsRow({ methods, level }: { methods?: MaintenanceTreeMetrics["methods"]; level: number }) {
+  if (!methods || methods.length === 0) return null;
+  return (
+    <tr className="border-b border-[var(--line2)]">
+      <td colSpan={9} className="px-3 pb-2 pt-0" style={{ paddingLeft: `${12 + level * 22}px` }}>
+        <div className="flex flex-wrap gap-1.5">
+          {methods.map((method) => (
+            <span
+              key={method.label ?? "unset"}
+              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                method.label
+                  ? "border-[var(--line)] bg-[var(--panel-muted)] text-[var(--foreground-soft)]"
+                  : "border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning-text)]"
+              }`}
+            >
+              {method.label ?? "Type not set"} · {method.count}
+            </span>
+          ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 /** Maintenance: Company → work type → team; click a team for its day by day. */
 export function MaintenanceTree({
   tree,
@@ -502,6 +527,7 @@ export function MaintenanceTree({
                             />
                             <MaintenanceCells metrics={category} />
                           </tr>
+                          <MethodsRow methods={category.methods} level={1} />
                           {categoryOpen
                             ? category.teams.map((team) => (
                                 <tr
@@ -516,7 +542,14 @@ export function MaintenanceTree({
                                   />
                                   <MaintenanceCells metrics={team} />
                                 </tr>
-                              ))
+                              )).flatMap((row, index) => [
+                                row,
+                                <MethodsRow
+                                  key={`${categoryKey}|${category.teams[index].teamId}|methods`}
+                                  methods={category.teams[index].methods}
+                                  level={2}
+                                />,
+                              ])
                             : null}
                         </Fragment>
                       );

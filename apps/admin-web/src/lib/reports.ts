@@ -419,6 +419,8 @@ export interface MaintenanceTreeMetrics {
   avgHoursToDone: number | null;
   passRate: number | null;
   onHand: number;
+  /** Plan §20 (P2): repaired per kind of repair (label null = Rentis, not set). */
+  methods?: Array<{ label: string | null; count: number }>;
 }
 
 export interface MaintenanceTreeCompany extends MaintenanceTreeMetrics {

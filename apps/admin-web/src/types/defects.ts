@@ -278,6 +278,10 @@ export interface DefectDetail extends DefectListItem {
   maintenanceProofImages?: DefectEvidenceImage[];
   /** TNB materials used for the repair (TNB feedback #1). */
   materials?: DefectMaterialLine[];
+  /** Plan §20: the company the repair is routed to (null = legacy, unrouted). */
+  maintenanceOrganizationId?: string | null;
+  /** Plan §20 (P2): the kind of repair done (Rentis: KAEDAH LAZIM …). */
+  repairMethod?: { id: string; label: string | null; note: string | null } | null;
   timeline: DefectTimelineEntry[];
 }
 

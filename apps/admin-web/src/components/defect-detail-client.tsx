@@ -24,6 +24,7 @@ import {
   EvidenceImageGrid,
   buildEvidenceEntries,
 } from "@/components/inspection-evidence-grid";
+import { RepairCorrectionsCard } from "@/components/repair-corrections-card";
 import { DefectMaterialsCard } from "@/components/defect-materials-card";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession, refreshStoredSessionUser } from "@/lib/auth";
@@ -1335,6 +1336,27 @@ function DefectDetailContent({ defectId }: { defectId: string }) {
                   onSaved={(materials) => setDefect((current) => (current ? { ...current, materials } : current))}
                   onUnauthorized={handleLogout}
                 />
+
+                {/* Plan §20: repair type + repair-photo fixes until TNB verifies. */}
+                {defect.maintenanceOrganizationId ? (
+                  <RepairCorrectionsCard
+                    token={session?.token ?? null}
+                    defectId={defect.id}
+                    category={defect.maintenanceCategory ?? null}
+                    repairMethod={defect.repairMethod ?? null}
+                    photos={defect.evidenceImages ?? []}
+                    canEdit={
+                      session?.user?.role === "ADMIN" ||
+                      canManageMaintenance ||
+                      (Boolean(session?.user?.canViewMaintenancePackages) && !session?.user?.isClientViewer)
+                    }
+                    isVerified={defect.lifecycleStatus === "CLOSED"}
+                    onChanged={() => {
+                      if (session?.token) void loadDefect(session.token, false);
+                    }}
+                    onUnauthorized={handleLogout}
+                  />
+                ) : null}
 
                 <section className="rounded-xl border border-[var(--line)] bg-white p-5 shadow-[var(--shadow-card)]">
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
