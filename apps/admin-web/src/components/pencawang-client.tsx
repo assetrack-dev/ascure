@@ -376,23 +376,22 @@ function PencawangContent() {
       longitude?: number | null;
     } = {};
 
+    // Kod + name are always sent, even unchanged: the server copies them onto
+    // every survey of this Pencawang, so a plain Save also repairs surveys whose
+    // copy drifted (a crew rename from before 2026-10-18).
     const nextCode = editForm.code.trim();
-    if (nextCode !== editInitial.code.trim()) {
-      if (!nextCode) {
-        setEditError("The Kod Pencawang cannot be empty.");
-        return;
-      }
-      payload.code = nextCode;
+    if (!nextCode) {
+      setEditError("The Kod Pencawang cannot be empty.");
+      return;
     }
+    payload.code = nextCode;
 
     const nextName = editForm.name.trim();
-    if (nextName !== editInitial.name.trim()) {
-      if (!nextName) {
-        setEditError("The Pencawang name cannot be empty.");
-        return;
-      }
-      payload.name = nextName;
+    if (!nextName) {
+      setEditError("The Pencawang name cannot be empty.");
+      return;
     }
+    payload.name = nextName;
 
     const nextLocation = editForm.location.trim();
     if (nextLocation !== editInitial.location.trim()) {
@@ -428,11 +427,6 @@ function PencawangContent() {
       }
     }
 
-    if (Object.keys(payload).length === 0) {
-      handleCloseEdit();
-      return;
-    }
-
     setIsSavingEdit(true);
     setEditError("");
     setError("");
@@ -466,7 +460,6 @@ function PencawangContent() {
     editForm,
     editInitial,
     editTarget,
-    handleCloseEdit,
     handleLogout,
     session?.token,
   ]);

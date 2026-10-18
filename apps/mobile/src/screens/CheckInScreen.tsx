@@ -846,12 +846,16 @@ export function CheckInScreen() {
               />
             ) : null}
 
+            {/* An existing Pencawang's details are its record's — renamed on the
+                Pencawang page (web), not here, or the survey and the Pencawang
+                list / QR exports would carry different names. */}
             <TextField
               label={pencawangMode === 'NEW' ? 'Nama Pencawang *' : 'Nama Pencawang'}
               value={pencawangName}
               onChangeText={(nextValue) => setPencawangName(normalizeOperationalText(nextValue))}
               placeholder="Nama pencawang di lokasi"
               autoCapitalize="characters"
+              editable={pencawangMode === 'NEW'}
             />
             <TextField
               label={pencawangMode === 'NEW' ? 'Functional Location *' : 'Functional Location'}
@@ -859,6 +863,7 @@ export function CheckInScreen() {
               onChangeText={(nextValue) => setFunctionalLocation(normalizeOperationalText(nextValue))}
               placeholder="Functional location / alamat operasi"
               autoCapitalize="characters"
+              editable={pencawangMode === 'NEW'}
             />
             <TextField
               label={pencawangMode === 'NEW' ? 'Kod Pencawang *' : 'Kod Pencawang'}
@@ -866,7 +871,13 @@ export function CheckInScreen() {
               onChangeText={(nextValue) => setPencawangCode(normalizeOperationalText(nextValue))}
               placeholder="Kod pencawang"
               autoCapitalize="characters"
+              editable={pencawangMode === 'NEW'}
             />
+            {pencawangMode === 'EXISTING' ? (
+              <Text style={styles.readOnlyHint}>
+                Nama / kod salah? Minta manager tukar di halaman Pencawang (web).
+              </Text>
+            ) : null}
             {mainheads.length === 0 ? (
               <EmptyState
                 icon="database"
@@ -1370,6 +1381,12 @@ const createStyles = (t: Theme) =>
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
+    },
+    readOnlyHint: {
+      color: t.colors.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: t.fonts.body,
     },
     coordinateInputRow: {
       flexDirection: 'row',

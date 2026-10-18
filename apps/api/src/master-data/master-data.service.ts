@@ -161,7 +161,7 @@ export class MasterDataService {
     id: string,
     dto: UpdateSubstationDetailsDto,
   ) {
-    await this.findSubstationOrThrow(user.tenantId, id);
+    const existing = await this.findSubstationOrThrow(user.tenantId, id);
     await this.assertManagerOwnsPencawang(user, id, 'edit');
 
     const data: Prisma.SubstationUpdateInput = {};
@@ -251,7 +251,9 @@ export class MasterDataService {
     if (data.code !== undefined) visitData.pencawangCode = data.code as string;
     if (data.name !== undefined) visitData.pencawangName = data.name as string;
     if (data.location !== undefined) {
-      visitData.functionalLocation = data.location as string | null;
+      // location ?? Kod — what check-in has always put on a survey.
+      visitData.functionalLocation =
+        (data.location as string | null) ?? ((data.code as string | undefined) ?? existing.code);
     }
 
     try {
