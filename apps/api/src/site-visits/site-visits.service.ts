@@ -601,23 +601,15 @@ export class SiteVisitsService {
           mainhead:
             this.normalizeOperationalString(dto.mainhead) ??
             operationalLinks.mainheadLabel,
-          pencawangCode: !substation
-            ? null
-            : dto.substationId
-              ? this.normalizePencawangCode(dto.pencawangCode) ??
-                this.normalizePencawangCode(substation.code) ??
-                substation.code
-              : substation.code,
-          pencawangName: substation
-            ? this.normalizeOperationalString(dto.pencawangName) ??
-              this.normalizeOperationalString(substation.name) ??
-              substation.name
-            : null,
-          functionalLocation: substation
-            ? this.normalizeOperationalString(dto.functionalLocation) ??
-              this.normalizeOperationalString(substation.location) ??
-              substation.location
-            : null,
+          // The visit's code / name / functional location are a COPY of its
+          // Pencawang's, never the crew's typing: a name changed here would only
+          // live on this survey (the Pencawang list, checklist and QR exports
+          // keep the record's name). Renames happen on the Pencawang page,
+          // which carries them onto every visit.
+          pencawangCode: substation ? substation.code : null,
+          pencawangName: substation ? substation.name : null,
+          // location ?? code = what the check-in screen has always shown.
+          functionalLocation: substation ? substation.location ?? substation.code : null,
           checkInLatitude: dto.checkInLatitude,
           checkInLongitude: dto.checkInLongitude,
           checkInAccuracyMeters: dto.checkInAccuracyMeters,
@@ -1396,8 +1388,9 @@ export class SiteVisitsService {
 
     const data: Prisma.SiteVisitUpdateInput = {};
 
-    // Pencawang re-point — validate it's in the tenant; refresh the denormalised
-    // label/location from it unless the caller set them explicitly this request.
+    // Pencawang re-point — validate it's in the tenant; the visit's code / name /
+    // functional location then follow the new Pencawang.
+    let target: { code: string; name: string; location: string | null } | null = null;
     if (dto.substationId && dto.substationId !== visit.substationId) {
       const substation = await this.prisma.substation.findFirst({
         where: { id: dto.substationId, tenantId: user.tenantId },
@@ -1406,25 +1399,42 @@ export class SiteVisitsService {
       if (!substation) {
         throw new NotFoundException('The selected Pencawang was not found.');
       }
+      target = substation;
       data.substation = { connect: { id: substation.id } };
-      if (dto.pencawangCode === undefined) data.pencawangCode = substation.code;
-      if (dto.pencawangName === undefined) data.pencawangName = substation.name;
-      if (dto.functionalLocation === undefined && substation.location) {
-        data.functionalLocation = substation.location;
-      }
+      data.pencawangCode = substation.code;
+      data.pencawangName = substation.name;
+      data.functionalLocation = substation.location ?? substation.code;
     }
 
     if (dto.mainhead !== undefined) {
       data.mainhead = this.normalizeOptionalString(dto.mainhead);
     }
-    if (dto.pencawangCode !== undefined) {
-      data.pencawangCode = this.normalizeOptionalString(dto.pencawangCode);
-    }
-    if (dto.pencawangName !== undefined) {
-      data.pencawangName = this.normalizeOptionalString(dto.pencawangName);
-    }
-    if (dto.functionalLocation !== undefined) {
-      data.functionalLocation = this.normalizeOptionalString(dto.functionalLocation);
+
+    if (visit.substation || target) {
+      // A visit's code / name / functional location are its Pencawang's. Changed
+      // here they would live on this survey only, while the Pencawang list,
+      // checklist and QR exports keep the record's (the 2026-10 KG BUDAYA /
+      // LAMPU PELABUHAN drift) — so they change on the Pencawang page, which
+      // carries a rename onto every visit. Phones send the fields back on every
+      // save, so a value matching the visit or its Pencawang is a no-op; only a
+      // real change is refused.
+      this.assertPencawangIdentityUnchanged(dto, [
+        { code: visit.pencawangCode, name: visit.pencawangName, location: visit.functionalLocation },
+        ...[visit.substation, target]
+          .filter((record): record is NonNullable<typeof record> => record != null)
+          .map((record) => ({ ...record, location: record.location ?? record.code })),
+      ]);
+    } else {
+      // No Pencawang record behind this visit — its labels are its own.
+      if (dto.pencawangCode !== undefined) {
+        data.pencawangCode = this.normalizeOptionalString(dto.pencawangCode);
+      }
+      if (dto.pencawangName !== undefined) {
+        data.pencawangName = this.normalizeOptionalString(dto.pencawangName);
+      }
+      if (dto.functionalLocation !== undefined) {
+        data.functionalLocation = this.normalizeOptionalString(dto.functionalLocation);
+      }
     }
     if (dto.notes !== undefined) {
       data.notes = this.normalizeOptionalString(dto.notes);
@@ -1589,9 +1599,13 @@ export class SiteVisitsService {
         requiresQAQC: prior.requiresQAQC,
         reportingGroup: prior.reportingGroup,
         mainhead: prior.mainhead,
-        pencawangCode: prior.pencawangCode,
-        pencawangName: prior.pencawangName,
-        functionalLocation: prior.functionalLocation,
+        // From the Pencawang itself, not the prior survey's copy (which may have
+        // drifted before renames were locked to the Pencawang page).
+        pencawangCode: prior.substation?.code ?? prior.pencawangCode,
+        pencawangName: prior.substation?.name ?? prior.pencawangName,
+        functionalLocation: prior.substation
+          ? prior.substation.location ?? prior.substation.code
+          : prior.functionalLocation,
         validationStatus: SiteVisitValidationStatus.PENDING,
         lifecycleStatus: SurveyLifecycleStatus.DALAM_RONDAAN,
         users: {
@@ -3581,6 +3595,38 @@ export class SiteVisitsService {
 
   private normalizePencawangCode(value?: string | null) {
     return this.normalizeOperationalString(value);
+  }
+
+  /**
+   * Refuse a visit edit that changes the Pencawang's code / name / functional
+   * location (see updateDetails). A sent value is a no-op when it matches any of
+   * `known` — the visit's own copy, its Pencawang, or a re-point target —
+   * compared case- and spacing-insensitively, blank = null.
+   */
+  private assertPencawangIdentityUnchanged(
+    dto: Pick<UpdateSiteVisitDto, 'pencawangCode' | 'pencawangName' | 'functionalLocation'>,
+    known: { code: string | null; name: string | null; location: string | null }[],
+  ) {
+    const comparable = (value?: string | null) =>
+      (value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+    const fields = [
+      { sent: dto.pencawangCode, key: 'code', label: 'Kod Pencawang' },
+      { sent: dto.pencawangName, key: 'name', label: 'Nama Pencawang' },
+      { sent: dto.functionalLocation, key: 'location', label: 'Functional Location' },
+    ] as const;
+    const changed = fields
+      .filter(
+        ({ sent, key }) =>
+          sent !== undefined &&
+          !known.some((record) => comparable(record[key]) === comparable(sent)),
+      )
+      .map(({ label }) => label);
+    if (changed.length > 0) {
+      throw new BadRequestException(
+        `${changed.join(' / ')} tidak boleh ditukar di sini — ia ikut rekod Pencawang. ` +
+          'Minta manager atau admin tukar di halaman Pencawang (web); semua survey di Pencawang itu akan ikut.',
+      );
+    }
   }
 
   private normalizeOperationalString(value?: string | null) {

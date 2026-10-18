@@ -276,6 +276,15 @@ export class ImportsService {
             create: { tenantId, code, name: first.pencawangName ?? code, location: this.locationLabel(first) },
             update: { name: first.pencawangName ?? undefined, location: this.locationLabel(first) },
           });
+          // A rename here must reach the Pencawang's existing visits too (their
+          // name is a copy — same rule as the Pencawang page). Not `location`:
+          // this import stores a GPS label there, not a functional location.
+          if (first.pencawangName) {
+            await tx.siteVisit.updateMany({
+              where: { tenantId, substationId: substation.id },
+              data: { pencawangName: substation.name },
+            });
+          }
 
           const teamId = resolveTeam(first.teamText);
           const createdByUserId = resolveUser(first.inspectorEmail);
@@ -295,7 +304,7 @@ export class ImportsService {
                 lifecycleStatus: SurveyLifecycleStatus.ARKIB,
                 rondaanSelesaiAt: completedAt, laporanSelesaiAt: completedAt, archivedAt: completedAt,
                 mainheadId: resolveMainhead(first.mainheadText), mainhead: first.mainheadText ?? undefined,
-                pencawangCode: code, pencawangName: first.pencawangName ?? undefined, functionalLocation: first.functionalLocation ?? undefined,
+                pencawangCode: substation.code, pencawangName: substation.name, functionalLocation: first.functionalLocation ?? undefined,
                 reportingGroup, startedAt, completedAt, endedAt: completedAt,
                 checkInLatitude: first.latitude ?? undefined, checkInLongitude: first.longitude ?? undefined,
               },

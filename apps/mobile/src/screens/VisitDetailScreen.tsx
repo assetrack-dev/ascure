@@ -851,10 +851,6 @@ function EditVisitDetailsCard({
   const [error, setError] = useState<string | null>(null);
 
   const [mainhead, setMainhead] = useState(visit.mainhead ?? '');
-  const [pencawangName, setPencawangName] = useState(visit.pencawangName ?? '');
-  const [functionalLocation, setFunctionalLocation] = useState(
-    visit.functionalLocation ?? '',
-  );
   const [notes, setNotes] = useState(visit.notes ?? '');
   const [latitude, setLatitude] = useState(
     visit.checkInLatitude != null ? String(visit.checkInLatitude) : '',
@@ -907,10 +903,10 @@ function EditVisitDetailsCard({
   const save = async () => {
     setError(null);
 
+    // Nama Pencawang / Functional Location are not sent: they follow the
+    // Pencawang record and change on the Pencawang page (web) only.
     const input: Parameters<typeof api.updateSiteVisit>[2] = {
       mainhead: mainhead.trim(),
-      pencawangName: pencawangName.trim(),
-      functionalLocation: functionalLocation.trim(),
       notes: notes.trim(),
     };
 
@@ -959,8 +955,7 @@ function EditVisitDetailsCard({
       {!open ? (
         <>
           <Text style={styles.reassignHint}>
-            Fix a wrong Pencawang name, mainhead, location, or notes without recreating
-            the visit.
+            Fix the mainhead, location, or notes without recreating the visit.
           </Text>
           <AppButton
             label="Edit Visit Details"
@@ -979,16 +974,20 @@ function EditVisitDetailsCard({
           />
           <TextField
             label="Pencawang Name"
-            value={pencawangName}
-            onChangeText={setPencawangName}
-            autoCapitalize="characters"
+            value={visit.pencawangName ?? visit.substation.name}
+            onChangeText={() => undefined}
+            editable={false}
           />
           <TextField
             label="Functional Location"
-            value={functionalLocation}
-            onChangeText={setFunctionalLocation}
-            autoCapitalize="characters"
+            value={visit.functionalLocation ?? ''}
+            onChangeText={() => undefined}
+            editable={false}
           />
+          <Text style={styles.reassignHint}>
+            Nama Pencawang salah? Minta manager tukar di halaman Pencawang (web) —
+            semua survey di Pencawang itu akan ikut.
+          </Text>
           <TextField label="Notes" value={notes} onChangeText={setNotes} multiline />
           <Text style={styles.reassignHint}>
             Location{accuracy != null ? ` (±${Math.round(accuracy)}m)` : ''} — re-capture
