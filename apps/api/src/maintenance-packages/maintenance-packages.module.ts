@@ -5,6 +5,8 @@ import { MaintenancePackagesService } from './maintenance-packages.service';
 import { MaintenanceClosureService } from './maintenance-closure.service';
 import { MaintenanceMaterialsController } from './maintenance-materials.controller';
 import { MaintenanceMaterialsService } from './maintenance-materials.service';
+import { MaintenanceTasksController } from './maintenance-tasks.controller';
+import { MaintenanceTasksService } from './maintenance-tasks.service';
 import { MaintenanceVerificationController } from './maintenance-verification.controller';
 import { MaintenanceWorkController } from './maintenance-work.controller';
 import { MaintenanceWorkService } from './maintenance-work.service';
@@ -16,6 +18,7 @@ import { RepairMethodsController } from './repair-methods.controller';
   controllers: [
     MaintenancePackagesController,
     MaintenanceVerificationController,
+    MaintenanceTasksController,
     MaintenanceWorkController,
     MaintenanceMaterialsController,
     RepairMethodsController,
@@ -23,6 +26,7 @@ import { RepairMethodsController } from './repair-methods.controller';
   providers: [
     MaintenancePackagesService,
     MaintenanceClosureService,
+    MaintenanceTasksService,
     MaintenanceWorkService,
     MaintenanceMaterialsService,
     RepairReportService,

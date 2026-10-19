@@ -70,6 +70,8 @@ export interface RepairReportInput {
   teams: string;
   scope: string;
   targetDate: string;
+  /** Plan §21 (R7): "Tempoh: 01/10/2026 - 31/10/2026 (Disahkan)" for a report by date. */
+  period?: string;
   generatedAt: string;
   draft: boolean;
   counts: Record<RepairStatus, number>;
@@ -247,6 +249,7 @@ export async function renderRepairReportPdf(input: RepairReportInput): Promise<B
       input.teams ? `Pasukan: ${input.teams}` : null,
       `Skop: ${input.scope}`,
       input.targetDate ? `Tarikh sasaran: ${input.targetDate}` : null,
+      input.period ? `Tempoh: ${input.period}` : null,
     ]
       .filter(Boolean)
       .join('   |   ');

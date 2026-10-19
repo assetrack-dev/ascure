@@ -11,8 +11,10 @@ import {
   DefectStatus,
   InspectionItemResultSource,
   MaintenanceCategory,
+  Prisma,
   ResolutionOutcome,
 } from '@prisma/client';
+import { Workbook } from 'exceljs';
 import { MATERIAL_SELECT, serializeMaterials } from './maintenance-materials.util';
 import archiver from 'archiver';
 import { randomUUID } from 'crypto';
@@ -35,7 +37,9 @@ import {
   RepairStage,
   RepairStatus,
 } from './repair-report-layout';
-import { previousNoTiangLama } from './maintenance-closure.service';
+import { dayStart, nextDayStart, previousNoTiangLama } from './maintenance-closure.service';
+import { RepairPeriodStatus } from './dto/repair-report.dto';
+import { MaintenanceTasksService } from './maintenance-tasks.service';
 import { effectiveLama } from './maintenance-work.service';
 
 const CATEGORY_LABEL: Record<MaintenanceCategory, string> = {
@@ -52,8 +56,47 @@ const OUTCOME_LABEL: Partial<Record<ResolutionOutcome, string>> = {
 
 /** Photos per stage on one Kejanggalan — keeps a card to one or two rows. */
 const MAX_PHOTOS_PER_STAGE = 4;
-/** Most Pencawang in one repair-report ZIP. */
+/** Most Pencawang in one repair-report ZIP picked on the board. */
 const REPAIR_ZIP_MAX = 40;
+/** A by-date ZIP (plan §21, R7) picks its own Pencawang — a month of a big company fits. */
+const REPAIR_PERIOD_ZIP_MAX = 150;
+
+/** Plan §21 (R7): the period line on the PDF and the ZIP name. */
+const PERIOD_STATUS_LABEL: Record<RepairPeriodStatus, string> = {
+  VERIFIED: 'Disahkan',
+  COMPLETED: 'Siap di tapak, belum disahkan',
+  BOTH: 'Disahkan + siap di tapak',
+};
+
+/** ringkasan.xlsx status words (same as the PDF chips). */
+const STATUS_WORD: Record<RepairStatus, string> = {
+  CLOSED: 'Disahkan',
+  AWAITING: 'Siap di tapak - menunggu pengesahan',
+  IN_PROGRESS: 'Dalam pembaikan',
+  TODO: 'Belum mula',
+  CANNOT_REPAIR: 'Tidak dapat dibaiki',
+};
+
+/** One Kejanggalan's row in ringkasan.xlsx. */
+type RepairSummaryRow = {
+  pencawang: string;
+  functionalLocation: string;
+  mainhead: string;
+  company: string;
+  team: string;
+  assetCode: string;
+  noTiangLama: string;
+  workType: string;
+  repairMethod: string;
+  category: RepairCategory;
+  label: string;
+  status: RepairStatus;
+  repairedAt: Date | null;
+  repairedBy: string;
+  verifiedAt: Date | null;
+  verifiedBy: string;
+  materials: string;
+};
 const REPAIR_ZIP_TTL_MS = 2 * 60 * 60 * 1000;
 
 interface RepairZipJob {
@@ -73,6 +116,13 @@ interface RepairZipJob {
 export type RepairReportOptions = {
   organizationId?: string | null;
   category?: MaintenanceCategory | null;
+  /** Plan §21 (R7): only the Kejanggalan of this period (yyyy-mm-dd, inclusive) … */
+  from?: string | null;
+  to?: string | null;
+  /** … in this status (default VERIFIED) … */
+  status?: RepairPeriodStatus | null;
+  /** … of this team. */
+  teamId?: string | null;
 };
 
 /**
@@ -91,13 +141,51 @@ export class RepairReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly packages: MaintenancePackagesService,
+    private readonly tasks: MaintenanceTasksService,
   ) {}
+
+  /**
+   * Plan §21 (R7): a report by date keeps only the Kejanggalan whose chosen
+   * status falls in the period — VERIFIED = signed off then (claimable),
+   * COMPLETED = marked done then and not verified yet, BOTH = either.
+   */
+  private periodWhere(options: RepairReportOptions): Prisma.DefectWhereInput[] {
+    if (!options.from || !options.to) return [];
+    const range = { gte: dayStart(options.from), lt: nextDayStart(options.to) };
+    const verified: Prisma.DefectWhereInput = {
+      lifecycleStatus: DefectLifecycleStatus.CLOSED,
+      closureVerifiedAt: range,
+    };
+    const completed: Prisma.DefectWhereInput = {
+      lifecycleStatus: { in: [DefectLifecycleStatus.COMPLETED, DefectLifecycleStatus.VERIFICATION_PENDING] },
+      maintainedAt: range,
+    };
+    const status = options.status ?? 'VERIFIED';
+    const where: Prisma.DefectWhereInput[] = [
+      status === 'VERIFIED' ? verified : status === 'COMPLETED' ? completed : { OR: [verified, completed] },
+    ];
+    if (options.teamId) {
+      where.push({
+        OR: [
+          { assignedToTeamId: options.teamId },
+          { assignedToTeamId: null, assignedTeamId: options.teamId },
+        ],
+      });
+    }
+    return where;
+  }
+
+  private periodLabel(options: RepairReportOptions) {
+    if (!options.from || !options.to) return undefined;
+    const day = (value: string) => value.slice(0, 10).split('-').reverse().join('/');
+    return `${day(options.from)} - ${day(options.to)} (${PERIOD_STATUS_LABEL[options.status ?? 'VERIFIED']})`;
+  }
 
   async generate(
     user: RequestUser,
     siteVisitId: string,
     options: RepairReportOptions,
-  ): Promise<{ buffer: Buffer; filename: string }> {
+  ): Promise<{ buffer: Buffer; filename: string; rows: RepairSummaryRow[] }> {
     const { visit, organization } = await this.packages.resolveRepairReportScope(
       user,
       siteVisitId,
@@ -136,6 +224,7 @@ export class RepairReportService {
                 { inspectionItemResult: { inspection: { completionStatus: 'SUBMITTED' } } },
               ],
             },
+            ...this.periodWhere(options),
           ],
           inspectionItemResult: { isDefect: true, inspection: { siteVisitId: visit.id } },
         },
@@ -192,7 +281,11 @@ export class RepairReportService {
       }),
     ]);
 
+    const period = this.periodLabel(options);
     if (defects.length === 0) {
+      if (period) {
+        throw new BadRequestException(`${organization.name} has no Kejanggalan here for ${period}.`);
+      }
       throw new BadRequestException(
         category
           ? `${organization.name} has no ${CATEGORY_LABEL[category]} Kejanggalan on this Pencawang.`
@@ -211,6 +304,7 @@ export class RepairReportService {
     const findings: RepairReportItem[] = [];
     const cannot: RepairReportItem[] = [];
     const teams = new Set<string>();
+    const rows: RepairSummaryRow[] = [];
 
     const sorted = [...defects].sort(
       (left, right) =>
@@ -304,6 +398,30 @@ export class RepairReportService {
         photos: await this.loadPhotos(defect.evidenceImages),
       };
 
+      rows.push({
+        pencawang: '',
+        functionalLocation: '',
+        mainhead: '',
+        company: organization.name,
+        team: team ?? '',
+        assetCode: asset.assetCode,
+        noTiangLama: effectiveLama(asset) ?? '',
+        workType: CATEGORY_LABEL[defect.maintenanceCategory ?? MaintenanceCategory.SELENGGARAAN],
+        repairMethod: defect.repairMethod
+          ? `${defect.repairMethod.label}${defect.repairMethodNote ? ` - ${defect.repairMethodNote}` : ''}`
+          : '',
+        category: reportItem.category,
+        label: item.label,
+        status,
+        repairedAt: defect.maintainedAt,
+        repairedBy: defect.maintainedByUser?.name ?? '',
+        verifiedAt: status === 'CLOSED' ? defect.closureVerifiedAt : null,
+        verifiedBy: status === 'CLOSED' ? (verifier?.name ?? '') : '',
+        materials: reportItem.materials
+          .map((material) => `${material.description} ${material.quantity} ${material.unit}`.trim())
+          .join('; '),
+      });
+
       if (cannotRepair) cannot.push(reportItem);
       else if (isFinding) findings.push(reportItem);
       else survey.push(reportItem);
@@ -325,6 +443,7 @@ export class RepairReportService {
       teams: [...teams].sort().join(', '),
       scope: category ? CATEGORY_LABEL[category] : 'Semua jenis kerja',
       targetDate: dueDates[0] ? this.fmtDate(dueDates[0]) : '',
+      period,
       generatedAt: this.fmtDateTime(new Date()),
       draft: counts.CLOSED < defects.length,
       counts,
@@ -336,30 +455,59 @@ export class RepairReportService {
       sanitize: (value) => this.winAnsiSafe(value),
     });
 
+    const functionalLocation = details.functionalLocation ?? details.pencawangCode ?? details.substation?.code ?? '';
+    for (const row of rows) {
+      row.pencawang = pencawangName;
+      row.functionalLocation = functionalLocation;
+      row.mainhead = details.mainheadRecord?.name ?? '';
+    }
+
+    const periodPart =
+      options.from && options.to ? `-${options.from.slice(0, 10)}_${options.to.slice(0, 10)}` : '';
     const filename = `laporan-pembaikan-${this.forFilename(pencawangName || 'pencawang')}-${this.forFilename(
       organization.name,
-    )}${category ? `-${category.toLowerCase()}` : ''}.pdf`;
-    return { buffer, filename };
+    )}${category ? `-${category.toLowerCase()}` : ''}${periodPart}.pdf`;
+    return { buffer, filename, rows };
   }
 
   // ── Batch ZIP (background) ────────────────────────────────────────────────
 
   async startZipJob(
     user: RequestUser,
-    siteVisitIds: string[],
+    siteVisitIds: string[] | undefined,
     options: RepairReportOptions,
   ): Promise<{ jobId: string; total: number }> {
-    const ids = [...new Set(siteVisitIds)];
-    if (ids.length === 0) {
-      throw new BadRequestException('No Pencawang were selected.');
+    const byDate = !siteVisitIds?.length;
+    let targets: Array<{ siteVisitId: string; organizationId: string | null }>;
+    if (byDate) {
+      // Plan §21 (R7): every Pencawang (per company) with Kejanggalan of the period.
+      if (!options.from || !options.to) {
+        throw new BadRequestException('Pick Pencawang, or a from and a to date.');
+      }
+      const period = await this.tasks.periodTargets(user, options);
+      targets = period.targets.map((target) => ({
+        siteVisitId: target.siteVisitId,
+        organizationId: target.company.id,
+      }));
+      if (targets.length === 0) {
+        throw new BadRequestException('No Kejanggalan in that period with that status.');
+      }
+      if (targets.length > REPAIR_PERIOD_ZIP_MAX) {
+        throw new BadRequestException(
+          `That period covers ${targets.length} Pencawang; at most ${REPAIR_PERIOD_ZIP_MAX} per ZIP. Pick a shorter period or one work type.`,
+        );
+      }
+    } else {
+      const ids = [...new Set(siteVisitIds)];
+      if (ids.length > REPAIR_ZIP_MAX) {
+        throw new BadRequestException(`At most ${REPAIR_ZIP_MAX} Pencawang per repair-report ZIP.`);
+      }
+      // Fails fast (403) for someone who may not use the board at all.
+      await this.packages.resolveRepairReportScope(user, ids[0], options.organizationId).catch((error) => {
+        if (error instanceof HttpException && error.getStatus() === 403) throw error;
+      });
+      targets = ids.map((siteVisitId) => ({ siteVisitId, organizationId: options.organizationId ?? null }));
     }
-    if (ids.length > REPAIR_ZIP_MAX) {
-      throw new BadRequestException(`At most ${REPAIR_ZIP_MAX} Pencawang per repair-report ZIP.`);
-    }
-    // Fails fast (403) for someone who may not use the board at all.
-    await this.packages.resolveRepairReportScope(user, ids[0], options.organizationId).catch((error) => {
-      if (error instanceof HttpException && error.getStatus() === 403) throw error;
-    });
 
     const now = Date.now();
     for (const [jobId, job] of this.zipJobs) {
@@ -372,14 +520,17 @@ export class RepairReportService {
     const directory = buildDefectZipDirectory();
     await mkdir(directory, { recursive: true });
     const jobId = randomUUID();
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const stamp =
+      byDate && options.from && options.to
+        ? `${options.from.slice(0, 10)}_${options.to.slice(0, 10)}`
+        : new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const job: RepairZipJob = {
       id: jobId,
       tenantId: user.tenantId,
       userId: user.id,
       status: 'RUNNING',
       processed: 0,
-      total: ids.length,
+      total: targets.length,
       currentLabel: null,
       fileName: `laporan-pembaikan-${stamp}.zip`,
       filePath: resolve(directory, `repair-${jobId}.zip`),
@@ -387,16 +538,18 @@ export class RepairReportService {
       createdAt: now,
     };
     this.zipJobs.set(jobId, job);
-    void this.runZipJob(job, ids, user, options);
-    return { jobId, total: ids.length };
+    void this.runZipJob(job, targets, user, options, byDate);
+    return { jobId, total: targets.length };
   }
 
   private async runZipJob(
     job: RepairZipJob,
-    siteVisitIds: string[],
+    targets: Array<{ siteVisitId: string; organizationId: string | null }>,
     user: RequestUser,
     options: RepairReportOptions,
+    byDate: boolean,
   ): Promise<void> {
+    const siteVisitIds = [...new Set(targets.map((target) => target.siteVisitId))];
     try {
       const output = createWriteStream(job.filePath);
       const archive = archiver('zip', { store: true });
@@ -419,12 +572,17 @@ export class RepairReportService {
       );
       const manifest: string[] = [];
       const usedNames = new Set<string>();
+      const summary: RepairSummaryRow[] = [];
       // Sequential on purpose: one report's photos in memory at a time.
-      for (const siteVisitId of siteVisitIds) {
+      for (const { siteVisitId, organizationId } of targets) {
         const label = labelOf.get(siteVisitId) ?? siteVisitId;
         job.currentLabel = label;
         try {
-          const { buffer, filename } = await this.generate(user, siteVisitId, options);
+          const { buffer, filename, rows } = await this.generate(user, siteVisitId, {
+            ...options,
+            organizationId: organizationId ?? options.organizationId,
+          });
+          summary.push(...rows);
           let entryName = filename;
           if (usedNames.has(entryName)) {
             entryName = entryName.replace(/\.pdf$/, ` (${siteVisitId.slice(0, 8)}).pdf`);
@@ -437,10 +595,17 @@ export class RepairReportService {
         }
         job.processed += 1;
       }
+      const period = this.periodLabel(options);
       archive.append(
-        `Laporan Pembaikan Kejanggalan ASCURE - ${new Date().toISOString()}\n\n${manifest.join('\n')}\n`,
+        `Laporan Pembaikan Kejanggalan ASCURE - ${new Date().toISOString()}\n${
+          period ? `Tempoh: ${period}\n` : ''
+        }\n${manifest.join('\n')}\n`,
         { name: 'SENARAI.txt' },
       );
+      // Plan §21 (R7): one row per Kejanggalan of the period, for the claim.
+      if (byDate) {
+        archive.append(await this.summaryWorkbook(summary, period ?? ''), { name: 'ringkasan.xlsx' });
+      }
       await archive.finalize();
       await closed;
       job.currentLabel = null;
@@ -485,6 +650,48 @@ export class RepairReportService {
       throw new NotFoundException('The ZIP file is gone (expired or the API restarted) — start the job again.');
     }
     return { filePath: job.filePath, fileName: job.fileName };
+  }
+
+  /** ringkasan.xlsx — every Kejanggalan in the by-date ZIP, one row each. */
+  private async summaryWorkbook(rows: RepairSummaryRow[], period: string): Promise<Buffer> {
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('Ringkasan');
+    const columns: Array<{ header: string; width: number; value: (row: RepairSummaryRow) => string | Date | null }> = [
+      { header: 'Pencawang', width: 30, value: (row) => row.pencawang },
+      { header: 'Lokasi Fungsian', width: 18, value: (row) => row.functionalLocation },
+      { header: 'Mainhead', width: 18, value: (row) => row.mainhead },
+      { header: 'Syarikat', width: 24, value: (row) => row.company },
+      { header: 'Pasukan', width: 18, value: (row) => row.team },
+      { header: 'No Tiang', width: 18, value: (row) => row.assetCode },
+      { header: 'No Tiang Lama', width: 16, value: (row) => row.noTiangLama },
+      { header: 'Jenis Kerja', width: 14, value: (row) => row.workType },
+      { header: 'Kaedah', width: 20, value: (row) => row.repairMethod },
+      { header: 'Kategori', width: 9, value: (row) => row.category },
+      { header: 'Kejanggalan', width: 40, value: (row) => row.label },
+      { header: 'Status', width: 30, value: (row) => STATUS_WORD[row.status] },
+      { header: 'Tarikh Dibaiki', width: 14, value: (row) => row.repairedAt },
+      { header: 'Dibaiki Oleh', width: 20, value: (row) => row.repairedBy },
+      { header: 'Tarikh Disahkan', width: 14, value: (row) => row.verifiedAt },
+      { header: 'Disahkan Oleh', width: 20, value: (row) => row.verifiedBy },
+      { header: 'Bahan Digunakan', width: 40, value: (row) => row.materials },
+    ];
+    sheet.columns = columns.map((column) => ({ width: column.width }));
+    sheet.addRow([`Laporan Pembaikan Kejanggalan - ${period}`]).font = { bold: true };
+    sheet.addRow([]);
+    sheet.addRow(columns.map((column) => column.header)).font = { bold: true };
+    // Dates as Malaysia calendar days (a sheet has no time zone).
+    const asDay = (value: Date) => new Date(`${this.fmtDate(value).split('/').reverse().join('-')}T00:00:00Z`);
+    for (const row of rows) {
+      const added = sheet.addRow(
+        columns.map((column) => {
+          const value = column.value(row);
+          return value instanceof Date ? asDay(value) : value;
+        }),
+      );
+      for (const index of [13, 15]) added.getCell(index).numFmt = 'dd/mm/yyyy';
+    }
+    sheet.views = [{ state: 'frozen', ySplit: 3 }];
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
