@@ -27,10 +27,14 @@ export function repairStage(defect: {
   lifecycleStatus: DefectLifecycleStatus | null;
   status: DefectStatus;
 }): RepairStage {
+  // Mark done sets status RESOLVED with lifecycle COMPLETED: that is awaiting
+  // verification, not closed (same rule as the board's FINISHED / CLOSED split).
+  const submitted =
+    defect.lifecycleStatus === DefectLifecycleStatus.COMPLETED ||
+    defect.lifecycleStatus === DefectLifecycleStatus.VERIFICATION_PENDING;
   if (
     defect.lifecycleStatus === DefectLifecycleStatus.CLOSED ||
-    defect.status === DefectStatus.RESOLVED ||
-    defect.status === DefectStatus.CLOSED
+    (!submitted && (defect.status === DefectStatus.RESOLVED || defect.status === DefectStatus.CLOSED))
   ) {
     return 'closed';
   }
