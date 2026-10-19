@@ -9,15 +9,25 @@ import { CreateTeamDto, UpdateTeamDto, UpdateTeamStatusDto } from './dto/manage-
 import { TeamIdParamDto } from './dto/team-id-param.dto';
 import { SetTeamSupervisorsDto } from './dto/team-supervisors.dto';
 import { TeamsService } from './teams.service';
+import { MyTeamService } from './my-team.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('teams')
 export class TeamsController {
-  constructor(private readonly teamsService: TeamsService) {}
+  constructor(
+    private readonly teamsService: TeamsService,
+    private readonly myTeam: MyTeamService,
+  ) {}
 
   @Get()
   list(@CurrentUser() user: RequestUser) {
     return this.teamsService.list(user);
+  }
+
+  /** Plan §21 (R5): the field crew's "My team" — own teams only, read-only. */
+  @Get('mine')
+  mine(@CurrentUser() user: RequestUser) {
+    return this.myTeam.summary(user);
   }
 
   @Post()
