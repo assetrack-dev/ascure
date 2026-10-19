@@ -202,4 +202,28 @@ describe('Authz · Asset Map repair view (maintenance company)', () => {
     const admin = await points('admin', '&categories=RENTIS');
     expect(admin).toHaveLength(0);
   });
+
+  it('marked done is awaiting verification, not closed; the map filters by its date (plan §21 R8)', async () => {
+    // Mark done = status RESOLVED + lifecycle COMPLETED, on 14 Oct (Malaysia).
+    await prisma.defect.update({
+      where: { id: P.defect.rentis },
+      data: {
+        lifecycleStatus: 'COMPLETED',
+        status: 'RESOLVED',
+        maintainedAt: new Date('2026-10-14T02:00:00Z'),
+      },
+    });
+    const all = await points('subMgr');
+    expect(pole(all, 0)?.repair).toMatchObject({ total: 1, closed: 0, awaiting: 1 });
+
+    const inRange = await points('subMgr', '&repairedFrom=2026-10-14&repairedTo=2026-10-14');
+    expect(inRange.map((row) => row.id)).toEqual([P.asset[0]]);
+    // The day before (Malaysia time) holds nothing.
+    expect(await points('subMgr', '&repairedFrom=2026-10-01&repairedTo=2026-10-13')).toHaveLength(0);
+    // The bubble level narrows the same way.
+    const bubbles = await http(app, token.subMgr)
+      .get('/api/v1/assets/map?level=pencawang&repairedFrom=2026-10-01&repairedTo=2026-10-13')
+      .expect(200);
+    expect((bubbles.body as Bubble[]).map((row) => row.id)).not.toContain(P.sub);
+  });
 });

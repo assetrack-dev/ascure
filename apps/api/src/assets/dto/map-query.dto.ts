@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export type MapLevel = 'region' | 'mainhead' | 'pencawang' | 'points';
 
@@ -79,4 +79,17 @@ export class MapQueryDto {
   @IsOptional()
   @IsString()
   teamIds?: string;
+
+  /**
+   * Plan §21 (R8): only poles with a Kejanggalan MARKED DONE (maintainedAt) in
+   * this range — yyyy-mm-dd, Malaysia days, inclusive. In the Repairs view it is
+   * the caller's own routed work; otherwise any routed work in scope.
+   */
+  @IsOptional()
+  @IsDateString()
+  repairedFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  repairedTo?: string;
 }
