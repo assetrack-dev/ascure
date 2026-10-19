@@ -50,6 +50,16 @@ export function repairStage(defect: {
   return 'todo';
 }
 
+/** Plan §21 (R8): a marked-done (maintainedAt) range — Malaysia days, inclusive. */
+export function repairedRange(from?: string, to?: string): Prisma.DateTimeFilter | null {
+  if (!from && !to) return null;
+  const day = (value: string) => new Date(`${value.slice(0, 10)}T00:00:00+08:00`);
+  return {
+    ...(from ? { gte: day(from) } : {}),
+    ...(to ? { lt: new Date(day(to).getTime() + 24 * 60 * 60 * 1000) } : {}),
+  };
+}
+
 /** Per-pole tally of the caller's own routed Kejanggalan. */
 export interface PoleRepairSummary {
   total: number;

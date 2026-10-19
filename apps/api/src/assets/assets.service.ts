@@ -78,6 +78,7 @@ import {
   emptyRepairSummary,
   parseCategories,
   repairDefectWhere,
+  repairedRange,
   repairStage,
   type PoleRepairSummary,
   type RepairScope,
@@ -564,6 +565,31 @@ export class AssetsService {
                 defect: repair
                   ? { OR: [openOfCategory, repairDefectWhere(repair.orgIds, categories)] }
                   : openOfCategory,
+              },
+            },
+          },
+        },
+      });
+    }
+
+    // Plan §21 (R8): poles where a Kejanggalan was marked done in the range —
+    // the company's own work in the Repairs view, any routed work otherwise.
+    const repaired = repairedRange(query.repairedFrom, query.repairedTo);
+    if (repaired) {
+      and.push({
+        inspections: {
+          some: {
+            itemResults: {
+              some: {
+                isDefect: true,
+                defect: {
+                  AND: [
+                    repair
+                      ? repairDefectWhere(repair.orgIds, categories)
+                      : { maintenanceOrganizationId: { not: null } },
+                    { maintainedAt: repaired },
+                  ],
+                },
               },
             },
           },
