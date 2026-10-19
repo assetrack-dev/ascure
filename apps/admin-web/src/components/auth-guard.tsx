@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { readStoredSession } from "@/lib/auth";
+import { resolveWorkspaceView } from "@/lib/workspaces";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -21,6 +22,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     // page (except the change-password page itself, to avoid a redirect loop).
     if (session.user?.mustChangePassword && pathname !== "/change-password") {
       router.replace("/change-password");
+      return;
+    }
+
+    // Plan §21 (R2): a page outside the user's workspace sends them to its home
+    // page. Navigation only — the API still scopes every request. ADMIN and the
+    // classic console (no Web view set) open every page as before.
+    const view = resolveWorkspaceView(session.user, pathname ?? "");
+    if (view.allowed && pathname && !view.allowed(pathname)) {
+      router.replace(view.home);
       return;
     }
 
