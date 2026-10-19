@@ -68,6 +68,8 @@ describe('Authz · organization work mode', () => {
   it('unset by default: a contractor manager gets null (full console)', async () => {
     const me = await http(app, token.mgrA).get('/api/v1/auth/me').expect(200);
     expect(me.body.workMode).toBeNull();
+    // Plan §21 (R1): no Web view → today's console.
+    expect(me.body.workspace).toBe('CLASSIC');
   });
 
   it('admin sets MAINTENANCE; login + /auth/me return it', async () => {
@@ -82,10 +84,17 @@ describe('Authz · organization work mode', () => {
       .send({ email: EMAILS.mgrB, password: TEST_PASSWORD })
       .expect(201);
     expect(loginRes.body.user.workMode).toBe('MAINTENANCE');
+    expect(loginRes.body.user.workspace).toBe('COMPANY_MAINTENANCE');
 
     token.mgrB = await login(app, EMAILS.mgrB);
     const me = await http(app, token.mgrB).get('/api/v1/auth/me').expect(200);
     expect(me.body.workMode).toBe('MAINTENANCE');
+    expect(me.body.workspace).toBe('COMPANY_MAINTENANCE');
+
+    // The company's field crew get the small read-only view (R5).
+    const techB = await login(app, EMAILS.techB);
+    const techMe = await http(app, techB).get('/api/v1/auth/me').expect(200);
+    expect(techMe.body.workspace).toBe('FIELD_CREW');
   });
 
   it('an unknown mode is rejected (400)', () =>
@@ -113,9 +122,12 @@ describe('Authz · organization work mode', () => {
   it('ADMIN users and non-contractor orgs never carry a mode', async () => {
     const adminMe = await http(app, token.admin).get('/api/v1/auth/me').expect(200);
     expect(adminMe.body.workMode).toBeNull();
+    expect(adminMe.body.workspace).toBe('ADMIN');
 
     token.tnb = await login(app, T.tnbEmail);
     const tnbMe = await http(app, token.tnb).get('/api/v1/auth/me').expect(200);
     expect(tnbMe.body.workMode).toBeNull();
+    // A TNB org's own work mode is ignored; its users get the TNB console.
+    expect(tnbMe.body.workspace).toBe('TNB');
   });
 });

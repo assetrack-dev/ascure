@@ -10,6 +10,7 @@ import {
   hasClientMaintenanceActorShape,
 } from '../common/authorization/client-maintenance-actor';
 import { resolveMainContractorOrgIds } from '../common/authorization/maintenance-closure';
+import { resolveWorkspace } from '../common/authorization/workspace';
 import {
   buildScopeContext,
   resolveMaintenanceOrgIds,
@@ -29,12 +30,6 @@ const PASSWORD_SALT_ROUNDS = 10;
 // module-default 8h.
 const MOBILE_TOKEN_TTL = '30d';
 
-/**
- * Plan §17 (L38): the web view this user's company asked for. Only an active
- * contractor company (MAIN_CONTRACTOR / SUBCONTRACTOR) carries one, and ADMIN
- * always keeps the full console. Null = unchanged full console. Navigation only —
- * every endpoint keeps its own scope checks.
- */
 /** Plan §19 (N55): a TNB Supervisor (CLIENT, rank SUPERVISOR, active TNB org). */
 function isClientSupervisorShape(user: {
   role: UserRole;
@@ -49,6 +44,12 @@ function isClientSupervisorShape(user: {
   );
 }
 
+/**
+ * Plan §17 (L38): the web view this user's company asked for. Only an active
+ * contractor company (MAIN_CONTRACTOR / SUBCONTRACTOR) carries one, and ADMIN
+ * always keeps the full console. Null = unchanged full console. Navigation only —
+ * every endpoint keeps its own scope checks.
+ */
 function resolveWorkMode(
   role: UserRole,
   organization: { type: OrganizationType; isActive: boolean; workMode: OrganizationWorkMode | null } | null,
@@ -157,6 +158,8 @@ export class AuthService {
     );
     const canViewMaintenancePackages =
       canViewRepairVerification || (await this.resolveIsContractorStaff(requestUser));
+    const workMode = resolveWorkMode(user.role, user.organization);
+    const isClientSupervisor = isClientSupervisorShape(user);
 
     return {
       access_token: accessToken,
@@ -184,9 +187,16 @@ export class AuthService {
         canActOnMaintenanceAsClient,
         canViewRepairVerification,
         canViewMaintenancePackages,
-        workMode: resolveWorkMode(user.role, user.organization),
-        isClientSupervisor: isClientSupervisorShape(user),
+        workMode,
+        isClientSupervisor,
         canManageClientSupervisors: canManageClientSupervisorsShape(user),
+        workspace: resolveWorkspace({
+          role: user.role,
+          workMode,
+          isClientViewer,
+          isClientSupervisor,
+          canGovernQa,
+        }),
       },
     };
   }
@@ -393,6 +403,8 @@ export class AuthService {
     const canViewMaintenancePackages =
       canViewRepairVerification || (await this.resolveIsContractorStaff(user));
     const { organization, ...currentUserFields } = currentUser;
+    const workMode = resolveWorkMode(currentUser.role, organization);
+    const isClientSupervisor = isClientSupervisorShape(currentUser);
 
     return {
       ...currentUserFields,
@@ -411,9 +423,16 @@ export class AuthService {
       canActOnMaintenanceAsClient,
       canViewRepairVerification,
       canViewMaintenancePackages,
-      workMode: resolveWorkMode(currentUser.role, organization),
-      isClientSupervisor: isClientSupervisorShape(currentUser),
+      workMode,
+      isClientSupervisor,
       canManageClientSupervisors: canManageClientSupervisorsShape(currentUser),
+      workspace: resolveWorkspace({
+        role: currentUser.role,
+        workMode,
+        isClientViewer,
+        isClientSupervisor,
+        canGovernQa,
+      }),
     };
   }
 
