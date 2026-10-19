@@ -543,7 +543,8 @@ function MapContent() {
     const stored = readStoredMapView();
     if (stored) {
       setDrill(stored.drill);
-      setFilters(stored.filters);
+      // A view saved before a filter existed lacks it: fill from the defaults.
+      setFilters({ ...EMPTY_MAP_FILTERS, ...stored.filters });
       setShowAllPoles(stored.showAllPoles);
       pendingSelectRef.current = stored.selectedId;
     }
@@ -1208,6 +1209,36 @@ function MapContent() {
                     />
                     <span className="text-[var(--on-chrome)]">Only poles with open defects</span>
                   </label>
+                </div>
+                {/* Plan §21 (R8): repairs marked done in a date range. */}
+                <div className="border-t border-[var(--chrome-line)] px-3.5 py-3">
+                  <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-faint)]">
+                    Repaired (marked done)
+                  </p>
+                  <div className="grid gap-1.5">
+                    {(
+                      [
+                        ["repairedFrom", "From"],
+                        ["repairedTo", "To"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-[12px] text-[var(--on-chrome-muted)]">
+                        <span className="w-9 shrink-0">{label}</span>
+                        <input
+                          id={`map-${key}`}
+                          type="date"
+                          value={filters[key]}
+                          onChange={(event) => setFilters((f) => ({ ...f, [key]: event.target.value }))}
+                          className="h-[30px] min-w-0 flex-1 rounded-[7px] border border-[var(--chrome-line-strong)] bg-[var(--chrome-panel)] px-2 text-[12px] text-[var(--on-chrome)]"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  {repairView ? (
+                    <p className="mt-1.5 text-[11px] text-[var(--on-chrome-faint)]">
+                      Shows your poles with a Kejanggalan marked done in these dates.
+                    </p>
+                  ) : null}
                 </div>
                 <FilterCheckGroup
                   label="Status"
