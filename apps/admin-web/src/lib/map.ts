@@ -491,6 +491,9 @@ export interface MapFilters {
   pencawangIds: string[];
   statuses: string[];
   teamIds: string[];
+  /** Plan §21 (R8): poles with a Kejanggalan marked done in this range (yyyy-mm-dd; "" = open). */
+  repairedFrom: string;
+  repairedTo: string;
 }
 
 export const EMPTY_MAP_FILTERS: MapFilters = {
@@ -502,6 +505,8 @@ export const EMPTY_MAP_FILTERS: MapFilters = {
   pencawangIds: [],
   statuses: [],
   teamIds: [],
+  repairedFrom: "",
+  repairedTo: "",
 };
 
 /** How many filters are active (for the dock badge). */
@@ -514,7 +519,8 @@ export function mapFiltersActive(filters: MapFilters): number {
     filters.mainheadIds.length +
     filters.pencawangIds.length +
     filters.statuses.length +
-    filters.teamIds.length
+    filters.teamIds.length +
+    (filters.repairedFrom || filters.repairedTo ? 1 : 0)
   );
 }
 
@@ -532,6 +538,8 @@ function appendFilters(params: URLSearchParams, filters?: MapFilters): void {
     params.set("pencawangIds", filters.pencawangIds.join(","));
   if (filters.statuses.length > 0) params.set("statuses", filters.statuses.join(","));
   if (filters.teamIds.length > 0) params.set("teamIds", filters.teamIds.join(","));
+  if (filters.repairedFrom) params.set("repairedFrom", filters.repairedFrom);
+  if (filters.repairedTo) params.set("repairedTo", filters.repairedTo);
 }
 
 /** Scoped Mainhead + Pencawang options for the filter dock. Each Pencawang
