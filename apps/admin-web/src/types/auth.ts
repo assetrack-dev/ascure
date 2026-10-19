@@ -2,6 +2,20 @@ import type { AppRole } from "@/lib/roles";
 
 export type OrganizationWorkMode = "SURVEY" | "MAINTENANCE" | "BOTH";
 
+/** Plan §21 (R1): the console a user gets — menu, home page and header. Set by
+ *  the API (common/authorization/workspace.ts); navigation only. */
+export type Workspace =
+  | "ADMIN"
+  | "TNB"
+  | "TNB_SUPERVISOR"
+  | "COMPANY_SURVEY"
+  | "COMPANY_MAINTENANCE"
+  | "COMPANY_BOTH"
+  | "FIELD_CREW"
+  | "CLASSIC";
+
+export type ClientRank = "FOREMAN" | "TECHNICIAN" | "ENGINEER" | "SUPERVISOR";
+
 export interface ApiUser {
   id: string;
   tenantId: string;
@@ -27,8 +41,8 @@ export interface ApiUser {
    * /client endpoint re-checks this server-side.
    */
   isClientViewer?: boolean;
-  /** TNB maintenance rank (FOREMAN / TECHNICIAN / ENGINEER), null otherwise. */
-  clientRank?: "FOREMAN" | "TECHNICIAN" | "ENGINEER" | null;
+  /** TNB maintenance rank (FOREMAN / TECHNICIAN / ENGINEER / SUPERVISOR), null otherwise. */
+  clientRank?: ClientRank | null;
   /**
    * TNB Foreman / Technician in an active TNB org: may assign PEs to maintenance
    * companies and verify / re-open repairs. The API re-checks on every action.
@@ -44,6 +58,8 @@ export interface ApiUser {
   isClientSupervisor?: boolean;
   /** ADMIN or TNB Foreman / Technician — the TNB Supervisors page. */
   canManageClientSupervisors?: boolean;
+  /** Plan §21: the user's console. Absent on an API older than §21. */
+  workspace?: Workspace;
 }
 
 export interface AuthUser {
@@ -129,7 +145,7 @@ export interface AuthUser {
   canOverseeSubcontractors?: boolean;
   /** Network-OWNER org (TNB / CLIENT) → the read-only client Progress view. */
   isClientViewer?: boolean;
-  clientRank?: "FOREMAN" | "TECHNICIAN" | "ENGINEER" | null;
+  clientRank?: ClientRank | null;
   canActOnMaintenanceAsClient?: boolean;
   /** ADMIN, TNB, or a main-contractor manager → the repair-verification page. */
   canViewRepairVerification?: boolean;
@@ -139,6 +155,8 @@ export interface AuthUser {
   workMode?: OrganizationWorkMode | null;
   isClientSupervisor?: boolean;
   canManageClientSupervisors?: boolean;
+  /** Plan §21: the user's console (lib/workspaces.ts derives it if absent). */
+  workspace?: Workspace;
 }
 
 export interface AuthSession {

@@ -1,131 +1,53 @@
 "use client";
 
-import {
-  Archive,
-  BarChart3,
-  Bug,
-  Building2,
-  CalendarClock,
-  ClipboardCheck,
-  ClipboardList,
-  Factory,
-  FileSpreadsheet,
-  FileText,
-  FolderKanban,
-  GitBranch,
-  Hammer,
-  LayoutDashboard,
-  Layers2,
-  LogOut,
-  Map as MapIcon,
-  MapPinned,
-  Network,
-  PackageCheck,
-  ShieldCheck,
-  Tags,
-  Upload,
-  TrendingUp,
-  Users,
-  Waypoints,
-  Wrench,
-  ChevronDown,
-  Settings2,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Building2, ChevronDown, Eye, LogOut, Settings2, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
-import type { AuthUser } from "@/types/auth";
+import { usePathname, useRouter } from "next/navigation";
+import type { AuthUser, Workspace } from "@/types/auth";
 import { readStoredSession } from "@/lib/auth";
 import { releasePushOnLogout } from "@/lib/push";
-import { roleLabel } from "@/lib/roles";
+import {
+  NAV_ITEMS,
+  PREVIEWABLE_WORKSPACES,
+  SECTION_LABELS,
+  WORKSPACE_CHANGE_EVENT,
+  WORKSPACE_LABELS,
+  companyModeHome,
+  navPath,
+  resolveWorkspaceView,
+  roleTitle,
+  writeCompanyMode,
+  writePreviewWorkspace,
+  type CompanyMode,
+  type NavItem,
+  type NavSection,
+  type WorkspaceView,
+} from "@/lib/workspaces";
 import { NotificationBell } from "./notification-bell";
 import { ThemeToggle } from "./theme-toggle";
 
-/** Sidebar grouping. Purely presentational — gating is unchanged. */
-type NavSection = "operations" | "insights" | "admin";
-
-const SECTION_ORDER: NavSection[] = ["operations", "insights", "admin"];
-const SECTION_LABELS: Record<NavSection, string> = {
-  operations: "Operations",
-  insights: "Insights",
-  admin: "Admin",
+/** Under the ASCURE wordmark: which console this is (plan §21 header). */
+const CONSOLE_TITLES: Record<Workspace, string> = {
+  ADMIN: "Admin Console",
+  CLASSIC: "Admin Console",
+  TNB: "TNB Console",
+  TNB_SUPERVISOR: "TNB Console",
+  COMPANY_SURVEY: "Survey",
+  COMPANY_MAINTENANCE: "Maintenance",
+  COMPANY_BOTH: "Survey · Maintenance",
+  FIELD_CREW: "Field crew",
 };
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  section: NavSection;
-  adminOnly?: boolean;
-  /** When set, only these roles see the item (data is still server-scoped). */
-  roles?: string[];
-  requiresReporting?: boolean;
-  requiresImport?: boolean;
-  requiresManageUsers?: boolean;
-  /** Only a CLIENT-org viewer (or ADMIN, previewing) sees this. */
-  requiresClientViewer?: boolean;
-  /** Gated to QA governors (canGovernQa) + ADMIN — e.g. the defect Operations Board. */
-  requiresGovernQa?: boolean;
-  /** Server flag canViewRepairVerification: ADMIN, TNB, main-contractor managers. */
-  requiresRepairVerification?: boolean;
-  /** Server flag canViewMaintenancePackages: + any contractor Manager / Supervisor (plan §15). */
-  requiresMaintenancePackages?: boolean;
-  /** Plan §19 (N55): ADMIN or TNB Foreman / Technician — the TNB Supervisors page. */
-  requiresManageClientSupervisors?: boolean;
-  /** Admin config surface — collapsed under the "Setup" group in the sidebar. */
-  group?: "setup";
-  /** Kept in code but removed from the nav (pending deletion). */
-  hidden?: boolean;
-};
+const MODE_OPTIONS: { value: CompanyMode; label: string }[] = [
+  { value: "SURVEY", label: "Survey" },
+  { value: "MAINTENANCE", label: "Maintenance" },
+];
 
 interface AppShellProps {
   children: React.ReactNode;
   user: AuthUser | null;
   onLogout: () => void;
 }
-
-// A MANAGER runs their own company: an explicit, closed nav allow-list of the
-// operational surfaces they own (every tab's data is company-scoped server-side).
-// This intentionally overrides the per-item adminOnly/capability gates — it both
-// reveals Teams (otherwise adminOnly) and hides everything not in the list
-// (Network, the Operations Board QA surface, the org/region/asset-type admin
-// tools). Reports is the one exception — added back in the filter when canReport.
-const MANAGER_NAV_HREFS = new Set<string>([
-  "/dashboard",
-  "/maintenance-workspace",
-  "/assets",
-  "/map",
-  "/site-visits",
-  "/defects",
-  "/crew-performance",
-  "/users",
-  "/teams",
-  // Edit-only surface for a manager: fix a Pencawang's details/map pin (their
-  // own company's only — server-enforced). Delete/deactivate/Mainhead stay
-  // ADMIN-only and are hidden on the page itself.
-  "/pencawang",
-]);
-
-// A CLIENT viewer (TNB) sees exactly three pages: their progress roll-up, the
-// survey feed and the asset map — all server-scoped to the Mainheads assigned to
-// their organization, all read-only. Everything else here is contractor
-// operations, not theirs. ⚠ Keep /site-visits OUT: that page is the contractor's
-// operational surface (lifecycle actions, editable checklist cells); the client
-// gets /visits, a purpose-built read-only feed over the same surveys.
-// ⚠ This allow-list also OVERRIDES the /map item's own `roles` gate (which lists
-// only ADMIN/MANAGER/SUPERVISOR), so the client branch must run before it.
-// "/maintenance-packages" is TNB's hand-off of surveyed Pencawang to maintenance
-// companies; every TNB rank sees it, only Foreman/Technician can act (API-enforced).
-// "/maintenance-verification" is where TNB signs off (or re-opens) repairs.
-// A TNB Supervisor (plan §19, N55) gets the same pages: the API narrows every
-// one of them to its companies (step 4c — the Pencawang they surveyed).
-const CLIENT_NAV_HREFS = new Set<string>([
-  "/progress",
-  "/visits",
-  "/map",
-  "/maintenance-packages",
-  "/maintenance-verification",
-]);
 
 /** null until mounted — the bell renders in exactly ONE place (one poller). */
 function useIsDesktop() {
@@ -149,247 +71,73 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
     onLogoutProp();
   };
   const pathname = usePathname();
-  const navItems: NavItem[] = [
-    // Operations — daily-use surfaces (top of the sidebar).
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "operations" },
-    { href: "/site-visits", label: "Site Visits", icon: MapPinned, section: "operations" },
-    { href: "/assets", label: "Assets", icon: Archive, section: "operations" },
-    {
-      href: "/map",
-      label: "Map",
-      icon: MapIcon,
-      section: "operations",
-      roles: ["ADMIN", "MANAGER", "SUPERVISOR"],
-    },
-    { href: "/defects", label: "Defects", icon: Bug, section: "operations" },
-    {
-      href: "/operations-board",
-      label: "Operations Board",
-      icon: ClipboardList,
-      section: "operations",
-      requiresGovernQa: true,
-      // Hidden from the nav for now (owner: not needed right now). Route + code
-      // kept; breadcrumbs still resolve if reached directly.
-      hidden: true,
-    },
-    // TNB → maintenance company/team hand-off (docs/PLAN-maintenance-flow.md §12).
-    // ADMIN, TNB, main-contractor managers (assign within their group) and — plan
-    // §15 — any contractor Manager (re-teams its own work) / Supervisor (view only).
-    {
-      href: "/maintenance-packages",
-      label: "Maintenance Packages",
-      icon: PackageCheck,
-      section: "operations",
-      requiresMaintenancePackages: true,
-    },
-    // Repair sign-off (verify / reject / re-open / cannot-repair). Server flag
-    // decides: ADMIN, TNB, and main-contractor managers only.
-    {
-      href: "/maintenance-verification",
-      label: "Repair Verification",
-      icon: ClipboardCheck,
-      section: "operations",
-      requiresRepairVerification: true,
-    },
-    {
-      href: "/maintenance-workspace",
-      label: "Maintenance",
-      icon: Wrench,
-      section: "operations",
-      roles: ["ADMIN", "MANAGER", "SUPERVISOR"],
-    },
-    { href: "/network", label: "Network", icon: Waypoints, section: "operations" },
-    // The network owner's (TNB / CLIENT) read-only view. Gated to client orgs +
-    // ADMIN (who can preview it); CLIENT_NAV_HREFS makes it their ONLY page.
-    {
-      href: "/progress",
-      label: "Progress",
-      icon: TrendingUp,
-      section: "operations",
-      requiresClientViewer: true,
-    },
-    // The client's survey feed — every survey on their Mainheads at every
-    // lifecycle stage, read-only. Distinct from /site-visits (the contractor's
-    // operational surface); see CLIENT_NAV_HREFS.
-    {
-      href: "/visits",
-      label: "Surveys",
-      icon: ClipboardCheck,
-      section: "operations",
-      requiresClientViewer: true,
-    },
-    // Insights — reporting + analytics.
-    {
-      href: "/crew-performance",
-      label: "Crew Performance",
-      icon: BarChart3,
-      section: "insights",
-      roles: ["ADMIN", "MANAGER"],
-    },
-    {
-      href: "/reports",
-      label: "Reports",
-      icon: FileSpreadsheet,
-      section: "insights",
-      requiresReporting: true,
-    },
-    // Admin — people, then the collapsed Setup config group.
-    { href: "/users", label: "Users", icon: Users, section: "admin", requiresManageUsers: true },
-    {
-      href: "/tnb-supervisors",
-      label: "TNB Supervisors",
-      icon: ShieldCheck,
-      section: "admin",
-      requiresManageClientSupervisors: true,
-    },
-    { href: "/organizations", label: "Organizations", icon: Building2, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/operational-regions", label: "Regions", icon: MapPinned, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/mainheads", label: "Mainheads", icon: Network, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/teams", label: "Teams", icon: Users, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/projects", label: "Projects", icon: FolderKanban, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/asset-types", label: "Asset Types", icon: Layers2, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/pencawang", label: "Pencawang", icon: Factory, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/capabilities", label: "Capabilities", icon: Tags, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/checklist-templates", label: "Checklists", icon: ClipboardList, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/repair-methods", label: "Repair types", icon: Hammer, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/report-templates", label: "Report Templates", icon: FileText, section: "admin", adminOnly: true, group: "setup" },
-    { href: "/imports", label: "Imports", icon: Upload, section: "admin", requiresImport: true, group: "setup" },
-    // Hidden from nav (kept in code, pending deletion) — declutter pass 2026-07-06.
-    { href: "/branches", label: "Branches", icon: GitBranch, section: "admin", adminOnly: true, group: "setup", hidden: true },
-    { href: "/work-packages", label: "Work Packages", icon: PackageCheck, section: "admin", adminOnly: true, group: "setup", hidden: true },
-    { href: "/operational-sessions", label: "Operations / Sessions", icon: CalendarClock, section: "operations", adminOnly: true, hidden: true },
-  ];
-  // The raw backend role: the admin web collapses MANAGER/SUPERVISOR/TECHNICIAN
-  // to VIEWER via normalizeRole, so user.role alone would mis-gate them.
-  // sourceRole is undefined for ADMIN/VIEWER/CLIENT, so the user.role fallback
-  // still holds for those.
-  const effectiveRole = user?.sourceRole ?? user?.role ?? "";
-  // Title-case the REAL backend role for the footer badge (roleLabel would
-  // collapse MANAGER back to "Viewer", which is misleading now that managers get
-  // an elevated nav + team-management powers).
-  const effectiveRoleLabel = effectiveRole
-    ? effectiveRole.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
-    : roleLabel(user?.role);
+  const router = useRouter();
+  // Plan §21: the user's workspace decides the menu, home page and header. It
+  // also reads the Admin preview + the main contractor's Survey | Maintenance
+  // switch from browser storage, so re-resolve when either changes.
+  const [view, setView] = useState<WorkspaceView>(() =>
+    resolveWorkspaceView(user, pathname ?? ""),
+  );
+  useEffect(() => {
+    const update = () => setView(resolveWorkspaceView(user, pathname ?? ""));
+    update();
+    window.addEventListener(WORKSPACE_CHANGE_EVENT, update);
+    return () => window.removeEventListener(WORKSPACE_CHANGE_EVENT, update);
+  }, [user, pathname]);
 
-  const visibleNavItems = navItems.filter((item) => {
-    // Hidden pages stay in code but never appear in the nav.
-    if (item.hidden) {
-      return false;
-    }
-
-    // The TNB Supervisors page: ADMIN + TNB Foreman / Technician.
-    if (item.requiresManageClientSupervisors) {
-      return user?.canManageClientSupervisors === true;
-    }
-
-    // CLIENT VIEWER (TNB): closed allow-list — the progress view only.
-    if (user?.isClientViewer === true && user?.role !== "ADMIN") {
-      return CLIENT_NAV_HREFS.has(item.href);
-    }
-
-    // The Progress view itself is only offered to a client org (or ADMIN, to
-    // preview what the client sees).
-    if (
-      item.requiresClientViewer &&
-      user?.isClientViewer !== true &&
-      user?.role !== "ADMIN"
-    ) {
-      return false;
-    }
-
-    // MANAGER: closed allow-list (see MANAGER_NAV_HREFS) — overrides every other
-    // gate so a manager sees exactly their company's operational surfaces. Reports
-    // is the one capability-gated exception layered on top of the list.
-    if (effectiveRole === "MANAGER") {
-      if (item.href === "/reports") {
-        return user?.canReport === true;
-      }
-      // Main-contractor managers only (a subcontractor never signs off its own work).
-      if (item.requiresRepairVerification) {
-        return user?.canViewRepairVerification === true;
-      }
-      if (item.requiresMaintenancePackages) {
-        return user?.canViewMaintenancePackages === true;
-      }
-      return MANAGER_NAV_HREFS.has(item.href);
-    }
-
-    if (item.adminOnly && user?.role !== "ADMIN") {
-      return false;
-    }
-
-    if (item.roles && !item.roles.includes(effectiveRole)) {
-      return false;
-    }
-
-    // The defect Operations Board is a QA-governance surface — only QA governors
-    // (canGovernQa) and ADMIN. Contractors don't triage QA.
-    if (
-      item.requiresGovernQa &&
-      user?.canGovernQa !== true &&
-      user?.role !== "ADMIN"
-    ) {
-      return false;
-    }
-
-    if (
-      item.requiresRepairVerification &&
-      user?.canViewRepairVerification !== true &&
-      user?.role !== "ADMIN"
-    ) {
-      return false;
-    }
-
-    if (
-      item.requiresMaintenancePackages &&
-      user?.canViewMaintenancePackages !== true &&
-      user?.role !== "ADMIN"
-    ) {
-      return false;
-    }
-
-    if (item.requiresReporting && user?.canReport !== true && user?.role !== "ADMIN") {
-      return false;
-    }
-
-    if (item.requiresImport && user?.canImport !== true && user?.role !== "ADMIN") {
-      return false;
-    }
-
-    if (
-      item.requiresManageUsers &&
-      user?.canManageUsers !== true &&
-      user?.role !== "ADMIN"
-    ) {
-      return false;
-    }
-
-    return true;
-  });
+  const visibleNavItems = view.items;
+  const viewUser = view.user;
+  const switchMode = (mode: CompanyMode) => {
+    writeCompanyMode(mode);
+    router.push(companyModeHome(viewUser, mode));
+  };
+  const changePreview = (next: Workspace | null) => {
+    writePreviewWorkspace(next);
+    router.push(resolveWorkspaceView(user).home);
+  };
+  const consoleTitle =
+    view.workspace === "COMPANY_BOTH"
+      ? view.mode === "MAINTENANCE"
+        ? "Maintenance"
+        : "Survey"
+      : CONSOLE_TITLES[view.workspace];
+  // Rail identity for a tailored workspace: whose console this is.
+  const companyChip =
+    view.workspace === "ADMIN" || view.workspace === "CLASSIC"
+      ? null
+      : view.previewing
+        ? WORKSPACE_LABELS[view.workspace]
+        : (user?.organizationName ?? null);
+  const sections = visibleNavItems.reduce<NavSection[]>(
+    (order, navItem) => (order.includes(navItem.section) ? order : [...order, navItem.section]),
+    [],
+  );
 
   // The collapsible "Setup" group is an ADMIN-only convenience: every setup item
   // is adminOnly, and a MANAGER's handful of config surfaces (Teams) read better
   // flat. Non-admins render everything flat.
-  const isAdmin = user?.role === "ADMIN";
+  const isAdmin = user?.role === "ADMIN" && !view.previewing;
   const setupItems = visibleNavItems.filter((item) => item.group === "setup");
   const useSetupGroup = isAdmin && setupItems.length > 0;
   const topNavItems = useSetupGroup
     ? visibleNavItems.filter((item) => item.group !== "setup")
     : visibleNavItems;
   const onSetupPage = setupItems.some(
-    (item) => pathname === item.href || pathname?.startsWith(`${item.href}/`),
+    (item) => pathname === navPath(item.href) || pathname?.startsWith(`${navPath(item.href)}/`),
   );
   const [setupOpen, setSetupOpen] = useState(onSetupPage);
 
   const isItemActive = (item: NavItem) =>
-    pathname === item.href || pathname?.startsWith(`${item.href}/`);
+    pathname === navPath(item.href) || pathname?.startsWith(`${navPath(item.href)}/`);
 
-  // Breadcrumb source. Matched against every item — including hidden ones and
-  // detail routes like /assets/[id] — so drill-throughs still name their section.
-  // Longest href wins, so /operational-regions never loses to a shorter prefix.
-  const activeItem = navItems
-    .filter((item) => isItemActive(item))
-    .sort((a, b) => b.href.length - a.href.length)[0];
+  // Breadcrumb source. The workspace menu first (its labels, e.g. "Pencawang"),
+  // then every item — including hidden ones and detail routes like /assets/[id] —
+  // so drill-throughs still name their section. Longest href wins, so
+  // /operational-regions never loses to a shorter prefix.
+  const byLength = (a: NavItem, b: NavItem) => navPath(b.href).length - navPath(a.href).length;
+  const activeItem =
+    visibleNavItems.filter((item) => isItemActive(item)).sort(byLength)[0] ??
+    NAV_ITEMS.filter((item) => isItemActive(item)).sort(byLength)[0];
 
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
@@ -468,7 +216,7 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
               <p className="text-[16px] font-bold leading-tight" style={{ fontFamily: "var(--font-display)" }}>
                 ASCURE
               </p>
-              <p className="text-[11px] font-medium text-[var(--on-chrome-muted)]">Admin Console</p>
+              <p className="truncate text-[11px] font-medium text-[var(--on-chrome-muted)]">{consoleTitle}</p>
             </div>
           </div>
 
@@ -486,14 +234,38 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
         </div>
 
         <nav className="flex gap-2 overflow-x-auto px-[14px] pb-4 lg:block lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto">
-          {SECTION_ORDER.map((section) => renderSection(section))}
+          {view.workspace === "COMPANY_BOTH" ? (
+            // Main contractor (plan §17 L39 / §21): one console, two menus.
+            <div
+              role="group"
+              aria-label="Work view"
+              className="flex shrink-0 rounded-[9px] border border-[var(--chrome-line-strong)] p-0.5 lg:mb-1 lg:mt-1"
+            >
+              {MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={view.mode === option.value}
+                  onClick={() => switchMode(option.value)}
+                  className={`h-[32px] flex-1 whitespace-nowrap rounded-[7px] px-3 text-[12.5px] font-semibold transition ${
+                    view.mode === option.value
+                      ? "bg-[var(--brand)] text-[var(--on-brand)]"
+                      : "text-[var(--on-chrome-muted)] hover:bg-[var(--chrome-panel)] hover:text-[var(--on-chrome)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {sections.map((section) => renderSection(section))}
         </nav>
 
         <div className="hidden px-[14px] pb-[18px] lg:mt-auto lg:block">
           <div className="rounded-[11px] border border-[var(--chrome-line)] bg-[var(--chrome-panel)] p-3.5">
             <div className="flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--on-chrome-muted)]">
               <ShieldCheck size={14} />
-              {effectiveRoleLabel}
+              {roleTitle(viewUser)}
             </div>
             <p className="mt-2.5 truncate text-[13px] font-semibold">{user?.name ?? "ASCURE User"}</p>
             <p className="mt-0.5 truncate text-[11.5px] text-[var(--on-chrome-muted)]">
@@ -506,6 +278,31 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
                   {user.organizationName}
                 </span>
               </div>
+            ) : null}
+            {user?.role === "ADMIN" ? (
+              // Plan §21 (R3): see any workspace's menu, home and header. Data
+              // stays the Admin's.
+              <label className="mt-2.5 block">
+                <span className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--on-chrome-muted)]">
+                  <Eye size={12} />
+                  Preview as
+                </span>
+                <select
+                  id="workspace-preview"
+                  value={view.previewing ? view.workspace : ""}
+                  onChange={(event) =>
+                    changePreview((event.target.value || null) as Workspace | null)
+                  }
+                  className="mt-1 h-[34px] w-full rounded-[8px] border border-[var(--chrome-line-strong)] bg-[var(--chrome)] px-2 text-[12px] text-[var(--on-chrome)]"
+                >
+                  <option value="">Admin (no preview)</option>
+                  {PREVIEWABLE_WORKSPACES.map((workspace) => (
+                    <option key={workspace} value={workspace}>
+                      {WORKSPACE_LABELS[workspace]}
+                    </option>
+                  ))}
+                </select>
+              </label>
             ) : null}
             <div className="mt-3">
               <ThemeToggle />
@@ -527,7 +324,18 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
             global search field here — omitted: the codebase has no search
             endpoint. The 🔔 sits at its right end (plan §19, N56). */}
         <div className="sticky top-0 z-30 hidden h-16 shrink-0 items-center border-b border-[var(--line)] bg-[var(--chrome-translucent)] px-[30px] backdrop-blur-[8px] lg:flex">
-          <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12.5px] font-medium">
+          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium">
+            {companyChip ? (
+              <>
+                <span className="inline-flex min-w-0 items-center gap-1.5 font-semibold text-[var(--foreground)]">
+                  <Building2 size={14} className="shrink-0 text-[var(--muted)]" />
+                  <span className="truncate">{companyChip}</span>
+                </span>
+                <span aria-hidden className="text-[var(--muted-2)]">
+                  ·
+                </span>
+              </>
+            ) : null}
             {activeItem ? (
               <>
                 <span className="text-[var(--muted)]">{SECTION_LABELS[activeItem.section]}</span>
@@ -547,6 +355,23 @@ export function AppShell({ children, user, onLogout: onLogoutProp }: AppShellPro
           ) : null}
         </div>
 
+        {view.previewing ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[var(--info-border)] bg-[var(--info-bg)] px-4 py-2 text-[12.5px] text-[var(--info-text)] lg:px-[30px]">
+            <Eye size={15} className="shrink-0" />
+            <span className="min-w-0 flex-1">
+              Previewing <b>{WORKSPACE_LABELS[view.workspace]}</b>: menu, home page and header only.
+              The data on each page is still yours as Admin.
+            </span>
+            <button
+              type="button"
+              onClick={() => changePreview(null)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-[8px] border border-[var(--info-border)] bg-[var(--panel)] px-2.5 font-semibold text-[var(--info-text)] transition hover:bg-[var(--panel-muted)]"
+            >
+              <X size={14} />
+              Exit preview
+            </button>
+          </div>
+        ) : null}
         <div className="min-w-0 flex-1">{children}</div>
       </div>
     </div>

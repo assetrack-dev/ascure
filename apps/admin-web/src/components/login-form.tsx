@@ -12,24 +12,19 @@ import {
   readLastLoginEmail,
   readStoredSession,
 } from "@/lib/auth";
+import { workspaceHome } from "@/lib/workspaces";
+import type { AuthUser } from "@/types/auth";
 
 /**
- * Where a signed-in user lands. A CLIENT viewer (TNB) owns the network but not
- * the operation, so they go to their progress view — /dashboard is the
- * contractor console and isn't theirs to read.
+ * Where a signed-in user lands: the forced password change first, then their
+ * workspace's home page (plan §21 — TNB → Progress, a TNB Supervisor → its
+ * repair work, a maintenance company → its Pencawang, everyone else → Dashboard).
  */
-function landingPath(
-  user: { mustChangePassword?: boolean; isClientViewer?: boolean; isClientSupervisor?: boolean } | null,
-): string {
+function landingPath(user: AuthUser | null): string {
   if (user?.mustChangePassword) {
     return "/change-password";
   }
-  // A TNB Supervisor starts on its repair work (plan §19, N55 — owner's call
-  // 2026-10-14); Progress / Surveys / Map are one click away in the menu.
-  if (user?.isClientSupervisor) {
-    return "/maintenance-packages";
-  }
-  return user?.isClientViewer ? "/progress" : "/dashboard";
+  return workspaceHome(user);
 }
 
 export function LoginForm() {

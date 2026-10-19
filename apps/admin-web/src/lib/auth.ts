@@ -58,6 +58,7 @@ export function normalizeAuthUser(user: ApiUser | AuthUser | null | undefined): 
     isClientSupervisor: "isClientSupervisor" in user ? user.isClientSupervisor : undefined,
     canManageClientSupervisors:
       "canManageClientSupervisors" in user ? user.canManageClientSupervisors : undefined,
+    workspace: "workspace" in user ? user.workspace : undefined,
   };
 }
 
