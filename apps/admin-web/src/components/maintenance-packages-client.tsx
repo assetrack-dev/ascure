@@ -58,8 +58,11 @@ import {
   pinnedCellClass,
   pinnedHeadClass,
   RowMenu,
+  SortableTh,
+  nextSort,
   routingMessage,
   routingParts,
+  type SortState,
 } from "@/components/maintenance-packages-shared";
 import {
   Card,
@@ -122,7 +125,15 @@ type StatusFilter = "ALL" | "AWAITING" | "ASSIGNED" | "NO_TEAM" | "OVERDUE" | "O
 type WorkTypeFilter = "ALL" | MaintenanceCategory;
 type ViewMode = "LIST" | "MAP" | "GRID";
 /** Plan §17.2: sort for List + Grid ("DEFAULT" = the board's own order). */
-type SortMode = "DEFAULT" | "NAME" | "LEAST_CLOSED" | "OVERDUE";
+/** Phone sort menu (no column headings there) → the same sort as a column click. */
+const PHONE_SORTS: Array<{ value: string; label: string; sort: SortState }> = [
+  { value: "DEFAULT", label: "Default order", sort: null },
+  { value: "NAME:asc", label: "Name A–Z", sort: { key: "NAME", dir: "asc" } },
+  { value: "PROGRESS:asc", label: "Least closed first", sort: { key: "PROGRESS", dir: "asc" } },
+  { value: "TARGET:asc", label: "Overdue first", sort: { key: "TARGET", dir: "asc" } },
+];
+/** Company filter value for work no company holds yet. */
+const NO_COMPANY = "NONE";
 
 const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "ALL", label: "All" },
@@ -167,6 +178,16 @@ function hasTeam(row: PackagePencawang, teamId: string) {
     row.lanes.some((lane) => lane.team?.id === teamId) ||
     row.packages.some((pkg) => pkg.team?.id === teamId) ||
     row.poleSplits.some((split) => split.team?.id === teamId)
+  );
+}
+
+/** The company holds any of the (scoped) PE's work; NO_COMPANY = work nobody holds yet. */
+function hasCompany(row: PackagePencawang, companyId: string) {
+  if (companyId === NO_COMPANY) return row.totals.unrouted > 0;
+  return (
+    row.lanes.some((lane) => lane.organization?.id === companyId) ||
+    row.packages.some((pkg) => pkg.organization.id === companyId) ||
+    row.poleSplits.some((split) => split.organization.id === companyId)
   );
 }
 
@@ -215,6 +236,51 @@ function scopeRow(row: PackagePencawang, category: MaintenanceCategory): Package
       (split) => split.category === category || split.category === null,
     ),
   };
+}
+
+/**
+ * Column sort (plan §21.2 #7). Empty values (no report, no target, no work of
+ * that type) always go last, whichever way the column is sorted; ties fall back
+ * to the Pencawang name.
+ */
+function sortRows(
+  rows: PackagePencawang[],
+  sort: NonNullable<SortState>,
+  board: MaintenancePackageBoard,
+): PackagePencawang[] {
+  const sign = sort.dir === "asc" ? 1 : -1;
+  const byName = (left: PackagePencawang, right: PackagePencawang) =>
+    pencawangLabel(left).localeCompare(pencawangLabel(right));
+  const laneShare = (row: PackagePencawang, category: string) => {
+    const lane = row.lanes.find((candidate) => candidate.category === category && candidate.total > 0);
+    return lane ? progressOf(lane).closed / lane.total : null;
+  };
+  const value = (row: PackagePencawang): string | number | null => {
+    if (sort.key === "NAME") return pencawangLabel(row).toLowerCase();
+    if (sort.key === "REPORT") return row.laporanSelesaiAt;
+    if (sort.key === "PROGRESS") return closedShare(row);
+    if (sort.key === "WORK") return row.totals.total;
+    if (sort.key === "COMPANY") return assignmentSummary(row, board).text.toLowerCase();
+    if (sort.key === "TARGET") return dueInfo(row, board).earliest;
+    if (sort.key.startsWith("LANE:")) return laneShare(row, sort.key.slice(5));
+    return null;
+  };
+  return [...rows].sort((left, right) => {
+    // Overdue first when target dates run earliest-first.
+    if (sort.key === "TARGET" && sort.dir === "asc") {
+      const l = dueInfo(left, board).overdue;
+      const r = dueInfo(right, board).overdue;
+      if (l !== r) return l ? -1 : 1;
+    }
+    const l = value(left);
+    const r = value(right);
+    if (l === null || r === null) {
+      if (l !== r) return l === null ? 1 : -1;
+      return byName(left, right);
+    }
+    const diff = typeof l === "number" && typeof r === "number" ? l - r : String(l).localeCompare(String(r));
+    return diff !== 0 ? diff * sign : byName(left, right);
+  });
 }
 
 /** Lane chip: done/total of that work type, green once all of it is done. */
@@ -1439,7 +1505,9 @@ function MaintenancePackagesContent() {
   const [search, setSearch] = useState("");
   const [view, setView] = useState<ViewMode>("LIST");
   const [teamFilter, setTeamFilter] = useState("ALL");
-  const [sortMode, setSortMode] = useState<SortMode>("DEFAULT");
+  const [companyFilter, setCompanyFilter] = useState("ALL");
+  const [sort, setSort] = useState<SortState>(null);
+  const onSort = useCallback((key: string) => setSort((current) => nextSort(current, key)), []);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   // A grid / map cell opens the dialog on its work type (plan §17.2).
   const [dialogCategory, setDialogCategory] = useState<MaintenanceCategory | null>(null);
@@ -1589,6 +1657,43 @@ function MaintenancePackagesContent() {
     return [...byId.entries()].sort((left, right) => left[1].localeCompare(right[1]));
   }, [board]);
 
+  // Every company holding work on the board (plan §21.2 #7) — a Main Contractor
+  // narrows to one subcontractor, TNB / Admin to one contractor.
+  const companies = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const row of board?.pencawangs ?? []) {
+      for (const owner of [
+        ...row.lanes.map((lane) => lane.organization),
+        ...row.packages.map((pkg) => pkg.organization),
+        ...row.poleSplits.map((split) => split.organization),
+      ]) {
+        if (owner) byId.set(owner.id, owner.name);
+      }
+    }
+    return [...byId.entries()].sort((left, right) => left[1].localeCompare(right[1]));
+  }, [board]);
+  const hasUnrouted = useMemo(
+    () => (board?.pencawangs ?? []).some((row) => row.totals.unrouted > 0),
+    [board],
+  );
+  const showCompanyFilter = companies.length + (hasUnrouted ? 1 : 0) >= 2;
+  // The team list follows the chosen company.
+  const teamOptions = useMemo(
+    () =>
+      (board?.teams ?? []).filter(
+        (team) =>
+          companyFilter === "ALL" ||
+          companyFilter === NO_COMPANY ||
+          team.organizationId === companyFilter,
+      ),
+    [board, companyFilter],
+  );
+  useEffect(() => {
+    if (teamFilter !== "ALL" && !teamOptions.some((team) => team.id === teamFilter)) {
+      setTeamFilter("ALL");
+    }
+  }, [teamFilter, teamOptions]);
+
   // Status + Mainhead filters. The Map view stops here: there the search box
   // flies to a Pencawang instead of hiding its neighbours.
   // Work-type filter: each PE narrowed to that lane (PEs without it drop out).
@@ -1620,43 +1725,34 @@ function MaintenancePackagesContent() {
         if (statusFilter === "CLOSED" && !isAllClosed(row)) return false;
         if (mainheadFilter !== "ALL" && row.mainhead?.id !== mainheadFilter) return false;
         if (teamFilter !== "ALL" && !hasTeam(row, teamFilter)) return false;
+        if (companyFilter !== "ALL" && !hasCompany(row, companyFilter)) return false;
         return true;
       }),
-    [board, mainheadFilter, scopedRows, statusFilter, teamFilter],
+    [board, companyFilter, mainheadFilter, scopedRows, statusFilter, teamFilter],
   );
 
-  // List + Grid also narrow by the search box, then sort.
+  // List + Grid also narrow by the search box, then sort (the whole list, before paging).
   const rows = useMemo(() => {
     const matched = filteredRows.filter((row) => matchesSearch(row, search));
-    if (sortMode === "DEFAULT" || !board) return matched;
-    const byName = (left: PackagePencawang, right: PackagePencawang) =>
-      pencawangLabel(left).localeCompare(pencawangLabel(right));
-    return [...matched].sort((left, right) => {
-      if (sortMode === "LEAST_CLOSED") return closedShare(left) - closedShare(right) || byName(left, right);
-      if (sortMode === "OVERDUE") {
-        const l = dueInfo(left, board);
-        const r = dueInfo(right, board);
-        if (l.overdue !== r.overdue) return l.overdue ? -1 : 1;
-        if (l.earliest !== r.earliest) {
-          if (!l.earliest) return 1;
-          if (!r.earliest) return -1;
-          return l.earliest.localeCompare(r.earliest);
-        }
-      }
-      return byName(left, right);
-    });
-  }, [board, filteredRows, search, sortMode]);
+    if (!sort || !board) return matched;
+    return sortRows(matched, sort, board);
+  }, [board, filteredRows, search, sort]);
 
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, workType, mainheadFilter, teamFilter, search, sortMode, view]);
+  }, [statusFilter, workType, mainheadFilter, teamFilter, companyFilter, search, sort, view]);
   const activeFilterCount = [
     mainheadFilter !== "ALL",
     workType !== "ALL",
     teamFilter !== "ALL",
-    sortMode !== "DEFAULT",
+    companyFilter !== "ALL",
+    sort !== null,
     statusFilter !== "ALL",
   ].filter(Boolean).length;
+  const phoneSortValue = !sort
+    ? "DEFAULT"
+    : (PHONE_SORTS.find((option) => option.sort?.key === sort.key && option.sort.dir === sort.dir)?.value ??
+      "COLUMN");
   const pageRows = useMemo(() => rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [rows, page]);
 
   /** Grid columns: every work type, or the one picked in the filter. */
@@ -2050,6 +2146,22 @@ function MaintenancePackagesContent() {
                       </option>
                     ))}
                   </select>
+                  {showCompanyFilter ? (
+                    <select
+                      aria-label="Company"
+                      value={companyFilter}
+                      onChange={(event) => setCompanyFilter(event.target.value)}
+                      className={filterSelectClass}
+                    >
+                      <option value="ALL">All companies</option>
+                      {companies.map(([id, name]) => (
+                        <option key={id} value={id}>
+                          {name}
+                        </option>
+                      ))}
+                      {hasUnrouted ? <option value={NO_COMPANY}>No company yet</option> : null}
+                    </select>
+                  ) : null}
                   <select
                     aria-label="Team"
                     value={teamFilter}
@@ -2057,7 +2169,7 @@ function MaintenancePackagesContent() {
                     className={filterSelectClass}
                   >
                     <option value="ALL">All teams</option>
-                    {board.teams.map((team) => (
+                    {teamOptions.map((team) => (
                       <option key={team.id} value={team.id}>
                         {isCompany
                           ? team.name
@@ -2066,16 +2178,25 @@ function MaintenancePackagesContent() {
                     ))}
                   </select>
                   {view !== "MAP" ? (
+                    // Phones only: on md+ the column headings sort (plan §21.2 #7).
                     <select
                       aria-label="Sort"
-                      value={sortMode}
-                      onChange={(event) => setSortMode(event.target.value as SortMode)}
-                      className={filterSelectClass}
+                      value={phoneSortValue}
+                      onChange={(event) =>
+                        setSort(PHONE_SORTS.find((option) => option.value === event.target.value)?.sort ?? null)
+                      }
+                      className={`${filterSelectClass} md:hidden`}
                     >
-                      <option value="DEFAULT">Default order</option>
-                      <option value="NAME">Name A–Z</option>
-                      <option value="LEAST_CLOSED">Least closed first</option>
-                      <option value="OVERDUE">Overdue first</option>
+                      {PHONE_SORTS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                      {phoneSortValue === "COLUMN" ? (
+                        <option value="COLUMN" disabled>
+                          Sorted by a column
+                        </option>
+                      ) : null}
                     </select>
                   ) : null}
                   <Seg
@@ -2149,6 +2270,8 @@ function MaintenancePackagesContent() {
                         onAssignLane={openLaneDialog}
                         onOpenPoles={(row) => setPoleRow(row)}
                         onReport={(row) => setReportRows([row])}
+                        sort={sort}
+                        onSort={onSort}
                       />
                       <Pager page={page} total={rows.length} onPage={setPage} />
                     </Card>
@@ -2194,12 +2317,12 @@ function MaintenancePackagesContent() {
                                   />
                                 </th>
                               ) : null}
-                              <th className={tableHeadCellClass}>Pencawang</th>
-                              <th className={tableHeadCellClass}>Report</th>
-                              <th className={tableHeadCellClass}>Progress</th>
-                              <th className={tableHeadCellClass}>Work types</th>
-                              <th className={tableHeadCellClass}>Company / team</th>
-                              <th className={tableHeadCellClass}>Target</th>
+                              <SortableTh label="Pencawang" sortKey="NAME" sort={sort} onSort={onSort} />
+                              <SortableTh label="Report" sortKey="REPORT" sort={sort} onSort={onSort} />
+                              <SortableTh label="Progress" sortKey="PROGRESS" sort={sort} onSort={onSort} />
+                              <SortableTh label="Work types" sortKey="WORK" sort={sort} onSort={onSort} />
+                              <SortableTh label="Company / team" sortKey="COMPANY" sort={sort} onSort={onSort} />
+                              <SortableTh label="Target" sortKey="TARGET" sort={sort} onSort={onSort} />
                               <th className={`${tableHeadCellClass} ${pinnedHeadClass}`} aria-label="Actions" />
                             </tr>
                           </thead>

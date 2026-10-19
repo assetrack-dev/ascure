@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { MoreHorizontal, X } from "lucide-react";
-import { Eyebrow, IconBtn, filterControlClass, filterSelectClass } from "@/components/ui";
+import { ArrowDown, ArrowUp, ArrowUpDown, MoreHorizontal, X } from "lucide-react";
+import { Eyebrow, IconBtn, filterControlClass, filterSelectClass, tableHeadCellClass } from "@/components/ui";
 import type {
   MaintenanceCategory,
   PackageCompany,
@@ -243,6 +243,60 @@ export const pinnedHeadClass =
   "sticky right-0 z-[1] bg-[var(--panel-muted)] shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.28)]";
 export const pinnedCellClass =
   "sticky right-0 z-[1] bg-[var(--panel)] shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.28)] transition group-hover:bg-[var(--panel-muted)]";
+
+/**
+ * Column sort (plan §21.2 #7): click a heading to sort A→Z / low→high, again to
+ * reverse, a third time for the default order. The whole filtered list is
+ * sorted before paging, never just the page on screen.
+ */
+export type SortDir = "asc" | "desc";
+export type SortState = { key: string; dir: SortDir } | null;
+
+export function nextSort(current: SortState, key: string): SortState {
+  if (current?.key !== key) return { key, dir: "asc" };
+  return current.dir === "asc" ? { key, dir: "desc" } : null;
+}
+
+export function SortableTh({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  className = "",
+}: {
+  label: string;
+  sortKey: string;
+  sort: SortState;
+  onSort: (key: string) => void;
+  className?: string;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={`${tableHeadCellClass} ${className}`}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        title={
+          !active
+            ? `Sort by ${label}`
+            : sort.dir === "asc"
+              ? `Sorted by ${label} · click to reverse`
+              : `Sorted by ${label}, reversed · click for the default order`
+        }
+        className={`-mx-1 inline-flex items-center gap-1 rounded-[6px] px-1 py-0.5 text-left font-semibold transition hover:bg-[var(--line2)] hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)] ${
+          active ? "text-[var(--brand-strong)]" : ""
+        }`}
+      >
+        {label}
+        <Icon size={13} className={active ? "shrink-0" : "shrink-0 opacity-45"} />
+      </button>
+    </th>
+  );
+}
 
 export type RowMenuItem = { label: string; icon?: ReactNode; onClick: () => void; title?: string };
 

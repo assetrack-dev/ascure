@@ -6,6 +6,7 @@ import {
   CATEGORY_LABEL,
   DestinationSelect,
   PROGRESS_PARTS,
+  SortableTh,
   encodeDestination,
   checkboxClass,
   formatDate,
@@ -14,6 +15,7 @@ import {
   pinnedHeadClass,
   progressOf,
   startOfToday,
+  type SortState,
 } from "@/components/maintenance-packages-shared";
 import { Tbtn, tableCellClass, tableHeadCellClass, tableHeadClass, tableRowClass } from "@/components/ui";
 import type {
@@ -291,6 +293,8 @@ export function MaintenanceGrid({
   onReport,
   onQuickAssign,
   busy = false,
+  sort = null,
+  onSort,
 }: {
   board: MaintenancePackageBoard;
   /** Full Pencawang rows (never the work-type slice). */
@@ -305,6 +309,9 @@ export function MaintenanceGrid({
   /** In-cell team pick, saved at once (plan §19, N53). */
   onQuickAssign?: (row: PackagePencawang, category: MaintenanceCategory, destination: string) => void;
   busy?: boolean;
+  /** Column sort (plan §21.2 #7); the page sorts the whole list before paging. */
+  sort?: SortState;
+  onSort?: (key: string) => void;
 }) {
   const selectable = (row: PackagePencawang) =>
     row.canAssign || row.lanes.some((lane) => lane.canAssign && lane.total > 0);
@@ -328,13 +335,32 @@ export function MaintenanceGrid({
                 />
               </th>
             ) : null}
-            <th className={`${tableHeadCellClass} min-w-[220px]`}>Pencawang</th>
-            {categories.map((category) => (
-              <th key={category} className={`${tableHeadCellClass} w-[210px]`}>
-                {CATEGORY_LABEL[category]}
-              </th>
-            ))}
-            <th className={`${tableHeadCellClass} w-[110px]`}>Total</th>
+            {onSort ? (
+              <>
+                <SortableTh label="Pencawang" sortKey="NAME" sort={sort} onSort={onSort} className="min-w-[220px]" />
+                {categories.map((category) => (
+                  <SortableTh
+                    key={category}
+                    label={CATEGORY_LABEL[category]}
+                    sortKey={`LANE:${category}`}
+                    sort={sort}
+                    onSort={onSort}
+                    className="w-[210px]"
+                  />
+                ))}
+                <SortableTh label="Total" sortKey="PROGRESS" sort={sort} onSort={onSort} className="w-[110px]" />
+              </>
+            ) : (
+              <>
+                <th className={`${tableHeadCellClass} min-w-[220px]`}>Pencawang</th>
+                {categories.map((category) => (
+                  <th key={category} className={`${tableHeadCellClass} w-[210px]`}>
+                    {CATEGORY_LABEL[category]}
+                  </th>
+                ))}
+                <th className={`${tableHeadCellClass} w-[110px]`}>Total</th>
+              </>
+            )}
             <th className={`${tableHeadCellClass} ${pinnedHeadClass}`} aria-label="Actions" />
           </tr>
         </thead>
