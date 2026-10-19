@@ -230,10 +230,14 @@ export class RepairReportService {
     for (const defect of sorted) {
       const item = defect.inspectionItemResult;
       const asset = item.inspection.asset;
+      // Closed = signed off. Mark done sets status RESOLVED with lifecycle
+      // COMPLETED — that is "waiting for verification", NOT closed (K35: DRAF
+      // until every Kejanggalan is verified). RESOLVED only counts for an old
+      // row with no lifecycle at all.
       const closed =
         defect.lifecycleStatus === DefectLifecycleStatus.CLOSED ||
-        defect.status === DefectStatus.RESOLVED ||
-        defect.status === DefectStatus.CLOSED;
+        defect.status === DefectStatus.CLOSED ||
+        (defect.lifecycleStatus === null && defect.status === DefectStatus.RESOLVED);
       const cannotRepair = isCannotRepairOutcome(defect.resolutionOutcome);
       const status: RepairStatus = closed
         ? 'CLOSED'
