@@ -48,10 +48,10 @@ const QUEUE_LIMIT = 200;
 const GROUPS_PAGE_SIZE = 20;
 
 /** Start of a Malaysia (UTC+8) day / start of the next one, for yyyy-mm-dd bounds. */
-function dayStart(value: string) {
+export function dayStart(value: string) {
   return new Date(`${value.slice(0, 10)}T00:00:00+08:00`);
 }
-function nextDayStart(value: string) {
+export function nextDayStart(value: string) {
   const start = dayStart(value);
   return new Date(start.getTime() + 24 * 60 * 60 * 1000);
 }
