@@ -815,6 +815,59 @@ model DefectEvidenceImageArchive {
   @@index([defectId])
 }
 
+/// docs/PLAN-google-sheet-repair-sync.md: a TNB Google Sheet (one QR03-style
+/// tab) whose "Tarikh Pembaikan" cells ASCURE fills nightly with verified
+/// repair dates. writeEnabled=false = dry runs only (the owner reviews first).
+model SheetSyncTarget {
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String          @db.Uuid
+  name          String
+  spreadsheetId String
+  sheetTitle    String          @default("QR03")
+  writeEnabled  Boolean         @default(false)
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  cells         SheetSyncCell[]
+  runs          SheetSyncRun[]
+
+  @@index([tenantId])
+}
+
+/// A cell ASCURE wrote, keyed by the row's Pencawang + No Tiang (not the row
+/// number — rows get sorted/inserted). ASCURE only rewrites a cell that is
+/// empty or still holds `value`; anything else is TNB's.
+model SheetSyncCell {
+  id        String          @id @default(uuid()) @db.Uuid
+  targetId  String          @db.Uuid
+  rowKey    String
+  groupKey  String
+  value     String
+  writtenAt DateTime        @default(now())
+  target    SheetSyncTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, rowKey, groupKey])
+}
+
+/// One sync run (nightly, Sync now or Dry run) with its counts and the
+/// check list (unmatched rows, clashes, items with no column).
+model SheetSyncRun {
+  id               String          @id @default(uuid()) @db.Uuid
+  targetId         String          @db.Uuid
+  trigger          String
+  dryRun           Boolean
+  status           String          @default("RUNNING")
+  error            String?
+  summary          Json?
+  issues           Json?
+  triggeredByEmail String?
+  startedAt        DateTime        @default(now())
+  finishedAt       DateTime?
+  target           SheetSyncTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, startedAt])
+}
+
 enum AssetChangeSource {
   OFFICE
   MAINTENANCE

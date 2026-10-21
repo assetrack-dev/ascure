@@ -25,6 +25,7 @@ import { PublicModule } from './public/public.module';
 import { ShareModule } from './share/share.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
+import { SheetSyncModule } from './sheet-sync/sheet-sync.module';
 
 @Module({
   imports: [
@@ -59,6 +60,8 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module';
     PublicModule,
     ShareModule,
     NotificationsModule,
+    // Nightly verified repair dates into TNB's Google Sheets (22:00 MYT).
+    SheetSyncModule,
     // RSS-leak instrumentation: 60s memory sampler + per-route attribution
     // (global interceptor) + ADMIN /diagnostics endpoints + SIGUSR2 dump.
     DiagnosticsModule,
