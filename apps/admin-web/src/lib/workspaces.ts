@@ -248,6 +248,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/capabilities", label: "Capabilities", icon: Tags, section: "admin", adminOnly: true, group: "setup" },
   { href: "/checklist-templates", label: "Checklists", icon: ClipboardList, section: "admin", adminOnly: true, group: "setup" },
   { href: "/repair-methods", label: "Repair types", icon: Hammer, section: "admin", adminOnly: true, group: "setup" },
+  { href: "/sheet-sync", label: "Google Sheet sync", icon: FileSpreadsheet, section: "admin", adminOnly: true, group: "setup" },
   { href: "/report-templates", label: "Report Templates", icon: FileText, section: "admin", adminOnly: true, group: "setup" },
   { href: "/imports", label: "Imports", icon: Upload, section: "admin", requiresImport: true, group: "setup" },
   // Hidden from nav (kept in code, pending deletion) — declutter pass 2026-07-06.
