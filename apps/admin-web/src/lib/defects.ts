@@ -1110,7 +1110,7 @@ export async function fetchDefectRegistryRollup(
     .map((group) => ({
       id: readString(group, "id") ?? "",
       name: readString(group, "name") ?? "Unnamed",
-      code: readString(group, "code") ?? null,
+      functionalLocation: readString(group, "functionalLocation") ?? null,
       mainheadName: readString(group, "mainheadName") ?? null,
       regionName: readString(group, "regionName") ?? null,
       ...readCounts(group),
