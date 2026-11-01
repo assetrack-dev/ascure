@@ -7,6 +7,7 @@ import { MarkOverlay } from './MarkOverlay';
 import { TiltOverlay } from './TiltOverlay';
 import { TimestampStamp, type StampContext } from './TimestampStamp';
 import { getPositionWithTimeout } from '../location';
+import { discardTempCapture } from '../deviceStorage';
 
 /**
  * Evidence-grade photo: in-app camera → FRESH GPS fix → date / GPS / defect
@@ -108,29 +109,39 @@ export function useStampedPhoto() {
       if (!shot) return null;
 
       const takenAt = new Date().toISOString();
-      const position = await getPositionWithTimeout({
-        accuracy: Location.Accuracy.High,
-        maxLastKnownAgeMs: 60_000,
-      });
-      if (!position) {
-        throw new Error('Could not get a fresh GPS fix for the photo. Move to open sky and try again.');
-      }
-
-      const size = await captureSize(shot.uri, shot.width, shot.height);
-      const uri = await new Promise<string>((resolve, reject) => {
-        handlersRef.current = { resolve, reject };
-        loadSignalRef.current = createSignal();
-        setPending({
-          originalUri: shot.uri,
-          timestamp: takenAt,
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          tiltLineAngle: shot.tiltLineAngle ?? null,
-          mark: shot.mark ?? null,
-          stamp: options?.stamp ?? null,
-          ...size,
+      let position: NonNullable<Awaited<ReturnType<typeof getPositionWithTimeout>>>;
+      let uri: string;
+      // The stamped copy is the evidence; the full-size raw only feeds the burn,
+      // so it goes on every exit (a no-GPS retry loop included).
+      try {
+        const fresh = await getPositionWithTimeout({
+          accuracy: Location.Accuracy.High,
+          maxLastKnownAgeMs: 60_000,
         });
-      });
+        if (!fresh) {
+          throw new Error('Could not get a fresh GPS fix for the photo. Move to open sky and try again.');
+        }
+        position = fresh;
+        const fix = fresh;
+
+        const size = await captureSize(shot.uri, shot.width, shot.height);
+        uri = await new Promise<string>((resolve, reject) => {
+          handlersRef.current = { resolve, reject };
+          loadSignalRef.current = createSignal();
+          setPending({
+            originalUri: shot.uri,
+            timestamp: takenAt,
+            latitude: fix.coords.latitude,
+            longitude: fix.coords.longitude,
+            tiltLineAngle: shot.tiltLineAngle ?? null,
+            mark: shot.mark ?? null,
+            stamp: options?.stamp ?? null,
+            ...size,
+          });
+        });
+      } finally {
+        void discardTempCapture(shot.uri);
+      }
 
       return {
         uri,

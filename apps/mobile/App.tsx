@@ -26,7 +26,8 @@ import { navigationRef } from './src/navigation/navigationRef';
 import { ThemeProvider, useTheme } from './src/theme';
 import { LoadingScreen } from './src/ui';
 import { initMapbox } from './src/mapbox';
-import { sweepTempPhotoFiles } from './src/deviceStorage';
+import { AppState } from 'react-native';
+import { sweepOnForeground, sweepTempPhotoFiles } from './src/deviceStorage';
 
 // Set the Mapbox access token once, before any MapView mounts (offline satellite).
 initMapbox();
@@ -45,6 +46,14 @@ setTimeout(() => {
     })
     .catch(() => undefined);
 }, 5000);
+
+// And whenever the app comes back to the foreground (throttled inside), so a
+// long offline day is tidied the same day rather than at the next cold start.
+AppState.addEventListener('change', (state) => {
+  if (state === 'active') {
+    void sweepOnForeground();
+  }
+});
 
 function AppShell() {
   const { isBooting } = useAuth();

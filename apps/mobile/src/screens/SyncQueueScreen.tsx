@@ -1,9 +1,10 @@
 import { Children, type ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSync } from '../context/SyncContext';
+import { getPhoneStorageSummary, type PhoneStorageSummary } from '../deviceStorage';
 import type { AppDrawerScreenProps } from '../navigation/types';
 import {
   EmptyState,
@@ -19,11 +20,13 @@ import { Theme, useTheme } from '../theme';
 import {
   CompletedInspectionSyncRecord,
   CompletedVisitCompletionSyncRecord,
+  getActiveQueueCount,
   getCompletedQueueCount,
   getFailedQueueCount,
   getPendingQueueCount,
   getSyncingQueueCount,
   OfflineInspectionQueueItem,
+  OfflineMutation,
   OfflineVisitCompletionQueueItem,
   SyncQueueDisplayStatus,
 } from '../syncQueue';
@@ -52,10 +55,28 @@ export function SyncQueueScreen() {
         (item) => item.status === 'FAILED',
       ),
       completedVisitCompletions: snapshot.completedVisitCompletions,
+      // Pole adds / edits / repair photos — they hold up a visit's completion
+      // too, so they must be visible here, not just counted.
+      pendingMutations: snapshot.mutations.filter((item) => item.status === 'PENDING_SYNC'),
+      syncingMutations: snapshot.mutations.filter((item) => item.status === 'SYNCING'),
+      failedMutations: snapshot.mutations.filter((item) => item.status === 'FAILED'),
     }),
     [snapshot],
   );
-  const activeCount = snapshot.items.length + snapshot.visitCompletions.length;
+  const activeCount = getActiveQueueCount(snapshot);
+  const [storage, setStorage] = useState<PhoneStorageSummary | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void getPhoneStorageSummary().then((summary) => {
+        if (active) setStorage(summary);
+      });
+      return () => {
+        active = false;
+      };
+    }, [snapshot]),
+  );
   const summaryStatus = getQueueSummaryStatus({
     pendingCount: getPendingQueueCount(snapshot),
     syncingCount: getSyncingQueueCount(snapshot),
@@ -156,7 +177,12 @@ export function SyncQueueScreen() {
         </Pressable>
       </View>
 
+      {storage ? <StorageCard storage={storage} /> : null}
+
       <QueueSection title="Syncing" emptyText="No queued work is syncing right now.">
+        {groupedItems.syncingMutations.map((item) => (
+          <MutationQueueCard key={item.id} item={item} />
+        ))}
         {groupedItems.syncing.map((item) => (
           <QueueItemCard key={item.id} item={item} />
         ))}
@@ -166,6 +192,9 @@ export function SyncQueueScreen() {
       </QueueSection>
 
       <QueueSection title="Pending" emptyText="No queued work is waiting to sync.">
+        {groupedItems.pendingMutations.map((item) => (
+          <MutationQueueCard key={item.id} item={item} />
+        ))}
         {groupedItems.pending.map((item) => (
           <QueueItemCard key={item.id} item={item} />
         ))}
@@ -175,6 +204,9 @@ export function SyncQueueScreen() {
       </QueueSection>
 
       <QueueSection title="Failed" emptyText="No failed sync attempts.">
+        {groupedItems.failedMutations.map((item) => (
+          <MutationQueueCard key={item.id} item={item} />
+        ))}
         {groupedItems.failed.map((item) => (
           <QueueItemCard key={item.id} item={item} />
         ))}
@@ -295,13 +327,26 @@ function QueueFact({ icon, label }: { icon: keyof typeof Feather.glyphMap; label
   );
 }
 
+/**
+ * The card's error line. A server refusal is labelled as such — automatic syncs
+ * stop retrying it, so the crew needs to know it is waiting on them.
+ */
+function describeQueueError(item: { errorMessage?: string; needsAttention?: boolean }) {
+  if (item.needsAttention) {
+    return `Needs attention — the server refused this${
+      item.errorMessage ? `: ${item.errorMessage}` : '.'
+    } It is kept on the phone; tap Retry Sync after it is fixed.`;
+  }
+  return item.errorMessage;
+}
+
 function QueueItemCard({ item }: { item: OfflineInspectionQueueItem }) {
   return (
     <QueueCardShell
       title={item.summary.assetCode}
       subtitle={item.summary.assetName ?? 'Unnamed asset'}
       status={item.status}
-      errorMessage={item.errorMessage}
+      errorMessage={describeQueueError(item)}
     >
       <QueueFact icon="map-pin" label={item.summary.substationName} />
       <QueueFact
@@ -328,7 +373,7 @@ function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueI
       title="Complete Visit"
       subtitle={item.summary.substationName}
       status={item.status}
-      errorMessage={item.errorMessage}
+      errorMessage={describeQueueError(item)}
     >
       <QueueFact icon="users" label={item.summary.teamName} />
       <QueueFact
@@ -341,6 +386,77 @@ function VisitCompletionQueueCard({ item }: { item: OfflineVisitCompletionQueueI
         label={`${item.attemptCount} attempt${item.attemptCount === 1 ? '' : 's'}`}
       />
     </QueueCardShell>
+  );
+}
+
+/** What kind of offline change a queued op is, in the crew's words. */
+const MUTATION_KIND_LABEL: Record<OfflineMutation['type'], string> = {
+  CREATE_ASSET: 'New pole',
+  CREATE_INSPECTION: 'Start inspection',
+  CREATE_VISIT: 'New visit',
+  LINK_VISIT_ASSET: 'Link pole to visit',
+  UPLOAD_DEFECT_EVIDENCE: 'Repair photo',
+  COMPLETE_DEFECT_MAINTENANCE: 'Repair done',
+  CREATE_DEFECT_FINDING: 'New finding',
+  SET_DEFECT_MATERIALS: 'Repair materials',
+  DELETE_DEFECT_EVIDENCE: 'Remove repair photo',
+  RELABEL_DEFECT_EVIDENCE: 'Change photo stage',
+  SET_POLE_NO_TIANG_LAMA: 'No Tiang Lama',
+};
+
+function MutationQueueCard({ item }: { item: OfflineMutation }) {
+  return (
+    <QueueCardShell
+      title={item.label}
+      subtitle={item.sublabel ?? null}
+      status={item.status}
+      errorMessage={describeQueueError(item)}
+    >
+      <QueueFact icon="edit-3" label={MUTATION_KIND_LABEL[item.type] ?? item.type} />
+      <QueueFact icon="clock" label={formatDateTime(item.createdAt)} />
+      <QueueFact
+        icon="rotate-cw"
+        label={`${item.attemptCount} attempt${item.attemptCount === 1 ? '' : 's'}`}
+      />
+    </QueueCardShell>
+  );
+}
+
+function formatMegabytes(bytes: number) {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+/** Phone storage gauge — warns before a full phone stops the camera. */
+function StorageCard({ storage }: { storage: PhoneStorageSummary }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return (
+    <View style={[styles.storageCard, storage.lowStorage && styles.storageCardLow]}>
+      <View style={styles.storageRow}>
+        <Feather
+          name="hard-drive"
+          size={16}
+          color={storage.lowStorage ? theme.colors.dangerText : theme.colors.textMuted}
+        />
+        <Text style={[styles.storageTitle, storage.lowStorage && styles.storageTitleLow]}>
+          {storage.freeBytes === null
+            ? 'Phone storage: unknown'
+            : `Phone storage: ${formatMegabytes(storage.freeBytes)} free`}
+        </Text>
+      </View>
+      <Text style={styles.storageDetail}>
+        {`Photos kept on this phone: ${storage.keptPhotoCount} (${formatMegabytes(storage.keptPhotoBytes)})`}
+      </Text>
+      {storage.lowStorage ? (
+        <Text style={styles.storageWarning}>
+          Low space — free some (old videos, WhatsApp media) before working offline. The camera
+          stops below 300 MB.
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -584,6 +700,45 @@ const createStyles = (t: Theme) =>
     },
     retryLabelDisabled: {
       color: t.colors.onChromeFaint,
+    },
+
+    storageCard: {
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.card,
+      padding: 14,
+      gap: 6,
+    },
+    storageCardLow: {
+      borderColor: t.colors.dangerBorder,
+      backgroundColor: t.colors.dangerSoft,
+    },
+    storageRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    storageTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
+      color: t.colors.textPrimary,
+    },
+    storageTitleLow: {
+      color: t.colors.dangerText,
+    },
+    storageDetail: {
+      fontSize: 13,
+      fontFamily: t.fonts.body,
+      color: t.colors.textSecondary,
+    },
+    storageWarning: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '600',
+      fontFamily: t.fonts.bodySemibold,
+      color: t.colors.dangerText,
     },
 
     section: {

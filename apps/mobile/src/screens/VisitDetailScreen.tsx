@@ -26,6 +26,7 @@ import {
 import { Theme, useTheme } from '../theme';
 import {
   enqueueVisitCompletion,
+  getVisitCompletionWait,
   hasQueuedVisitCompletion,
   isRetryableSyncError,
   isTempId,
@@ -102,7 +103,7 @@ export function VisitDetailScreen() {
   const route = useRoute<RootStackScreenProps<'VisitDetail'>['route']>();
   const { visitId, substationId, successMessage } = route.params;
   const { token, user, handleUnauthorized } = useSession();
-  const { isOffline, snapshot: syncQueueSnapshot } = useSync();
+  const { isOffline, isSyncing, snapshot: syncQueueSnapshot, runQueueSync } = useSync();
 
   const [visit, setVisit] = useState<SiteVisit | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -426,10 +427,14 @@ export function VisitDetailScreen() {
   }
 
   const terminal = visit ? isVisitTerminal(visit.status) : false;
+  const completionWait = getVisitCompletionWait(syncQueueSnapshot, visitId);
+  const completionWaitMessage = completionWait
+    ? describeCompletionWait(completionWait, isOffline)
+    : null;
   const ctaInactive = terminal || isCompletionQueued || isCompleting;
   const ctaLabel = isOffline ? 'Queue Visit Completion' : 'Complete Visit';
   const ctaHint = isCompletionQueued
-    ? 'Completion Queued'
+    ? 'Completion waiting to send'
     : terminal
       ? 'Visit Completed'
       : isCompleting
@@ -480,6 +485,29 @@ export function VisitDetailScreen() {
       />
       <SuccessBanner message={successMessage} />
       <SuccessBanner message={completionNotice} />
+      {completionWaitMessage ? (
+        <Card>
+          <SectionTitle>Completion not sent yet</SectionTitle>
+          {completionWaitMessage.refused ? (
+            <ErrorBanner message={completionWaitMessage.text} />
+          ) : (
+            <WarningBanner message={completionWaitMessage.text} />
+          )}
+          <View style={styles.completionWaitActions}>
+            <AppButton
+              label={isSyncing ? 'Sending…' : 'Retry now'}
+              onPress={() => void runQueueSync().catch(() => undefined)}
+              disabled={isOffline || isSyncing}
+              loading={isSyncing}
+            />
+            <AppButton
+              label="Open Sync Queue"
+              variant="secondary"
+              onPress={() => navigation.navigate('AppDrawer', { screen: 'SyncQueue' })}
+            />
+          </View>
+        </Card>
+      ) : null}
       {isLoading ? <LoadingBlock label="Loading visit and assets..." /> : null}
 
       {!isLoading && visit ? (
@@ -1629,6 +1657,62 @@ function isVisitTerminal(status: string) {
   return status === 'COMPLETED' || status === 'CANCELLED';
 }
 
+/**
+ * Plain-language reason a queued visit completion hasn't reached the server,
+ * so the crew knows what to do instead of staring at "Completion Queued".
+ */
+function describeCompletionWait(
+  wait: NonNullable<ReturnType<typeof getVisitCompletionWait>>,
+  isOffline: boolean,
+): { text: string; refused: boolean } {
+  const { completion, blockers, refusedBlocker } = wait;
+
+  if (refusedBlocker) {
+    return {
+      refused: true,
+      text:
+        `Waiting on "${refusedBlocker.label}", which the server refused` +
+        (refusedBlocker.errorMessage ? `: ${refusedBlocker.errorMessage}` : '.') +
+        ' Open Sync Queue to see it, then Retry once it is fixed.',
+    };
+  }
+
+  if (blockers.length > 0) {
+    const first = blockers[0].label;
+    return {
+      refused: false,
+      text:
+        `Waiting for ${blockers.length} item${blockers.length === 1 ? '' : 's'} of this visit to sync first` +
+        ` (${first}${blockers.length > 1 ? ', …' : ''}). The completion sends right after.`,
+    };
+  }
+
+  if (completion.needsAttention) {
+    return {
+      refused: true,
+      text:
+        'The server did not accept the completion' +
+        (completion.errorMessage ? `: ${completion.errorMessage}` : '.') +
+        ' Tap Retry once it is fixed, or ask your supervisor.',
+    };
+  }
+
+  if (isOffline) {
+    return {
+      refused: false,
+      text: 'Saved on this phone. It sends by itself when you are back online.',
+    };
+  }
+
+  return {
+    refused: false,
+    text:
+      (completion.status === 'FAILED' && completion.errorMessage
+        ? `Last try didn't reach the server (${completion.errorMessage}). `
+        : '') + 'It retries every 2 minutes while online — or tap Retry now.',
+  };
+}
+
 function getAssetCoordinate(asset: Asset) {
   return createCoordinate(asset.latitude, asset.longitude);
 }
@@ -1701,6 +1785,10 @@ function zoomFromRegion(region: Region): number {
 
 const createStyles = (t: Theme) =>
   StyleSheet.create({
+    completionWaitActions: {
+      marginTop: 10,
+      gap: 8,
+    },
     // Progress hero (handoff 2f) — dark panel, big mono count, bar + mini-stats.
     hero: {
       backgroundColor: t.colors.solidFill,

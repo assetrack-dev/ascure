@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import NetInfo from '@react-native-community/netinfo';
+import { AppState } from 'react-native';
 import { ApiError, API_BASE_URL, api } from '../api';
 import {
   getActiveQueueCount,
@@ -61,8 +62,14 @@ type SyncContextValue = {
   forceOffline: boolean;
   /** Flip the manual "Work Offline" override (persisted). */
   setWorkOffline: (value: boolean) => void;
-  runQueueSync: () => Promise<SyncQueueRunResult>;
+  /** A crew-initiated sync (Retry Sync): also re-sends items the server refused. */
+  runQueueSync: (options?: { automatic?: boolean }) => Promise<SyncQueueRunResult>;
 };
+
+// While online with work in the outbox, sync on this cadence even when the
+// network never changes state — steady-but-weak signal used to leave a queued
+// visit completion waiting for days.
+const AUTO_SYNC_INTERVAL_MS = 2 * 60 * 1000;
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 
@@ -74,7 +81,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [forceOffline, setForceOfflineState] = useState(false);
   const snapshotRef = useRef(snapshot);
   const forceOfflineRef = useRef(false);
-  const runQueueSyncRef = useRef<(() => Promise<SyncQueueRunResult>) | null>(null);
+  const runQueueSyncRef = useRef<
+    ((options?: { automatic?: boolean }) => Promise<SyncQueueRunResult>) | null
+  >(null);
 
   // The shared networkStatus module is the single source of truth for
   // forceOffline. Subscribe and MIRROR it into React state + the ref, so the UI
@@ -106,7 +115,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       // Turning it OFF while online + work is queued: drain immediately so the
       // crew doesn't have to wait for the next NetInfo transition.
       if (!value && !isOffline && getActiveQueueCount(snapshotRef.current) > 0) {
-        void runQueueSyncRef.current?.().catch(() => undefined);
+        void runQueueSyncRef.current?.({ automatic: true }).catch(() => undefined);
       }
     },
     [isOffline],
@@ -132,7 +141,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const runQueueSync = useCallback(async (): Promise<SyncQueueRunResult> => {
+  const runQueueSync = useCallback(async (options?: { automatic?: boolean }): Promise<SyncQueueRunResult> => {
     if (!token) {
       return {
         completed: 0,
@@ -146,7 +155,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
       // Pass the current user so the reconciler skips (never replays) another
       // user's queued offline work under this token — see isForeignOwner.
-      return await syncQueuedInspections(token, user?.id);
+      return await syncQueuedInspections(token, user?.id, options);
     } catch (syncError) {
       if (syncError instanceof ApiError && syncError.status === 401) {
         await handleUnauthorized(syncError);
@@ -186,7 +195,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         canReachNetwork &&
         getActiveQueueCount(snapshotRef.current) > 0
       ) {
-        void runQueueSyncRef.current?.().catch(() => undefined);
+        void runQueueSyncRef.current?.({ automatic: true }).catch(() => undefined);
       }
     }
 
@@ -217,6 +226,30 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
   // The whole app treats "offline" as NetInfo-offline OR the manual override.
   const effectiveOffline = isOffline || forceOffline;
+  const hasQueuedWork = getActiveQueueCount(snapshot) > 0;
+
+  // Retry timer + on return to the foreground: only while signed in, online,
+  // not on Work Offline, and with something queued (no idle wake-ups).
+  useEffect(() => {
+    if (!token || effectiveOffline || !hasQueuedWork) {
+      return;
+    }
+
+    const runAutomatic = () => {
+      void runQueueSyncRef.current?.({ automatic: true }).catch(() => undefined);
+    };
+    const timer = setInterval(runAutomatic, AUTO_SYNC_INTERVAL_MS);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        runAutomatic();
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      appStateSubscription.remove();
+    };
+  }, [token, effectiveOffline, hasQueuedWork]);
 
   const value = useMemo<SyncContextValue>(
     () => ({

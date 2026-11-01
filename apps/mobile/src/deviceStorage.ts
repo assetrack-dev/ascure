@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Alert } from 'react-native';
 import { freeReadCacheSpace } from './offlineCache';
 
 // Keeps the phone (and the AsyncStorage SQLite DB) from filling up in the field.
@@ -24,12 +25,37 @@ const TEMP_PHOTO_DIRS = ['Camera/', 'ImageManipulator/'];
 // At cold start no screen holds a photo in memory, so anything older than this
 // that no durable store references is garbage.
 const STARTUP_SWEEP_MIN_AGE_MS = 12 * 60 * 60 * 1000;
-// Mid-session (a write just failed) a form may still be holding a recent
-// capture — only take files well past any plausible open form.
+// Mid-session (a write just failed, or the app came back to the foreground) a
+// form may still be holding a recent capture — only take files well past any
+// plausible open form.
 const RECOVERY_SWEEP_MIN_AGE_MS = 2 * 60 * 60 * 1000;
+
+// Our own durable photo copies (documentDirectory). Each is deleted once its
+// upload syncs or its inspection submits online — but a form abandoned without
+// submitting, or a retaken photo, left its copy behind forever. Swept when no
+// durable store references it AND it is old enough that no open form can.
+const DURABLE_PHOTO_DIRS = [
+  'ascure-offline-inspection-images/',
+  'ascure-offline-sitevisit-images/',
+  'ascure-offline-repair-images/',
+];
+const DURABLE_ORPHAN_MIN_AGE_MS = 48 * 60 * 60 * 1000;
 
 const CACHE_KEY_PREFIX = '@ascure/mobile/cache/';
 const LOW_DISK_BYTES = 300 * 1024 * 1024;
+
+/**
+ * Delete one native temp capture (a raw camera shot, an image-manipulator
+ * output) as soon as nothing needs it — e.g. once its stamped copy exists, or on
+ * Retake / cancel. Only ever touches files inside TEMP_PHOTO_DIRS, so a stamped
+ * photo or an outbox copy can never be removed through here. Best-effort.
+ */
+export async function discardTempCapture(uri: string | null | undefined): Promise<void> {
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!uri || !cacheDirectory) return;
+  if (!TEMP_PHOTO_DIRS.some((dir) => uri.startsWith(`${cacheDirectory}${dir}`))) return;
+  await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+}
 
 export function isStorageFullError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? '');
@@ -151,16 +177,37 @@ export async function sweepTempPhotoFiles(
   minAgeMs: number = STARTUP_SWEEP_MIN_AGE_MS,
 ): Promise<{ deleted: number; freedBytes: number }> {
   const result = { deleted: 0, freedBytes: 0 };
-  const cacheDirectory = FileSystem.cacheDirectory;
-  if (!cacheDirectory) return result;
-
   const references = await loadDurableReferences();
   if (references === null) return result;
 
-  const cutoffSeconds = (Date.now() - minAgeMs) / 1000;
+  const now = Date.now();
+  if (FileSystem.cacheDirectory) {
+    await sweepUnreferenced(FileSystem.cacheDirectory, TEMP_PHOTO_DIRS, now - minAgeMs, references, result);
+  }
+  if (FileSystem.documentDirectory) {
+    await sweepUnreferenced(
+      FileSystem.documentDirectory,
+      DURABLE_PHOTO_DIRS,
+      now - Math.max(minAgeMs, DURABLE_ORPHAN_MIN_AGE_MS),
+      references,
+      result,
+    );
+  }
 
-  for (const dir of TEMP_PHOTO_DIRS) {
-    const dirUri = `${cacheDirectory}${dir}`;
+  return result;
+}
+
+async function sweepUnreferenced(
+  baseDirectory: string,
+  dirs: string[],
+  cutoffMs: number,
+  references: string,
+  result: { deleted: number; freedBytes: number },
+) {
+  const cutoffSeconds = cutoffMs / 1000;
+
+  for (const dir of dirs) {
+    const dirUri = `${baseDirectory}${dir}`;
     let names: string[];
     try {
       names = await FileSystem.readDirectoryAsync(dirUri);
@@ -183,14 +230,125 @@ export async function sweepTempPhotoFiles(
       }
     }
   }
+}
 
-  return result;
+export type PhoneStorageSummary = {
+  /** Phone free space; null when the OS won't say. */
+  freeBytes: number | null;
+  /** Photos ASCURE is keeping on the phone (waiting to upload, or open forms). */
+  keptPhotoCount: number;
+  keptPhotoBytes: number;
+  /** Leftover raw camera / crop files (cleared by the sweeps). */
+  tempBytes: number;
+  lowStorage: boolean;
+};
+
+/** For the Sync Queue storage gauge. Best-effort; never throws. */
+export async function getPhoneStorageSummary(): Promise<PhoneStorageSummary> {
+  const freeBytes = await FileSystem.getFreeDiskStorageAsync().catch(() => null);
+  const kept = FileSystem.documentDirectory
+    ? await measureDirs(FileSystem.documentDirectory, DURABLE_PHOTO_DIRS)
+    : { count: 0, bytes: 0 };
+  const temp = FileSystem.cacheDirectory
+    ? await measureDirs(FileSystem.cacheDirectory, TEMP_PHOTO_DIRS)
+    : { count: 0, bytes: 0 };
+
+  return {
+    freeBytes,
+    keptPhotoCount: kept.count,
+    keptPhotoBytes: kept.bytes,
+    tempBytes: temp.bytes,
+    lowStorage: freeBytes !== null && freeBytes < CAMERA_WARN_BYTES,
+  };
+}
+
+async function measureDirs(baseDirectory: string, dirs: string[]) {
+  const total = { count: 0, bytes: 0 };
+  for (const dir of dirs) {
+    let names: string[];
+    try {
+      names = await FileSystem.readDirectoryAsync(`${baseDirectory}${dir}`);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      try {
+        const info = await FileSystem.getInfoAsync(`${baseDirectory}${dir}${name}`);
+        if (info.exists && !info.isDirectory) {
+          total.count += 1;
+          total.bytes += info.size ?? 0;
+        }
+      } catch {
+        // skip
+      }
+    }
+  }
+  return total;
+}
+
+let lastForegroundSweepAt = 0;
+const FOREGROUND_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+
+/**
+ * Same sweep when the app returns to the foreground (throttled), so a full
+ * offline day is tidied the same day instead of at the next cold start.
+ */
+export async function sweepOnForeground(): Promise<void> {
+  const now = Date.now();
+  if (now - lastForegroundSweepAt < FOREGROUND_SWEEP_INTERVAL_MS) return;
+  lastForegroundSweepAt = now;
+  await sweepTempPhotoFiles(RECOVERY_SWEEP_MIN_AGE_MS).catch(() => undefined);
 }
 
 /** Free what we safely can after a SQLITE_FULL: read-cache rows + stale temp photos. */
 export async function recoverStorageSpace(): Promise<void> {
   await freeReadCacheSpace();
   await sweepTempPhotoFiles(RECOVERY_SWEEP_MIN_AGE_MS).catch(() => undefined);
+}
+
+// Below this the camera won't open: a photo that can't be saved is lost work.
+const CAMERA_BLOCK_BYTES = 300 * 1024 * 1024;
+// Below this the crew is warned (once an hour) before they run into the block.
+const CAMERA_WARN_BYTES = 1024 * 1024 * 1024;
+const CAMERA_WARN_INTERVAL_MS = 60 * 60 * 1000;
+let lastCameraWarnAt = 0;
+
+function formatMegabytes(bytes: number) {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+/**
+ * Run before opening the camera. Under CAMERA_BLOCK_BYTES free it first frees
+ * what it safely can, then refuses with a message the crew can act on; under
+ * CAMERA_WARN_BYTES it warns and carries on. If free space can't be read, it
+ * never blocks.
+ */
+export async function ensureStorageForCapture(): Promise<void> {
+  let freeBytes = await FileSystem.getFreeDiskStorageAsync().catch(() => null);
+  if (freeBytes === null) return;
+
+  if (freeBytes < CAMERA_BLOCK_BYTES) {
+    await recoverStorageSpace().catch(() => undefined);
+    freeBytes = (await FileSystem.getFreeDiskStorageAsync().catch(() => null)) ?? freeBytes;
+  }
+
+  if (freeBytes < CAMERA_BLOCK_BYTES) {
+    throw new Error(
+      `Phone storage is almost full (${formatMegabytes(freeBytes)} free). ` +
+        'Delete old videos, photos or WhatsApp media, then take the photo again. ' +
+        'Your saved work is safe — do NOT clear the ASCURE app data.',
+    );
+  }
+
+  const now = Date.now();
+  if (freeBytes < CAMERA_WARN_BYTES && now - lastCameraWarnAt > CAMERA_WARN_INTERVAL_MS) {
+    lastCameraWarnAt = now;
+    Alert.alert(
+      'Phone storage is low',
+      `Only ${formatMegabytes(freeBytes)} free. Free some space (old videos, WhatsApp media) ` +
+        'before a long offline day — the camera stops below 300 MB.',
+    );
+  }
 }
 
 /** What the crew should do when storage is still full after recovery. */

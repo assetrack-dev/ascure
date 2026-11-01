@@ -114,6 +114,9 @@ export type OfflineMutation = {
   updatedAt: string;
   attemptCount: number;
   errorMessage?: string;
+  // The server REFUSED the last attempt (a 4xx, not a connection problem) —
+  // automatic syncs stop retrying it; a manual Retry Sync still tries. Data kept.
+  needsAttention?: boolean;
   // The user who queued this op. The offline write-queue is device-global, so
   // the reconciler skips (never fails) any op whose owner isn't the currently
   // signed-in user — a queued CREATE_VISIT must never replay under a different
@@ -216,6 +219,7 @@ export type OfflineInspectionQueueItem = {
   lastAttemptAt?: string;
   attemptCount: number;
   errorMessage?: string;
+  needsAttention?: boolean; // see OfflineMutation.needsAttention
   ownerUserId?: string;
 };
 
@@ -252,6 +256,7 @@ export type OfflineVisitCompletionQueueItem = {
   lastAttemptAt?: string;
   attemptCount: number;
   errorMessage?: string;
+  needsAttention?: boolean; // see OfflineMutation.needsAttention
   ownerUserId?: string;
 };
 
@@ -373,9 +378,11 @@ export function isRetryableSyncError(error: unknown) {
 }
 
 export async function persistCapturedInspectionPhoto(photo: QueueableInspectionPhoto) {
+  // A fresh stamped capture is a throwaway temp file, so MOVE it: one durable
+  // copy per photo instead of two full files on the phone.
   return {
     ...photo,
-    uri: await persistPhotoUri(photo.uri, photo.id),
+    uri: await persistUriToDir(photo.uri, photo.id, OFFLINE_PHOTO_DIRECTORY, { move: true }),
   };
 }
 
@@ -819,23 +826,42 @@ async function markMutationSyncing(mutationId: string) {
             updatedAt: now,
             attemptCount: mutation.attemptCount + 1,
             errorMessage: undefined,
+            needsAttention: false,
           }
         : mutation,
     ),
   }));
 }
 
-async function markMutationFailed(mutationId: string, errorMessage: string) {
+async function markMutationFailed(mutationId: string, error: unknown) {
   const now = new Date().toISOString();
+  const errorMessage = getErrorMessage(error);
+  const needsAttention = isRefusedByServer(error);
 
   await updateStoredQueue((queue) => ({
     ...queue,
     mutations: queue.mutations.map((mutation) =>
       mutation.id === mutationId
-        ? { ...mutation, status: 'FAILED', updatedAt: now, errorMessage }
+        ? { ...mutation, status: 'FAILED', updatedAt: now, errorMessage, needsAttention }
         : mutation,
     ),
   }));
+}
+
+/**
+ * The server answered and said no (bad data, forbidden, conflict…) — retrying
+ * the same request automatically can't change that. Connection problems,
+ * timeouts, rate limits, server errors and an expired login are NOT refusals.
+ */
+export function isRefusedByServer(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 401 &&
+    error.status !== 408 &&
+    error.status !== 429
+  );
 }
 
 async function completeMutation(mutationId: string, tempId: string, realId: string) {
@@ -1119,7 +1145,7 @@ async function syncMutationItem(token: string, mutation: OfflineMutation) {
       return;
     }
 
-    await markMutationFailed(mutation.id, getErrorMessage(error));
+    await markMutationFailed(mutation.id, error);
     throw error;
   }
 }
@@ -1289,12 +1315,16 @@ export async function dropOfflineAssetCreate(tempAssetId: string) {
 export async function syncQueuedInspections(
   token: string,
   currentUserId?: string,
+  options?: { automatic?: boolean },
 ): Promise<SyncQueueRunResult> {
   if (activeSyncPromise) {
     return activeSyncPromise;
   }
 
-  activeSyncPromise = runSyncQueue(token, currentUserId).finally(() => {
+  // An automatic run (reconnect, timer) skips items the server already refused
+  // — only the crew's own Retry Sync re-sends those.
+  const automatic = options?.automatic === true;
+  activeSyncPromise = runSyncQueue(token, currentUserId, automatic).finally(() => {
     activeSyncPromise = null;
   });
 
@@ -1329,7 +1359,8 @@ export async function cleanupLocalInspectionPhotos(photos: QueueableInspectionPh
 
 async function runSyncQueue(
   token: string,
-  currentUserId?: string,
+  currentUserId: string | undefined,
+  automatic: boolean,
 ): Promise<SyncQueueRunResult> {
   const total: SyncQueueRunResult = { completed: 0, failed: 0, skipped: 0 };
   // A dependency chain (visit -> asset -> inspection -> submission -> completion)
@@ -1341,7 +1372,7 @@ async function runSyncQueue(
   const MAX_PASSES = 6;
 
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
-    const passResult = await runSyncQueuePass(token, currentUserId);
+    const passResult = await runSyncQueuePass(token, currentUserId, automatic);
     total.completed += passResult.completed;
     total.failed += passResult.failed;
     total.skipped = passResult.skipped; // residual still-pending after this pass
@@ -1358,7 +1389,8 @@ async function runSyncQueue(
 
 async function runSyncQueuePass(
   token: string,
-  currentUserId?: string,
+  currentUserId: string | undefined,
+  automatic: boolean,
 ): Promise<SyncQueueRunResult> {
   const snapshot = await loadSyncQueueSnapshot();
   const mutationCandidateIds = snapshot.mutations.map((mutation) => mutation.id);
@@ -1383,6 +1415,11 @@ async function runSyncQueuePass(
     // User-scoped queue: leave another user's queued create for that user to
     // flush (never replay it under this token).
     if (isForeignOwner(mutation.ownerUserId, currentUserId)) {
+      result.skipped += 1;
+      continue;
+    }
+
+    if (automatic && mutation.needsAttention) {
       result.skipped += 1;
       continue;
     }
@@ -1424,6 +1461,11 @@ async function runSyncQueuePass(
       continue;
     }
 
+    if (automatic && item.needsAttention) {
+      result.skipped += 1;
+      continue;
+    }
+
     const tempIdMap = (await loadSyncQueueSnapshot()).tempIdMap;
     const inspectionId = resolveTempId(tempIdMap, item.summary.inspectionId);
 
@@ -1453,6 +1495,11 @@ async function runSyncQueuePass(
     }
 
     if (isForeignOwner(item.ownerUserId, currentUserId)) {
+      result.skipped += 1;
+      continue;
+    }
+
+    if (automatic && item.needsAttention) {
       result.skipped += 1;
       continue;
     }
@@ -1550,7 +1597,7 @@ async function syncQueueItem(
       return;
     }
 
-    await markItemFailed(item.id, getErrorMessage(error));
+    await markItemFailed(item.id, error);
     throw error;
   }
 }
@@ -1571,7 +1618,7 @@ async function syncVisitCompletionQueueItem(
       return;
     }
 
-    await markVisitCompletionItemFailed(item.id, getErrorMessage(error));
+    await markVisitCompletionItemFailed(item.id, error);
     throw error;
   }
 }
@@ -1590,6 +1637,7 @@ async function markItemSyncing(itemId: string) {
             lastAttemptAt: now,
             attemptCount: item.attemptCount + 1,
             errorMessage: undefined,
+            needsAttention: false,
           }
         : item,
     ),
@@ -1610,14 +1658,17 @@ async function markVisitCompletionItemSyncing(itemId: string) {
             lastAttemptAt: now,
             attemptCount: item.attemptCount + 1,
             errorMessage: undefined,
+            needsAttention: false,
           }
         : item,
     ),
   }));
 }
 
-async function markItemFailed(itemId: string, errorMessage: string) {
+async function markItemFailed(itemId: string, error: unknown) {
   const now = new Date().toISOString();
+  const errorMessage = getErrorMessage(error);
+  const needsAttention = isRefusedByServer(error);
 
   await updateStoredQueue((queue) => ({
     ...queue,
@@ -1628,14 +1679,17 @@ async function markItemFailed(itemId: string, errorMessage: string) {
             status: 'FAILED',
             updatedAt: now,
             errorMessage,
+            needsAttention,
           }
         : item,
     ),
   }));
 }
 
-async function markVisitCompletionItemFailed(itemId: string, errorMessage: string) {
+async function markVisitCompletionItemFailed(itemId: string, error: unknown) {
   const now = new Date().toISOString();
+  const errorMessage = getErrorMessage(error);
+  const needsAttention = isRefusedByServer(error);
 
   await updateStoredQueue((queue) => ({
     ...queue,
@@ -1646,6 +1700,7 @@ async function markVisitCompletionItemFailed(itemId: string, errorMessage: strin
             status: 'FAILED',
             updatedAt: now,
             errorMessage,
+            needsAttention,
           }
         : item,
     ),
@@ -1763,24 +1818,61 @@ async function getVisitCompletionQueueItem(itemId: string) {
  * real id, since queued payloads keep the temp id even after reconcile.
  */
 async function hasBlockingWorkForVisit(siteVisitId: string) {
-  const queue = await loadSyncQueueSnapshot();
+  return getVisitBlockingWork(await loadSyncQueueSnapshot(), siteVisitId).length > 0;
+}
+
+/** One queued item that a visit's completion must wait for. */
+export type VisitBlockingWork = {
+  label: string;
+  status: SyncQueueStatus;
+  errorMessage?: string;
+  needsAttention: boolean;
+};
+
+/** Everything still queued for a visit (its inspections + its creates/edits). */
+function getVisitBlockingWork(queue: SyncQueueSnapshot, siteVisitId: string): VisitBlockingWork[] {
   const identity = visitIdentitySet(siteVisitId, queue.tempIdMap);
+  const matches = (id: string) => identity.has(id) || identity.has(resolveTempId(queue.tempIdMap, id));
 
-  const inspectionBlocking = queue.items.some(
-    (item) =>
-      identity.has(item.summary.siteVisitId) ||
-      identity.has(resolveTempId(queue.tempIdMap, item.summary.siteVisitId)),
+  return [
+    ...queue.items
+      .filter((item) => matches(item.summary.siteVisitId))
+      .map((item) => ({
+        label: `Inspection ${item.summary.assetCode}`,
+        status: item.status,
+        errorMessage: item.errorMessage,
+        needsAttention: item.needsAttention === true,
+      })),
+    ...queue.mutations
+      .filter((mutation) => mutationVisitReference(mutation).some(matches))
+      .map((mutation) => ({
+        label: mutation.sublabel ? `${mutation.label} · ${mutation.sublabel}` : mutation.label,
+        status: mutation.status,
+        errorMessage: mutation.errorMessage,
+        needsAttention: mutation.needsAttention === true,
+      })),
+  ];
+}
+
+/**
+ * Why a visit's queued completion hasn't reached the server yet, for Visit
+ * Detail: still waiting on other queued items of the visit (any of them refused
+ * by the server?), or the completion itself refused. Null = nothing queued.
+ */
+export function getVisitCompletionWait(snapshot: SyncQueueSnapshot, siteVisitId: string) {
+  const completion = snapshot.visitCompletions.find(
+    (item) => item.summary.siteVisitId === siteVisitId,
   );
-
-  if (inspectionBlocking) {
-    return true;
+  if (!completion) {
+    return null;
   }
 
-  return queue.mutations.some((mutation) =>
-    mutationVisitReference(mutation).some(
-      (id) => identity.has(id) || identity.has(resolveTempId(queue.tempIdMap, id)),
-    ),
-  );
+  const blockers = getVisitBlockingWork(snapshot, siteVisitId);
+  return {
+    completion,
+    blockers,
+    refusedBlocker: blockers.find((blocker) => blocker.needsAttention) ?? null,
+  };
 }
 
 /** Every id that denotes a given visit: the id itself + its resolved real id. */
@@ -1833,16 +1925,35 @@ async function persistPhotoUri(uri: string, photoId: string) {
  * Copy a capture URI into a durable directory so it survives OS cache eviction
  * before the queued upload runs. Returns the durable URI, or the original URI on
  * any failure (best-effort). No-ops if the URI already lives in that directory.
+ * `move` (only for a source in the app cache dir) moves instead of copying; a
+ * failed move falls back to a copy, so the photo is never lost.
  */
-async function persistUriToDir(uri: string, id: string, directory: string | null) {
+async function persistUriToDir(
+  uri: string,
+  id: string,
+  directory: string | null,
+  options?: { move?: boolean },
+) {
   if (!directory || uri.startsWith(directory)) {
     return uri;
   }
 
   const targetUri = `${directory}${sanitizeFilename(id)}.jpg`;
+  const canMove =
+    options?.move === true &&
+    !!FileSystem.cacheDirectory &&
+    uri.startsWith(FileSystem.cacheDirectory);
 
   try {
     await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    if (canMove) {
+      try {
+        await FileSystem.moveAsync({ from: uri, to: targetUri });
+        return targetUri;
+      } catch {
+        // fall through to a copy
+      }
+    }
     await FileSystem.copyAsync({
       from: uri,
       to: targetUri,

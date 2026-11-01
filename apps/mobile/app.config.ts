@@ -7,7 +7,7 @@ export default {
     scheme: 'ascure',
     // NOTE: the native build does NOT run expo prebuild — the REAL versionCode /
     // versionName live in android/app/build.gradle. Kept in sync here for docs.
-    version: '2.0.20',
+    version: '2.0.21',
     orientation: 'portrait',
     userInterfaceStyle: 'automatic',
     icon: './assets/brand/monogram.png',

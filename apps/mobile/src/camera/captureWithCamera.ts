@@ -20,13 +20,14 @@
 // call site surfaces exactly like it surfaced the old thrown errors.
 
 import type { StampContext } from './TimestampStamp';
+import { ensureStorageForCapture } from '../deviceStorage';
 
 export type CaptureMode = 'photo' | 'video';
 
 /**
- * Optional framing guide overlaid on the live camera. 'reading' draws an aim box
- * for the Smart Sensor LCD so the crew frames just the big reading (which is
- * then cropped + OCR'd, isolated from the temperature/buttons).
+ * Optional framing guide overlaid on the live camera. 'reading' = the Smart
+ * Sensor meter photo: a hint to keep the reading clear (the office reads it) and
+ * no defect-marking circle over the digits.
  */
 export type CaptureGuide = 'reading';
 
@@ -106,11 +107,7 @@ export function registerCameraCaptureHost(listener: HostListener): () => void {
   };
 }
 
-/**
- * Open the in-app camera and resolve with the captured photo/video, or `null`
- * if the user cancelled. Drop-in replacement for `ImagePicker.launchCameraAsync`.
- */
-export function captureWithCamera(options: {
+type CaptureOptions = {
   mode: CaptureMode;
   guide?: CaptureGuide;
   allowMark?: boolean;
@@ -118,7 +115,23 @@ export function captureWithCamera(options: {
   defaultMarkEnabled?: boolean;
   lockMarkCategory?: boolean;
   stamp?: StampContext;
-}): Promise<CaptureResult | null> {
+};
+
+/**
+ * Open the in-app camera and resolve with the captured photo/video, or `null`
+ * if the user cancelled. Drop-in replacement for `ImagePicker.launchCameraAsync`.
+ * Refuses to open on a nearly-full phone (a photo that can't be saved is lost
+ * work) and warns when space is getting low — see ensureStorageForCapture.
+ */
+export async function captureWithCamera(options: CaptureOptions): Promise<CaptureResult | null> {
+  if (pending) {
+    throw new Error('A camera capture is already in progress.');
+  }
+  await ensureStorageForCapture();
+  return openCamera(options);
+}
+
+function openCamera(options: CaptureOptions): Promise<CaptureResult | null> {
   if (pending) {
     return Promise.reject(
       new Error('A camera capture is already in progress.'),

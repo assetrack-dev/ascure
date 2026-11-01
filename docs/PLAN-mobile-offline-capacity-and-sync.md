@@ -1,7 +1,8 @@
 # PLAN — Offline capacity (SQLITE_FULL at ~80 poles) + stuck "Completion Queued" + remove OCR
 
-Status: **DRAFT for owner review, 2026-11-01.** Owner decided 2026-11-01 to **remove the
-Smart Sensor OCR from the phone** (Part C). Mobile-only (one APK) except the optional office view
+Status: **APPROVED + BUILT 2026-11-02** (Q1 warn < 1 GB / block < 300 MB, Q2 2-minute retry,
+Q3 office view: all as suggested). Owner decided 2026-11-01 to **remove the Smart Sensor OCR from
+the phone** (Part C). Mobile-only (one APK) except the optional office view
 in B5. Builds on `docs/PLAN-mobile-storage-hardening.md` and the fixes shipped in v2.0.16–v2.0.20.
 
 ## 1. The two field reports
@@ -77,7 +78,7 @@ raw captures. **Never "Clear data"**, which wipes the unsynced outbox.
 |---|---|---|
 | A1 | Delete the **raw capture** as soon as the stamped photo is saved (nothing else needs it once the OCR is gone, Part C); delete it on **Retake** and on cancel. | Removes ~2–5 MB per photo, the bulk of the usage |
 | A2 | Durable copy = **move** the stamped temp instead of copying it. | One 0.5 MB copy per photo instead of two |
-| A3 | Sweep also on **app resume** and after each pole save; include view-shot snapshot files; age threshold 12 h → **30 min** for files no outbox entry references. | Leftovers from crashes or old versions are freed the same day |
+| A3 | Sweep also on **app return to foreground** (throttled to every 30 min) with a **2 h** age floor for cache files (not 30 min: the defect and check-in screens can hold a photo in memory that long before saving, so stamped snapshot files are never swept mid-session). **Built 2026-11-02, plus:** a sweep of our own durable photo folders for copies **no outbox entry references and older than 48 h** (an abandoned form or a retaken photo left its copy behind for good). | Leftovers from crashes or old versions are freed the same day |
 | A4 | **Storage gauge** on Sync Queue: phone free space, photos waiting (count + MB), outbox items. **Warn** when free space < 1 GB; **block the camera** with a clear message below 300 MB. | Crews see it coming instead of hitting an error mid-pole |
 | A5 | Raise the database cap 64 → 128 MB (headroom only; costs nothing unless used). | Belt and braces; not the fix |
 
@@ -94,7 +95,7 @@ stamps and GPS.
 | B2 | **Show pole adds/edits** on Sync Queue (Pending / Failed, with the server's error and a per-item Retry). |
 | B3 | **Visit Detail says why:** *"Waiting for 3 items of this visit to sync"* (tap → Sync Queue), or *"Not accepted: <server message>"* + **Retry**. Never a bare "Completion Queued". |
 | B4 | **Stop hammering hopeless items:** a 4xx refusal (other than 408/429) stops automatic retries and shows **Needs attention** with the message. Manual Retry stays. Nothing is deleted from the phone. |
-| B5 | *(optional, web only, no APK)* **Office view:** "Unsynced on device: N, last seen <time>" per crew member on Teams / My team, so a stuck phone is spotted from the office. |
+| B5 | *(web only, no APK)* **Office view:** "N unsent on phone · <time>" under each person's Status on the **Users** page (admin: tenant, manager: own company), so a stuck phone is spotted from the office. |
 
 ### C. Remove the Smart Sensor OCR from the phone (owner decision 2026-11-01)
 

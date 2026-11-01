@@ -36,7 +36,7 @@ import {
 import { MarkOverlay, MARK_CATEGORY_COLORS } from './MarkOverlay';
 import { TimestampStamp } from './TimestampStamp';
 import { TiltOverlay } from './TiltOverlay';
-import { READING_AIM_BOX } from '../ocr';
+import { discardTempCapture } from '../deviceStorage';
 
 type ReviewPhoto = {
   uri: string;
@@ -453,6 +453,10 @@ export function CameraCaptureHost() {
     if (isRecording) {
       cameraRef.current?.stopRecording();
     }
+    // A photo snapped but never used is a full-size file nobody will read.
+    if (reviewPhoto) {
+      void discardTempCapture(reviewPhoto.uri);
+    }
     active?.resolve(null);
   }
 
@@ -519,6 +523,9 @@ export function CameraCaptureHost() {
   }
 
   function retakePhoto() {
+    if (reviewPhoto) {
+      void discardTempCapture(reviewPhoto.uri);
+    }
     setReviewPhoto(null);
   }
 
@@ -600,21 +607,6 @@ export function CameraCaptureHost() {
                   <View style={[styles.gridLineV, { left: '66.66%' }]} />
                   <View style={[styles.gridLineH, { top: '33.33%' }]} />
                   <View style={[styles.gridLineH, { top: '66.66%' }]} />
-                </View>
-              ) : null}
-              {guide === 'reading' && !tiltMode && frameSize.w > 0 ? (
-                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                  <View
-                    style={[
-                      styles.aimBox,
-                      {
-                        left: READING_AIM_BOX.x * frameSize.w,
-                        top: READING_AIM_BOX.y * frameSize.h,
-                        width: READING_AIM_BOX.w * frameSize.w,
-                        height: READING_AIM_BOX.h * frameSize.h,
-                      },
-                    ]}
-                  />
                 </View>
               ) : null}
               {markEnabled && !tiltMode ? (
@@ -886,11 +878,11 @@ export function CameraCaptureHost() {
               </View>
             ) : null}
 
-            {/* Smart Sensor aim guide (reading scan) */}
+            {/* Smart Sensor meter photo: the office reads it, so ask for a clear shot */}
             {guide === 'reading' && !tiltMode && !reticle?.locked ? (
               <View style={[styles.levelWrap, { top: insets.top + 54 }]}>
                 <Text style={[styles.levelPill, styles.guideHintPill]}>
-                  ⌖ Fit the big reading in the box · avoid glare
+                  ⌖ Make the reading clear and free of glare
                 </Text>
               </View>
             ) : null}
@@ -1214,16 +1206,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: 'rgba(245,158,11,0.9)',
-  },
-  // Smart Sensor reading aim box — the crew frames the big LCD number inside it;
-  // OCR crops to this same region (READING_AIM_BOX) to isolate it from the
-  // temperature + buttons. Blue to match the app's primary accent.
-  aimBox: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: '#2563EB',
-    borderRadius: 10,
-    backgroundColor: 'rgba(37,99,235,0.10)',
   },
   guideHintPill: {
     backgroundColor: 'rgba(37,99,235,0.92)',

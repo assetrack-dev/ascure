@@ -203,7 +203,7 @@ export function MaintenancePoleScreen() {
   };
 
   const kickSync = () => {
-    if (!isOffline) void runQueueSync().catch(() => undefined);
+    if (!isOffline) void runQueueSync({ automatic: true }).catch(() => undefined);
   };
 
   const takePhoto = async (item: OverlaidKejanggalan, stage: RepairStage) => {

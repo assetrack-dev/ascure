@@ -23,6 +23,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, ApiError, API_BASE_URL } from '../api';
 import { getPositionWithTimeout } from '../location';
+import { discardTempCapture } from '../deviceStorage';
 import { useSession } from '../context/AuthContext';
 import type { ImagePreviewParams, RootStackScreenProps } from '../navigation/types';
 import {
@@ -423,20 +424,26 @@ export function DefectDetailScreen() {
       const position = await getOptionalCurrentPosition();
       const latitude = position?.coords.latitude ?? null;
       const longitude = position?.coords.longitude ?? null;
-      const overlayImageUri = await createOverlayPhoto({
-        originalUri: capturedAsset.uri,
-        timestamp,
-        timestampLabel: formatPhotoTimestampLabel(capturedAt),
-        latitude,
-        longitude,
-        tiltLineAngle: capturedAsset.tiltLineAngle ?? null,
-        mark: capturedAsset.mark ?? null,
-        ...(await getOverlayCaptureSize(
-          capturedAsset.uri,
-          capturedAsset.width,
-          capturedAsset.height,
-        )),
-      });
+      let overlayImageUri: string;
+      try {
+        overlayImageUri = await createOverlayPhoto({
+          originalUri: capturedAsset.uri,
+          timestamp,
+          timestampLabel: formatPhotoTimestampLabel(capturedAt),
+          latitude,
+          longitude,
+          tiltLineAngle: capturedAsset.tiltLineAngle ?? null,
+          mark: capturedAsset.mark ?? null,
+          ...(await getOverlayCaptureSize(
+            capturedAsset.uri,
+            capturedAsset.width,
+            capturedAsset.height,
+          )),
+        });
+      } finally {
+        // The stamped copy is the evidence; the full-size raw only fed the stamp.
+        void discardTempCapture(capturedAsset.uri);
+      }
 
       setProofPhotos((current) => [
         ...current,
