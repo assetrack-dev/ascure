@@ -17,6 +17,7 @@ import type {
   DefectOperationsBoardSiteVisit,
   DefectRegistryLevel,
   DefectRegistryRollup,
+  DefectRegistryTotals,
   DefectResolutionOutcome,
   DefectSeverity,
   DefectSlaState,
@@ -1084,12 +1085,24 @@ export async function fetchDefectRegistryRollup(
   token: string,
   level: DefectRegistryLevel,
   parents: { regionId?: string; mainheadId?: string } = {},
+  category?: MaintenanceCategory,
 ): Promise<DefectRegistryRollup> {
   const params = new URLSearchParams({ level });
   if (parents.regionId) params.set("regionId", parents.regionId);
   if (parents.mainheadId) params.set("mainheadId", parents.mainheadId);
+  if (category) params.set("category", category);
   const payload = await apiRequest<unknown>(`/defects/registry?${params}`, { token });
   const record = asRecord(payload);
+  const readCounts = (source: ApiRecord | null): DefectRegistryTotals => ({
+    defectCount: readNumber(source, "defectCount") ?? 0,
+    openCount: readNumber(source, "openCount") ?? 0,
+    criticalCount: readNumber(source, "criticalCount") ?? 0,
+    emergencyCount: readNumber(source, "emergencyCount") ?? 0,
+    pencawangCount: readNumber(source, "pencawangCount") ?? 0,
+    openPencawangCount: readNumber(source, "openPencawangCount") ?? 0,
+    poleCount: readNumber(source, "poleCount") ?? 0,
+    openPoleCount: readNumber(source, "openPoleCount") ?? 0,
+  });
   const rawGroups = record && Array.isArray(record.groups) ? record.groups : [];
   const groups = rawGroups
     .map((group) => asRecord(group))
@@ -1097,24 +1110,16 @@ export async function fetchDefectRegistryRollup(
     .map((group) => ({
       id: readString(group, "id") ?? "",
       name: readString(group, "name") ?? "Unnamed",
-      defectCount: readNumber(group, "defectCount") ?? 0,
-      openCount: readNumber(group, "openCount") ?? 0,
-      criticalCount: readNumber(group, "criticalCount") ?? 0,
-      emergencyCount: readNumber(group, "emergencyCount") ?? 0,
-      pencawangCount: readNumber(group, "pencawangCount") ?? 0,
+      code: readString(group, "code") ?? null,
+      mainheadName: readString(group, "mainheadName") ?? null,
+      regionName: readString(group, "regionName") ?? null,
+      ...readCounts(group),
     }))
     .filter((group) => group.id);
-  const totalsRecord = nestedRecord(record, "totals");
   return {
     level,
     groups,
-    totals: {
-      defectCount: readNumber(totalsRecord, "defectCount") ?? 0,
-      openCount: readNumber(totalsRecord, "openCount") ?? 0,
-      criticalCount: readNumber(totalsRecord, "criticalCount") ?? 0,
-      emergencyCount: readNumber(totalsRecord, "emergencyCount") ?? 0,
-      pencawangCount: readNumber(totalsRecord, "pencawangCount") ?? 0,
-    },
+    totals: readCounts(nestedRecord(record, "totals")),
   };
 }
 

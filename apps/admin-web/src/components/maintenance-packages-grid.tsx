@@ -18,6 +18,7 @@ import {
   type SortState,
 } from "@/components/maintenance-packages-shared";
 import { Tbtn, tableCellClass, tableHeadCellClass, tableHeadClass, tableRowClass } from "@/components/ui";
+import { downloadCsv } from "@/lib/csv";
 import type {
   MaintenanceCategory,
   MaintenancePackageBoard,
@@ -569,7 +570,7 @@ export function downloadGridCsv(
   }
   header.push("Total closed", "Total", "% closed");
 
-  const lines = [header];
+  const lines: Array<Array<string | number>> = [header];
   for (const row of rows) {
     const line: Array<string | number> = [
       row.pencawangName ?? "",
@@ -589,20 +590,8 @@ export function downloadGridCsv(
     }
     const total = rowProgress(row, categories, board);
     line.push(total.closed, total.total, total.pct);
-    lines.push(line.map(String));
+    lines.push(line);
   }
 
-  const csv = lines
-    .map((line) => line.map((value) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)).join(","))
-    .join("\r\n");
-  // BOM so Excel reads the UTF-8 names correctly.
-  const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `pencawang-progress-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadCsv(`pencawang-progress-${new Date().toISOString().slice(0, 10)}.csv`, lines);
 }

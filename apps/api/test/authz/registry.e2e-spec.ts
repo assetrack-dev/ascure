@@ -89,7 +89,53 @@ describe('Authz · registry drill-down feeds (assets + defects)', () => {
       );
       expect(res.status).toBe(200);
       expect(res.body.totals.defectCount).toBeGreaterThan(0);
+      expect(res.body.totals.poleCount).toBeGreaterThan(0);
+      expect(res.body.totals.poleCount).toBeLessThanOrEqual(
+        res.body.totals.defectCount,
+      );
+      expect(res.body.totals.openPoleCount).toBeLessThanOrEqual(
+        res.body.totals.poleCount,
+      );
     });
+
+    it('work-type rollups partition the full rollup (untagged = Selenggaraan)', async () => {
+      const levels = ['', 'RENTIS', 'CAT_TIANG', 'SELENGGARAAN'];
+      const [all, ...byType] = await Promise.all(
+        levels.map((category) =>
+          http(app, token.adminT1).get(
+            `/api/v1/defects/registry?level=region${category ? `&category=${category}` : ''}`,
+          ),
+        ),
+      );
+      for (const res of [all, ...byType]) {
+        expect(res.status).toBe(200);
+      }
+      const sum = (key: string) =>
+        byType.reduce((total, res) => total + res.body.totals[key], 0);
+      expect(sum('defectCount')).toBe(all.body.totals.defectCount);
+      expect(sum('openCount')).toBe(all.body.totals.openCount);
+    });
+
+    it('a parent-less pencawang level lists every Pencawang (the summary download)', async () => {
+      const [regionRes, pencawangRes] = await Promise.all(
+        ['region', 'pencawang'].map((level) =>
+          http(app, token.adminT1).get(`/api/v1/defects/registry?level=${level}`),
+        ),
+      );
+      expect(pencawangRes.status).toBe(200);
+      expect(pencawangRes.body.totals).toEqual(regionRes.body.totals);
+      expect(pencawangRes.body.groups.length).toBe(regionRes.body.totals.pencawangCount);
+      for (const group of pencawangRes.body.groups) {
+        expect(group).toHaveProperty('code');
+        expect(group).toHaveProperty('mainheadName');
+        expect(group).toHaveProperty('regionName');
+      }
+    });
+
+    it('rejects an unknown work type (400)', () =>
+      http(app, token.adminT1)
+        .get('/api/v1/defects/registry?level=region&category=PAINTING')
+        .expect(400));
 
     it('leaf lists only company A defects for techA', async () => {
       const res = await http(app, token.techA).get(
