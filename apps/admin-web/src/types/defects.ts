@@ -132,20 +132,25 @@ export type DefectRegistryLevel = "region" | "mainhead" | "pencawang";
 export interface DefectRegistryGroup {
   id: string;
   name: string;
+  /** Pencawang-level rows only: where the Pencawang sits in the hierarchy. */
+  code?: string | null;
+  mainheadName?: string | null;
+  regionName?: string | null;
   defectCount: number;
   openCount: number;
   criticalCount: number;
   emergencyCount: number;
   pencawangCount: number;
+  /** Pencawang / poles with at least one still-open defect. */
+  openPencawangCount: number;
+  poleCount: number;
+  openPoleCount: number;
 }
 
-export interface DefectRegistryTotals {
-  defectCount: number;
-  openCount: number;
-  criticalCount: number;
-  emergencyCount: number;
-  pencawangCount: number;
-}
+export type DefectRegistryTotals = Omit<
+  DefectRegistryGroup,
+  "id" | "name" | "code" | "mainheadName" | "regionName"
+>;
 
 export interface DefectRegistryRollup {
   level: DefectRegistryLevel;

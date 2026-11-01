@@ -668,7 +668,9 @@ export class DefectsService {
     query: DefectRegistryQueryDto,
   ) {
     const parentFilter: Prisma.DefectWhereInput[] = [];
-    if (level === 'mainhead' && query.regionId) {
+    // The pencawang level also honours regionId, so the summary download can
+    // list a whole Region's Pencawang in one call (no mainheadId = all of them).
+    if ((level === 'mainhead' || level === 'pencawang') && query.regionId) {
       parentFilter.push({
         inspectionItemResult: {
           inspection: {
@@ -701,6 +703,18 @@ export class DefectsService {
         },
       });
     }
+    if (query.category) {
+      parentFilter.push(
+        query.category === MaintenanceCategory.SELENGGARAAN
+          ? {
+              OR: [
+                { maintenanceCategory: MaintenanceCategory.SELENGGARAAN },
+                { maintenanceCategory: null },
+              ],
+            }
+          : { maintenanceCategory: query.category },
+      );
+    }
 
     const rows = await this.prisma.defect.findMany({
       where: { AND: [scope, ...parentFilter] },
@@ -711,24 +725,24 @@ export class DefectsService {
         inspectionItemResult: {
           select: {
             inspection: {
-              select: { asset: { select: { substationId: true } } },
+              select: { asset: { select: { id: true, substationId: true } } },
             },
           },
         },
       },
     });
+    const emptyTotals = {
+      defectCount: 0,
+      openCount: 0,
+      criticalCount: 0,
+      emergencyCount: 0,
+      pencawangCount: 0,
+      openPencawangCount: 0,
+      poleCount: 0,
+      openPoleCount: 0,
+    };
     if (rows.length === 0) {
-      return {
-        level,
-        groups: [],
-        totals: {
-          defectCount: 0,
-          openCount: 0,
-          criticalCount: 0,
-          emergencyCount: 0,
-          pencawangCount: 0,
-        },
-      };
+      return { level, groups: [], totals: emptyTotals };
     }
 
     const substationIds = [
@@ -763,10 +777,13 @@ export class DefectsService {
       criticalCount: number;
       emergencyCount: number;
       pencawangIds: Set<string>;
+      openPencawangIds: Set<string>;
+      poleIds: Set<string>;
+      openPoleIds: Set<string>;
     };
     const buckets = new Map<string, Bucket>();
     for (const row of rows) {
-      const substationId = row.inspectionItemResult.inspection.asset.substationId;
+      const { id: poleId, substationId } = row.inspectionItemResult.inspection.asset;
       const meta = subMeta.get(substationId);
       const key =
         level === 'pencawang'
@@ -792,13 +809,19 @@ export class DefectsService {
             criticalCount: 0,
             emergencyCount: 0,
             pencawangIds: new Set(),
+            openPencawangIds: new Set(),
+            poleIds: new Set(),
+            openPoleIds: new Set(),
           }),
         );
       }
       bucket.defectCount += 1;
       bucket.pencawangIds.add(substationId);
+      bucket.poleIds.add(poleId);
       if (openStatuses.has(row.status)) {
         bucket.openCount += 1;
+        bucket.openPencawangIds.add(substationId);
+        bucket.openPoleIds.add(poleId);
         if (row.severity === DefectSeverity.CRITICAL) {
           bucket.criticalCount += 1;
         }
@@ -812,11 +835,28 @@ export class DefectsService {
       .map((b) => ({
         id: b.id,
         name: b.name,
+        // Pencawang rows carry their place in the hierarchy, so a Region-wide
+        // listing (the summary download) still reads without the drill path.
+        ...(level === 'pencawang'
+          ? (() => {
+              const meta = subMeta.get(b.id);
+              return {
+                code: meta?.code ?? null,
+                mainheadName: meta?.mainhead?.name ?? null,
+                regionName: meta?.mainhead?.operationalRegion?.name ?? null,
+              };
+            })()
+          : {}),
         defectCount: b.defectCount,
         openCount: b.openCount,
         criticalCount: b.criticalCount,
         emergencyCount: b.emergencyCount,
         pencawangCount: b.pencawangIds.size,
+        openPencawangCount: b.openPencawangIds.size,
+        // A pole's defects all share its Pencawang, so poles never straddle
+        // buckets and the per-group sizes below sum safely into the totals.
+        poleCount: b.poleIds.size,
+        openPoleCount: b.openPoleIds.size,
       }))
       .sort((a, b) =>
         a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' }),
@@ -832,14 +872,11 @@ export class DefectsService {
           criticalCount: totals.criticalCount + group.criticalCount,
           emergencyCount: totals.emergencyCount + group.emergencyCount,
           pencawangCount: totals.pencawangCount + group.pencawangCount,
+          openPencawangCount: totals.openPencawangCount + group.openPencawangCount,
+          poleCount: totals.poleCount + group.poleCount,
+          openPoleCount: totals.openPoleCount + group.openPoleCount,
         }),
-        {
-          defectCount: 0,
-          openCount: 0,
-          criticalCount: 0,
-          emergencyCount: 0,
-          pencawangCount: 0,
-        },
+        emptyTotals,
       ),
     };
   }

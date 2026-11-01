@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronRight,
+  Download,
   Loader2,
   MapPin,
   RefreshCw,
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { clearStoredSession, readStoredSession } from "@/lib/auth";
+import { downloadCsv } from "@/lib/csv";
 import {
   fetchDefectRegistryDefects,
   fetchDefectRegistryRollup,
@@ -71,7 +73,7 @@ const SEVERITY_OPTIONS: Array<{ label: string; value: SeverityFilter }> = [
   { label: "Low", value: "LOW" },
 ];
 const MAINTENANCE_CATEGORY_OPTIONS: Array<{ label: string; value: CategoryFilter }> = [
-  { label: "All categories", value: "ALL" },
+  { label: "All work types", value: "ALL" },
   { label: "Rentis", value: "RENTIS" },
   { label: "Cat Tiang", value: "CAT_TIANG" },
   { label: "Selenggaraan", value: "SELENGGARAAN" },
@@ -338,6 +340,18 @@ function CategoryChip({ category }: { category: MaintenanceCategory }) {
   return <Chip tone="info">{formatCategory(category)}</Chip>;
 }
 
+/** A rollup count with how many of them still carry an open defect. */
+function CountWithOpen({ total, open }: { total: number; open: number }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span>{total}</span>
+      {open > 0 ? (
+        <span className="text-[11px] text-[var(--critical-text)]">{open} open</span>
+      ) : null}
+    </span>
+  );
+}
+
 function SeverityBadge({ severity }: { severity: DefectSeverity | null }) {
   return <Chip tone={severityTone(severity)}>{formatSeverity(severity)}</Chip>;
 }
@@ -408,6 +422,8 @@ function DefectsContent() {
   const [expandedPoles, setExpandedPoles] = useState<Set<string>>(new Set());
   const [expandedPencawang, setExpandedPencawang] = useState<Set<string>>(new Set());
   const [groupPage, setGroupPage] = useState(1);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
   const handleLogout = useCallback(() => {
     clearStoredSession();
@@ -417,7 +433,7 @@ function DefectsContent() {
   // Load whatever the current drill position needs: rollup counts for a group
   // view, or the one drilled Pencawang's defects. Nothing tenant-wide, ever.
   const loadView = useCallback(
-    async (token: string, current: DrillState) => {
+    async (token: string, current: DrillState, category: CategoryFilter) => {
       setIsLoading(true);
       setError("");
 
@@ -432,12 +448,20 @@ function DefectsContent() {
         }
 
         const level = listedLevel(current);
-        const rollup = await fetchDefectRegistryRollup(token, level, {
-          regionId: current.regionId ?? undefined,
-          mainheadId: current.mainheadId ?? undefined,
-        });
+        const rollup = await fetchDefectRegistryRollup(
+          token,
+          level,
+          {
+            regionId: current.regionId ?? undefined,
+            mainheadId: current.mainheadId ?? undefined,
+          },
+          category === "ALL" ? undefined : category,
+        );
 
-        if (level === "region" && rollup.groups.length === 1) {
+        // Only the unfiltered tenant shape may auto-skip: a work type can thin
+        // the regions to one, and skipping then would strand the user in that
+        // region once the filter is cleared.
+        if (level === "region" && category === "ALL" && rollup.groups.length === 1) {
           setRegionAutoSkipped(true);
           setDrill((previous) => ({
             ...previous,
@@ -471,11 +495,15 @@ function DefectsContent() {
     setSession(storedSession);
   }, []);
 
+  // The leaf filters its own rows locally, so only a group view refetches when
+  // the work type changes.
+  const rollupCategory: CategoryFilter = drill.pencawangId ? "ALL" : categoryFilter;
+
   useEffect(() => {
     if (session?.token) {
-      void loadView(session.token, drill);
+      void loadView(session.token, drill, rollupCategory);
     }
-  }, [session?.token, drill, loadView]);
+  }, [session?.token, drill, rollupCategory, loadView]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -725,12 +753,16 @@ function DefectsContent() {
     });
   }
 
-  function resetFilters() {
+  // The work type is the drill's own lens (it shapes every level's counts), so
+  // moving between levels keeps it; only the explicit Reset clears it.
+  function resetFilters({ keepCategory = false } = {}) {
     setSearch("");
     setSeverityFilter("ALL");
     setStatusFilter("ALL");
     setAssignedUserFilter("ALL");
-    setCategoryFilter("ALL");
+    if (!keepCategory) {
+      setCategoryFilter("ALL");
+    }
     setOverdueOnly(false);
     setStartDate("");
     setEndDate("");
@@ -738,7 +770,7 @@ function DefectsContent() {
 
   function drillInto(group: DefectRegistryGroup) {
     setGlobalSearch("");
-    resetFilters();
+    resetFilters({ keepCategory: true });
     if (listLevel === "region") {
       setDrill((previous) => ({
         ...previous,
@@ -763,7 +795,7 @@ function DefectsContent() {
   }
 
   function drillUpTo(level: "root" | "region" | "mainhead") {
-    resetFilters();
+    resetFilters({ keepCategory: true });
     setGlobalSearch("");
     if (level === "root") {
       setDrill(EMPTY_DRILL);
@@ -784,6 +816,96 @@ function DefectsContent() {
       pencawangId: null,
       pencawangName: null,
     }));
+  }
+
+  // One row per Pencawang under the current drill position (all of them at the
+  // top), counted for the chosen work type — the "which PE has how much" sheet.
+  async function downloadPencawangSummary() {
+    if (!session?.token) {
+      return;
+    }
+    setIsDownloading(true);
+    setDownloadError("");
+    try {
+      const category = categoryFilter === "ALL" ? undefined : categoryFilter;
+      const rollup = await fetchDefectRegistryRollup(
+        session.token,
+        "pencawang",
+        {
+          regionId: drill.regionId ?? undefined,
+          mainheadId: drill.mainheadId ?? undefined,
+        },
+        category,
+      );
+      const qtyLabel = category ? formatCategory(category) : "Defect";
+      const byPlace = (group: DefectRegistryGroup) =>
+        [group.regionName ?? "Unassigned", group.mainheadName ?? "Unassigned", group.name];
+      const rows = [...rollup.groups].sort((left, right) => {
+        const [a, b] = [byPlace(left), byPlace(right)];
+        for (let index = 0; index < a.length; index += 1) {
+          const order = a[index].localeCompare(b[index], "en", {
+            numeric: true,
+            sensitivity: "base",
+          });
+          if (order !== 0) {
+            return order;
+          }
+        }
+        return 0;
+      });
+      const totals = rollup.totals;
+      const lines: Array<Array<string | number>> = [
+        [
+          "Region",
+          "Mainhead",
+          "Pencawang",
+          "Pencawang code",
+          "Poles",
+          "Poles open",
+          "Poles closed",
+          `${qtyLabel} qty`,
+          "Open",
+          "Closed",
+        ],
+        ...rows.map((group) => [
+          ...byPlace(group),
+          group.code ?? "",
+          group.poleCount,
+          group.openPoleCount,
+          group.poleCount - group.openPoleCount,
+          group.defectCount,
+          group.openCount,
+          group.defectCount - group.openCount,
+        ]),
+        [
+          "TOTAL",
+          "",
+          `${rows.length} Pencawang`,
+          "",
+          totals.poleCount,
+          totals.openPoleCount,
+          totals.poleCount - totals.openPoleCount,
+          totals.defectCount,
+          totals.openCount,
+          totals.defectCount - totals.openCount,
+        ],
+      ];
+      const typeSlug = category ? category.toLowerCase().replace("_", "-") : "all-work-types";
+      downloadCsv(
+        `pencawang-${typeSlug}-summary-${new Date().toISOString().slice(0, 10)}.csv`,
+        lines,
+      );
+    } catch (summaryError) {
+      if (summaryError instanceof ApiError && summaryError.status === 401) {
+        handleLogout();
+        return;
+      }
+      setDownloadError(
+        summaryError instanceof Error ? summaryError.message : "Unable to build the summary.",
+      );
+    } finally {
+      setIsDownloading(false);
+    }
   }
 
   function openDefect(defectId: string) {
@@ -835,7 +957,14 @@ function DefectsContent() {
                 </Chip>
                 {mode === "groups" && totals ? (
                   <>
-                    <Chip tone="neutral">{totals.defectCount} in scope</Chip>
+                    {categoryFilter !== "ALL" ? (
+                      <Chip tone="info">{formatCategory(categoryFilter)} only</Chip>
+                    ) : null}
+                    <Chip tone="neutral">
+                      {totals.poleCount} pole{totals.poleCount === 1 ? "" : "s"} ·{" "}
+                      {totals.pencawangCount} Pencawang
+                    </Chip>
+                    <Chip tone="neutral">{totals.defectCount} defects</Chip>
                     <Chip tone={totals.openCount > 0 ? "critical" : "success"}>
                       {totals.openCount} open
                     </Chip>
@@ -865,7 +994,9 @@ function DefectsContent() {
             }
             actions={
               <Tbtn
-                onClick={() => (session?.token ? loadView(session.token, drill) : undefined)}
+                onClick={() =>
+                  session?.token ? loadView(session.token, drill, rollupCategory) : undefined
+                }
                 disabled={isLoading || !session?.token}
               >
                 <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
@@ -911,6 +1042,33 @@ function DefectsContent() {
                       placeholder="Find a pole's defects anywhere (code or old number)…"
                       aria-label="Search all defects by pole"
                     />
+                    <select
+                      aria-label="Work type"
+                      value={categoryFilter}
+                      onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}
+                      className={filterSelectClass}
+                    >
+                      {MAINTENANCE_CATEGORY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {mode === "groups" ? (
+                      <Tbtn
+                        onClick={() => void downloadPencawangSummary()}
+                        disabled={isDownloading || groups.length === 0}
+                        title="One row per Pencawang here: qty, open and closed for the chosen work type"
+                      >
+                        {isDownloading ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <Download size={16} />
+                        )}
+                        Pencawang summary
+                      </Tbtn>
+                    ) : null}
+                    {downloadError ? <Chip tone="critical">{downloadError}</Chip> : null}
                     {isSearching ? (
                       <Chip tone="neutral">
                         <Loader2 size={13} className="animate-spin" />
@@ -948,6 +1106,7 @@ function DefectsContent() {
                               Pencawang
                             </th>
                           ) : null}
+                          <th className={`${tableHeadCellClass} whitespace-nowrap`}>Poles</th>
                           <th className={`${tableHeadCellClass} whitespace-nowrap`}>Defects</th>
                           <th className={`${tableHeadCellClass} whitespace-nowrap`}>Open</th>
                           <th className={`${tableHeadCellClass} whitespace-nowrap`}>Critical</th>
@@ -975,9 +1134,15 @@ function DefectsContent() {
                             </td>
                             {listLevel !== "pencawang" ? (
                               <td className={`${tableMonoCellClass} whitespace-nowrap`}>
-                                {group.pencawangCount}
+                                <CountWithOpen
+                                  total={group.pencawangCount}
+                                  open={group.openPencawangCount}
+                                />
                               </td>
                             ) : null}
+                            <td className={`${tableMonoCellClass} whitespace-nowrap`}>
+                              <CountWithOpen total={group.poleCount} open={group.openPoleCount} />
+                            </td>
                             <td className={`${tableMonoCellClass} whitespace-nowrap`}>
                               {group.defectCount}
                             </td>
@@ -1015,7 +1180,9 @@ function DefectsContent() {
                           <MapPin size={20} />
                         </div>
                         <p className="mt-4 text-[13px] font-semibold text-[var(--foreground)]">
-                          No defects in your scope
+                          {categoryFilter === "ALL"
+                            ? "No defects in your scope"
+                            : `No ${formatCategory(categoryFilter)} defects in your scope`}
                         </p>
                       </div>
                     ) : null}
@@ -1131,7 +1298,7 @@ function DefectsContent() {
                       Overdue only
                     </label>
 
-                    <Tbtn variant="ghost" onClick={resetFilters}>
+                    <Tbtn variant="ghost" onClick={() => resetFilters()}>
                       <X size={16} />
                       Reset
                     </Tbtn>

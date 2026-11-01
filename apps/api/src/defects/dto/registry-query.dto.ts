@@ -1,4 +1,5 @@
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { MaintenanceCategory } from '@prisma/client';
+import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export type DefectRegistryLevel = 'region' | 'mainhead' | 'pencawang' | 'defects';
 
@@ -37,4 +38,10 @@ export class DefectRegistryQueryDto {
   @IsString()
   @MaxLength(120)
   search?: string;
+
+  /** Rollup levels: count only defects of this work type (SELENGGARAAN also
+   *  takes untagged defects, matching the workspace lanes). */
+  @IsOptional()
+  @IsEnum(MaintenanceCategory)
+  category?: MaintenanceCategory;
 }
