@@ -1328,6 +1328,10 @@ export class UsersService {
       clientRank: true,
       isActive: true,
       mustChangePassword: true,
+      // The field app's last "still unsent on this phone" report (ADR 0002 §4
+      // heartbeat) — lets the office spot a phone whose work never synced.
+      syncPendingCount: true,
+      syncReportedAt: true,
       createdAt: true,
       updatedAt: true,
       department: {
