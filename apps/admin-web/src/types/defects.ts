@@ -133,7 +133,7 @@ export interface DefectRegistryGroup {
   id: string;
   name: string;
   /** Pencawang-level rows only: where the Pencawang sits in the hierarchy. */
-  code?: string | null;
+  functionalLocation?: string | null;
   mainheadName?: string | null;
   regionName?: string | null;
   defectCount: number;
@@ -149,7 +149,7 @@ export interface DefectRegistryGroup {
 
 export type DefectRegistryTotals = Omit<
   DefectRegistryGroup,
-  "id" | "name" | "code" | "mainheadName" | "regionName"
+  "id" | "name" | "functionalLocation" | "mainheadName" | "regionName"
 >;
 
 export interface DefectRegistryRollup {

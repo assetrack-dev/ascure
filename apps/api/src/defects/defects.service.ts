@@ -756,6 +756,9 @@ export class DefectsService {
         id: true,
         code: true,
         name: true,
+        // "Functional Location" = TNB's own ID for the Pencawang (e.g.
+        // CKTN/PCE/J01502), the one the summary download lists.
+        location: true,
         mainheadId: true,
         mainhead: {
           select: {
@@ -841,7 +844,7 @@ export class DefectsService {
           ? (() => {
               const meta = subMeta.get(b.id);
               return {
-                code: meta?.code ?? null,
+                functionalLocation: meta?.location ?? null,
                 mainheadName: meta?.mainhead?.name ?? null,
                 regionName: meta?.mainhead?.operationalRegion?.name ?? null,
               };

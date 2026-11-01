@@ -126,7 +126,7 @@ describe('Authz · registry drill-down feeds (assets + defects)', () => {
       expect(pencawangRes.body.totals).toEqual(regionRes.body.totals);
       expect(pencawangRes.body.groups.length).toBe(regionRes.body.totals.pencawangCount);
       for (const group of pencawangRes.body.groups) {
-        expect(group).toHaveProperty('code');
+        expect(group).toHaveProperty('functionalLocation');
         expect(group).toHaveProperty('mainheadName');
         expect(group).toHaveProperty('regionName');
       }

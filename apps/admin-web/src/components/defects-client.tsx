@@ -859,7 +859,7 @@ function DefectsContent() {
           "Region",
           "Mainhead",
           "Pencawang",
-          "Pencawang code",
+          "Functional Location",
           "Poles",
           "Poles open",
           "Poles closed",
@@ -869,7 +869,7 @@ function DefectsContent() {
         ],
         ...rows.map((group) => [
           ...byPlace(group),
-          group.code ?? "",
+          group.functionalLocation ?? "",
           group.poleCount,
           group.openPoleCount,
           group.poleCount - group.openPoleCount,
