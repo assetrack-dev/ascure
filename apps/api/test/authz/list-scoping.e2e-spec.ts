@@ -41,6 +41,24 @@ describe('Authz · management list scoping (manager = own company only)', () => 
       expect(body).toContain(IDS.user.techA);
       expect(body).toContain(IDS.user.techB);
     });
+
+    it("shows each phone's last unsent-items report to its manager", async () => {
+      const techToken = await login(app, EMAILS.techA);
+      await http(app, techToken)
+        .post('/api/v1/sync/heartbeat')
+        .send({ pendingMutationCount: 3 })
+        .expect((res) => expect(res.status).toBeLessThan(300));
+
+      const res = await http(app, token.mgrA).get('/api/v1/users');
+      expect(res.status).toBe(200);
+      const techA = (res.body as Array<{ id: string; syncPendingCount: number; syncReportedAt: string | null }>)
+        .find((row) => row.id === IDS.user.techA);
+      expect(techA?.syncPendingCount).toBe(3);
+      expect(techA?.syncReportedAt).toBeTruthy();
+
+      // Back to 0 — a non-zero count gates team reassignment in other suites.
+      await http(app, techToken).post('/api/v1/sync/heartbeat').send({ pendingMutationCount: 0 });
+    });
   });
 
   describe('GET /teams', () => {

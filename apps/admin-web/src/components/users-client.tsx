@@ -299,6 +299,33 @@ function StatusBadge({ isActive }: { isActive: boolean }) {
   );
 }
 
+/**
+ * What the user's phone last said it still holds unsent (the field app reports
+ * it whenever its outbox changes while online). A non-zero count that stays
+ * put for hours means work stuck on that phone — ask them to tap Retry Sync.
+ */
+function UnsentOnPhone({ user }: { user: ManagedUser }) {
+  const pending = user.syncPendingCount ?? 0;
+  if (pending <= 0 || !user.syncReportedAt) {
+    return null;
+  }
+  const reported = new Date(user.syncReportedAt);
+  const label = reported.toLocaleString("en-MY", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return (
+    <div
+      className="mt-1 text-[11.5px] font-semibold text-[var(--warning-text)]"
+      title="Items the field app still had waiting to sync on this phone at its last report"
+    >
+      {pending} unsent on phone · {label}
+    </div>
+  );
+}
+
 function RoleBadge({ role }: { role: UserRole }) {
   return <Chip tone={roleTone(role)}>{roleLabel(role)}</Chip>;
 }
@@ -1566,6 +1593,7 @@ function UsersContent() {
                             </td>
                             <td className={`${tableCellClass} whitespace-nowrap`}>
                               <StatusBadge isActive={user.isActive} />
+                              <UnsentOnPhone user={user} />
                             </td>
                             <td className={tableCellClass}>
                               <div className="flex flex-wrap justify-end gap-2">

@@ -90,6 +90,9 @@ export interface ManagedUser {
   clientRank?: ClientRank | null;
   isActive: boolean;
   mustChangePassword?: boolean;
+  /** Items the field app last reported as still unsent on the phone, and when. */
+  syncPendingCount?: number;
+  syncReportedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   department: UserDepartment | null;
