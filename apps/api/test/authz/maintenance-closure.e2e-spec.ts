@@ -185,7 +185,7 @@ describe('Authz · maintenance closure (verify / reject / re-open / cannot-repai
         canDecideCannotRepair: false,
         canReopen: false,
       });
-      expect(res.body.counts).toEqual({ pending: 3, cannotRepair: 2 });
+      expect(res.body.counts).toEqual({ pending: 3, cannotRepair: 2, returned: 0 });
       const ids = res.body.items.map((item: { id: string }) => item.id);
       expect(ids).toEqual(
         expect.arrayContaining([defectId('bySub'), defectId('reject'), defectId('legacy')]),

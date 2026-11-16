@@ -609,3 +609,24 @@ Ships as Deploy 213 (API + web + 1 additive migration) first, then APK v2.0.20 (
 8. Field crew read-only view (web). **✅ Built 2026-10-20 (dev, uncommitted):** `GET /teams/mine` (`teams/my-team.service.ts`, own active teams only, any role): teams + teammates + supervisors, poles inspected today / 7 days (team + mine, Malaysia days), the team's open surveys (DALAM RONDAAN / PERLU PINDAAN, DC amendment remark first), and — technicians only — their routed Kejanggalan by status. Web `/my-team` ("My team") = the field crew's home; menu My team · Surveys · My tasks (technicians) · Map. e2e `my-team.e2e-spec.ts`.
 
 No migration expected for steps 1–8; no APK.
+
+## 22. Returned repairs on Repair Verification (TNB ask, owner-approved 2026-11-16)
+
+**Problem.** When TNB sends a repair back (reject) or re-opens a closed one, the Kejanggalan goes back to
+`IN_PROGRESS`. The verification tabs only list submitted or closed work, so it dropped off TNB's page and
+could not be followed up. Nothing on the Defect row marks a return; the record is the timeline entry
+(`STATUS_CHANGED`, from COMPLETED / VERIFICATION_PENDING / CLOSED → IN_PROGRESS, comment
+"Repair rejected by …: <reason>" / "Re-opened by …: <reason>").
+
+**Built (API + admin, no migration, no APK):**
+- `repair-returns.util.ts`: the return-event rule (Prisma + SQL twins), reason parsing (shared with My tasks),
+  `returnStateOf`, `summarizeReturns`.
+- `GET /maintenance-verification[/groups]?tab=RETURNED&returnedState=WITH_CONTRACTOR|RESUBMITTED|CLOSED|ALL`
+  (default WITH_CONTRACTOR, owner D6). Same scope as the other tabs. Groups date column = latest return;
+  the date filter = returned at least once in the range. Oldest return first; newest first on CLOSED / ALL.
+- Every queue item now carries `lastReturn {at, by, reason, kind SENT_BACK|REOPENED, count}`,
+  `returnState`, `team`, `photosSinceReturn`; responses add `counts.returned` (badge = still with the
+  contractor) and `returnedStates` (chip counts).
+- Admin: "Returned (n)" tab + state chips; a return banner on every card (also on Awaiting verification, so
+  a re-submitted repair shows the earlier reason). Verify / Send back only on submitted items.
+- Tests: `test/unit/repair-returns.unit-spec.ts`, `test/authz/maintenance-returned.e2e-spec.ts`.
