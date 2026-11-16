@@ -37,11 +37,14 @@ longest, flagged count, gap count + gap length.
 2. **SAVT route list export**: `JUMLAH PANJANG (m)`, `BIL SPAN`, `SPAN TERPANJANG (m)`
    (with the No. Tiang pair), `SPAN DITANDA`, `JURANG No. Tiang (m)`.
 3. **Reports page, SAVT tab**: each route row shows "· 1.65 km · 4 to check".
-4. **SAVT site-visit page → "Route spans" card**: totals, a sketch of the route
-   drawn from the poles' GPS (lines coloured by flag; no base map), and a table of
-   spans (From → To No. Tiang, metres, KELEGAAN on the TO pole, check note),
-   defaulting to "To check". API: `GET /site-visits/:id/savt-spans` (same visibility
-   as the visit).
+4. **SAVT site-visit page → "Route spans" card**: totals, a satellite Google map of
+   THIS route only (spans as lines coloured by flag; metre labels on flagged spans,
+   on every span from zoom 18; click a span → its table row), and a table of spans
+   (From → To No. Tiang, metres, KELEGAAN on the TO pole, check note) with a
+   "Find No. Tiang" search (exact No. Tiang picks that span and zooms the map),
+   defaulting to "To check". Falls back to a GPS sketch if the Maps key is missing
+   or the map fails. The main Asset Map is unchanged. API: `GET
+   /site-visits/:id/savt-spans` (same visibility as the visit).
 
 ## Route key fix (folded in)
 KOD TIANG is not unique — TK, KC, PBA, PUL, FLS1 each name two lines with
