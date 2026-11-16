@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
+import { SavtRouteSpansPanel } from "@/components/savt-route-spans-panel";
 import {
   Card,
   CardHead,
@@ -3100,6 +3101,10 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                 ) : null}
 
                 {cycleDelta ? <CycleDeltaPanel delta={cycleDelta} /> : null}
+
+                {visit.surveyScope === "SAVT" ? (
+                  <SavtRouteSpansPanel token={session?.token ?? null} siteVisitId={visit.id} />
+                ) : null}
 
                 <div className="grid gap-6">
                   {/* min-w-0: a grid item's default min-width:auto refuses to

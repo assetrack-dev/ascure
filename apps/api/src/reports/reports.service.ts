@@ -46,6 +46,18 @@ import {
   type MasterlistRow,
 } from './savr-masterlist';
 import { SURVEY_ITEM_RESULT_WHERE } from '../common/survey-item-results';
+import {
+  parseSavtRouteKey,
+  savtRouteKey,
+  savtSpanFlagText,
+  type SavtSpan,
+  type SavtSpanSummary,
+} from '../common/savt-spans';
+import {
+  loadSavtFeederSpans,
+  savtFeederLookupKey,
+  savtFeederOwnerOf,
+} from '../common/savt-spans.loader';
 
 const UPLOADS_URL_PREFIX = '/uploads';
 
@@ -2841,6 +2853,8 @@ export class ReportsService {
         // Presence only — enough to know the visit carries a compiled report.
         reports: { select: { id: true }, take: 1 },
         routeCode: true,
+        substationId: true,
+        fromPencawangId: true,
         functionalLocation: true,
         pencawangName: true,
         pencawangCode: true,
@@ -2862,32 +2876,50 @@ export class ReportsService {
     });
 
     // Inspected-pole counts per route (distinct assets whose inspection's visit
-    // carries the route code) — a route can be re-surveyed across cycles.
+    // carries the route) — a route can be re-surveyed across cycles. A route is
+    // keyed by its From Pencawang + KOD TIANG: the code alone is NOT unique.
     const poleRows = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
         siteVisit: { operationalScope: OperationalScope.SAVT, routeCode: { not: null } },
       },
-      select: { assetId: true, siteVisit: { select: { routeCode: true } } },
+      select: {
+        assetId: true,
+        siteVisit: {
+          select: { routeCode: true, fromPencawangId: true, substationId: true },
+        },
+      },
     });
     const polesByRoute = new Map<string, Set<string>>();
     for (const row of poleRows) {
       const code = (row.siteVisit?.routeCode ?? '').trim();
-      if (!code) {
+      if (!code || !row.siteVisit) {
         continue;
       }
-      let set = polesByRoute.get(code);
+      const key = savtRouteKey(savtFeederOwnerOf(row.siteVisit), code);
+      let set = polesByRoute.get(key);
       if (!set) {
         set = new Set<string>();
-        polesByRoute.set(code, set);
+        polesByRoute.set(key, set);
       }
       set.add(row.assetId);
     }
+
+    // Span totals per route (GPS distance pole → its parent on the route).
+    const spansByFeeder = await loadSavtFeederSpans(this.prisma, user.tenantId);
+    const spansByLookup = new Map(
+      [...spansByFeeder.values()].map((route) => [
+        `${route.substationId}|${route.code}`,
+        route,
+      ]),
+    );
 
     // First visit seen per route = the most recent (ordered desc) → its From/To.
     const byRoute = new Map<
       string,
       {
+        /** "<From Pencawang id>:<KOD TIANG>" — the selection/download key. */
+        routeKey: string;
         routeCode: string;
         fromName: string;
         fromCode: string;
@@ -2897,6 +2929,8 @@ export class ReportsService {
         /** From the route's most recent visit — the report page's Mainhead filter. */
         mainhead: string | null;
         poleCount: number;
+        /** GPS span totals for the route; null when it has no poles yet. */
+        spanSummary: SavtSpanSummary | null;
       }
     >();
     // Every lifecycle status seen on a route (across cycles) for the status filter.
@@ -2915,35 +2949,37 @@ export class ReportsService {
       if (!code) {
         continue;
       }
+      const owner = savtFeederOwnerOf(visit);
+      const key = savtRouteKey(owner, code);
 
       if (visit.lifecycleStatus) {
-        let statuses = statusesByRoute.get(code);
+        let statuses = statusesByRoute.get(key);
         if (!statuses) {
           statuses = new Set<SurveyLifecycleStatus>();
-          statusesByRoute.set(code, statuses);
+          statusesByRoute.set(key, statuses);
         }
         statuses.add(visit.lifecycleStatus);
       }
 
       // First seen per route = most recent: its current status + check-in point.
-      if (!displayStatusByRoute.has(code)) {
+      if (!displayStatusByRoute.has(key)) {
         displayStatusByRoute.set(
-          code,
+          key,
           deriveDisplayStatus(visit.status, visit.lifecycleStatus),
         );
       }
       // The CURRENT survey's start date (most recent visit — same source as the
       // Status, so the two always describe the same cycle).
-      if (!startedAtByRoute.has(code)) {
-        startedAtByRoute.set(code, visit.startedAt);
-        completedAtByRoute.set(code, visitCompletedAt(visit));
+      if (!startedAtByRoute.has(key)) {
+        startedAtByRoute.set(key, visit.startedAt);
+        completedAtByRoute.set(key, visitCompletedAt(visit));
       }
       if (
-        !coordsByRoute.has(code) &&
+        !coordsByRoute.has(key) &&
         visit.checkInLatitude != null &&
         visit.checkInLongitude != null
       ) {
-        coordsByRoute.set(code, {
+        coordsByRoute.set(key, {
           latitude: visit.checkInLatitude,
           longitude: visit.checkInLongitude,
         });
@@ -2952,14 +2988,16 @@ export class ReportsService {
       // Must run BEFORE the byRoute guard: that guard short-circuits every visit
       // after the newest one, but the newest is often the cycle WITHOUT a report
       // (a re-survey in progress) while an older cycle holds the compiled PDF.
-      if (visit.reports.length > 0 && !reportVisitByRoute.has(code)) {
-        reportVisitByRoute.set(code, visit.id);
+      if (visit.reports.length > 0 && !reportVisitByRoute.has(key)) {
+        reportVisitByRoute.set(key, visit.id);
       }
 
-      if (byRoute.has(code)) {
+      if (byRoute.has(key)) {
         continue;
       }
-      byRoute.set(code, {
+      const lookup = owner ? savtFeederLookupKey(owner, code) : null;
+      byRoute.set(key, {
+        routeKey: key,
         routeCode: code,
         fromName: visit.fromPencawang?.name ?? visit.pencawangName ?? '',
         fromCode: visit.fromPencawang?.code ?? visit.pencawangCode ?? '',
@@ -2968,15 +3006,16 @@ export class ReportsService {
         toCode: visit.toPencawang?.code ?? '',
         mainhead:
           visit.mainheadRecord?.name?.trim() || visit.mainhead?.trim() || null,
-        poleCount: polesByRoute.get(code)?.size ?? 0,
+        poleCount: polesByRoute.get(key)?.size ?? 0,
+        spanSummary: (lookup && spansByLookup.get(lookup)?.summary) || null,
       });
     }
 
     return [...byRoute.values()]
       .map((route) => {
-        const displayStatus = displayStatusByRoute.get(route.routeCode) ?? null;
-        const coords = coordsByRoute.get(route.routeCode) ?? null;
-        const reportVisitId = reportVisitByRoute.get(route.routeCode) ?? null;
+        const displayStatus = displayStatusByRoute.get(route.routeKey) ?? null;
+        const coords = coordsByRoute.get(route.routeKey) ?? null;
+        const reportVisitId = reportVisitByRoute.get(route.routeKey) ?? null;
         return {
           ...route,
           latitude: coords?.latitude ?? null,
@@ -2985,17 +3024,21 @@ export class ReportsService {
           displayStatusLabel: displayStatus
             ? DISPLAY_STATUS_LABEL[displayStatus]
             : null,
-          statuses: [...(statusesByRoute.get(route.routeCode) ?? [])],
+          statuses: [...(statusesByRoute.get(route.routeKey) ?? [])],
           // The current (most recent) survey's start date; null = never started.
-          surveyStartedAt: startedAtByRoute.get(route.routeCode) ?? null,
+          surveyStartedAt: startedAtByRoute.get(route.routeKey) ?? null,
           // That same survey's completion; null = still open.
-          surveyCompletedAt: completedAtByRoute.get(route.routeCode) ?? null,
+          surveyCompletedAt: completedAtByRoute.get(route.routeKey) ?? null,
           // Drives the "Visual Report" download button (null => nothing compiled).
           reportVisitId,
           hasReport: reportVisitId != null,
         };
       })
-      .sort((a, b) => a.routeCode.localeCompare(b.routeCode));
+      .sort(
+        (a, b) =>
+          a.routeCode.localeCompare(b.routeCode) ||
+          a.fromName.localeCompare(b.fromName),
+      );
   }
 
   /**
@@ -3006,19 +3049,19 @@ export class ReportsService {
    * the owner's "how many poles does each route carry" reconcile. Pole count =
    * DISTINCT poles inspected on the route across all cycles (a pole shared by
    * two routes counts in each; a pole linked but never inspected does not).
-   * `routeCodes` (the report page's checkbox selection) narrows the file;
-   * omitted/empty = every route.
+   * `routeKeys` (the report page's checkbox selection: "<From Pencawang id>:<KOD
+   * TIANG>", or a bare KOD TIANG from older links) narrows the file;
+   * omitted/empty = every route. Span columns: GPS distance pole → its parent
+   * on the route (common/savt-spans.ts) — measured length excludes GAP spans.
    */
   async buildSavtRouteList(
     user: RequestUser,
-    routeCodes?: string[],
+    routeKeys?: string[],
   ): Promise<{ buffer: Buffer; filename: string }> {
     const allRoutes = await this.listSavtRoutes(user);
-    const codeFilter = new Set(
-      (routeCodes ?? []).map((code) => code.trim()).filter(Boolean),
-    );
-    const routes = codeFilter.size
-      ? allRoutes.filter((route) => codeFilter.has(route.routeCode))
+    const keyFilter = (routeKeys ?? []).map((key) => key.trim()).filter(Boolean);
+    const routes = keyFilter.length
+      ? allRoutes.filter((route) => matchesSavtRouteKeys(keyFilter, route))
       : allRoutes;
 
     const workbook = new Workbook();
@@ -3034,10 +3077,16 @@ export class ReportsService {
       'Number of Poles',
       'Start Survey Date',
       'Status',
+      'JUMLAH PANJANG (m)',
+      'BIL SPAN',
+      'SPAN TERPANJANG (m)',
+      'SPAN DITANDA',
+      'JURANG No. Tiang (m)',
     ]);
     header.font = { bold: true };
 
     routes.forEach((route, index) => {
+      const spans = route.spanSummary;
       sheet.addRow([
         index + 1,
         route.routeCode,
@@ -3050,10 +3099,18 @@ export class ReportsService {
         route.poleCount,
         formatDate(route.surveyStartedAt),
         route.displayStatusLabel ?? '',
+        // Blank = the route has no poles on record yet.
+        spans ? spans.measuredLength : '',
+        spans ? spans.spanCount : '',
+        spans?.longest
+          ? `${spans.longest.metres} (${spans.longest.fromNoTiang}→${spans.longest.toNoTiang})`
+          : '',
+        spans ? spans.flaggedCount : '',
+        spans && spans.gapCount > 0 ? spans.gapLength : '',
       ]);
     });
 
-    const columnWidths = [6, 20, 30, 30, 20, 14, 14, 14, 16, 18];
+    const columnWidths = [6, 20, 30, 30, 20, 14, 14, 14, 16, 18, 18, 10, 20, 13, 18];
     columnWidths.forEach((width, index) => {
       sheet.getColumn(index + 1).width = width;
     });
@@ -3074,12 +3131,14 @@ export class ReportsService {
    */
   async buildSavtRouteChecklist(
     user: RequestUser,
-    routeCode: string,
+    routeKey: string,
     lifecycleStatus?: SurveyLifecycleStatus,
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
-    const code = routeCode.trim();
+    // "<From Pencawang id>:<KOD TIANG>" — the code alone is not unique (two
+    // lines can share one), so the owner narrows it; a bare code still works.
+    const { ownerSubstationId, routeCode: code } = parseSavtRouteKey(routeKey);
     if (!code) {
       throw new NotFoundException('SAVT route not found.');
     }
@@ -3091,6 +3150,7 @@ export class ReportsService {
         siteVisit: {
           operationalScope: OperationalScope.SAVT,
           routeCode: code,
+          ...(ownerSubstationId ? savtOwnerVisitWhere(ownerSubstationId) : {}),
           ...(lifecycleStatus ? { lifecycleStatus } : {}),
         },
       },
@@ -3109,6 +3169,8 @@ export class ReportsService {
             mainheadRecord: { select: { name: true } },
             functionalLocation: true,
             pencawangName: true,
+            fromPencawangId: true,
+            substationId: true,
             team: { select: { name: true, code: true } },
             fromPencawang: { select: { name: true } },
             toPencawang: { select: { name: true } },
@@ -3173,6 +3235,10 @@ export class ReportsService {
       );
       return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
     });
+    const spanOf = await this.savtSpanLookup(
+      user.tenantId,
+      canonicalRoute ? [canonicalRoute] : [],
+    );
 
     const columns = await this.deriveTemplateColumns([
       ...new Set(chosen.map((i) => i.templateId)),
@@ -3189,6 +3255,7 @@ export class ReportsService {
     for (const insp of chosen) {
       const sv = insp.siteVisit;
       const firstInsp = firstByAsset.get(insp.assetId) ?? insp;
+      const span = sv ? spanOf(sv, code, insp.assetId) : null;
       const resultByItemId = new Map<string, (typeof insp.results)[number]>();
       for (const r of insp.results) {
         resultByItemId.set(r.templateItemId, r);
@@ -3224,6 +3291,7 @@ export class ReportsService {
           ),
         ),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        ...savtSpanCells(span),
       ];
 
       const itemCells = templateFlatCells(
@@ -3266,19 +3334,34 @@ export class ReportsService {
   async buildBulkSavtChecklist(
     user: RequestUser,
     lifecycleStatus?: SurveyLifecycleStatus,
-    routeCodes?: string[],
+    routeKeys?: string[],
   ): Promise<{ buffer: Buffer; filename: string }> {
     await this.assertCanReport(user);
 
     // Explicit route selection (checkbox "Download selected") narrows at the DB.
-    const codeFilter = routeCodes?.map((code) => code.trim()).filter(Boolean) ?? [];
+    // Keys are "<From Pencawang id>:<KOD TIANG>" (a bare code = every route
+    // with that code, as before).
+    const selected = (routeKeys ?? [])
+      .map((key) => key.trim())
+      .filter(Boolean)
+      .map(parseSavtRouteKey)
+      .filter((key) => key.routeCode);
     const inspections = await this.prisma.inspection.findMany({
       where: {
         tenantId: user.tenantId,
         ...EXPORTABLE_INSPECTION_WHERE,
         siteVisit: {
           operationalScope: OperationalScope.SAVT,
-          routeCode: codeFilter.length ? { in: codeFilter } : { not: null },
+          ...(selected.length
+            ? {
+                OR: selected.map((key) => ({
+                  routeCode: key.routeCode,
+                  ...(key.ownerSubstationId
+                    ? { AND: [savtOwnerVisitWhere(key.ownerSubstationId)] }
+                    : {}),
+                })),
+              }
+            : { routeCode: { not: null } }),
           ...(lifecycleStatus ? { lifecycleStatus } : {}),
         },
       },
@@ -3298,6 +3381,8 @@ export class ReportsService {
             functionalLocation: true,
             pencawangName: true,
             routeCode: true,
+            fromPencawangId: true,
+            substationId: true,
             team: { select: { name: true, code: true } },
             fromPencawang: { select: { name: true } },
             toPencawang: { select: { name: true } },
@@ -3354,10 +3439,23 @@ export class ReportsService {
       if (ra !== rb) {
         return ra.localeCompare(rb);
       }
+      // Two lines can share a KOD TIANG — keep each From Pencawang's together.
+      const oa = a.siteVisit ? (savtFeederOwnerOf(a.siteVisit) ?? '') : '';
+      const ob = b.siteVisit ? (savtFeederOwnerOf(b.siteVisit) ?? '') : '';
+      if (oa !== ob) {
+        return oa.localeCompare(ob);
+      }
       const ka = noTiangSortKey(rowNoTiang(a, ra));
       const kb = noTiangSortKey(rowNoTiang(b, rb));
       return ka[0] - kb[0] || ka[1].localeCompare(kb[1]);
     });
+    const spanOf = await this.savtSpanLookup(user.tenantId, [
+      ...new Set(
+        chosen
+          .map((insp) => canonicalizeSavtRouteCode(insp.siteVisit?.routeCode))
+          .filter((code): code is string => !!code),
+      ),
+    ]);
 
     const columns = await this.deriveTemplateColumns([
       ...new Set(chosen.map((i) => i.templateId)),
@@ -3403,6 +3501,7 @@ export class ReportsService {
           : '',
         sanitizeText(rowNoTiang(insp, code)),
         sanitizeText(insp.asset.noTiangLama || insp.asset.name || ''),
+        ...savtSpanCells(sv ? spanOf(sv, code, insp.assetId) : null),
       ];
 
       const itemCells = templateFlatCells(
@@ -3418,6 +3517,34 @@ export class ReportsService {
     const buffer = Buffer.from(arrayBuffer as ArrayBuffer);
     const statusTag = lifecycleStatus ? `_${lifecycleStatus}` : '';
     return { buffer, filename: `ALL_SAVT_ROUTES${statusTag}_CHECKLIST.xlsx` };
+  }
+
+  /**
+   * Span lookup for the SAVT checklist exports: the span INTO a pole on the
+   * row's route (owner = the visit's From Pencawang, code = KOD TIANG), i.e.
+   * from its parent pole to it — the same pole the KELEGAAN reading sits on.
+   */
+  private async savtSpanLookup(tenantId: string, canonicalCodes: string[]) {
+    const feeders = canonicalCodes.length
+      ? await loadSavtFeederSpans(this.prisma, tenantId, {
+          code: { in: canonicalCodes },
+        })
+      : new Map();
+    const byPole = new Map<string, SavtSpan>();
+    for (const feeder of feeders.values()) {
+      for (const span of feeder.spans) {
+        byPole.set(`${feeder.substationId}|${feeder.code}|${span.toAssetId}`, span);
+      }
+    }
+    return (
+      visit: { fromPencawangId: string | null; substationId: string | null },
+      routeCode: string,
+      assetId: string,
+    ): SavtSpan | null => {
+      const owner = savtFeederOwnerOf(visit);
+      const lookup = owner ? savtFeederLookupKey(owner, routeCode) : null;
+      return (lookup && byPole.get(`${lookup}|${assetId}`)) || null;
+    };
   }
 
   /**
@@ -4467,11 +4594,52 @@ const SAVT_META_HEADERS = [
   'LOCATION',
   'No. Tiang',
   'NO TIANG LAMA',
+  // TNB ask 2026-11-16 — GPS distance from the previous pole on the route to
+  // this one (lines up with the KELEGAAN reading, which also sits on the TO
+  // pole), and a check note when that span looks wrong. Last in the meta block
+  // so the DC's existing column order is unchanged.
+  'JARAK SPAN (m)',
+  'SEMAKAN SPAN',
   // NOTE: no KONGSI DENGAN column — the DC asked for it to be excluded
   // (2026-08-26). A shared-corridor pole still appears in several per-feeder
   // reports by design (docs/PLAN-savt-shared-poles.md); its cross-route codes
   // just aren't printed. The membership data itself is untouched.
 ];
+
+/** JARAK SPAN (m) + SEMAKAN SPAN cells; blank for pole 1 / no span. */
+function savtSpanCells(span: SavtSpan | null): (string | number)[] {
+  if (!span) {
+    return ['', ''];
+  }
+  return [span.metres ?? '', savtSpanFlagText(span)];
+}
+
+/**
+ * SAVT visits on the route owned by this From Pencawang (the pole sync falls
+ * back to the visit's Pencawang when it has no From Pencawang).
+ */
+function savtOwnerVisitWhere(ownerSubstationId: string): Prisma.SiteVisitWhereInput {
+  return {
+    OR: [
+      { fromPencawangId: ownerSubstationId },
+      { fromPencawangId: null, substationId: ownerSubstationId },
+    ],
+  };
+}
+
+/** A route matches a selected key: the full "<owner>:<code>" key, or a bare
+ *  code (older links / visits without a Pencawang) by code. */
+function matchesSavtRouteKeys(
+  keys: string[],
+  route: { routeKey: string; routeCode: string },
+): boolean {
+  return keys.some((key) => {
+    const parsed = parseSavtRouteKey(key);
+    return parsed.ownerSubstationId
+      ? key === route.routeKey
+      : parsed.routeCode === route.routeCode;
+  });
+}
 
 /**
  * Strip a SAVT route's "{KOD TIANG} " prefix from a pole's assetCode to recover

@@ -11,6 +11,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import { extname, resolve } from 'path';
 import {
   AssetStatus,
+  FeederKind,
   InspectionCompletionStatus,
   OperationalScope,
   Prisma,
@@ -55,6 +56,15 @@ import {
 } from '../common/operational-scope';
 import { normalizeOperationalText } from '../common/operational-text';
 import { upsertSavtMembership } from '../common/savt-graph';
+import {
+  compareNoTiang,
+  computeSavtRouteSpans,
+  noTiangLabel,
+  SPAN_LONG_MEDIAN_FACTOR,
+  SPAN_LONG_MIN_METRES,
+  SPAN_SHORT_METRES,
+} from '../common/savt-spans';
+import { savtFeederOwnerOf } from '../common/savt-spans.loader';
 import {
   buildSiteVisitImagePath,
   buildSiteVisitImagesDirectory,
@@ -1021,6 +1031,167 @@ export class SiteVisitsService {
       totalAssets: scopeAssetIds.length,
       snapshotReason,
     };
+  }
+
+  /**
+   * SAVT cable spans for this visit's route (TNB ask 2026-11-16): every pole on
+   * the route (its Feeder = From Pencawang + KOD TIANG — the code alone is not
+   * unique), the GPS span from each pole's parent to it with GAP / SHORT / LONG
+   * / NO_GPS flags (common/savt-spans.ts), the route totals, and each pole's
+   * latest KELEGAAN reading (it sits on the TO pole of a span). Read-only;
+   * same visibility as the visit itself.
+   */
+  async getSavtSpans(user: RequestUser, id: string) {
+    const visit = await this.findVisibleSiteVisit(user, id);
+    if (visit.operationalScope !== OperationalScope.SAVT) {
+      throw new BadRequestException('Span distances apply to SAVT route surveys only.');
+    }
+    const owner = savtFeederOwnerOf(visit);
+    const code = canonicalizeSavtRouteCode(visit.routeCode);
+    const empty = {
+      routeCode: visit.routeCode,
+      feederId: null as string | null,
+      poles: [] as {
+        assetId: string;
+        assetCode: string;
+        noTiang: string;
+        latitude: number | null;
+        longitude: number | null;
+        kelegaan: string | null;
+        /** Also on another SAVT route (shared corridor). */
+        shared: boolean;
+      }[],
+      ...computeSavtRouteSpans([]),
+      thresholds: {
+        shortMetres: SPAN_SHORT_METRES,
+        longMinMetres: SPAN_LONG_MIN_METRES,
+        longMedianFactor: SPAN_LONG_MEDIAN_FACTOR,
+      },
+    };
+    if (!owner || !code) {
+      return empty;
+    }
+    const feeder = await this.prisma.feeder.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        kind: FeederKind.SAVT,
+        substationId: owner,
+        code,
+        originKind: '',
+        originNumber: 0,
+      },
+      select: {
+        id: true,
+        memberships: {
+          select: {
+            assetId: true,
+            sequenceIndex: true,
+            branchSuffix: true,
+            fedFromAssetId: true,
+            asset: {
+              select: {
+                assetCode: true,
+                latitude: true,
+                longitude: true,
+                _count: {
+                  select: {
+                    feederMemberships: { where: { feeder: { kind: FeederKind.SAVT } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!feeder) {
+      return empty;
+    }
+
+    const assetIds = feeder.memberships.map((m) => m.assetId);
+    const kelegaanByAsset = await this.latestKelegaanReadings(user.tenantId, assetIds);
+    const poles = feeder.memberships
+      .map((m) => ({
+        assetId: m.assetId,
+        assetCode: m.asset.assetCode,
+        sequenceIndex: m.sequenceIndex,
+        branchSuffix: m.branchSuffix,
+        fedFromAssetId: m.fedFromAssetId,
+        latitude: m.asset.latitude,
+        longitude: m.asset.longitude,
+        shared: m.asset._count.feederMemberships > 1,
+      }))
+      .sort(compareNoTiang);
+    return {
+      ...empty,
+      feederId: feeder.id,
+      poles: poles.map((pole) => ({
+        assetId: pole.assetId,
+        assetCode: pole.assetCode,
+        noTiang: noTiangLabel(pole),
+        latitude: pole.latitude,
+        longitude: pole.longitude,
+        kelegaan: kelegaanByAsset.get(pole.assetId) ?? null,
+        shared: pole.shared,
+      })),
+      ...computeSavtRouteSpans(poles),
+    };
+  }
+
+  /** Each pole's KELEGAAN reading from its latest shown inspection. */
+  private async latestKelegaanReadings(tenantId: string, assetIds: string[]) {
+    const out = new Map<string, string>();
+    if (assetIds.length === 0) {
+      return out;
+    }
+    const norm = (value: string) => value.toUpperCase().replace(/\s+/g, ' ').trim();
+    const aliasRank = new Map(KELEGAAN_LABEL_ALIASES.map((alias, i) => [norm(alias), i]));
+    const inspections = await this.prisma.inspection.findMany({
+      where: {
+        tenantId,
+        assetId: { in: assetIds },
+        OR: [
+          { completionStatus: InspectionCompletionStatus.SUBMITTED },
+          { reinspectionRequestedAt: { not: null } },
+        ],
+      },
+      orderBy: [{ submittedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      select: {
+        assetId: true,
+        results: {
+          where: { templateItem: { label: { contains: 'KELEGAAN', mode: 'insensitive' } } },
+          select: {
+            valueText: true,
+            valueNumber: true,
+            templateItem: { select: { label: true } },
+          },
+        },
+      },
+    });
+    const seen = new Set<string>();
+    for (const inspection of inspections) {
+      if (seen.has(inspection.assetId)) {
+        continue; // newest first — only the latest inspection counts
+      }
+      seen.add(inspection.assetId);
+      let best: { rank: number; value: string } | null = null;
+      for (const result of inspection.results) {
+        const rank = aliasRank.get(norm(result.templateItem.label));
+        const value =
+          result.valueText?.trim() ||
+          (result.valueNumber != null ? result.valueNumber.toString() : '');
+        if (rank == null || !value) {
+          continue;
+        }
+        if (!best || rank < best.rank) {
+          best = { rank, value };
+        }
+      }
+      if (best) {
+        out.set(inspection.assetId, best.value);
+      }
+    }
+    return out;
   }
 
   /**
