@@ -81,8 +81,9 @@ export class ReportsController {
 
   // SAVT analogue of pencawang-list: every accessible route (KOD TIANG) with
   // From/To Pencawang, Mainhead, lat/long, pole count, survey start date and
-  // Status. `ids` = comma-separated ROUTE CODES from the report page's checkbox
-  // selection; omitted = every route.
+  // Status + GPS span totals. `ids` = comma-separated ROUTE KEYS
+  // ("<From Pencawang id>:<KOD TIANG>"; a bare code still works) from the
+  // report page's checkbox selection; omitted = every route.
   @Get('savt-route-list.xlsx')
   async exportSavtRouteList(
     @CurrentUser() user: RequestUser,
@@ -292,13 +293,16 @@ export class ReportsController {
   async exportSavtRouteChecklist(
     @CurrentUser() user: RequestUser,
     @Query('routeCode') routeCode: string | undefined,
+    // "<From Pencawang id>:<KOD TIANG>" — preferred: the code alone is not
+    // unique. routeCode stays for older links.
+    @Query('routeKey') routeKey: string | undefined,
     @Query('status') status: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const { buffer, filename } =
       await this.reportsService.buildSavtRouteChecklist(
         user,
-        routeCode ?? '',
+        routeKey || routeCode || '',
         parseLifecycleStatus(status),
       );
 

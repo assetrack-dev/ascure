@@ -118,6 +118,11 @@ describe('Reports · SAVT route list export (pole count per route)', () => {
       'Number of Poles',
       'Start Survey Date',
       'Status',
+      'JUMLAH PANJANG (m)',
+      'BIL SPAN',
+      'SPAN TERPANJANG (m)',
+      'SPAN DITANDA',
+      'JURANG No. Tiang (m)',
     ]);
     const routeRow = rows.find((row) => row[1] === ROUTE_CODE);
     expect(routeRow).toBeDefined();

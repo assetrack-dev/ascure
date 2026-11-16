@@ -192,6 +192,15 @@ export class SiteVisitsController {
     return this.siteVisitsService.getCycleDelta(user, params.id);
   }
 
+  // SAVT route survey: GPS span distances between consecutive poles + flags.
+  @Get(':id/savt-spans')
+  getSavtSpans(
+    @CurrentUser() user: RequestUser,
+    @Param() params: SiteVisitIdParamDto,
+  ) {
+    return this.siteVisitsService.getSavtSpans(user, params.id);
+  }
+
   @Get(':id/contributions')
   getContributions(
     @CurrentUser() user: RequestUser,

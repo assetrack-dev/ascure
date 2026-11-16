@@ -43,7 +43,12 @@ import {
 } from "@/lib/reports";
 import { downloadCompiledReport } from "@/lib/report-templates";
 import type { AuthSession } from "@/types/auth";
-import type { ReportSavtRoute, ReportSubstation } from "@/types/reports";
+import type {
+  ReportSavtRoute,
+  ReportSubstation,
+  SavtSpanSummary,
+} from "@/types/reports";
+import { formatSpanLength } from "@/lib/savt-spans";
 import { DISPLAY_STATUS_LABELS, type DisplayStatus } from "@/types/site-visits";
 
 // Compact 32px row button — the table's per-row actions. Tbtn is 38px, too tall
@@ -240,6 +245,30 @@ function CoordCell({
   );
 }
 
+/** " · 1.24 km · 2 to check" under a SAVT route — GPS span totals. */
+function SpanSummaryText({ summary }: { summary: SavtSpanSummary | null }) {
+  if (!summary || summary.spanCount === 0) {
+    return null;
+  }
+  return (
+    <>
+      {" · "}
+      <span title={`${summary.spanCount} measured spans (GPS, pole to pole)`}>
+        {formatSpanLength(summary.measuredLength)}
+      </span>
+      {summary.flaggedCount > 0 ? (
+        <span
+          className="text-[var(--warning-text)]"
+          title="Spans flagged for a No. Tiang gap, an unusually long/short span or missing GPS"
+        >
+          {" · "}
+          {summary.flaggedCount} to check
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function ReportsContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -358,7 +387,7 @@ function ReportsContent() {
   const visibleKeys = useMemo(
     () =>
       isSavt
-        ? filteredRoutes.map((route) => route.routeCode)
+        ? filteredRoutes.map((route) => route.routeKey)
         : filteredSubstations.map((substation) => substation.id),
     [isSavt, filteredRoutes, filteredSubstations],
   );
@@ -451,7 +480,7 @@ function ReportsContent() {
     setNotice("");
     try {
       if (isSavt) {
-        const route = routes.find((item) => item.routeCode === key);
+        const route = routes.find((item) => item.routeKey === key);
         if (route) {
           // The list filter is for finding/selecting; the download returns the
           // route's full checklist (latest inspection per pole).
@@ -743,20 +772,20 @@ function ReportsContent() {
                     </tr>
                   ) : isSavt ? (
                     filteredRoutes.map((route) => {
-                      const selected = selectedKeys.has(route.routeCode);
-                      const downloading = downloadingKey === `xlsx:${route.routeCode}`;
+                      const selected = selectedKeys.has(route.routeKey);
+                      const downloading = downloadingKey === `xlsx:${route.routeKey}`;
                       const downloadingReport =
-                        downloadingKey === `pdf:${route.routeCode}`;
+                        downloadingKey === `pdf:${route.routeKey}`;
                       return (
                         <tr
-                          key={route.routeCode}
+                          key={route.routeKey}
                           className={`${tableRowClass} ${selected ? "bg-[var(--brand-tint)]" : ""}`}
                         >
                           <td className="px-3.5 py-2.5">
                             <input
                               type="checkbox"
                               checked={selected}
-                              onChange={() => toggleOne(route.routeCode)}
+                              onChange={() => toggleOne(route.routeKey)}
                               aria-label={`Select ${route.routeCode}`}
                               className="h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--brand)]"
                             />
@@ -768,6 +797,7 @@ function ReportsContent() {
                             <div className="text-[12px] text-[var(--muted)]">
                               {(route.fromName || "?") + " → " + (route.toName || "?")} ·{" "}
                               {route.poleCount} pole{route.poleCount === 1 ? "" : "s"}
+                              <SpanSummaryText summary={route.spanSummary} />
                             </div>
                           </td>
                           <td className={tableCellClass}>
@@ -789,7 +819,7 @@ function ReportsContent() {
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 type="button"
-                                onClick={() => handleRowDownload(route.routeCode)}
+                                onClick={() => handleRowDownload(route.routeKey)}
                                 disabled={!!downloadingKey || isBulkDownloading}
                                 className={rowButtonClassName}
                               >
@@ -804,7 +834,7 @@ function ReportsContent() {
                                 type="button"
                                 onClick={() =>
                                   handleVisualReportDownload(
-                                    route.routeCode,
+                                    route.routeKey,
                                     route.reportVisitId,
                                     route.routeCode,
                                   )
