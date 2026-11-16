@@ -3,7 +3,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ClipboardCheck, RefreshCw, SlidersHorizontal, Undo2, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGuard } from "@/components/auth-guard";
 import {
@@ -35,6 +35,8 @@ import {
 import type { AuthSession } from "@/types/auth";
 import type {
   RepairEvidence,
+  ReturnState,
+  ReturnedStateFilter,
   VerificationFilters,
   VerificationGroup,
   VerificationGroups,
@@ -112,6 +114,52 @@ function formatDateTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+/** Where a returned repair stands now. */
+const RETURN_STATE_META: Record<ReturnState, { label: string; chip: string; tone: Tone }> = {
+  WITH_CONTRACTOR: { label: "Still with contractor", chip: "Still with contractor", tone: "warning" },
+  RESUBMITTED: { label: "Re-submitted", chip: "Re-submitted — check again", tone: "brand" },
+  CLOSED: { label: "Closed after return", chip: "Closed after return", tone: "success" },
+};
+
+const SUBMITTED_LIFECYCLES = new Set(["COMPLETED", "VERIFICATION_PENDING"]);
+
+function daysSince(iso: string) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return "today";
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/** The latest send-back / re-open: reason, who, when, and where it stands now. */
+function ReturnBanner({ item }: { item: VerificationItem }) {
+  const last = item.lastReturn;
+  if (!last) return null;
+  const state = item.returnState ? RETURN_STATE_META[item.returnState] : null;
+  const photos = item.photosSinceReturn ?? 0;
+  return (
+    <div className="mt-3 rounded-[var(--radius-control)] border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2.5 text-[12.5px] text-[var(--warning-text)]">
+      <div className="flex flex-wrap items-center gap-2">
+        <Undo2 size={14} className="shrink-0" />
+        <span className="font-semibold">
+          {last.kind === "REOPENED" ? "Re-opened" : "Sent back"}
+          {last.by ? ` by ${last.by.name}` : ""} · {formatDateTime(last.at)}
+        </span>
+        {last.count > 1 ? <Chip tone="high">Returned {last.count}×</Chip> : null}
+        {state ? <Chip tone={state.tone}>{state.chip}</Chip> : null}
+      </div>
+      <p className="mt-1.5 text-[var(--foreground-soft)]">
+        {last.reason ? <>“{last.reason}”</> : <span className="italic">No reason recorded</span>}
+      </p>
+      {item.returnState === "WITH_CONTRACTOR" ? (
+        <p className="mt-1 text-[var(--muted)]">
+          With {item.company?.name ?? "the company"}
+          {item.team ? ` · ${item.team.name}` : " · no team"} · returned {daysSince(last.at)} ·{" "}
+          {photos === 0 ? "no new photos yet" : `${photos} new photo${photos === 1 ? "" : "s"} since`}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function severityTone(severity: string): Tone {
@@ -233,6 +281,8 @@ function RepairCard({
     entries: buildEvidenceEntries(item.evidence.filter((image) => evidenceGroup(image) === group.key)),
   })).filter((group) => group.entries.length > 0 || group.key === "BEFORE" || group.key === "AFTER");
   const isClosed = item.lifecycleStatus === "CLOSED";
+  // Only a submitted repair can be decided — a returned one still with the crew can't.
+  const isSubmitted = SUBMITTED_LIFECYCLES.has(item.lifecycleStatus ?? "");
   const canDecide = item.cannotRepair ? actor.canDecideCannotRepair : actor.canVerify;
 
   return (
@@ -286,7 +336,8 @@ function RepairCard({
             {item.mainhead?.name ?? "No Mainhead"}
           </p>
           <p className="mt-1 text-[12.5px] text-[var(--muted)]">
-            {item.company?.name ?? "—"} · submitted {formatDateTime(item.maintainedAt)}
+            {item.company?.name ?? "—"} · {isSubmitted || isClosed ? "submitted" : "last submitted"}{" "}
+            {formatDateTime(item.maintainedAt)}
             {item.maintainedBy ? ` by ${item.maintainedBy.name}` : ""}
           </p>
           {isClosed ? (
@@ -298,7 +349,7 @@ function RepairCard({
           ) : null}
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
-          {!isClosed && canDecide ? (
+          {isSubmitted && canDecide ? (
             item.cannotRepair ? (
               <>
                 <Tbtn variant="primary" onClick={() => onAction("CLOSE_NOT_REPAIRABLE", item)}>
@@ -327,6 +378,8 @@ function RepairCard({
           ) : null}
         </div>
       </div>
+
+      <ReturnBanner item={item} />
 
       {item.maintenanceNotes ? (
         <p className="mt-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-muted)] px-3 py-2 text-[12.5px] text-[var(--foreground-soft)]">
@@ -369,6 +422,12 @@ function MaintenanceVerificationContent() {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [tab, setTab] = useState<VerificationTab>("PENDING");
+  // Returned tab chip (owner, 2026-11-16: opens on what is still with the contractor).
+  const [returnedState, setReturnedState] = useState<ReturnedStateFilter>("WITH_CONTRACTOR");
+  const tabFilters = useMemo(
+    () => (tab === "RETURNED" ? { returnedState } : {}),
+    [returnedState, tab],
+  );
   const [filters, setFilters] = useState<VerificationFilters>(EMPTY_FILTERS);
   // Search is applied a moment after typing stops.
   const [searchInput, setSearchInput] = useState("");
@@ -412,7 +471,12 @@ function MaintenanceVerificationContent() {
       setError("");
       try {
         setGroups(
-          await fetchVerificationGroups(token, tab, { ...filters, siteVisitId: focusVisitId || undefined }, page),
+          await fetchVerificationGroups(
+            token,
+            tab,
+            { ...filters, ...tabFilters, siteVisitId: focusVisitId || undefined },
+            page,
+          ),
         );
       } catch (loadError) {
         fail(loadError, "Unable to load repairs.");
@@ -420,7 +484,7 @@ function MaintenanceVerificationContent() {
         setIsLoading(false);
       }
     },
-    [fail, filters, focusVisitId, page, tab],
+    [fail, filters, focusVisitId, page, tab, tabFilters],
   );
 
   const loadGroup = useCallback(
@@ -435,6 +499,7 @@ function MaintenanceVerificationContent() {
             category: filters.category,
             from: filters.from,
             to: filters.to,
+            ...tabFilters,
           }),
         );
       } catch (loadError) {
@@ -443,7 +508,7 @@ function MaintenanceVerificationContent() {
         setIsLoadingGroup(false);
       }
     },
-    [fail, filters.category, filters.from, filters.to, tab],
+    [fail, filters.category, filters.from, filters.to, tab, tabFilters],
   );
 
   // Read the notification deep link once, before the first load.
@@ -500,7 +565,7 @@ function MaintenanceVerificationContent() {
     setPage(0);
     setOpenKey(null);
     setQueue(null);
-  }, [tab, filters, focusVisitId]);
+  }, [tab, tabFilters, filters, focusVisitId]);
 
   const toggleGroup = (group: VerificationGroup) => {
     const key = groupKey(group);
@@ -519,9 +584,26 @@ function MaintenanceVerificationContent() {
       { value: "PENDING" as const, label: `Awaiting verification${groups ? ` (${groups.counts.pending})` : ""}` },
       { value: "CANNOT_REPAIR" as const, label: `Cannot repair${groups ? ` (${groups.counts.cannotRepair})` : ""}` },
       { value: "CLOSED" as const, label: "Closed" },
+      // Sent back / re-opened; the badge = what is still with the contractor.
+      {
+        value: "RETURNED" as const,
+        label: `Returned${groups?.counts.returned !== undefined ? ` (${groups.counts.returned})` : ""}`,
+      },
     ],
     [groups],
   );
+
+  const returnedOptions = useMemo(() => {
+    const count = (state: ReturnState) =>
+      groups?.returnedStates ? ` (${groups.returnedStates[state]})` : "";
+    return [
+      ...(Object.keys(RETURN_STATE_META) as ReturnState[]).map((state) => ({
+        value: state,
+        label: `${RETURN_STATE_META[state].label}${count(state)}`,
+      })),
+      { value: "ALL" as const, label: "All" },
+    ];
+  }, [groups]);
 
   const activeFilterCount = [filters.organizationId, filters.category, filters.from, filters.to].filter(Boolean).length;
   const setFilter = (key: keyof VerificationFilters, value: string) =>
@@ -597,6 +679,22 @@ function MaintenanceVerificationContent() {
             <div className="overflow-x-auto">
               <Seg aria-label="Verification tab" options={tabOptions} value={tab} onChange={setTab} />
             </div>
+            {tab === "RETURNED" ? (
+              <div className="space-y-2">
+                <div className="overflow-x-auto">
+                  <Seg
+                    aria-label="Returned repairs state"
+                    options={returnedOptions}
+                    value={returnedState}
+                    onChange={setReturnedState}
+                  />
+                </div>
+                <p className="text-[12.5px] text-[var(--muted)]">
+                  Repairs sent back to the crew or re-opened, with the reason, who returned them and when.
+                  Re-submitted ones can be verified here or on Awaiting verification.
+                </p>
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2.5">
               <input
@@ -645,7 +743,7 @@ function MaintenanceVerificationContent() {
                   ))}
                 </select>
                 <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--muted)]">
-                  {tab === "CLOSED" ? "Closed" : "Submitted"} from
+                  {tab === "CLOSED" ? "Closed" : tab === "RETURNED" ? "Returned" : "Submitted"} from
                   <input
                     type="date"
                     value={filters.from ?? ""}
@@ -704,7 +802,16 @@ function MaintenanceVerificationContent() {
                     {groups.groups.map((group) => {
                       const key = groupKey(group);
                       const isOpen = openKey === key;
-                      const waiting = waitingFor(tab === "CLOSED" ? null : group.oldestAt);
+                      const newestFirst =
+                        tab === "CLOSED" ||
+                        (tab === "RETURNED" && (returnedState === "CLOSED" || returnedState === "ALL"));
+                      const waiting = waitingFor(newestFirst ? null : group.oldestAt);
+                      const countChip =
+                        tab === "CLOSED"
+                          ? { tone: "success" as const, text: "closed" }
+                          : tab === "RETURNED"
+                            ? { tone: "warning" as const, text: "returned" }
+                            : { tone: "brand" as const, text: "waiting" };
                       return (
                         <li
                           key={key}
@@ -742,11 +849,13 @@ function MaintenanceVerificationContent() {
                                   {CATEGORY_LABEL[category] ?? category}
                                 </Chip>
                               ))}
-                              <Chip tone={tab === "CLOSED" ? "success" : "brand"}>
-                                {group.count} {tab === "CLOSED" ? "closed" : "waiting"}
+                              <Chip tone={countChip.tone}>
+                                {group.count} {countChip.text}
                               </Chip>
                               {waiting ? (
-                                <span className="text-[12px] text-[var(--muted)]">oldest {waiting}</span>
+                                <span className="text-[12px] text-[var(--muted)]">
+                                  {tab === "RETURNED" ? "oldest return" : "oldest"} {waiting}
+                                </span>
                               ) : null}
                             </div>
                           </button>
@@ -806,7 +915,11 @@ function MaintenanceVerificationContent() {
                       ? "No repairs match these filters."
                       : tab === "CLOSED"
                         ? "No closed Kejanggalan yet."
-                        : "Repairs appear here once a crew submits them."}
+                        : tab === "RETURNED"
+                          ? returnedState === "WITH_CONTRACTOR"
+                            ? "No returned repair is waiting on a contractor."
+                            : "No returned repairs here."
+                          : "Repairs appear here once a crew submits them."}
                   </p>
                 </Card>
               )

@@ -1,6 +1,20 @@
 import type { MaintenanceCategory } from "@/types/maintenance-workspace";
 
-export type VerificationTab = "PENDING" | "CANNOT_REPAIR" | "CLOSED";
+export type VerificationTab = "PENDING" | "CANNOT_REPAIR" | "CLOSED" | "RETURNED";
+
+/** Where a returned repair stands now (the Returned tab's chips). */
+export type ReturnState = "WITH_CONTRACTOR" | "RESUBMITTED" | "CLOSED";
+export type ReturnedStateFilter = ReturnState | "ALL";
+
+/** The latest time TNB / the main contractor sent the repair back or re-opened it. */
+export interface RepairReturn {
+  at: string;
+  by: { id: string; name: string } | null;
+  reason: string | null;
+  kind: "SENT_BACK" | "REOPENED";
+  /** How many times it has been returned. */
+  count: number;
+}
 
 export interface RepairEvidence {
   id: string;
@@ -36,6 +50,13 @@ export interface VerificationItem {
   closedBy: { id: string; name: string } | null;
   closureNotes: string | null;
   company: { id: string; name: string } | null;
+  /** The team holding the work. */
+  team?: { id: string; name: string } | null;
+  /** Returned before (null = never). */
+  lastReturn?: RepairReturn | null;
+  returnState?: ReturnState | null;
+  /** Repair photos the crew added after the latest return. */
+  photosSinceReturn?: number;
   asset: {
     id: string;
     assetCode: string;
@@ -65,8 +86,10 @@ export interface VerificationQueue {
     canReopen: boolean;
   };
   companies: Array<{ id: string; name: string; code: string | null }>;
-  counts: { pending: number; cannotRepair: number };
+  counts: { pending: number; cannotRepair: number; returned?: number };
+  returnedStates?: Record<ReturnState, number>;
   tab: VerificationTab;
+  returnedState?: ReturnedStateFilter | null;
   items: VerificationItem[];
 }
 
@@ -77,6 +100,8 @@ export interface VerificationFilters {
   category?: string;
   from?: string;
   to?: string;
+  /** Returned tab only. */
+  returnedState?: ReturnedStateFilter;
 }
 
 export interface VerificationGroup {
@@ -95,7 +120,9 @@ export interface VerificationGroup {
 export interface VerificationGroups {
   actor: VerificationQueue["actor"];
   counts: VerificationQueue["counts"];
+  returnedStates?: VerificationQueue["returnedStates"];
   tab: VerificationTab;
+  returnedState?: ReturnedStateFilter | null;
   page: number;
   pageSize: number;
   totalGroups: number;

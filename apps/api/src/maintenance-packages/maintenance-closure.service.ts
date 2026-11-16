@@ -31,18 +31,39 @@ import { effectiveLama } from './maintenance-work.service';
 import {
   ReassignCannotRepairDto,
   RepairReasonDto,
+  ReturnedStateFilter,
   VerificationGroupsQueryDto,
   VerificationQueueQueryDto,
   VerificationTab,
   VerifyRepairDto,
 } from './dto/maintenance-closure.dto';
 import { REPAIR_EVIDENCE_WHERE } from './package-routing.util';
+import {
+  RETURN_EVENT_SQL,
+  RETURN_EVENT_WHERE,
+  SUBMITTED_LIFECYCLES,
+  returnStateOf,
+  returnStateSql,
+  returnStateWhere,
+  summarizeReturns,
+} from './repair-returns.util';
 
-/** Submitted by the contractor, waiting for someone to sign it off. */
-const SUBMITTED_LIFECYCLES: DefectLifecycleStatus[] = [
-  DefectLifecycleStatus.COMPLETED,
-  DefectLifecycleStatus.VERIFICATION_PENDING,
-];
+/** The narrowing shared by the queue and the groups. */
+type QueueFilters = Pick<
+  VerificationQueueQueryDto,
+  'siteVisitId' | 'organizationId' | 'category' | 'from' | 'to' | 'returnedState'
+>;
+
+/** Returned tab default: what is still with the contractor (owner, 2026-11-16). */
+const DEFAULT_RETURNED_STATE: ReturnedStateFilter = 'WITH_CONTRACTOR';
+
+/** Newest first on Closed, and on the Returned tab's Closed / All chips. */
+function newestFirst(tab: VerificationTab, returnedState: ReturnedStateFilter) {
+  return (
+    tab === 'CLOSED' ||
+    (tab === 'RETURNED' && (returnedState === 'CLOSED' || returnedState === 'ALL'))
+  );
+}
 
 const QUEUE_LIMIT = 200;
 const GROUPS_PAGE_SIZE = 20;
@@ -115,8 +136,19 @@ export class MaintenanceClosureService {
   async getGroups(user: RequestUser, query: VerificationGroupsQueryDto) {
     const actor = await this.resolveActor(user);
     const tab: VerificationTab = query.tab ?? 'PENDING';
+    const returnedState = query.returnedState ?? DEFAULT_RETURNED_STATE;
     const page = query.page ?? 0;
     const cannotRepair = [...CANNOT_REPAIR_OUTCOMES].map((outcome) => outcome as string);
+    // Returned tab: each Kejanggalan's latest return (reject / re-open); its
+    // date is the tab's date column.
+    const returnedJoin =
+      tab === 'RETURNED'
+        ? Prisma.sql`LEFT JOIN LATERAL (
+            SELECT MAX(e."createdAt") AS "returnedAt"
+            FROM "DefectTimelineEntry" e
+            WHERE e."defectId" = d."id" AND ${RETURN_EVENT_SQL}
+          ) ret ON TRUE`
+        : Prisma.empty;
 
     const scopeSql =
       actor.kind === 'TNB'
@@ -128,14 +160,30 @@ export class MaintenanceClosureService {
           ? Prisma.sql`AND d."maintenanceOrganizationId" = ANY(${actor.organizationIds}::uuid[])`
           : Prisma.empty;
     const tabSql =
-      tab === 'CLOSED'
+      tab === 'RETURNED'
+        ? returnedState === 'ALL'
+          ? Prisma.sql`AND ret."returnedAt" IS NOT NULL`
+          : Prisma.sql`AND ret."returnedAt" IS NOT NULL AND ${returnStateSql(returnedState)}`
+        : tab === 'CLOSED'
         ? Prisma.sql`AND d."lifecycleStatus" = 'CLOSED'`
         : tab === 'CANNOT_REPAIR'
           ? Prisma.sql`AND d."lifecycleStatus" IN ('COMPLETED', 'VERIFICATION_PENDING')
               AND d."resolutionOutcome"::text = ANY(${cannotRepair}::text[])`
           : Prisma.sql`AND d."lifecycleStatus" IN ('COMPLETED', 'VERIFICATION_PENDING')
               AND (d."resolutionOutcome" IS NULL OR NOT (d."resolutionOutcome"::text = ANY(${cannotRepair}::text[])))`;
-    const dateColumn = tab === 'CLOSED' ? Prisma.sql`d."closedAt"` : Prisma.sql`d."maintainedAt"`;
+    const dateColumn =
+      tab === 'RETURNED'
+        ? Prisma.sql`ret."returnedAt"`
+        : tab === 'CLOSED'
+          ? Prisma.sql`d."closedAt"`
+          : Prisma.sql`d."maintainedAt"`;
+    // Returned tab: returned at least once inside the range (any of its returns).
+    const returnedInRange = (from?: string, to?: string) => Prisma.sql`EXISTS (
+      SELECT 1 FROM "DefectTimelineEntry" e
+      WHERE e."defectId" = d."id" AND ${RETURN_EVENT_SQL}
+        ${from ? Prisma.sql`AND e."createdAt" >= ${dayStart(from)}` : Prisma.empty}
+        ${to ? Prisma.sql`AND e."createdAt" < ${nextDayStart(to)}` : Prisma.empty}
+    )`;
     const filterSql = Prisma.join(
       [
         Prisma.sql`TRUE`,
@@ -149,8 +197,15 @@ export class MaintenanceClosureService {
         query.category
           ? Prisma.sql`d."maintenanceCategory"::text = ${query.category}`
           : Prisma.sql`TRUE`,
-        query.from ? Prisma.sql`${dateColumn} >= ${dayStart(query.from)}` : Prisma.sql`TRUE`,
-        query.to ? Prisma.sql`${dateColumn} < ${nextDayStart(query.to)}` : Prisma.sql`TRUE`,
+        tab === 'RETURNED' && (query.from || query.to)
+          ? returnedInRange(query.from, query.to)
+          : Prisma.sql`TRUE`,
+        tab !== 'RETURNED' && query.from
+          ? Prisma.sql`${dateColumn} >= ${dayStart(query.from)}`
+          : Prisma.sql`TRUE`,
+        tab !== 'RETURNED' && query.to
+          ? Prisma.sql`${dateColumn} < ${nextDayStart(query.to)}`
+          : Prisma.sql`TRUE`,
         query.search
           ? Prisma.sql`(COALESCE(sv."pencawangName", st."name", '') ILIKE ${`%${query.search}%`}
               OR COALESCE(sv."pencawangCode", st."code", '') ILIKE ${`%${query.search}%`})`
@@ -167,14 +222,16 @@ export class MaintenanceClosureService {
       LEFT JOIN "Mainhead" mh ON mh."id" = sv."mainheadId"
       -- The visit's name / code snapshot may be empty: fall back to the Pencawang.
       LEFT JOIN "Substation" st ON st."id" = sv."substationId"
+      ${returnedJoin}
       WHERE sv."tenantId" = ${user.tenantId}::uuid
         AND d."maintenanceOrganizationId" IS NOT NULL
         ${scopeSql}
         ${tabSql}
         AND ${filterSql}
     `;
-    const order =
-      tab === 'CLOSED' ? Prisma.sql`MAX(${dateColumn}) DESC NULLS LAST` : Prisma.sql`MIN(${dateColumn}) ASC NULLS LAST`;
+    const order = newestFirst(tab, returnedState)
+      ? Prisma.sql`MAX(${dateColumn}) DESC NULLS LAST`
+      : Prisma.sql`MIN(${dateColumn}) ASC NULLS LAST`;
 
     const [rows, companies] = await Promise.all([
       this.prisma.$queryRaw<
@@ -219,6 +276,7 @@ export class MaintenanceClosureService {
         JOIN "Inspection" i ON i."id" = r."inspectionId"
         JOIN "SiteVisit" sv ON sv."id" = i."siteVisitId"
         JOIN "Organization" o ON o."id" = d."maintenanceOrganizationId"
+        ${returnedJoin}
         WHERE sv."tenantId" = ${user.tenantId}::uuid
           AND d."maintenanceOrganizationId" IS NOT NULL
           ${scopeSql}
@@ -229,39 +287,14 @@ export class MaintenanceClosureService {
 
     // Tab badges + what the viewer may do (the page no longer loads the whole
     // queue just for these).
-    const scope = this.scopeWhere(user, actor);
-    const [pending, cannotRepairCount] = await Promise.all([
-      this.prisma.defect.count({
-        where: {
-          AND: [
-            scope,
-            {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              OR: [
-                { resolutionOutcome: null },
-                { resolutionOutcome: { notIn: [...CANNOT_REPAIR_OUTCOMES] } },
-              ],
-            },
-          ],
-        },
-      }),
-      this.prisma.defect.count({
-        where: {
-          AND: [
-            scope,
-            {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              resolutionOutcome: { in: [...CANNOT_REPAIR_OUTCOMES] },
-            },
-          ],
-        },
-      }),
-    ]);
+    const { counts, returnedStates } = await this.tabCounts(this.scopeWhere(user, actor));
 
     return {
       actor: { kind: actor.kind, ...this.permissions(actor) },
-      counts: { pending, cannotRepair: cannotRepairCount },
+      counts,
+      returnedStates,
       tab,
+      returnedState: tab === 'RETURNED' ? returnedState : null,
       page,
       pageSize: GROUPS_PAGE_SIZE,
       totalGroups: rows[0]?.total ?? 0,
@@ -316,11 +349,45 @@ export class MaintenanceClosureService {
     return tenant;
   }
 
+  /** Which Kejanggalan a tab lists (SQL twin in getGroups). */
+  private tabWhere(tab: VerificationTab, returnedState: ReturnedStateFilter): Prisma.DefectWhereInput {
+    const cannotRepair = [...CANNOT_REPAIR_OUTCOMES];
+    if (tab === 'RETURNED') {
+      const returned: Prisma.DefectWhereInput = { timelineEntries: { some: RETURN_EVENT_WHERE } };
+      return returnedState === 'ALL' ? returned : { AND: [returned, returnStateWhere(returnedState)] };
+    }
+    if (tab === 'CLOSED') {
+      return { lifecycleStatus: DefectLifecycleStatus.CLOSED };
+    }
+    if (tab === 'CANNOT_REPAIR') {
+      return { lifecycleStatus: { in: SUBMITTED_LIFECYCLES }, resolutionOutcome: { in: cannotRepair } };
+    }
+    return {
+      lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
+      OR: [{ resolutionOutcome: null }, { resolutionOutcome: { notIn: cannotRepair } }],
+    };
+  }
+
+  /** Tab badges + the Returned tab's state chip counts. */
+  private async tabCounts(scope: Prisma.DefectWhereInput) {
+    const count = (where: Prisma.DefectWhereInput) =>
+      this.prisma.defect.count({ where: { AND: [scope, where] } });
+    const [pending, cannotRepair, withContractor, resubmitted, closed] = await Promise.all([
+      count(this.tabWhere('PENDING', 'ALL')),
+      count(this.tabWhere('CANNOT_REPAIR', 'ALL')),
+      count(this.tabWhere('RETURNED', 'WITH_CONTRACTOR')),
+      count(this.tabWhere('RETURNED', 'RESUBMITTED')),
+      count(this.tabWhere('RETURNED', 'CLOSED')),
+    ]);
+    return {
+      // `returned` is the tab badge: what is still with the contractor.
+      counts: { pending, cannotRepair, returned: withContractor },
+      returnedStates: { WITH_CONTRACTOR: withContractor, RESUBMITTED: resubmitted, CLOSED: closed },
+    };
+  }
+
   /** Plan §19 (N54): the optional narrowing shared by the queue and the groups. */
-  private filterWhere(
-    tab: VerificationTab,
-    filters: Pick<VerificationQueueQueryDto, 'siteVisitId' | 'organizationId' | 'category' | 'from' | 'to'>,
-  ): Prisma.DefectWhereInput[] {
+  private filterWhere(tab: VerificationTab, filters: QueueFilters): Prisma.DefectWhereInput[] {
     const where: Prisma.DefectWhereInput[] = [];
     if (filters.siteVisitId) {
       where.push({ inspectionItemResult: { inspection: { siteVisitId: filters.siteVisitId } } });
@@ -336,7 +403,13 @@ export class MaintenanceClosureService {
         ...(filters.from ? { gte: dayStart(filters.from) } : {}),
         ...(filters.to ? { lt: nextDayStart(filters.to) } : {}),
       };
-      where.push(tab === 'CLOSED' ? { closedAt: range } : { maintainedAt: range });
+      where.push(
+        tab === 'RETURNED'
+          ? { timelineEntries: { some: { ...RETURN_EVENT_WHERE, createdAt: range } } }
+          : tab === 'CLOSED'
+            ? { closedAt: range }
+            : { maintainedAt: range },
+      );
     }
     return where;
   }
@@ -344,35 +417,25 @@ export class MaintenanceClosureService {
   async getQueue(
     user: RequestUser,
     tab: VerificationTab = 'PENDING',
-    filters: Pick<VerificationQueueQueryDto, 'siteVisitId' | 'organizationId' | 'category' | 'from' | 'to'> = {},
+    filters: QueueFilters = {},
   ) {
     const actor = await this.resolveActor(user);
-    const cannotRepair = [...CANNOT_REPAIR_OUTCOMES];
-
-    const tabWhere: Prisma.DefectWhereInput =
-      tab === 'CLOSED'
-        ? { lifecycleStatus: DefectLifecycleStatus.CLOSED }
-        : tab === 'CANNOT_REPAIR'
-          ? {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              resolutionOutcome: { in: cannotRepair },
-            }
-          : {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              OR: [
-                { resolutionOutcome: null },
-                { resolutionOutcome: { notIn: cannotRepair } },
-              ],
-            };
+    const returnedState = filters.returnedState ?? DEFAULT_RETURNED_STATE;
+    const scope = this.scopeWhere(user, actor);
 
     const where: Prisma.DefectWhereInput = {
-      AND: [this.scopeWhere(user, actor), tabWhere, ...this.filterWhere(tab, filters)],
+      AND: [scope, this.tabWhere(tab, returnedState), ...this.filterWhere(tab, filters)],
     };
 
-    const [items, pending, cannotRepairCount] = await Promise.all([
+    const [rawItems, { counts, returnedStates }] = await Promise.all([
       this.prisma.defect.findMany({
         where,
-        orderBy: tab === 'CLOSED' ? { closedAt: 'desc' } : { maintainedAt: 'asc' },
+        orderBy:
+          tab === 'RETURNED'
+            ? { updatedAt: 'desc' }
+            : tab === 'CLOSED'
+              ? { closedAt: 'desc' }
+              : { maintainedAt: 'asc' },
         take: QUEUE_LIMIT,
         select: {
           id: true,
@@ -391,6 +454,20 @@ export class MaintenanceClosureService {
           maintainedByUser: { select: { id: true, name: true } },
           closureVerifiedByUser: { select: { id: true, name: true } },
           maintenanceOrganization: { select: { id: true, name: true } },
+          assignedToTeam: { select: { id: true, name: true } },
+          assignedTeam: { select: { id: true, name: true } },
+          // Every return (reject / re-open), newest first: the latest one's
+          // reason, who and when — shown on every tab, not just Returned.
+          timelineEntries: {
+            where: RETURN_EVENT_WHERE,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              comment: true,
+              createdAt: true,
+              fromLifecycleStatus: true,
+              createdBy: { select: { id: true, name: true } },
+            },
+          },
           evidenceImages: {
             where: REPAIR_EVIDENCE_WHERE,
             orderBy: { createdAt: 'asc' },
@@ -433,29 +510,20 @@ export class MaintenanceClosureService {
           },
         },
       }),
-      this.prisma.defect.count({
-        where: {
-          AND: [
-            this.scopeWhere(user, actor),
-            {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              OR: [{ resolutionOutcome: null }, { resolutionOutcome: { notIn: cannotRepair } }],
-            },
-          ],
-        },
-      }),
-      this.prisma.defect.count({
-        where: {
-          AND: [
-            this.scopeWhere(user, actor),
-            {
-              lifecycleStatus: { in: SUBMITTED_LIFECYCLES },
-              resolutionOutcome: { in: cannotRepair },
-            },
-          ],
-        },
-      }),
+      this.tabCounts(scope),
     ]);
+
+    // Returned tab: the longest-waiting return first (newest first on Closed / All).
+    const lastReturnAt = (defect: (typeof rawItems)[number]) =>
+      defect.timelineEntries[0]?.createdAt.getTime() ?? 0;
+    const items =
+      tab === 'RETURNED'
+        ? [...rawItems].sort((a, b) =>
+            newestFirst(tab, returnedState)
+              ? lastReturnAt(b) - lastReturnAt(a)
+              : lastReturnAt(a) - lastReturnAt(b),
+          )
+        : rawItems;
 
     // Plan §20 (P3): No Tiang Lama corrected by maintenance → show the old one too.
     const previousLama = await previousNoTiangLama(
@@ -481,10 +549,14 @@ export class MaintenanceClosureService {
     return {
       actor: { kind: actor.kind, ...permissions },
       companies,
-      counts: { pending, cannotRepair: cannotRepairCount },
+      counts,
+      returnedStates,
       tab,
+      returnedState: tab === 'RETURNED' ? returnedState : null,
       items: items.map((defect) => {
         const inspection = defect.inspectionItemResult.inspection;
+        const lastReturn = summarizeReturns(defect.timelineEntries);
+        const lastReturnDate = defect.timelineEntries[0]?.createdAt;
         return {
           id: defect.id,
           label: defect.inspectionItemResult.label,
@@ -512,6 +584,14 @@ export class MaintenanceClosureService {
           closedBy: defect.closureVerifiedByUser,
           closureNotes: defect.closureVerificationNotes,
           company: defect.maintenanceOrganization,
+          team: defect.assignedToTeam ?? defect.assignedTeam ?? null,
+          // Sent back / re-opened before (null = never): the latest return and
+          // where the Kejanggalan stands since.
+          lastReturn,
+          returnState: lastReturn ? returnStateOf(defect.lifecycleStatus) : null,
+          photosSinceReturn: lastReturnDate
+            ? defect.evidenceImages.filter((image) => image.createdAt > lastReturnDate).length
+            : 0,
           asset: {
             id: inspection.asset.id,
             assetCode: inspection.asset.assetCode,
