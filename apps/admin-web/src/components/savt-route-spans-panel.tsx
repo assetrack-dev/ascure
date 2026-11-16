@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Ruler } from "lucide-react";
+import { Ruler, Search, X } from "lucide-react";
 import {
   Card,
   CardHead,
@@ -19,7 +20,9 @@ import {
   fetchSavtRouteSpans,
   formatSpanLength,
   SPAN_FLAG_LABEL,
+  SPAN_MAP_COLOR,
   spanFlagHint,
+  spanKey,
   type SavtRouteSpans,
   type SavtSpan,
   type SavtSpanFlag,
@@ -42,8 +45,47 @@ const FLAG_STROKE: Record<SavtSpanFlag | "OK", string> = {
 
 type SpanFilter = "FLAGGED" | "ALL";
 
-function spanKey(span: SavtSpan) {
-  return `${span.fromAssetId}>${span.toAssetId}`;
+// Google Maps loads only in the browser, only when the card shows.
+const SavtRouteSpansMap = dynamic(() => import("@/components/savt-route-spans-map"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
+      Loading map…
+    </div>
+  ),
+});
+
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+/** "149", "12/1" — compare No. Tiang typed in the search box. */
+function normaliseNoTiang(value: string) {
+  return value.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function MapLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--line)] px-3 py-2 text-[11.5px] text-[var(--muted)]">
+      {(["OK", "LONG", "SHORT", "GAP"] as const).map((flag) => (
+        <span key={flag} className="inline-flex items-center gap-1.5">
+          <svg width="18" height="6" aria-hidden>
+            <line
+              x1="1"
+              y1="3"
+              x2="17"
+              y2="3"
+              stroke={flag === "GAP" ? "var(--muted)" : SPAN_MAP_COLOR[flag]}
+              strokeWidth={3}
+              strokeDasharray={flag === "GAP" ? "4 3" : undefined}
+            />
+          </svg>
+          {flag === "OK" ? "Span" : SPAN_FLAG_LABEL[flag]}
+        </span>
+      ))}
+      <span className="ml-auto">
+        Click a span for its row · metres on every span from street zoom
+      </span>
+    </div>
+  );
 }
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -226,6 +268,10 @@ export function SavtRouteSpansPanel({
   const [failed, setFailed] = useState(false);
   const [filter, setFilter] = useState<SpanFilter | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [mapError, setMapError] = useState(false);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const onMapError = useCallback(() => setMapError(true), []);
 
   useEffect(() => {
     if (!token) {
@@ -255,6 +301,24 @@ export function SavtRouteSpansPanel({
     [data],
   );
 
+  // A span picked on the map: make sure its row is listed, then scroll to it.
+  const pickFromMap = useCallback(
+    (key: string) => {
+      setSelected(key);
+      const span = data?.spans.find((item) => spanKey(item) === key);
+      if (span && !span.flag) {
+        setFilter("ALL");
+      }
+      setQuery("");
+    },
+    [data],
+  );
+  useEffect(() => {
+    if (selected) {
+      rowRefs.current.get(selected)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [selected, filter, query]);
+
   if (failed) {
     return null;
   }
@@ -271,7 +335,17 @@ export function SavtRouteSpansPanel({
   const flagged = spans.filter((span) => span.flag != null);
   // Default to the spans that need a look, when there are any.
   const activeFilter: SpanFilter = filter ?? (flagged.length > 0 ? "FLAGGED" : "ALL");
-  const rows = activeFilter === "FLAGGED" ? flagged : spans;
+  // The No. Tiang search looks across ALL spans (either end matches).
+  const needle = normaliseNoTiang(query);
+  const rows = needle
+    ? spans.filter(
+        (span) =>
+          normaliseNoTiang(span.toNoTiang).startsWith(needle) ||
+          normaliseNoTiang(span.fromNoTiang).startsWith(needle),
+      )
+    : activeFilter === "FLAGGED"
+      ? flagged
+      : spans;
 
   if (spans.length === 0) {
     return (
@@ -330,23 +404,75 @@ export function SavtRouteSpansPanel({
         />
       </div>
 
-      <RouteSketch data={data} selected={selected} onSelect={setSelected} />
+      {GOOGLE_MAPS_API_KEY && !mapError ? (
+        <div className="mt-4 overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)]">
+          <div className="h-[460px] w-full">
+            <SavtRouteSpansMap
+              apiKey={GOOGLE_MAPS_API_KEY}
+              onLoadError={onMapError}
+              poles={data.poles}
+              spans={data.spans}
+              selectedKey={selected}
+              onSelect={pickFromMap}
+            />
+          </div>
+          <MapLegend />
+        </div>
+      ) : (
+        // No Maps key / the map failed to load: the GPS sketch instead.
+        <RouteSketch data={data} selected={selected} onSelect={pickFromMap} />
+      )}
 
-      <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <Seg<SpanFilter>
           aria-label="Which spans to list"
           value={activeFilter}
-          onChange={setFilter}
+          onChange={(next) => {
+            setFilter(next);
+            setQuery("");
+          }}
           options={[
             { value: "FLAGGED", label: `To check (${flagged.length})` },
             { value: "ALL", label: `All spans (${spans.length})` },
           ]}
         />
+        <label className="relative flex h-[38px] min-w-[180px] flex-1 items-center sm:max-w-[240px]">
+          <Search size={14} className="pointer-events-none absolute left-3 text-[var(--muted)]" />
+          <input
+            value={query}
+            onChange={(event) => {
+              const next = event.target.value;
+              setQuery(next);
+              // An exact No. Tiang picks the span INTO that pole (map zooms).
+              const exact = spans.find(
+                (span) => normaliseNoTiang(span.toNoTiang) === normaliseNoTiang(next),
+              );
+              if (exact) {
+                setSelected(spanKey(exact));
+              }
+            }}
+            placeholder="Find No. Tiang, e.g. 149"
+            aria-label="Find a span by No. Tiang"
+            className="h-full w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] pl-8 pr-8 text-[13px] text-[var(--foreground)] placeholder:text-[var(--muted-2)] focus:border-[var(--brand)] focus:outline-none"
+          />
+          {query ? (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              className="absolute right-2 rounded p-1 text-[var(--muted)] hover:text-[var(--foreground)]"
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </label>
       </div>
 
       {rows.length === 0 ? (
         <p className="mt-4 text-sm text-[var(--muted)]">
-          Nothing to check — every span on this route looks normal.
+          {needle
+            ? `No span with No. Tiang ${query.trim()} on this route.`
+            : "Nothing to check — every span on this route looks normal."}
         </p>
       ) : (
         <div className="mt-3 max-h-[420px] overflow-auto rounded-[var(--radius-control)] border border-[var(--line)]">
@@ -368,6 +494,10 @@ export function SavtRouteSpansPanel({
                 return (
                   <tr
                     key={key}
+                    ref={(row) => {
+                      if (row) rowRefs.current.set(key, row);
+                      else rowRefs.current.delete(key);
+                    }}
                     onClick={() => setSelected(key)}
                     className={`${tableRowClass} cursor-pointer ${
                       key === selected ? "bg-[var(--brand-tint)]" : ""

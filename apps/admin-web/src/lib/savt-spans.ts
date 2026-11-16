@@ -55,6 +55,20 @@ export function formatSpanLength(metres: number): string {
     : `${Math.round(metres)} m`;
 }
 
+/** Stable id of a span (parent pole → pole). */
+export function spanKey(span: Pick<SavtSpan, "fromAssetId" | "toAssetId">) {
+  return `${span.fromAssetId}>${span.toAssetId}`;
+}
+
+/** Line colours on the span map — bright on satellite imagery. */
+export const SPAN_MAP_COLOR: Record<SavtSpanFlag | "OK", string> = {
+  OK: "#38bdf8",
+  LONG: "#f97316",
+  SHORT: "#d946ef",
+  GAP: "#f8fafc",
+  NO_GPS: "#ef4444",
+};
+
 export const SPAN_FLAG_LABEL: Record<SavtSpanFlag, string> = {
   GAP: "No. Tiang gap",
   LONG: "Long span",
