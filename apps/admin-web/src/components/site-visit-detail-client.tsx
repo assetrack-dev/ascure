@@ -3427,7 +3427,36 @@ function SiteVisitDetailContent({ siteVisitId }: { siteVisitId: string }) {
                                     />
                                   </td>
                                   <td className={`${tableCellClass} min-w-48`}>
-                                    {formatNullable(link.checklist?.catitan)}
+                                    {/* Free-text remark (e.g. P2P / UG for an
+                                        underground span) — the API matches the
+                                        template's CATITAN / CATATAN item. */}
+                                    <EditableCell
+                                      value={link.checklist?.catitan ?? null}
+                                      canEdit={
+                                        canEditLinkedAssets &&
+                                        Boolean(link.asset.latestInspectionId)
+                                      }
+                                      placeholder="e.g. P2P"
+                                      ariaLabel={`Catitan for ${link.asset.assetCode}`}
+                                      onSave={async (next) => {
+                                        const token = session?.token;
+                                        const inspectionId = link.asset.latestInspectionId;
+                                        if (!token) {
+                                          throw new Error("Your session has expired.");
+                                        }
+                                        if (!inspectionId) {
+                                          throw new Error("No submitted inspection to edit.");
+                                        }
+                                        await editChecklistValue(
+                                          token,
+                                          inspectionId,
+                                          "CATATAN",
+                                          next,
+                                          siteVisitId,
+                                        );
+                                        await loadVisit(token, false);
+                                      }}
+                                    />
                                   </td>
                                   {activeChecklistColumns.map((column) => {
                                     // Number-ish items get the decimal keypad; every

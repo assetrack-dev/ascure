@@ -39,6 +39,7 @@ import { describeInspectionRecency } from '../common/inspection-cadence';
 import {
   checklistColumnOptions,
   checklistResultValue,
+  CATATAN_LABEL_ALIASES,
   KELEGAAN_LABEL_ALIASES,
   type ChecklistColumnDef,
   type ChecklistImage,
@@ -2871,9 +2872,7 @@ export class SiteVisitsService {
     const PINNED = new Set(
       [
         ...KELEGAAN_LABEL_ALIASES,
-        'CATITAN',
-        'CATATAN',
-        'CATATAN / REMARK',
+        ...CATATAN_LABEL_ALIASES,
       ].map(norm),
     );
 
@@ -3220,7 +3219,7 @@ export class SiteVisitsService {
               createdAt: kelegaanImage.createdAt.toISOString(),
             }
           : null,
-        catitan: pickValue('CATITAN', 'CATATAN', 'CATATAN / REMARK'),
+        catitan: pickValue(...CATATAN_LABEL_ALIASES),
       },
       // Generic per-field values for the DC's toggleable checklist columns.
       checklistValues,
