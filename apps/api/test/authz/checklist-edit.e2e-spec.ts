@@ -231,4 +231,77 @@ describe('Authz · generalized checklist-value edit', () => {
     });
     expect(defect?.lifecycleStatus).toBe('IN_PROGRESS');
   });
+
+  // The Linked Assets "Catitan" column is fixed (not a toggleable checklist
+  // column), so the web edits it with the generic "CATATAN" key whatever the
+  // template calls its remark item (SAVT: CATATAN, SAVR: CATITAN). Office use:
+  // mark an underground span "P2P" for the SAVT QR pipeline.
+  describe('Catitan (remark) column', () => {
+    let remarkItemId: string;
+
+    beforeAll(async () => {
+      const seedItem = await prisma.inspectionTemplateItem.findUniqueOrThrow({
+        where: { id: IDS.template.item },
+      });
+      const created = await prisma.inspectionTemplateItem.create({
+        data: {
+          templateId: seedItem.templateId,
+          sectionId: seedItem.sectionId,
+          key: 'catitan_e2e',
+          label: 'CATITAN',
+          inputType: 'TEXT',
+          sortOrder: 99,
+        },
+      });
+      remarkItemId = created.id;
+    });
+
+    afterAll(async () => {
+      await prisma.inspectionResult.deleteMany({ where: { templateItemId: remarkItemId } });
+      await prisma.inspectionItemResult.deleteMany({ where: { checklistItemId: remarkItemId } });
+      await prisma.inspectionTemplateItem.delete({ where: { id: remarkItemId } });
+    });
+
+    it('the generic CATATAN key edits the template item labelled CATITAN (200): text stored, never a defect', async () => {
+      await http(app, token.mgrA)
+        .patch(url(IDS.inspection.a))
+        .send({ columnKey: 'CATATAN', value: 'P2P', siteVisitId: IDS.visit.a })
+        .expect(200);
+      const row = await prisma.inspectionResult.findUnique({
+        where: {
+          inspectionId_templateItemId: {
+            inspectionId: IDS.inspection.a,
+            templateItemId: remarkItemId,
+          },
+        },
+      });
+      expect(row?.valueText).toBe('P2P');
+      const itemResult = await prisma.inspectionItemResult.findFirst({
+        where: { inspectionId: IDS.inspection.a, checklistItemId: remarkItemId },
+      });
+      expect(itemResult?.isDefect ?? false).toBe(false);
+    });
+
+    it('clearing the Catitan removes the text (200 → null)', async () => {
+      await http(app, token.mgrA)
+        .patch(url(IDS.inspection.a))
+        .send({ columnKey: 'CATATAN', value: '', siteVisitId: IDS.visit.a })
+        .expect(200);
+      const row = await prisma.inspectionResult.findUnique({
+        where: {
+          inspectionId_templateItemId: {
+            inspectionId: IDS.inspection.a,
+            templateItemId: remarkItemId,
+          },
+        },
+      });
+      expect(row?.valueText ?? null).toBeNull();
+    });
+
+    it('a crew member still canNOT edit the Catitan (403)', () =>
+      http(app, token.techA)
+        .patch(url(IDS.inspection.a))
+        .send({ columnKey: 'CATATAN', value: 'P2P' })
+        .expect(403));
+  });
 });
