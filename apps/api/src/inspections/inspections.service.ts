@@ -52,6 +52,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTemplateSelectOptions } from '../templates/template-builder.constants';
 import {
   checklistResultValue,
+  CATATAN_LABEL_ALIASES,
   KELEGAAN_LABEL_ALIASES,
 } from '../common/checklist-columns';
 import { TemplatesService } from '../templates/templates.service';
@@ -861,13 +862,18 @@ export class InspectionsService {
     // IMAGE carries a photo, not a value, so it is the only type excluded here.
     // MULTI_SELECT IS editable — its picks round-trip through valueJson (see the
     // MULTI_SELECT branch of coerceInspectionResultValue).
-    const item = inspection.template.sections
+    // The Catitan column is a FIXED column on the Linked Assets table (it reads
+    // whichever of the remark labels the template uses), so the web sends the
+    // generic "CATATAN" key — match any of those labels for it.
+    const remarkKeys = CATATAN_LABEL_ALIASES.map(norm);
+    const editableItems = inspection.template.sections
       .flatMap((section) => section.items)
-      .find(
-        (templateItem) =>
-          templateItem.inputType !== InspectionItemInputType.IMAGE &&
-          norm(templateItem.label) === columnKey,
-      );
+      .filter((templateItem) => templateItem.inputType !== InspectionItemInputType.IMAGE);
+    const item =
+      editableItems.find((templateItem) => norm(templateItem.label) === columnKey) ??
+      (remarkKeys.includes(columnKey)
+        ? editableItems.find((templateItem) => remarkKeys.includes(norm(templateItem.label)))
+        : undefined);
 
     if (!item) {
       throw new BadRequestException(

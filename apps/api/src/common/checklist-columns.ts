@@ -70,6 +70,11 @@ export const KELEGAAN_LABEL_ALIASES = [
   'KELEGAAN',
 ] as const;
 
+/** Labels a template uses for its free-text remark item. The Linked Assets
+ *  table shows it as the fixed "Catitan" column (first alias that has a value),
+ *  and the office edits it through the generic "CATATAN" key. */
+export const CATATAN_LABEL_ALIASES = ['CATITAN', 'CATATAN', 'CATATAN / REMARK'] as const;
+
 /** Dropdown options for a checklist column's inline editor, mirroring how the
  *  checklist template defines the item: a SELECT exposes its configured options
  *  (via the canonical template parser), a BOOLEAN gets a synthetic Yes/No, and
