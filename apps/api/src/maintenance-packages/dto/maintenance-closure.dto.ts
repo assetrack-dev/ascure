@@ -16,13 +16,22 @@ import {
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
-export const VERIFICATION_TABS = ['PENDING', 'CANNOT_REPAIR', 'CLOSED'] as const;
+export const VERIFICATION_TABS = ['PENDING', 'CANNOT_REPAIR', 'CLOSED', 'RETURNED'] as const;
 export type VerificationTab = (typeof VERIFICATION_TABS)[number];
+
+/** The Returned tab's state chips (default WITH_CONTRACTOR). */
+export const RETURNED_STATE_FILTERS = ['WITH_CONTRACTOR', 'RESUBMITTED', 'CLOSED', 'ALL'] as const;
+export type ReturnedStateFilter = (typeof RETURNED_STATE_FILTERS)[number];
 
 export class VerificationQueueQueryDto {
   @IsOptional()
   @IsIn(VERIFICATION_TABS)
   tab?: VerificationTab;
+
+  /** Returned tab only: where the returned repairs stand now. */
+  @IsOptional()
+  @IsIn(RETURNED_STATE_FILTERS)
+  returnedState?: ReturnedStateFilter;
 
   // Plan §19 (N54): narrow the queue — one Pencawang group, a company, a work
   // type, a submitted (closed, on the Closed tab) date range.

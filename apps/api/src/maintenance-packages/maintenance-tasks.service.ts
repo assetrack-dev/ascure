@@ -28,6 +28,7 @@ import { RepairPeriodStatus } from './dto/repair-report.dto';
 import { dayStart, nextDayStart, previousNoTiangLama } from './maintenance-closure.service';
 import { effectiveLama } from './maintenance-work.service';
 import { REPAIR_EVIDENCE_WHERE } from './package-routing.util';
+import { returnReasonOf as reasonOf } from './repair-returns.util';
 
 const GROUPS_PAGE_SIZE = 20;
 /** The Overview's chart: the chosen day and the 29 before it. */
@@ -125,12 +126,6 @@ export function taskStatus(defect: {
   return 'TODO';
 }
 
-/** "Repair rejected by TNB: poles still overgrown" → "poles still overgrown". */
-function reasonOf(comment: string | null) {
-  if (!comment) return null;
-  const at = comment.indexOf(': ');
-  return at >= 0 ? comment.slice(at + 2).trim() || null : null;
-}
 
 /**
  * Plan §21.2 #4 — "My tasks": every routed Kejanggalan of the caller's company,

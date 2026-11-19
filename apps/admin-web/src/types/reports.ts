@@ -31,7 +31,25 @@ export interface ReportSubstation {
 }
 
 /** A SAVT route (one KOD TIANG, From → To) — the SAVT report's grouping unit. */
+/** GPS span totals for a SAVT route (API common/savt-spans.ts). */
+export interface SavtSpanSummary {
+  poleCount: number;
+  /** Measured spans (everything except GAP and NO_GPS). */
+  spanCount: number;
+  /** Sum of the measured spans, metres. */
+  measuredLength: number;
+  medianSpan: number | null;
+  longest: { metres: number; fromNoTiang: string; toNoTiang: string } | null;
+  flaggedCount: number;
+  gapCount: number;
+  /** Straight-line metres across No. Tiang gaps (under-reads the cable). */
+  gapLength: number;
+  noGpsCount: number;
+}
+
 export interface ReportSavtRoute {
+  /** "<From Pencawang id>:<KOD TIANG>" — the KOD TIANG alone is not unique. */
+  routeKey: string;
   routeCode: string;
   fromName: string;
   fromCode: string;
@@ -57,4 +75,6 @@ export interface ReportSavtRoute {
   /** Newest visit on the route carrying a compiled visual report; null if none. */
   reportVisitId: string | null;
   hasReport: boolean;
+  /** GPS span totals; null when the route has no poles on record yet. */
+  spanSummary: SavtSpanSummary | null;
 }
